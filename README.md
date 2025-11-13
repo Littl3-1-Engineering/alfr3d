@@ -24,7 +24,8 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
 - **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring.
 - **Service Environment**: Handles geolocation, weather updates, and environmental data collection.
-- **Service Frontend**: Modern Flask web application with real-time dashboard, user/device management, and control panel.
+- **Service API**: REST API gateway providing endpoints for users and container metrics, interfacing with database and Docker.
+- **Service Frontend**: Modern React web application with real-time dashboard, user/device management, and control panel.
 
 ## Quick Start
 
@@ -52,6 +53,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **MySQL**: 3306
 - **Zookeeper**: 2181
 - **Service Frontend**: 8000
+- **Service API**: 5002
 - **Service Daemon**: 8080
 - **Service Device**: 8080
 - **Service Environment**: 8080
@@ -128,8 +130,8 @@ The ALFR3D dashboard provides real-time monitoring and control:
 ## Development
 
 ### Architecture Overview
-- **Backend**: Flask-based microservices with Kafka messaging
-- **Frontend**: HTML/CSS/JavaScript with real-time updates
+- **Backend**: Flask-based microservices with Kafka messaging and REST API gateway
+- **Frontend**: React application with real-time updates
 - **Database**: MySQL with comprehensive schema
 - **Deployment**: Docker Compose (dev) and Kubernetes (prod)
 
@@ -149,11 +151,13 @@ The ALFR3D dashboard provides real-time monitoring and control:
 5. Rebuild: `docker-compose up --build`
 
 ### API Endpoints
-- `GET /`: Landing page
-- `GET /dashboard`: Real-time monitoring dashboard
-- `GET /control`: Management interface
-- `POST /command`: Send commands via Kafka
-- `GET /dashboard/data`: JSON API for real-time metrics
+- **Service API**:
+  - `GET /api/users`: Retrieve online users
+  - `GET /api/containers`: Retrieve container health metrics
+- **Service Frontend**:
+  - `GET /`: Landing page
+  - `GET /dashboard`: Real-time monitoring dashboard
+  - `GET /control`: Management interface
 
 ## Kubernetes Deployment
 
@@ -176,11 +180,12 @@ The project includes complete Kubernetes manifests for production deployment wit
    ```bash
    # Build all service images
    eval $(minikube docker-env)
-   docker build -t alfr3d/service-frontend:latest services/service_frontend
-   docker build -t alfr3d/service-daemon:latest services/service_daemon
-   docker build -t alfr3d/service-device:latest services/service_device
-   docker build -t alfr3d/service-environment:latest services/service_environment
-   docker build -t alfr3d/service-user:latest services/service_user
+    docker build -t alfr3d/service-frontend:latest services/service_frontend
+    docker build -t alfr3d/service-api:latest services/service_api
+    docker build -t alfr3d/service-daemon:latest services/service_daemon
+    docker build -t alfr3d/service-device:latest services/service_device
+    docker build -t alfr3d/service-environment:latest services/service_environment
+    docker build -t alfr3d/service-user:latest services/service_user
    ```
 
 3. **Deploy to Kubernetes**:

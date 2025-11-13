@@ -1,0 +1,147 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg-primary: #0A0F14;
+    --color-bg-secondary: #05070A;
+    --color-card: rgba(15, 23, 42, 0.5);
+    --color-border: rgba(67, 227, 240, 0.3);
+    --color-text: #E1E8EF;
+    --color-text-muted: #8A9DAF;
+    --color-primary: #43E3F0;
+    --color-alert: #F0438B;
+    --color-warn: #F0D443;
+    --color-success: #10B981;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 300;
+    background: var(--color-bg-primary);
+    color: var(--color-text);
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+}
+
+body {
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 300;
+  background-color: var(--color-bg-primary); /* Use a solid color as a fallback */
+  background-image:
+    linear-gradient(rgba(10, 15, 20, 0.95), rgba(10, 15, 20, 0.95)),
+    url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="20" y="20" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="rgba(67, 227, 240, 0.1)">+</text></svg>');
+  color: var(--color-text);
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* Advanced Glassmorphism with Corner Glow */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  position: relative;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.glass-panel::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  bottom: -1px;
+  background:
+    radial-gradient(20px 20px at 0 0, rgba(67, 227, 240, 0.3), transparent),
+    radial-gradient(20px 20px at 100% 0, rgba(67, 227, 240, 0.3), transparent),
+    radial-gradient(20px 20px at 0 100%, rgba(67, 227, 240, 0.3), transparent),
+    radial-gradient(20px 20px at 100% 100%, rgba(67, 227, 240, 0.3), transparent);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Glowing Elements */
+.glow-primary { filter: drop-shadow(0 0 12px rgba(67, 227, 240, 0.8)); }
+.glow-alert { filter: drop-shadow(0 0 12px rgba(240, 67, 139, 0.8)); }
+.glow-warn { filter: drop-shadow(0 0 12px rgba(240, 212, 67, 0.8)); }
+.glow-success { filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.8)); }
+
+/* Text Glows */
+.text-glow-primary { text-shadow: 0 0 15px rgba(67, 227, 240, 0.8); }
+.text-glow-alert { text-shadow: 0 0 15px rgba(240, 67, 139, 0.8); }
+.text-glow-warn { text-shadow: 0 0 15px rgba(240, 212, 67, 0.8); }
+
+/* Terminal Style */
+.terminal {
+  font-family: 'JetBrains Mono', monospace;
+  background: linear-gradient(135deg, #0A0F14 0%, #05070A 100%);
+  border: 1px solid rgba(67, 227, 240, 0.3);
+  box-shadow:
+    0 0 20px rgba(67, 227, 240, 0.1),
+    inset 0 1px 0 rgba(67, 227, 240, 0.1);
+}
+
+.terminal-header {
+  background: rgba(67, 227, 240, 0.1);
+  border-bottom: 1px solid rgba(67, 227, 240, 0.3);
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #43E3F0;
+}
+
+.terminal-content {
+  padding: 16px;
+  color: #E1E8EF;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Count-up Animation */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.count-up {
+  animation: count-up 0.6s ease-out;
+}
+
+@keyframes rotate-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.ring-1 {
+  animation: rotate-slow 60s linear infinite;
+}
+
+.ring-2 {
+  animation: rotate-slow 70s linear infinite reverse;
+}
+
+.ring-3 {
+  animation: rotate-slow 80s linear infinite;
+}
+
+/* Grid background with + signs */
+.grid-bg {
+  background-image:
+    /* This creates a vignette effect to darken the edges */
+    radial-gradient(circle at center, transparent 40%, rgba(10, 15, 20, 1)),
+    /* This is the plus-sign grid */
+    url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="20" y="20" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="rgba(67, 227, 240, 0.1)">+</text></svg>');
+}
