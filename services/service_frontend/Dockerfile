@@ -1,18 +1,20 @@
-FROM python:3.9-slim
+FROM node:18-alpine
+
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 WORKDIR /app
 
-COPY requirements.txt .
-
-RUN pip install -r requirements.txt
+COPY package*.json ./
+RUN npm install
 
 COPY . .
 
-ENV FLASK_APP=app.py
-ENV FLASK_DEBUG=1
-ENV PYTHONUNBUFFERED=1
+RUN npm run build
+
+# Install a static file server
+RUN npm install -g serve
 
 EXPOSE 8000
 
-#CMD ["flask", "run", "--host=0.0.0.0", "--port=8000"]
-CMD ["python", "-u", "app.py"]
+CMD ["serve", "-s", "dist", "-l", "8000"]

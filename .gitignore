@@ -3,3 +3,6 @@ __pycache__/
 .env
 mysql_data/
 AGENTS.md
+node_modules/
+dist/
+backup/

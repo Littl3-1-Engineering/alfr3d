@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-api
+spec:
+  selector:
+    app: service-api
+  ports:
+  - port: 5002
+    targetPort: 5001
+  type: ClusterIP
