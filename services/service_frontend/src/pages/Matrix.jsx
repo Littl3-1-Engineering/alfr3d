@@ -29,7 +29,7 @@ const Matrix = () => {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
-          className="text-4xl font-bold text-cyan-400 mb-8 text-center drop-shadow-lg"
+          className="text-4xl font-bold text-primary mb-8 text-center drop-shadow-lg"
         >
           ALFR3D Matrix
         </motion.h1>
@@ -47,8 +47,8 @@ const Matrix = () => {
                   onClick={() => setActiveTab(tab.id)}
                   className={`w-full text-left py-3 px-4 rounded-lg mb-2 transition-all duration-300 ${
                     activeTab === tab.id
-                      ? 'bg-cyan-400/20 text-cyan-400 border-l-4 border-cyan-400 drop-shadow-lg'
-                      : 'text-gray-400 hover:text-cyan-400 hover:bg-slate-700/30'
+                      ? 'bg-primary/20 text-primary border-l-4 border-primary drop-shadow-lg'
+                      : 'text-text-tertiary hover:text-primary hover:bg-card/30'
                   }`}
                 >
                   {tab.label}

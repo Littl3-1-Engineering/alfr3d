@@ -1,3 +1,4 @@
+"""Tests for the ALFR3D device service."""
 import pytest
 from confluent_kafka import Producer, Consumer
 import time

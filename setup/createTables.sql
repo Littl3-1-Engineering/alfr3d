@@ -15,15 +15,15 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `user`;
 		
 CREATE TABLE `user` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `username` VARCHAR(128) NULL DEFAULT NULL,
-  `email` VARCHAR(128) NULL DEFAULT NULL,
-  `password_hash` VARCHAR(128) NULL DEFAULT NULL,
-  `about_me` VARCHAR(256) NULL DEFAULT NULL,
-  `state` INTEGER(1) NULL DEFAULT 0,
-  `last_online` DATETIME NULL DEFAULT NULL,
-  `environment_id` INTEGER NULL DEFAULT NULL,
-  `type` INTEGER NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each user
+  `username` VARCHAR(128) NULL DEFAULT NULL, -- User's chosen username
+  `email` VARCHAR(128) NULL DEFAULT NULL, -- User's email address
+  `password_hash` VARCHAR(128) NULL DEFAULT NULL, -- Hashed password for authentication
+  `about_me` VARCHAR(256) NULL DEFAULT NULL, -- Short description or bio of the user
+  `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
+  `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
+  `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment the user belongs to (foreign key to environment.id)
+  `type` INTEGER NULL DEFAULT NULL, -- User type (references user_types table: 1=technoking, 2=resident, 3=guest)
   PRIMARY KEY (`id`)
 );
 
@@ -35,16 +35,40 @@ CREATE TABLE `user` (
 DROP TABLE IF EXISTS `device`;
 		
 CREATE TABLE `device` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `name` VARCHAR(128) NULL DEFAULT NULL,
-  `IP` VARCHAR(15) NULL DEFAULT '10.0.0.125',
-  `MAC` VARCHAR(17) NULL DEFAULT '00:00:00:00:00:00',
-  `state` INTEGER(1) NULL DEFAULT 0,
-  `last_online` DATETIME NULL DEFAULT '1000-01-01 00:00:00',
-  `environment_id` INTEGER NULL DEFAULT NULL,
-  `device_type` INTEGER NULL DEFAULT NULL,
-  `user_id` INTEGER NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each device
+  `name` VARCHAR(128) NULL DEFAULT NULL, -- Human-readable name of the device
+  `IP` VARCHAR(15) NULL DEFAULT '10.0.0.125', -- IP address of the device
+  `MAC` VARCHAR(17) NULL DEFAULT '00:00:00:00:00:00', -- MAC address of the device
+  `state` INTEGER(1) NULL DEFAULT 0, -- Device state (references states table: 1=offline, 2=online)
+  `last_online` DATETIME NULL DEFAULT '1000-01-01 00:00:00', -- Timestamp of last device activity
+  `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment the device is in (foreign key to environment.id)
+  `device_type` INTEGER NULL DEFAULT NULL, -- Type of device (references device_types table: 1=alfr3d, 2=HW, 3=guest, 4=light, 5=resident)
+  `user_id` INTEGER NULL DEFAULT NULL, -- ID of the user associated with the device (foreign key to user.id)
+  `position_x` FLOAT NULL DEFAULT NULL, -- X position on the blueprint (relative to SVG viewBox)
+  `position_y` FLOAT NULL DEFAULT NULL, -- Y position on the blueprint (relative to SVG viewBox)
   PRIMARY KEY (`id`)
+);
+
+-- ---
+-- Table 'device_history'
+--
+-- ---
+
+DROP TABLE IF EXISTS `device_history`;
+
+CREATE TABLE `device_history` (
+  `device_id` INTEGER NOT NULL, -- ID of the device this history entry belongs to (foreign key to device.id)
+  `name` VARCHAR(128) NULL DEFAULT NULL, -- Name of the device at the time of the update
+  `timestamp` DATETIME NOT NULL, -- Timestamp when the history entry was created
+  `IP` VARCHAR(15) NULL DEFAULT NULL, -- IP address at the time of the update
+  `MAC` VARCHAR(17) NULL DEFAULT NULL, -- MAC address at the time of the update
+  `state` INTEGER NULL DEFAULT NULL, -- State at the time of the update (references states table)
+  `last_online` DATETIME NULL DEFAULT NULL, -- Last online timestamp at the time of the update
+  `environment_id` INTEGER NULL DEFAULT NULL, -- Environment ID at the time of the update (foreign key to environment.id)
+  `device_type` INTEGER NULL DEFAULT NULL, -- Device type at the time of the update (references device_types table)
+  `user_id` INTEGER NULL DEFAULT NULL, -- User ID at the time of the update (foreign key to user.id)
+  `position_x` FLOAT NULL DEFAULT NULL, -- X position at the time of the update
+  `position_y` FLOAT NULL DEFAULT NULL -- Y position at the time of the update
 );
 
 -- ---
@@ -55,8 +79,8 @@ CREATE TABLE `device` (
 DROP TABLE IF EXISTS `user_types`;
 		
 CREATE TABLE `user_types` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `type` VARCHAR(64) NULL DEFAULT 'guest',
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for user type
+  `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the user type (e.g., technoking, resident, guest)
   PRIMARY KEY (`id`)
 );
 
@@ -68,8 +92,8 @@ CREATE TABLE `user_types` (
 DROP TABLE IF EXISTS `device_types`;
 		
 CREATE TABLE `device_types` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `type` VARCHAR(64) NULL DEFAULT 'guest',
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for device type
+  `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the device type (e.g., alfr3d, HW, guest, light, resident)
   PRIMARY KEY (`id`)
 );
 
@@ -81,8 +105,8 @@ CREATE TABLE `device_types` (
 DROP TABLE IF EXISTS `states`;
 		
 CREATE TABLE `states` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `state` VARCHAR(8) NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for state
+  `state` VARCHAR(8) NULL DEFAULT NULL, -- Name of the state (e.g., offline, online)
   PRIMARY KEY (`id`)
 );
 
@@ -94,12 +118,12 @@ CREATE TABLE `states` (
 DROP TABLE IF EXISTS `routines`;
 		
 CREATE TABLE `routines` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `name` VARCHAR(128) NULL DEFAULT NULL,
-  `time` TIME NULL DEFAULT NULL,
-  `enabled` TINYINT NULL DEFAULT NULL,
-  `triggered` TINYINT NULL DEFAULT NULL,
-  `environment_id` INTEGER NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for routine
+  `name` VARCHAR(128) NULL DEFAULT NULL, -- Name of the routine
+  `time` TIME NULL DEFAULT NULL, -- Scheduled time for the routine
+  `enabled` TINYINT NULL DEFAULT NULL, -- Whether the routine is enabled (1=yes, 0=no)
+  `triggered` TINYINT NULL DEFAULT NULL, -- Whether the routine has been triggered
+  `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment this routine belongs to (foreign key to environment.id)
   PRIMARY KEY (`id`)
 );
 
@@ -112,19 +136,23 @@ CREATE TABLE `routines` (
 DROP TABLE IF EXISTS `environment`;
 		
 CREATE TABLE `environment` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `name` VARCHAR(64) NULL DEFAULT 'guest',
-  `latitude` INTEGER NULL DEFAULT NULL,
-  `longitude` INTEGER NULL DEFAULT NULL,
-  `city` VARCHAR(64) NULL DEFAULT NULL,
-  `state` VARCHAR(64) NULL DEFAULT NULL,
-  `country` VARCHAR(64) NULL DEFAULT NULL,
-  `IP` VARCHAR(15) NULL DEFAULT NULL,
-  `low` INTEGER NULL DEFAULT NULL,
-  `high` INTEGER NULL DEFAULT NULL,
-  `description` VARCHAR(64) NULL DEFAULT NULL,
-  `sunrise` DATETIME NULL DEFAULT NULL,
-  `sunset` DATETIME NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for environment
+  `name` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the environment
+  `latitude` VARCHAR(32) NULL DEFAULT NULL, -- Latitude coordinate of the environment
+  `longitude` VARCHAR(32) NULL DEFAULT NULL, -- Longitude coordinate of the environment
+  `city` VARCHAR(64) NULL DEFAULT NULL, -- City name
+  `state` VARCHAR(64) NULL DEFAULT NULL, -- State or province name
+  `country` VARCHAR(64) NULL DEFAULT NULL, -- Country name
+  `IP` VARCHAR(15) NULL DEFAULT NULL, -- IP address associated with the environment
+  `low` INTEGER NULL DEFAULT NULL, -- Low temperature threshold
+  `high` INTEGER NULL DEFAULT NULL, -- High temperature threshold
+  `description` VARCHAR(64) NULL DEFAULT NULL, -- Description of the environment
+  `sunrise` DATETIME NULL DEFAULT NULL, -- Sunrise time
+  `sunset` DATETIME NULL DEFAULT NULL, -- Sunset time
+  `pressure` INTEGER NULL DEFAULT NULL, -- Atmospheric pressure
+  `humidity` INTEGER NULL DEFAULT NULL, -- Humidity percentage
+  `manual_override` TINYINT NULL DEFAULT 0, -- Manual override flag (1=yes, 0=no)
+  `manual_location_override` TINYINT NULL DEFAULT 0, -- Manual location override flag (1=yes, 0=no)
   PRIMARY KEY (`id`)
 );
 
@@ -136,9 +164,9 @@ CREATE TABLE `environment` (
 DROP TABLE IF EXISTS `config`;
 		
 CREATE TABLE `config` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `name` VARCHAR(45) NULL DEFAULT NULL,
-  `value` VARCHAR(45) NULL DEFAULT NULL
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
+  `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting
+  `value` VARCHAR(45) NULL DEFAULT NULL -- Value of the configuration setting
 );
 
 -- ---
@@ -147,25 +175,65 @@ CREATE TABLE `config` (
 -- ---
 
 CREATE TABLE `quips` (
-  `id` INTEGER UNIQUE AUTO_INCREMENT,
-  `type` VARCHAR(64) NULL DEFAULT NULL,
-  `quips` VARCHAR(256) NULL DEFAULT NULL,
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for quip
+  `type` VARCHAR(64) NULL DEFAULT NULL, -- Type of quip (e.g., smart, email, bedtime)
+  `quips` VARCHAR(256) NULL DEFAULT NULL, -- The quip text
   PRIMARY KEY (`id`)
 );
 
 
 -- ---
--- Foreign Keys 
+-- Foreign Keys
 -- ---
 
+-- User state references states table (defines if user is online/offline)
 ALTER TABLE `user` ADD FOREIGN KEY (state) REFERENCES `states` (`id`);
+-- User type references user_types table (defines user role like technoking, resident, guest)
 ALTER TABLE `user` ADD FOREIGN KEY (type) REFERENCES `user_types` (`id`);
+-- User belongs to an environment
 ALTER TABLE `user` ADD FOREIGN KEY (environment_id) REFERENCES `environment` (`id`);
+-- Device state references states table (defines if device is online/offline)
 ALTER TABLE `device` ADD FOREIGN KEY (state) REFERENCES `states` (`id`);
+-- Device belongs to an environment
 ALTER TABLE `device` ADD FOREIGN KEY (environment_id) REFERENCES `environment` (`id`);
+-- Device type references device_types table (defines device category like alfr3d, HW, light)
 ALTER TABLE `device` ADD FOREIGN KEY (device_type) REFERENCES `device_types` (`id`);
+-- Device is associated with a user
 ALTER TABLE `device` ADD FOREIGN KEY (user_id) REFERENCES `user` (`id`);
+-- Routine belongs to an environment
 ALTER TABLE `routines` ADD FOREIGN KEY (environment_id) REFERENCES `environment` (`id`);
+-- Device history entry links to the device
+ALTER TABLE `device_history` ADD FOREIGN KEY (device_id) REFERENCES `device` (`id`);
+-- Device history entry links to the environment at the time
+ALTER TABLE `device_history` ADD FOREIGN KEY (environment_id) REFERENCES `environment` (`id`);
+-- Device history entry links to the user at the time
+ALTER TABLE `device_history` ADD FOREIGN KEY (user_id) REFERENCES `user` (`id`);
+
+-- ---
+-- Triggers
+-- ---
+
+DELIMITER ;;
+
+CREATE TRIGGER `before_device_update` BEFORE UPDATE ON `device`
+FOR EACH ROW
+BEGIN
+  INSERT INTO device_history
+  SET device_id = OLD.id,
+      name = OLD.name,
+      timestamp = NOW(),
+      IP = OLD.IP,
+      MAC = OLD.MAC,
+      state = OLD.state,
+      last_online = OLD.last_online,
+      environment_id = OLD.environment_id,
+      device_type = OLD.device_type,
+      user_id = OLD.user_id,
+      position_x = OLD.position_x,
+      position_y = OLD.position_y;
+END;;
+
+DELIMITER ;
 
 -- ---
 -- set dome initial values 

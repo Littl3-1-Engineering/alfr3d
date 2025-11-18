@@ -24,8 +24,8 @@ const OnlineUsers = () => {
   }, []);
 
   return (
-    <div className="glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20">
-      <h2 className="text-xl font-bold text-cyan-400 mb-4 drop-shadow-lg">Online Users</h2>
+    <div className="glass rounded-2xl p-6 border border-primary/30 bg-card/20">
+      <h2 className="text-xl font-bold text-primary mb-4 drop-shadow-lg">Online Users</h2>
 
         <div className="space-y-3">
           {users.map((user, index) => (
@@ -36,8 +36,8 @@ const OnlineUsers = () => {
               transition={{ delay: index * 0.1, duration: 0.3 }}
               className="flex items-center space-x-2 py-1"
             >
-              <User className={`w-4 h-4 ${user.type !== 'guest' ? 'text-green-400' : 'text-yellow-400'}`} />
-              <span className="text-sm text-gray-300">{user.name}</span>
+              <User className={`w-4 h-4 ${user.type !== 'guest' ? 'text-success' : 'text-warning'}`} />
+              <span className="text-sm text-text-secondary">{user.name}</span>
             </motion.div>
           ))}
         </div>

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Core from '../components/Core';
 import SituationalAwareness from '../components/SituationalAwareness';
 import OnlineUsers from '../components/OnlineUsers';
@@ -7,7 +7,7 @@ import ContainerHealth from '../components/ContainerHealth';
 import EventStream from '../components/EventStream';
 
 const Nexus = () => {
-  const [systemHealth, setSystemHealth] = useState('cyan');
+  const [systemHealth] = useState('cyan');
 
   return (
     <motion.div
@@ -21,7 +21,7 @@ const Nexus = () => {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
-          className="text-4xl font-bold text-cyan-400 mb-8 text-center drop-shadow-lg"
+          className="text-4xl font-bold text-primary mb-8 text-center drop-shadow-lg"
         >
           ALFR3D Nexus
         </motion.h1>

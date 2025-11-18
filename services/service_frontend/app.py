@@ -1,3 +1,4 @@
+"""Frontend service for ALFR3D, serving the web dashboard and API endpoints."""
 from flask import Flask, jsonify, send_from_directory
 import os
 import pymysql

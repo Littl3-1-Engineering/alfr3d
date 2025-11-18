@@ -1,3 +1,4 @@
+"""Tests for MySQL database connectivity and operations in ALFR3D."""
 import pytest
 import pymysql
 import json

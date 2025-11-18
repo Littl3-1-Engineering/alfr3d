@@ -22,12 +22,12 @@ function App() {
     <Router>
       <div className="min-h-screen relative overflow-hidden">
         {/* Temporary Navbar */}
-        <nav className="fixed top-0 left-0 right-0 z-20 bg-slate-900/80 backdrop-blur-sm border-b border-cyan-500/20">
+        <nav className="fixed top-0 left-0 right-0 z-20 bg-card/80 backdrop-blur-sm border-b border-primary/20">
           <div className="max-w-7xl mx-auto px-4 py-3">
             <div className="flex space-x-6">
-              <a href="/" className="text-cyan-400 hover:text-cyan-300 transition-colors">Nexus</a>
-              <a href="/domain" className="text-cyan-400 hover:text-cyan-300 transition-colors">Domain</a>
-              <a href="/matrix" className="text-cyan-400 hover:text-cyan-300 transition-colors">Matrix</a>
+              <a href="/" className="text-primary hover:text-primary-hover transition-colors">Nexus</a>
+              <a href="/domain" className="text-primary hover:text-primary-hover transition-colors">Domain</a>
+              <a href="/matrix" className="text-primary hover:text-primary-hover transition-colors">Matrix</a>
             </div>
           </div>
         </nav>

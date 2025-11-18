@@ -2,6 +2,10 @@
 
 A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, and Python services. Includes a modern Flask web frontend with real-time dashboard monitoring and comprehensive user/device management.
 
+## Screenshot
+
+![ALFR3D Dashboard](screenshot.png)
+
 ## Features
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
@@ -53,7 +57,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **MySQL**: 3306
 - **Zookeeper**: 2181
 - **Service Frontend**: 8000
-- **Service API**: 5002
+- **Service API**: 5001
 - **Service Daemon**: 8080
 - **Service Device**: 8080
 - **Service Environment**: 8080
@@ -98,11 +102,18 @@ Run linting across all services:
 ./lint.sh
 ```
 
-This checks code style with flake8 and formatting with black. Fix issues with:
+This runs `npm run lint` for the frontend service and flake8/black for Python services. Fix issues with:
+
+For frontend:
 
 ```bash
-black services/service_frontend/app/ services/service_frontend/tests/
-# Repeat for other services
+cd services/service_frontend && npm run lint -- --fix
+```
+
+For Python services:
+
+```bash
+black services/service_api/app.py services/service_daemon/alfr3ddaemon.py services/service_daemon/daemon.py services/service_daemon/utils/ services/service_user/app.py services/service_device/app.py services/service_environment/environment.py services/service_environment/weather_util.py
 ```
 
 ## Dashboard Features
@@ -154,6 +165,22 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - **Service API**:
   - `GET /api/users`: Retrieve online users
   - `GET /api/containers`: Retrieve container health metrics
+  - `POST /api/users`: Create a new user
+  - `PUT /api/users/<user_id>`: Update an existing user
+  - `DELETE /api/users/<user_id>`: Delete a user
+  - `GET /api/devices`: Retrieve devices
+  - `POST /api/devices`: Create a new device
+  - `PUT /api/devices/<device_id>`: Update an existing device
+  - `DELETE /api/devices/<device_id>`: Delete a device
+  - `GET /api/events`: Retrieve recent events
+  - `GET /api/quips`: Retrieve quips
+  - `POST /api/quips`: Create a new quip
+  - `PUT /api/quips/<quip_id>`: Update an existing quip
+  - `DELETE /api/quips/<quip_id>`: Delete a quip
+  - `GET /api/weather`: Retrieve weather data
+  - `GET /api/environment`: Retrieve environment data and override status
+  - `PUT /api/environment`: Update environment data and override mode
+  - `POST /api/environment/reset`: Reset to automatic detection
 - **Service Frontend**:
   - `GET /`: Landing page
   - `GET /dashboard`: Real-time monitoring dashboard

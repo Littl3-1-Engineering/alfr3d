@@ -1,3 +1,4 @@
+"""Tests for Kafka messaging in ALFR3D services."""
 import pytest
 from confluent_kafka import Producer, Consumer
 import time
