@@ -3,3 +3,4 @@ schedule
 python-dotenv
 pymysql
 cryptography
+googlemaps

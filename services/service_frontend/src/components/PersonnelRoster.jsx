@@ -2,6 +2,8 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { User, Monitor, Edit, Trash2, Plus, Save, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import UserModal from './UserModal';
+import DeviceHistoryModal from './DeviceHistoryModal';
 
 const PersonnelRoster = () => {
   const [users, setUsers] = useState([]);
@@ -12,8 +14,15 @@ const PersonnelRoster = () => {
   const [newDevice, setNewDevice] = useState({ name: '', type: 'guest', ip: '', mac: '', user: '' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [showAddDevice, setShowAddDevice] = useState(false);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [modalUser, setModalUser] = useState(null);
+  const [modalDevice, setModalDevice] = useState(null);
+  const [userDevices, setUserDevices] = useState([]);
+  const [deviceHistory, setDeviceHistory] = useState([]);
 
   useEffect(() => {
+    console.log('PersonnelRoster component mounted');
     fetchUsers();
     fetchDevices();
   }, []);
@@ -144,15 +153,63 @@ const PersonnelRoster = () => {
     }
   };
 
+  const handleUserClick = async (user) => {
+    console.log('handleUserClick called with user:', user);
+    setModalUser(user);
+    setUserDevices([]);
+    setShowUserModal(true);
+    console.log('Opening user modal for:', user);
+    try {
+      const response = await fetch(API_BASE_URL + '/api/users/' + user.id + '/devices');
+      const devices = await response.json();
+      console.log('Received devices:', devices);
+      setUserDevices(devices);
+      console.log('User modal opened with devices');
+    } catch (error) {
+      console.error('Error fetching user devices:', error);
+    }
+  };
+
+  const handleDeviceHistoryClick = async (device) => {
+    console.log('handleDeviceHistoryClick called with device:', device);
+    setModalDevice(device);
+    setDeviceHistory([]);
+    setShowDeviceModal(true);
+    console.log('Opening device history modal for:', device);
+    try {
+      const response = await fetch(API_BASE_URL + '/api/devices/' + device.id + '/history');
+      const history = await response.json();
+      console.log('Received history:', history);
+      setDeviceHistory(history);
+      console.log('Device history modal opened');
+    } catch (error) {
+      console.error('Error fetching device history:', error);
+    }
+  };
+
+  const closeUserModal = () => {
+    setShowUserModal(false);
+    setModalUser(null);
+    setUserDevices([]);
+  };
+
+  const closeDeviceModal = () => {
+    setShowDeviceModal(false);
+    setModalDevice(null);
+    setDeviceHistory([]);
+  };
+
+  console.log('Rendering PersonnelRoster with modals:', { showUserModal, showDeviceModal, userDevices: userDevices.length, deviceHistory: deviceHistory.length });
+
   return (
     <div className="space-y-8">
       {/* Users Section */}
       <div>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-cyan-400">Users</h2>
+          <h2 className="text-2xl font-bold text-primary">Users</h2>
           <button
             onClick={() => setShowAddUser(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-cyan-400/20 border border-cyan-400 rounded-lg text-cyan-400 hover:bg-cyan-400/30"
+            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
           >
             <Plus className="w-4 h-4" />
             <span>Add User</span>
@@ -165,20 +222,30 @@ const PersonnelRoster = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1, duration: 0.5 }}
-              className="glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20"
+              className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
+              onClick={() => {
+                console.log('User card clicked!');
+                handleUserClick(user);
+              }}
             >
               <div className="flex items-center justify-between mb-4">
-                  <User className={'w-6 h-6 ' + (user.type !== 'guest' ? 'text-green-400' : 'text-yellow-400')} />
+                  <User className={'w-6 h-6 ' + (user.type !== 'guest' ? 'text-success' : 'text-warning')} />
                 <div className="flex space-x-2">
                   <button
-                    onClick={() => handleEditUser(user)}
-                    className="p-1 text-cyan-400 hover:bg-cyan-400/20 rounded"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditUser(user);
+                    }}
+                    className="p-1 text-primary hover:bg-primary/20 rounded"
                   >
                     <Edit className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleDeleteUser(user.id)}
-                    className="p-1 text-red-400 hover:bg-red-400/20 rounded"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteUser(user.id);
+                    }}
+                    className="p-1 text-error hover:bg-error/20 rounded"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -189,13 +256,13 @@ const PersonnelRoster = () => {
                   <input
                     value={editingUser.name}
                     onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     placeholder="Name"
                   />
                   <select
                     value={editingUser.type}
                     onChange={(e) => setEditingUser({ ...editingUser, type: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                   >
                     <option value="technoking">Technoking</option>
                     <option value="resident">Resident</option>
@@ -204,27 +271,27 @@ const PersonnelRoster = () => {
                   <input
                     value={editingUser.email}
                     onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     placeholder="Email"
                   />
                   <textarea
                     value={editingUser.about_me}
                     onChange={(e) => setEditingUser({ ...editingUser, about_me: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     rows={2}
                     placeholder="About Me"
                   />
                   <div className="flex space-x-2">
                     <button
                       onClick={handleSaveUser}
-                      className="px-3 py-1 bg-green-400/20 border border-green-400 rounded text-green-400 hover:bg-green-400/30"
+                      className="px-3 py-1 bg-success/20 border border-success rounded text-success hover:bg-success/30"
                     >
                       <Save className="w-4 h-4 inline mr-1" />
                       Save
                     </button>
                     <button
                       onClick={() => setEditingUser(null)}
-                      className="px-3 py-1 bg-gray-400/20 border border-gray-400 rounded text-gray-400 hover:bg-gray-400/30"
+                      className="px-3 py-1 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
                     >
                       <X className="w-4 h-4 inline mr-1" />
                       Cancel
@@ -233,11 +300,11 @@ const PersonnelRoster = () => {
                 </div>
               ) : (
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-200">{user.name}</h3>
-                  <p className="text-sm text-cyan-400 uppercase">{user.type}</p>
-                  <p className="text-xs text-gray-400">{user.email}</p>
-                  <p className="text-xs text-gray-500">{user.about_me}</p>
-                  <p className="text-xs text-gray-500">State: {user.state}</p>
+                  <h3 className="text-lg font-semibold text-text-primary">{user.name}</h3>
+                  <p className="text-sm text-primary uppercase">{user.type}</p>
+                  <p className="text-xs text-text-tertiary">{user.email}</p>
+                  <p className="text-xs text-text-tertiary">{user.about_me}</p>
+                  <p className="text-xs text-text-tertiary">State: {user.state}</p>
                 </div>
               )}
             </motion.div>
@@ -247,20 +314,20 @@ const PersonnelRoster = () => {
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="mt-4 glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20"
+            className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20"
           >
-            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Add New User</h3>
+            <h3 className="text-lg font-semibold text-primary mb-4">Add New User</h3>
             <div className="space-y-3">
               <input
                 value={newUser.name}
                 onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newUser.type}
                 onChange={(e) => setNewUser({ ...newUser, type: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="technoking">Technoking</option>
                 <option value="resident">Resident</option>
@@ -269,26 +336,26 @@ const PersonnelRoster = () => {
               <input
                 value={newUser.email}
                 onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Email"
               />
               <textarea
                 value={newUser.about_me}
                 onChange={(e) => setNewUser({ ...newUser, about_me: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 rows={2}
                 placeholder="About Me"
               />
               <div className="flex space-x-2">
                 <button
                   onClick={handleAddUser}
-                  className="px-4 py-2 bg-green-400/20 border border-green-400 rounded text-green-400 hover:bg-green-400/30"
+                  className="px-4 py-2 bg-success/20 border border-success rounded text-success hover:bg-success/30"
                 >
                   Add
                 </button>
                 <button
                   onClick={() => setShowAddUser(false)}
-                  className="px-4 py-2 bg-gray-400/20 border border-gray-400 rounded text-gray-400 hover:bg-gray-400/30"
+                  className="px-4 py-2 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
                 >
                   Cancel
                 </button>
@@ -301,10 +368,10 @@ const PersonnelRoster = () => {
       {/* Devices Section */}
       <div>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-cyan-400">Devices</h2>
+          <h2 className="text-2xl font-bold text-primary">Devices</h2>
           <button
             onClick={() => setShowAddDevice(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-cyan-400/20 border border-cyan-400 rounded-lg text-cyan-400 hover:bg-cyan-400/30"
+            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
           >
             <Plus className="w-4 h-4" />
             <span>Add Device</span>
@@ -317,20 +384,30 @@ const PersonnelRoster = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1, duration: 0.5 }}
-              className="glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20"
+              className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
+                  onClick={() => {
+                    console.log('User device card clicked!');
+                    handleDeviceHistoryClick(device);
+                  }}
             >
               <div className="flex items-center justify-between mb-4">
-                <Monitor className="w-6 h-6 text-cyan-400" />
+                <Monitor className="w-6 h-6 text-primary" />
                 <div className="flex space-x-2">
                   <button
-                    onClick={() => handleEditDevice(device)}
-                    className="p-1 text-cyan-400 hover:bg-cyan-400/20 rounded"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditDevice(device);
+                    }}
+                    className="p-1 text-primary hover:bg-primary/20 rounded"
                   >
                     <Edit className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleDeleteDevice(device.id)}
-                    className="p-1 text-red-400 hover:bg-red-400/20 rounded"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteDevice(device.id);
+                    }}
+                    className="p-1 text-error hover:bg-error/20 rounded"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -341,13 +418,13 @@ const PersonnelRoster = () => {
                   <input
                     value={editingDevice.name}
                     onChange={(e) => setEditingDevice({ ...editingDevice, name: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     placeholder="Name"
                   />
                   <select
                     value={editingDevice.type}
                     onChange={(e) => setEditingDevice({ ...editingDevice, type: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                   >
                     <option value="alfr3d">Alfr3d</option>
                     <option value="HW">HW</option>
@@ -358,19 +435,19 @@ const PersonnelRoster = () => {
                   <input
                     value={editingDevice.ip}
                     onChange={(e) => setEditingDevice({ ...editingDevice, ip: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     placeholder="IP"
                   />
                   <input
                     value={editingDevice.mac}
                     onChange={(e) => setEditingDevice({ ...editingDevice, mac: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                     placeholder="MAC"
                   />
                   <select
                     value={editingDevice.user || ''}
                     onChange={(e) => setEditingDevice({ ...editingDevice, user: e.target.value })}
-                    className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                    className="w-full p-2 bg-card rounded text-text-primary"
                   >
                     <option value="">No User</option>
                     {users.map(user => (
@@ -380,14 +457,14 @@ const PersonnelRoster = () => {
                   <div className="flex space-x-2">
                     <button
                       onClick={handleSaveDevice}
-                      className="px-3 py-1 bg-green-400/20 border border-green-400 rounded text-green-400 hover:bg-green-400/30"
+                      className="px-3 py-1 bg-success/20 border border-success rounded text-success hover:bg-success/30"
                     >
                       <Save className="w-4 h-4 inline mr-1" />
                       Save
                     </button>
                     <button
                       onClick={() => setEditingDevice(null)}
-                      className="px-3 py-1 bg-gray-400/20 border border-gray-400 rounded text-gray-400 hover:bg-gray-400/30"
+                      className="px-3 py-1 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
                     >
                       <X className="w-4 h-4 inline mr-1" />
                       Cancel
@@ -396,12 +473,12 @@ const PersonnelRoster = () => {
                 </div>
               ) : (
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-200">{device.name}</h3>
-                  <p className="text-sm text-cyan-400 uppercase">{device.type}</p>
-                  <p className="text-xs text-gray-400">IP: {device.ip}</p>
-                  <p className="text-xs text-gray-400">MAC: {device.mac}</p>
-                  <p className="text-xs text-gray-500">User: {device.user || 'None'}</p>
-                  <p className="text-xs text-gray-500">State: {device.state}</p>
+                  <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
+                  <p className="text-sm text-primary uppercase">{device.type}</p>
+                  <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
+                  <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
+                  <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
+                  <p className="text-xs text-text-tertiary">State: {device.state}</p>
                 </div>
               )}
             </motion.div>
@@ -411,20 +488,20 @@ const PersonnelRoster = () => {
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="mt-4 glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20"
+            className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20"
           >
-            <h3 className="text-lg font-semibold text-cyan-400 mb-4">Add New Device</h3>
+            <h3 className="text-lg font-semibold text-primary mb-4">Add New Device</h3>
             <div className="space-y-3">
               <input
                 value={newDevice.name}
                 onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newDevice.type}
                 onChange={(e) => setNewDevice({ ...newDevice, type: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="alfr3d">Alfr3d</option>
                 <option value="HW">HW</option>
@@ -435,19 +512,19 @@ const PersonnelRoster = () => {
               <input
                 value={newDevice.ip}
                 onChange={(e) => setNewDevice({ ...newDevice, ip: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="IP"
               />
               <input
                 value={newDevice.mac}
                 onChange={(e) => setNewDevice({ ...newDevice, mac: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="MAC"
               />
               <select
                 value={newDevice.user}
                 onChange={(e) => setNewDevice({ ...newDevice, user: e.target.value })}
-                className="w-full p-2 bg-slate-700 rounded text-gray-200"
+                className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="">No User</option>
                 {users.map(user => (
@@ -457,13 +534,13 @@ const PersonnelRoster = () => {
               <div className="flex space-x-2">
                 <button
                   onClick={handleAddDevice}
-                  className="px-4 py-2 bg-green-400/20 border border-green-400 rounded text-green-400 hover:bg-green-400/30"
+                  className="px-4 py-2 bg-success/20 border border-success rounded text-success hover:bg-success/30"
                 >
                   Add
                 </button>
                 <button
                   onClick={() => setShowAddDevice(false)}
-                  className="px-4 py-2 bg-gray-400/20 border border-gray-400 rounded text-gray-400 hover:bg-gray-400/30"
+                  className="px-4 py-2 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
                 >
                   Cancel
                 </button>
@@ -471,6 +548,22 @@ const PersonnelRoster = () => {
             </div>
           </motion.div>
         )}
+
+        {/* Modals */}
+        <UserModal
+          isOpen={showUserModal}
+          onClose={closeUserModal}
+          user={modalUser}
+          devices={userDevices}
+          onDeviceClick={handleDeviceHistoryClick}
+        />
+
+        <DeviceHistoryModal
+          isOpen={showDeviceModal}
+          onClose={closeDeviceModal}
+          device={modalDevice}
+          history={deviceHistory}
+        />
       </div>
     </div>
   );

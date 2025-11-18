@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 """
-	This is a utility for Routines for Alfr3d:
+This is a utility for Routines for Alfr3d:
 """
 # Copyright (c) 2010-2020 LiTtl3.1 Industries (LiTtl3.1).
 # All rights reserved.
@@ -33,244 +33,280 @@ import socket
 import pymysql as MySQLdb
 from kafka import KafkaProducer
 from datetime import datetime, timedelta
+from typing import Optional
 
 # set up logging
 logger = logging.getLogger("RoutinesLog")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # get main DB credentials
-MYSQL_DATABASE 	= os.environ.get('MYSQL_DATABASE') or 'mysql'
-MYSQL_DB 	= os.environ.get('MYSQL_NAME') or 'alfr3d_db'
-MYSQL_USER 	= os.environ.get('MYSQL_USER') or 'user'
-MYSQL_PSWD 	= os.environ.get('MYSQL_PSWD') or 'password'
-KAFKA_URL       = os.environ['KAFKA_BOOTSTRAP_SERVERS']
-ENV_NAME        = os.environ.get('ALFR3D_ENV_NAME')
+MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE") or "mysql"
+MYSQL_DB = os.environ.get("MYSQL_NAME") or "alfr3d_db"
+MYSQL_USER = os.environ.get("MYSQL_USER") or "user"
+MYSQL_PSWD = os.environ.get("MYSQL_PSWD") or "password"
+KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
+ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 
-def checkRoutines():
-	"""
-		Description:
-			Check if it is time to execute any routines and take action
-			if needed...
-	"""
-	logger.info("Checking routines")
 
-	if not ENV_NAME:
-		logger.error("ALFR3D_ENV_NAME environment variable not set")
-		return False
+def checkRoutines() -> bool:
+    """
+    Description:
+            Check if it is time to execute any routines and take action
+            if needed...
+    """
+    logger.info("Checking routines")
 
-	# fetch available Routines
-	try:
-		db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-		cursor = db.cursor()
-	except Exception as e:
-		logger.error("Failed to connect to database")
-		logger.error("Traceback: "+str(e))
-		return False
+    if not ENV_NAME:
+        logger.error("ALFR3D_ENV_NAME environment variable not set")
+        return False
 
-	# get environemnt id of current environment
-	cursor.execute("SELECT * from environment WHERE name = \""+ENV_NAME+"\";")
-	data = cursor.fetchone()
-	if not data:
-		logger.error("Environment not found")
-		db.close()
-		return False
-	env_id = data[0]
+    # fetch available Routines
+    try:
+        db = MySQLdb.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+        )
+        cursor = db.cursor()
+    except Exception as e:
+        logger.error("Failed to connect to database")
+        logger.error("Traceback: " + str(e))
+        return False
 
-	cursor.execute("SELECT * from routines WHERE \
-					environment_id = "+str(env_id)+"\
-					and enabled = 1;")
-	routines = cursor.fetchall()
+    # get environemnt id of current environment
+    cursor.execute("SELECT * from environment WHERE name = %s;", (ENV_NAME,))
+    data = cursor.fetchone()
+    if not data:
+        logger.error("Environment not found")
+        db.close()
+        return False
+    env_id = data[0]
 
-	for routine in routines:
-		logger.info("Checking "+routine[1]+" routine with time "+str(routine[2])+" and flag "+str(routine[4]))
-		# get routine trigger time and flag
-		routine_time = routine[2]
-		routine_time = datetime.now().replace(hour=int(routine_time.seconds/3600), minute=int((routine_time.seconds//60)%60))
-		routine_trigger = routine[4]
-		cur_time = datetime.now()
+    cursor.execute(
+        "SELECT * from routines WHERE environment_id = %s and enabled = 1;", (env_id,)
+    )
+    routines = cursor.fetchall()
 
-		# does routine need to be triggered??
-		if cur_time > routine_time and not routine_trigger:
-			logger.info(routine[1] + " routine is being triggered")
-			# set triggered flag = True
-			try:
-				logger.info("Resetting 'triggered' flag for "+routine[1]+" routine")
-				cursor.execute("UPDATE routines SET triggered = 1 WHERE id = \""+str(routine[0])+"\";")
-				db.commit()
-			except Exception as  e:
-				logger.error("Failed to update the database")
-				logger.error("Traceback: "+str(e))
-				db.rollback()
-				db.close()
-				return False
+    for routine in routines:
+        logger.info(
+            "Checking "
+            + routine[1]
+            + " routine with time "
+            + str(routine[2])
+            + " and flag "
+            + str(routine[4])
+        )
+        # get routine trigger time and flag
+        routine_time = routine[2]
+        routine_time = datetime.now().replace(
+            hour=int(routine_time.seconds / 3600),
+            minute=int((routine_time.seconds // 60) % 60),
+        )
+        routine_trigger = routine[4]
+        cur_time = datetime.now()
 
-			logger.info("Sending routine to speaker")
-			try:
-				producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-				producer.send("speak", key = b'routine', value = bytes(routine[1],'utf-8'))
-			except Exception as e:
-				logger.error("Failed to send to Kafka")
-				logger.error("Traceback: "+str(e))
+        # does routine need to be triggered??
+        if cur_time > routine_time and not routine_trigger:
+            logger.info(routine[1] + " routine is being triggered")
+            # set triggered flag = True
+            try:
+                logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
+                cursor.execute(
+                    "UPDATE routines SET triggered = 1 WHERE id = %s;", (routine[0],)
+                )
+                db.commit()
+            except Exception as e:
+                logger.error("Failed to update the database")
+                logger.error("Traceback: " + str(e))
+                db.rollback()
+                db.close()
+                return False
 
-	db.close()
-	return True	
+            logger.info("Sending routine to speaker")
+            try:
+                producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
+                producer.send("speak", key=b"routine", value=bytes(routine[1], "utf-8"))
+            except Exception as e:
+                logger.error("Failed to send to Kafka")
+                logger.error("Traceback: " + str(e))
 
-def resetRoutines():
-	"""
-		Description:
-			reset Triggerd flag for every Enabled routine
-	"""
-	logger.info("Resetting routine flags")
+    db.close()
+    return True
 
-	if not ENV_NAME:
-		logger.error("ALFR3D_ENV_NAME environment variable not set")
-		return False
 
-	try:
-		db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-		cursor = db.cursor()
-	except Exception as e:
-		logger.error("Failed to connect to database")
-		logger.error("Traceback: "+str(e))
-		return False
+def resetRoutines() -> bool:
+    """
+    Description:
+            refresh some things at midnight
+    """
+    logger.info("Resetting routine flags")
 
-	# get environemnt id of current environment
-	cursor.execute("SELECT * from environment WHERE name = \""+ENV_NAME+"\";")
-	data = cursor.fetchone()
-	if not data:
-		logger.error("Environment not found")
-		db.close()
-		return False
-	env_id = data[0]
+    if not ENV_NAME:
+        logger.error("ALFR3D_ENV_NAME environment variable not set")
+        return False
 
-	cursor.execute("SELECT * from routines WHERE \
-					environment_id = "+str(env_id)+"\
-					and enabled = True;")
-	routines = cursor.fetchall()
+    try:
+        db = MySQLdb.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+        )
+        cursor = db.cursor()
+    except Exception as e:
+        logger.error("Failed to connect to database")
+        logger.error("Traceback: " + str(e))
+        return False
 
-	for routine in routines:
-		# set Triggered flag to false
-		try:
-			logger.info("Resetting 'triggered' flag for "+routine[1]+" routine")
-			cursor.execute("UPDATE routines SET triggered = 0 WHERE id = \""+str(routine[0])+"\";")
-			db.commit()
-		except Exception as  e:
-			logger.error("Failed to update the database")
-			logger.error("Traceback: "+str(e))
-			db.rollback()
-			db.close()
-			return False
+    # get environemnt id of current environment
+    cursor.execute("SELECT * from environment WHERE name = %s;", (ENV_NAME,))
+    data = cursor.fetchone()
+    if not data:
+        logger.error("Environment not found")
+        db.close()
+        return False
+    env_id = data[0]
 
-	return True
+    cursor.execute(
+        "SELECT * from routines WHERE environment_id = %s and enabled = True;",
+        (env_id,),
+    )
+    routines = cursor.fetchall()
 
-def checkMute():
-	"""
-		Description:
-			checks what time it is and decides if B3na should be quiet
-	"""
-	logger.info("Checking if Alfr3d should be mute")
-	result = False
+    for routine in routines:
+        # set Triggered flag to false
+        try:
+            logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
+            cursor.execute(
+                "UPDATE routines SET triggered = 0 WHERE id = %s;", (routine[0],)
+            )
+            db.commit()
+        except Exception as e:
+            logger.error("Failed to update the database")
+            logger.error("Traceback: " + str(e))
+            db.rollback()
+            db.close()
+            return False
 
-	if not ENV_NAME:
-		logger.error("ALFR3D_ENV_NAME environment variable not set")
-		return False
+    return True
 
-	try:
-		db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-		cursor = db.cursor()
-	except Exception as e:
-		logger.error("Failed to connect to database")
-		logger.error("Traceback: "+str(e))
-		return False
 
-	# get environemnt id of current environment
-	cursor.execute("SELECT * from environment WHERE name = \""+ENV_NAME+"\";")
-	data = cursor.fetchone()
-	if not data:
-		logger.error("Environment not found")
-		db.close()
-		return False
-	env_id = data[0]
+def checkMute() -> bool:
+    """
+    Description:
+            checks what time it is and decides if Alfr3d should be quiet
+            - between wake-up time and bedtime
+            - only when Athos is at home
+            - only when 'owner' is at home
+    """
+    logger.info("Checking if Alfr3d should be mute")
+    result = False
 
-	cursor.execute("SELECT * from routines WHERE \
-					environment_id = "+str(env_id)+"\
-					and name = \"Morning\";")
-	morning = cursor.fetchone()
-	if not morning:
-		logger.error("Morning routine not found")
-		db.close()
-		return False
-	morning_time = morning[2]
+    if not ENV_NAME:
+        logger.error("ALFR3D_ENV_NAME environment variable not set")
+        return False
 
-	cursor.execute("SELECT * from routines WHERE \
-					environment_id = "+str(env_id)+"\
-					and name = \"Bedtime\";")
-	bed = cursor.fetchone()
-	if not bed:
-		logger.error("Bedtime routine not found")
-		db.close()
-		return False
-	bed_time = bed[2]
+    try:
+        db = MySQLdb.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+        )
+        cursor = db.cursor()
+    except Exception as e:
+        logger.error("Failed to connect to database")
+        logger.error("Traceback: " + str(e))
+        return False
 
-	cur_time = datetime.now()
-	mor_time = datetime.now().replace(hour=int(morning_time.seconds/3600), minute=int((morning_time.seconds//60)%60))
-	end_time = datetime.now().replace(hour=int(bed_time.seconds/3600), minute=int((bed_time.seconds//60)%60))
+    # get environemnt id of current environment
+    cursor.execute("SELECT * from environment WHERE name = %s;", (ENV_NAME,))
+    data = cursor.fetchone()
+    if not data:
+        logger.error("Environment not found")
+        db.close()
+        return False
+    env_id = data[0]
 
-	# only speak between morning alarm and bedtime alarm...
-	if cur_time > mor_time and cur_time < end_time:
-		logger.info("Alfr3d is free to speak during this time of day")
-	else:
-		logger.info("Alfr3d should be quiet while we're sleeping")
-		result = True
+    cursor.execute(
+        "SELECT * from routines WHERE environment_id = %s and name = %s;",
+        (env_id, "Morning"),
+    )
+    morning = cursor.fetchone()
+    if not morning:
+        logger.error("Morning routine not found")
+        db.close()
+        return False
+    morning_time = morning[2]
 
-	# get state id of status "online"
-	cursor.execute("SELECT * from states WHERE state = \"online\";")
-	data = cursor.fetchone()
-	if not data:
-		logger.error("Online state not found")
-		db.close()
-		return False
-	state_id = data[0]
+    cursor.execute(
+        "SELECT * from routines WHERE environment_id = %s and name = %s;",
+        (env_id, "Bedtime"),
+    )
+    bed = cursor.fetchone()
+    if not bed:
+        logger.error("Bedtime routine not found")
+        db.close()
+        return False
+    bed_time = bed[2]
 
-	# get all user types which are god or owner type
-	cursor.execute("SELECT * from user_types WHERE type = \"owner\" or \
-												   type = \"technoking\" or \
-												   type = \"resident\";")
-	data = cursor.fetchall()
-	if not data:
-		logger.error("No user types found")
-		db.close()
-		return False
-	types = []
-	for item in data:
-		types.append(item[0])
+    cur_time = datetime.now()
+    mor_time = datetime.now().replace(
+        hour=int(morning_time.seconds / 3600),
+        minute=int((morning_time.seconds // 60) % 60),
+    )
+    end_time = datetime.now().replace(
+        hour=int(bed_time.seconds / 3600), minute=int((bed_time.seconds // 60) % 60)
+    )
 
-	# see if any users worth speaking to are online
-	cursor.execute("SELECT * from user WHERE state = \""+str(state_id)+"\" and \
-											  (type = \""+str(types[0])+"\" or \
-											   type = \""+str(types[1])+"\" or \
-											   type = \""+str(types[2])+"\");")
-	data = cursor.fetchall()
+    # only speak between morning alarm and bedtime alarm...
+    if cur_time > mor_time and cur_time < end_time:
+        logger.info("Alfr3d is free to speak during this time of day")
+    else:
+        logger.info("Alfr3d should be quiet while we're sleeping")
+        result = True
 
-	if not data:
-		logger.info("Alfr3d should be quiet when no worthy ears are around")
-		result = True
-	else:
-		logger.info("Alfr3d has worthy listeners:")
-		for user in data:
-			logger.info("    - "+user[1])
+    # get state id of status "online"
+    cursor.execute('SELECT * from states WHERE state = "online";')
+    data = cursor.fetchone()
+    if not data:
+        logger.error("Online state not found")
+        db.close()
+        return False
+    state_id = data[0]
 
-	if result:
-		logger.info("Alfr3d is to be quiet")
-	else:
-		logger.info("Alfr3d is free to speak")
+    # get all user types which are god or owner type
+    cursor.execute(
+        'SELECT * from user_types WHERE type = "owner" or type = "technoking" or type = "resident";'
+    )
+    data = cursor.fetchall()
+    if not data:
+        logger.error("No user types found")
+        db.close()
+        return False
+    types = []
+    for item in data:
+        types.append(item[0])
 
-	return result
+    # see if any users worth speaking to are online
+    cursor.execute(
+        "SELECT * from user WHERE state = %s and type IN (%s, %s, %s);",
+        (state_id, types[0], types[1], types[2]),
+    )
+    data = cursor.fetchall()
 
-if __name__ == '__main__':
-	if sys.argv[1] == 'reset':
-		resetRoutines()
+    if not data:
+        logger.info("Alfr3d should be quiet when no worthy ears are around")
+        result = True
+    else:
+        logger.info("Alfr3d has worthy listeners:")
+        for user in data:
+            logger.info("    - " + user[1])
+
+    if result:
+        logger.info("Alfr3d is to be quiet")
+    else:
+        logger.info("Alfr3d is free to speak")
+
+    return result
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "reset":
+        resetRoutines()

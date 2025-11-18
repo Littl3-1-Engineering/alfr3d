@@ -1,3 +1,4 @@
+"""Tests for the ALFR3D user service."""
 import pytest
 import pymysql
 from confluent_kafka import Producer

@@ -1,0 +1,107 @@
+/* Theme CSS Variables - Auto-generated from themes.js */
+/* Dark theme (default) */
+:root {
+  /* Core substrate – ultra-deep charcoal (darker than pure black for depth) */
+  --theme-background:           hsl(30, 17%, 6%);
+  --theme-background-secondary: hsl(30, 22%, 9%);
+  --theme-background-tertiary:  hsl(30, 18%, 12%);
+
+  /* Primary accent – electric amber/yellow (the glowing highlights in the reference) */
+  --theme-primary:              hsl(45, 100%, 58%);     /* #FFB84D → pure glowing amber */
+  --theme-primary-hover:        hsl(45, 100%, 65%);
+  --theme-primary-light:        hsl(45, 80%, 15%);      /* dark amber fill for active states */
+
+  /* Secondary accent – cold steel blue (used sparingly for text, orbits, healthy states) */
+  --theme-secondary:            hsl(200, 30%, 50%);
+  --theme-secondary-hover:      hsl(200, 35%, 60%);
+
+  /* Success / healthy – keep a very subtle cyan nod to the original “neural” theme */
+  --theme-success:              hsl(190, 80%, 45%);
+
+  /* Warning / environmental – bright amber (sun, alerts) */
+  --theme-warning:              hsl(45, 100%, 58%);
+  --theme-warning-light:        hsl(45, 80%, 18%);
+
+  /* Critical / error – shift to magenta only when truly critical (rare) */
+  --theme-error:                hsl(330, 90%, 65%);
+
+  /* Text – high-contrast off-white with slight blue tint */
+  --theme-text-primary:         hsl(200, 20%, 92%);
+  --theme-text-secondary:       hsl(200, 15%, 70%);
+  --theme-text-tertiary:        hsl(200, 10%, 50%);
+  --theme-text-inverse:         hsl(0, 0%, 100%);
+
+  /* Borders & glows – glowing amber edges */
+  --theme-border:               hsla(45, 100%, 58%, 0.4);
+  --theme-border-active:        hsl(45, 100%, 58%);
+  --theme-border-secondary:     hsla(45, 100%, 58%, 0.15);
+
+   /* Glassmorphic cards – dark transparent with amber border glow */
+   --theme-card:                 hsla(210, 8%, 4%, 0.65);
+  --theme-card-hover:           hsla(220, 25%, 10%, 0.85);
+  --theme-card-border:          hsla(45, 100%, 58%, 0.35);
+
+  /* Inputs & interactive elements */
+  --theme-input:                hsla(220, 25%, 8%, 0.75);
+  --theme-input-border:         hsla(45, 100%, 58%, 0.4);
+  --theme-input-focus:          hsl(45, 100%, 58%);
+
+  /* Backdrop blur overlay */
+  --theme-backdrop:             hsla(220, 30%, 4%, 0.85);
+
+  /* Extra glow utilities for orbits, pulses, etc. */
+  --glow-amber:                 0 0 12px hsla(45, 100%, 58%, 0.6);
+  --glow-amber-intense:         0 0 20px hsla(45, 100%, 58%, 0.9);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  /* Light substrate – pure tactical white with a hint of warmth */
+  --theme-background:           hsl(30, 20%, 99%);
+  --theme-background-secondary: hsl(30, 15%, 97%);
+  --theme-background-tertiary:  hsl(30, 12%, 95%);
+
+  /* Primary accent – vivid tactical orange (exactly like the reference) */
+  --theme-primary:              hsl(24, 100%, 58%);     /* #FF6A2B */
+  --theme-primary-hover:        hsl(24, 100%, 65%);
+  --theme-primary-light:        hsl(24, 90%, 92%);
+
+  /* Secondary accent – cool steel gray-blue for orbits and neutral elements */
+  --theme-secondary:            hsl(210, 15%, 68%);
+  --theme-secondary-hover:      hsl(210, 15%, 60%);
+
+  /* Success / healthy – subtle cyan nod preserved for continuity */
+  --theme-success:              hsl(190, 80%, 50%);
+
+  /* Warning – intense orange-red */
+  --theme-warning:              hsl(14, 100%, 58%);
+  --theme-error:                hsl(0, 90%, 65%);
+
+  /* Text – deep charcoal for maximum legibility on light */
+  --theme-text-primary:         hsl(220, 25%, 12%);
+  --theme-text-secondary:       hsl(220, 15%, 35%);
+  --theme-text-tertiary:        hsl(220, 10%, 55%);
+  --theme-text-inverse:         hsl(0, 0%, 100%);
+
+  /* Borders & glows – soft orange glow + crisp lines */
+  --theme-border:               hsla(24, 100%, 58%, 0.5);
+  --theme-border-active:        hsl(24, 100%, 58%);
+  --theme-border-secondary:     hsl(220, 10%, 80%);
+
+  /* Light glassmorphic cards – very subtle frost */
+  --theme-card:                 hsla(30, 30%, 98%, 0.85);
+  --theme-card-hover:           hsla(30, 30%, 96%, 0.95);
+  --theme-card-border:          hsla(24, 100%, 58%, 0.4);
+
+  /* Inputs */
+  --theme-input:                hsla(30, 20%, 99%, 0.9);
+  --theme-input-border:         hsl(220, 10%, 85%);
+  --theme-input-focus:          hsl(24, 100%, 58%);
+
+  /* Backdrop */
+  --theme-backdrop:             hsla(30, 30%, 98%, 0.9);
+
+  /* Glow utilities for light mode */
+  --glow-orange:                0 0 12px hsla(24, 100%, 58%, 0.5);
+  --glow-orange-intense:        0 0 20px hsla(24, 100%, 58%, 0.8);
+}

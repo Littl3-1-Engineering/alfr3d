@@ -1,74 +1,75 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { Clock, Thermometer, Droplets, Wind, Sun, Moon } from 'lucide-react';
+import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 const SituationalAwareness = () => {
-  const [time, setTime] = useState(new Date());
+  const [saData, setSaData] = useState([]);
 
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    const fetchSA = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/situational-awareness`);
+        if (response.ok) {
+          const data = await response.json();
+          setSaData(data || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch SA:', error);
+      }
+    };
+
+    fetchSA();
+    const saTimer = setInterval(fetchSA, 60000); // Poll every 60s
+    return () => clearInterval(saTimer);
   }, []);
 
-  const isDay = time.getHours() >= 6 && time.getHours() < 18;
+  const getIcon = (mode) => {
+    switch (mode) {
+      case 'time': return <Clock className="w-6 h-6 text-primary drop-shadow-lg" />;
+      case 'weather': return <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />;
+      case 'email': return <Mail className="w-6 h-6 text-primary drop-shadow-lg" />;
+      case 'event': return <Calendar className="w-6 h-6 text-success drop-shadow-lg" />;
+      case 'music': return <Music className="w-6 h-6 text-secondary drop-shadow-lg" />;
+      default: return <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />;
+    }
+  };
 
   return (
-    <div className="glass rounded-2xl p-6 border border-cyan-500/30 bg-slate-800/20">
-      <h2 className="text-xl font-bold text-cyan-400 mb-4 drop-shadow-lg">Situational Awareness</h2>
+    <div className="glass rounded-2xl p-6 border border-primary/30 bg-card/20">
+      <h2 className="text-xl font-bold text-primary mb-4 drop-shadow-lg">Situational Awareness</h2>
 
       <div className="space-y-4">
-        {/* Time */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center space-x-3"
-        >
-          {isDay ? <Sun className="w-6 h-6 text-yellow-400 drop-shadow-lg" /> : <Moon className="w-6 h-6 text-cyan-400 drop-shadow-lg" />}
-          <div>
-            <p className="text-sm text-gray-400">Current Time</p>
-            <p className="text-lg font-mono text-gray-200">{time.toLocaleTimeString()}</p>
-          </div>
-        </motion.div>
-
-        {/* Weather */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="flex items-center space-x-3"
-        >
-          <Thermometer className="w-6 h-6 text-red-400 drop-shadow-lg" />
-          <div>
-            <p className="text-sm text-gray-400">Temperature</p>
-            <p className="text-lg font-mono text-gray-200">72°F</p>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="flex items-center space-x-3"
-        >
-          <Droplets className="w-6 h-6 text-blue-400 drop-shadow-lg" />
-          <div>
-            <p className="text-sm text-gray-400">Humidity</p>
-            <p className="text-lg font-mono text-gray-200">45%</p>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="flex items-center space-x-3"
-        >
-          <Wind className="w-6 h-6 text-green-400 drop-shadow-lg" />
-          <div>
-            <p className="text-sm text-gray-400">Wind Speed</p>
-            <p className="text-lg font-mono text-gray-200">5 mph</p>
-          </div>
-        </motion.div>
+        {saData.length > 0 ? (
+          saData.slice(0, 4).map((card, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.1 }}
+              className="flex items-center space-x-3"
+            >
+              {getIcon(card.mode)}
+              <div>
+                <p className="text-sm text-text-tertiary capitalize">{card.mode || 'Status'}</p>
+                <p className="text-lg font-mono text-text-primary">{card.content || 'No data'}</p>
+                <p className="text-xs text-text-tertiary">Priority: {card.priority || 4}</p>
+              </div>
+            </motion.div>
+          ))
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center space-x-3"
+          >
+            <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />
+            <div>
+              <p className="text-sm text-text-tertiary">Loading</p>
+              <p className="text-lg font-mono text-text-primary">Fetching data...</p>
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   );

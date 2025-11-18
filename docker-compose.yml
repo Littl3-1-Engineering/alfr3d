@@ -1,3 +1,4 @@
+# Docker Compose configuration for ALFR3D services
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -9,6 +10,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
+    # Kafka depends on Zookeeper for cluster coordination and metadata management
     depends_on:
       - zookeeper
     environment:
@@ -19,9 +21,10 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=INTERNAL:${KAFKA_ADVERTISED_LISTENERS_1},EXTERNAL:${KAFKA_ADVERTISED_LISTENERS_2}
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
-      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1
+      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1
     ports:
       - "9092:9092"
+    # Healthcheck ensures Kafka is ready to accept connections
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
       interval: 10s
@@ -42,21 +45,19 @@ services:
 
   service-user:
     build: ./services/service_user
+    # Depends on Kafka for messaging and MySQL for user data
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
+    env_file: .env
     environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PSWD=${MYSQL_PSWD}
-      - MYSQL_NAME=${MYSQL_NAME}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-      - ALFR3D_ENV_NAME=${ALFR3D_ENV_NAME}
+       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
 
   service-api:
     build: ./services/service_api
+    # Depends on MySQL for database operations and Kafka for messaging
     depends_on:
       mysql:
         condition: service_started
@@ -64,71 +65,64 @@ services:
         condition: service_healthy
     ports:
       - "5001:5001"
+    # Mounts Docker socket to allow container management
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Privileged mode grants elevated permissions for Docker operations
     privileged: true
+    env_file: .env
     environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PSWD=${MYSQL_PSWD}
-      - MYSQL_NAME=${MYSQL_NAME}
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-      - ALFR3D_ENV_NAME=${ALFR3D_ENV_NAME}
 
   service-device:
     build: ./services/service_device
+    # Depends on Kafka for event streaming and MySQL for data storage
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
+    # Host network mode enables ARP scanning and direct host access
     network_mode: host  # To allow arp-scan on host network
+    env_file: .env
     environment:
       - MYSQL_DATABASE=localhost
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PSWD=${MYSQL_PSWD}
-      - MYSQL_NAME=${MYSQL_NAME}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_2}
-      - ALFR3D_ENV_NAME=${ALFR3D_ENV_NAME}
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
   service-environment:
     build: ./services/service_environment
+    # Depends on Kafka for event publishing and MySQL for data persistence
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
+    env_file: .env
     environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PSWD=${MYSQL_PSWD}
-      - MYSQL_NAME=${MYSQL_NAME}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-      - ALFR3D_ENV_NAME=${ALFR3D_ENV_NAME}
+       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
 
   service-daemon:
     build: ./services/service_daemon
+    # Depends on Kafka for inter-service communication and MySQL for state storage
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
+    env_file: .env
     environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PSWD=${MYSQL_PSWD}
-      - MYSQL_NAME=${MYSQL_NAME}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-      - ALFR3D_ENV_NAME=${ALFR3D_ENV_NAME}
+       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
 
   service-frontend:
-    build: ./services/service_frontend
+    build:
+      context: ./services/service_frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     ports:
       - "8000:8000"
-    environment:
-      - SECRET_KEY=${SECRET_KEY}
-      - API_BASE_URL=${API_BASE_URL}
+    env_file: .env
 
+  # Separate MySQL instance for testing to avoid interfering with production data
   test-mysql:
     image: mysql:8.0
     environment:
@@ -141,5 +135,6 @@ services:
       timeout: 20s
       retries: 10
 
+# Named volume for persistent MySQL data storage
 volumes:
   mysql_data:

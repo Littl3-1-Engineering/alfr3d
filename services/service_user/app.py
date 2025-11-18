@@ -1,4 +1,5 @@
 # Modified for containerization: logging to stdout instead of file
+"""Main application for the ALFR3D user service, handling user management and state tracking."""
 import os
 import sys
 import time
@@ -14,7 +15,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("UsersLog")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -87,7 +88,9 @@ class User:
                 db.close()
                 return False
             usrtype = data[0]
-            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+            cursor.execute(
+                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+            )
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -133,7 +136,9 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning("Failed to find user with username: " + self.name + " in the database")
+            logger.warning(
+                "Failed to find user with username: " + self.name + " in the database"
+            )
             db.close()
             return False
 
@@ -160,12 +165,14 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn("Failed to find user with username: " + self.name + " in the database")
+            logger.warn(
+                "Failed to find user with username: " + self.name + " in the database"
+            )
             db.close()
             return False
 
         logger.info("User found")
-        logger.info(data)
+        logger.debug(data)
 
         try:
             cursor.execute(
@@ -184,7 +191,9 @@ class User:
                 db.close()
                 return False
             stateid = data[0]
-            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+            cursor.execute(
+                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+            )
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -223,7 +232,9 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning("Failed to find user with username: " + self.name + " in the database")
+            logger.warning(
+                "Failed to find user with username: " + self.name + " in the database"
+            )
             db.close()
             return False
 
@@ -244,8 +255,131 @@ class User:
         return True
 
 
+def refresh_user_devices(user, cursor, db, env_id):
+    """
+    Updates the user's last_online timestamp based on the most recent device activity.
+    """
+    logger.info("Refreshing user devices for " + user[1])
+    last_online = user[6]
+    if user[6] is None:
+        last_online = datetime(1970, 1, 1)
+
+    try:
+        logger.info("Fetching user devices")
+        cursor.execute(
+            "SELECT d.last_online FROM device d \
+                        inner join device_types dt on d.device_type = dt.id \
+                        WHERE user_id = "
+            + str(user[0])
+            + ' \
+                        AND (type = "guest" or type = "resident");'
+        )
+        devices = cursor.fetchall()
+        for device in devices:
+            if device[0] and (device[0] > last_online):
+                logger.info("Updating user " + user[1])
+                cursor.execute(
+                    "UPDATE user SET last_online = %s WHERE username = %s",
+                    (str(device[0]), user[1]),
+                )
+                cursor.execute(
+                    "UPDATE user SET environment_id = %s WHERE username = %s",
+                    (str(env_id), user[1]),
+                )
+                db.commit()
+                last_online = device[0]
+    except Exception as e:
+        logger.error("Failed to update the database")
+        logger.error("Traceback: " + str(e))
+        db.rollback()
+        raise  # Re-raise to handle in caller
+
+    return last_online
+
+
+def update_user_state(user, cursor, db, stat, producer, last_online):
+    """
+    Updates the user's state to online or offline based on last_online timestamp.
+    Sends Kafka events for state changes.
+    """
+    try:
+        time_now = datetime.now()
+        if last_online:
+            delta = time_now - last_online
+        else:
+            delta = timedelta(minutes=60)
+    except Exception:
+        logger.error("Failed to figure out the timedelta")
+        delta = timedelta(minutes=60)
+
+    if delta < timedelta(minutes=30):  # 30 minutes
+        logger.info("User is online")
+        if user[5] == stat["offline"]:
+            logger.info(user[1] + " just came online")
+            producer.send("speak", bytes(user[1] + " just came online", "utf-8"))
+            cursor.execute(
+                "UPDATE user SET state = %s WHERE username = %s",
+                (stat["online"], user[1]),
+            )
+            logger.info(f"User {user[1]} state changed to online")
+            cursor.execute("SELECT * FROM user_types where id = %s", (user[8],))
+            usr_type = cursor.fetchone()
+            if not usr_type:
+                logger.error("User type not found")
+                return
+            data = {
+                "user": user[1],
+                "type": usr_type[1],
+                "last_online": str(user[6]),
+            }
+            producer.send(
+                "speak", value=json.dumps(data).encode("utf-8"), key=b"welcome"
+            )
+            event = {
+                "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "info",
+                "message": f"User {user[1]} came online",
+                "time": datetime.now().strftime("%I:%M %p"),
+            }
+            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+    else:
+        logger.info("User is offline")
+        if user[5] == stat["online"]:
+            logger.info(user[1] + " went offline")
+            cursor.execute(
+                "UPDATE user SET state = %s WHERE username = %s",
+                (stat["offline"], user[1]),
+            )
+            logger.info(f"User {user[1]} state changed to offline")
+            cursor.execute(
+                "UPDATE device SET state = %s WHERE user_id = %s",
+                (stat["offline"], user[0]),
+            )
+            event = {
+                "id": f"user_offline_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "warning",
+                "message": f"User {user[1]} went offline",
+                "time": datetime.now().strftime("%I:%M %p"),
+            }
+            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+
+    try:
+        db.commit()
+    except Exception:
+        logger.error("Failed to update the database")
+        db.rollback()
+        db.close()
+        raise
+
+
 # refreshes state and last_online for all users
 def refreshAll():
+    """
+    Refreshes the state and last_online timestamp for all users based on device activity.
+    For each user, updates last_online to the most recent device last_online if newer,
+    then sets the user state to online if last_online is within 30 minutes, otherwise offline.
+    Sends Kafka events for state changes and updates associated devices when going offline.
+    """
     logger.info("Refreshing users")
 
     db = pymysql.connect(
@@ -276,124 +410,14 @@ def refreshAll():
     if env_data:
         env_id = env_data[0]
 
-    # get all devices for that user
     for user in user_data:
         logger.info("Refreshing user " + user[1])
-        logger.info(user)
-        last_online = user[6]
+        logger.debug(user)
 
-        if user[6] is None:
-            # if no last_online time is set, set it to jan 1, 1970
-            last_online = datetime(1970, 1, 1)
-
-        # get all devices for that user
         try:
-            logger.info("Fetching user devices")
-            cursor.execute(
-                "SELECT d.last_online FROM device d \
-                            inner join device_types dt on d.device_type = dt.id \
-                            WHERE user_id = "
-                + str(user[0])
-                + ' \
-                            AND (type = "guest" or type = "resident");'
-            )
-            devices = cursor.fetchall()
-            for device in devices:
-                # update last_online time for that user
-                if device[0] and (device[0] > last_online):
-                    logger.info("Updating user " + user[1])
-                    cursor.execute(
-                        "UPDATE user SET last_online = %s WHERE username = %s",
-                        (str(device[0]), user[1]),
-                    )
-                    cursor.execute(
-                        "UPDATE user SET environment_id = %s WHERE username = %s",
-                        (str(env_id), user[1]),
-                    )
-                    db.commit()
-                    last_online = device[
-                        0
-                    ]  # most recent online time (user[6] is when user went offline last time)
-        except Exception as e:
-            logger.error("Failed to update the database")
-            logger.error("Traceback: " + str(e))
-            db.rollback()
-            continue
-
-        # this time only needs to account for one cycle of alfr3d's standard loop
-        # or a few... in case one of them misses it :)
-        try:
-            time_now = datetime.now()
-            if last_online:
-                delta = time_now - last_online
-            else:
-                delta = timedelta(minutes=60)
+            last_online = refresh_user_devices(user, cursor, db, env_id)
+            update_user_state(user, cursor, db, stat, producer, last_online)
         except Exception:
-            logger.error("Failed to figure out the timedelta")
-            delta = timedelta(minutes=60)
-
-        if delta < timedelta(minutes=30):  # 30 minutes
-            logger.info("User is online")  # DEBUG
-            if user[5] == stat["offline"]:
-                logger.info(user[1] + " just came online")
-                producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-                producer.send(
-                    "speak", bytes(user[1] + " just came online", "utf-8")
-                )  ## temp until greeting
-                cursor.execute(
-                    "UPDATE user SET state = %s WHERE username = %s",
-                    (stat["online"], user[1]),
-                )
-                # welcome the user
-                cursor.execute("SELECT * FROM user_types where id = %s", (user[8],))
-                usr_type = cursor.fetchone()
-                if not usr_type:
-                    logger.error("User type not found")
-                    continue
-                # print(usr_type) # DEBUG
-                data = {
-                    "user": user[1],
-                    "type": usr_type[1],
-                    "last_online": str(user[6]),
-                }
-                producer.send("speak", value=json.dumps(data).encode("utf-8"), key=b"welcome")
-                event = {
-                    "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    "type": "info",
-                    "message": f"User {user[1]} came online",
-                    "time": datetime.now().strftime("%I:%M %p"),
-                }
-                producer.send("event-stream", json.dumps(event).encode("utf-8"))
-                # nighttime_auto()    # turn on the lights
-                # speak welcome
-        else:
-            logger.info("User is offline")  # DEBUG
-            if user[5] == stat["online"]:
-                logger.info(user[1] + " went offline")
-                producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-                cursor.execute(
-                    "UPDATE user SET state = %s WHERE username = %s",
-                    (stat["offline"], user[1]),
-                )
-                cursor.execute(
-                    "UPDATE device SET state = %s WHERE user_id = %s",
-                    (stat["offline"], user[0]),
-                )
-                event = {
-                    "id": f"user_offline_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    "type": "warning",
-                    "message": f"User {user[1]} went offline",
-                    "time": datetime.now().strftime("%I:%M %p"),
-                }
-                producer.send("event-stream", json.dumps(event).encode("utf-8"))
-                # nighttime_auto()            # this is only useful when alfr3d is left all alone
-
-        try:
-            db.commit()
-        except Exception:
-            logger.error("Failed to update the database")
-            db.rollback()
-            db.close()
             continue
 
     db.close()

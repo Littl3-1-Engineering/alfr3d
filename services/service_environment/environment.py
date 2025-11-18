@@ -1,4 +1,5 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
+"""Main module for the ALFR3D environment service, handling location detection and weather updates."""
 import os
 import re
 import sys
@@ -17,7 +18,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("EnvironmentLog")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -48,10 +49,188 @@ def get_producer():
     return producer
 
 
+def get_ip():
+    myipv4 = None
+    myipv6 = None
+    try:
+        myipv4 = urlopen("http://ifconfig.me/ip").read().decode("ascii")
+        logger.info("My IP: " + myipv4)
+    except Exception as e:
+        logger.error("Error getting my IPV4")
+        myipv4 = None
+        logger.error("Traceback " + str(e))
+        logger.info("Trying to get our IPV6")
+        try:
+            myipv6 = (
+                urlopen("http://ipv6bot.whatismyipaddress.com").read().decode("ascii")
+            )
+        except Exception as e:
+            logger.error("Error getting my IPV6")
+            logger.error("Traceback " + str(e))
+    return myipv4, myipv6
+
+
+def geocode_ip(myipv4, myipv6, method, cursor):
+    if method == "dbip":
+        cursor.execute("SELECT * from config WHERE name = %s", ("dbip",))
+        data = cursor.fetchone()
+        if data and len(data) > 15 and data[15] == 1:
+            logger.info("Manual override active, skipping auto location update")
+            return None
+        apikey = data[2] if data else None
+        if not apikey:
+            logger.warning("Failed to get API key for dbip")
+            return None
+        try:
+            if myipv4:
+                url = (
+                    "http://api.db-ip.com/addrinfo?addr="
+                    + myipv4
+                    + "&api_key="
+                    + apikey
+                )
+                info = json.loads(urlopen(url).read().decode("utf-8"))
+                if info.get("city"):
+                    return {
+                        "country": info["country"],
+                        "state": info["stateprov"],
+                        "city": info["city"],
+                        "ip": info["address"],
+                        "lat": "n/a",
+                        "long": "n/a",
+                    }
+            if myipv6:
+                url = (
+                    "http://api.db-ip.com/addrinfo?addr="
+                    + myipv6
+                    + "&api_key="
+                    + apikey
+                )
+                info = json.loads(urlopen(url).read().decode("utf-8"))
+                if info.get("country"):
+                    return {
+                        "country": info["country"],
+                        "state": info["stateprov"],
+                        "city": info["city"],
+                        "ip": info["address"],
+                        "lat": "n/a",
+                        "long": "n/a",
+                    }
+            return None
+        except Exception as e:
+            logger.error("Error getting my location:" + str(e))
+            return None
+    elif method == "freegeoip":
+        cursor.execute("SELECT * from config WHERE name = %s", ("ipstack",))
+        data = cursor.fetchone()
+        if data and len(data) > 15 and data[15] == 1:
+            logger.info("Manual override active, skipping auto location update")
+            return None
+        apikey = data[2] if data else None
+        if not apikey:
+            logger.warning("Failed to get API key for ipstack")
+            return None
+        if myipv4:
+            url = "http://api.ipstack.com/" + myipv4 + "?access_key=" + apikey
+            try:
+                info = json.loads(urlopen(url).read().decode("utf-8"))
+                if info.get("city"):
+                    return {
+                        "country": info["country_name"],
+                        "state": info.get("region_name", ""),
+                        "city": info["city"],
+                        "ip": info["ip"],
+                        "lat": info["latitude"],
+                        "long": info["longitude"],
+                    }
+                else:
+                    return None
+            except Exception as e:
+                logger.error("Error getting my location:" + str(e))
+                return None
+        else:
+            return None
+    else:
+        return None
+
+
+def update_db(new_data, existing_city, cursor, db, producer):
+    if not new_data:
+        return False
+    city_new = re.sub("[^A-Za-z]+", "", new_data["city"])
+    state_new = new_data["state"].strip() if new_data["state"] else new_data["country"]
+    country_new = new_data["country"]
+    ip_new = new_data["ip"]
+    lat_new = new_data["lat"]
+    long_new = new_data["long"]
+    logger.debug("IP: " + str(ip_new))
+    logger.debug("City: " + str(city_new))
+    logger.info("State/Prov: " + str(state_new))
+    logger.info("Country: " + str(country_new))
+    logger.info("Longitude: " + str(long_new))
+    logger.info("Latitude: " + str(lat_new))
+    if city_new == existing_city:
+        logger.info("You are still in the same location")
+        if producer:
+            producer.send(
+                "speak",
+                b"It would appear that I am in the same location as the last time",
+            )
+            producer.flush()
+    else:
+        logger.info("Oh hello! Welcome to " + city_new)
+        if producer:
+            producer.send("speak", b"Welcome to " + city_new.encode("utf-8") + b" sir")
+            producer.send("speak", b"I trust you enjoyed your travels")
+            producer.flush()
+        try:
+            cursor.execute(
+                "UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, latitude = %s, longitude = %s WHERE name = %s",
+                (
+                    country_new,
+                    state_new,
+                    city_new,
+                    ip_new,
+                    lat_new,
+                    long_new,
+                    ALFR3D_ENV_NAME,
+                ),
+            )
+            db.commit()
+            logger.info("Environment updated")
+        except Exception:
+            logger.error("Failed to update Environment database")
+            db.rollback()
+            return False
+    return True
+
+
 # def checkLocation(method="freegeoip", speaker=None):
 def checkLocation(method="freegeoip"):
     """
-    Check location based on IP
+    Performs geocoding to determine the current location based on the device's IP address.
+
+    The geocoding flow involves the following steps:
+    1. Checks the database for a manual location override flag. If active, skips auto-update and returns early.
+    2. Retrieves existing location data (country, state, city) from the database for the current environment name.
+       If no data exists, creates a new environment entry in the database.
+    3. Fetches the current public IP address (IPv4 first, falls back to IPv6 if necessary) using external services.
+    4. Depending on the specified method ("dbip" or "freegeoip"):
+       - Retrieves the corresponding API key from the database.
+       - Checks for a manual override flag for the API key; if active, skips update.
+       - Constructs the API URL with the IP address and API key.
+       - Sends a request to the geocoding API and parses the JSON response.
+       - Extracts location details: country, state/province, city, IP, latitude, and longitude.
+    5. Cleans up the retrieved data (e.g., removes non-alphabetic characters from city names).
+    6. Compares the new location with the existing one. If different, updates the database and sends welcome messages via Kafka.
+    7. Triggers a weather update for the new location using the latitude and longitude.
+    8. Returns a status indicating success or failure.
+
+    Args:
+        method (str): The geocoding method to use. Supported values are "dbip" and "freegeoip". Defaults to "freegeoip".
+
+    Returns:
+        None: The function does not return a value but updates the database and sends Kafka messages.
     """
     logger.info("Checking environment info")
     p = get_producer()
@@ -70,200 +249,63 @@ def checkLocation(method="freegeoip"):
     city = "unknown"
     ip = "unknown"
 
-    try:
-        cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
-        data = cursor.fetchone()
+    cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+    data = cursor.fetchone()
+    if data and len(data) > 16 and data[16] == 1:
+        logger.info("Manual location override active, skipping auto location update")
+        db.close()
+        return [True, 0, 0]
 
-        if data:
-            logger.info("Found environment configuration for this host")
-            print(data)
+    if data:
+        logger.info("Found environment configuration for this host")
+        print(data)
+        if len(data) > 6:
             country = data[6]
+        if len(data) > 5:
             state = data[5]
+        if len(data) > 4:
             city = data[4]
-        else:
-            logger.warning("Failed to find environment configuration for this host")
-            logger.info("Creating environment configuration for this host")
-            try:
-                cursor.execute("INSERT INTO environment (name) VALUES (%s)", (ALFR3D_ENV_NAME,))
-                db.commit()
-                logger.info("New environment created")
-            except Exception:
-                logger.error("Failed to add new environment to DB")
-                db.rollback()
-                db.close()
-                return [False, 0, 0]
-    except Exception:
-        logger.error("Environment check failed")
-        p = get_producer()
-        if p:
-            p.send("speak", b"Environment check failed")
-            p.flush()
-
-    # placeholders for my ip
-    myipv4 = None
-    myipv6 = None
-
-    # get my current ip
-    logger.info("Getting my IP")
-    try:
-        myipv4 = urlopen("http://ifconfig.me/ip").read().decode("ascii")
-        logger.info("My IP: " + myipv4)
-    except Exception as e:
-        logger.error("Error getting my IPV4")
-        myipv4 = None
-        logger.error("Traceback " + str(e))
-        logger.info("Trying to get our IPV6")
-        try:
-            myipv6 = urlopen("http://ipv6bot.whatismyipaddress.com").read()
-        except Exception as e:
-            logger.error("Error getting my IPV6")
-            logger.error("Traceback " + str(e))
-    finally:
-        if not myipv6 and not myipv4:
-            return [False, 0, 0]
-
-    # get our geocoding info
-    country_new = country
-    state_new = state
-    city_new = city
-    ip_new = ip
-    lat_new = "n/a"
-    long_new = "n/a"
-
-    if method == "dbip":
-        logger.info("getting API key for db-ip from DB")
-        cursor.execute("SELECT * from config WHERE name = %s", ("dbip",))
-        data = cursor.fetchone()
-
-        if data:
-            logger.info("Found API key")
-            print(data)  # DEBUG
-            apikey = data[2]
-        else:
-            logger.warning("Failed to get API key for dbip")
-
-        # get my geo info
-        if myipv6:
-            url6 = "http://api.db-ip.com/addrinfo?addr=" + myipv6 + "&api_key=" + apikey
-        elif myipv4:
-            url4 = "http://api.db-ip.com/addrinfo?addr=" + myipv4 + "&api_key=" + apikey
-
-        logger.info("Getting my location")
-        try:
-            # try to get our info based on IPV4
-            info4 = json.loads(urlopen(url4).read().decode("utf-8"))
-            print(info4)  # DEBUG
-
-            if info4["city"]:
-                country_new = info4["country"]
-                state_new = info4["stateprov"]
-                city_new = info4["city"]
-                ip_new = info4["address"]
-
-            # if that fails, try the IPV6 way
-            else:
-                info6 = json.loads(urlopen(url6).read().decode("utf-8"))
-                print(info6)  # DEBUG
-
-                if info6["country"]:
-                    country_new = info6["country"]
-                    state_new = info6["stateprov"]
-                    city_new = info6["city"]
-                    ip_new = info6["address"]
-
-                else:
-                    raise Exception("Unable to get geo info based on IP")
-
-        except Exception as e:
-            logger.error("Error getting my location:" + e)
-            return [False, 0, 0]
-
-    elif method == "freegeoip":
-        # get API key for ipstack which was freegeoip.net
-        logger.info("getting API key for ipstack from DB")
-        cursor.execute("SELECT * from config WHERE name = %s", ("ipstack",))
-        data = cursor.fetchone()
-
-        if data:
-            logger.info("Found API key")
-            print(data)  # DEBUG
-            apikey = data[2]
-        else:
-            logger.warning("Failed to get API key for ipstack")
-
-        if myipv4:
-            # url4 = "http://freegeoip.net/json/"+myipv4
-            url4 = "http://api.ipstack.com/" + myipv4 + "?access_key=" + apikey
-
-            try:
-                # try to get our info based on IPV4
-                info4 = json.loads(urlopen(url4).read().decode("utf-8"))
-                print(info4)  # DEBUG
-                if info4["city"]:
-                    country_new = info4["country_name"]
-                    # state_new = info4['stateprov_name']
-                    city_new = info4["city"]
-                    ip_new = info4["ip"]
-                    lat_new = info4["latitude"]
-                    long_new = info4["longitude"]
-
-                else:
-                    raise Exception("Unable to get geo info based on IP")
-
-            except Exception as e:
-                logger.error("Error getting my location:" + str(e))
-                return [False, 0, 0]
-
     else:
-        logger.warning("Unable to obtain geo info - invalid method specified")
-        return [False, 0, 0]
-
-    # by this point we got our geo info
-    # just gotta clean it up because sometimes we get garbage in the city name
-    city_new = re.sub("[^A-Za-z]+", "", city_new)
-    if state_new:
-        state_new = state_new.strip()
-    else:
-        state_new = country_new
-
-    logger.info("IP: " + str(ip_new))
-    logger.info("City: " + str(city_new))
-    logger.info("State/Prov: " + str(state_new))
-    logger.info("Country: " + str(country_new))
-    logger.info("Longitude: " + str(long_new))
-    logger.info("Latitude: " + str(lat_new))
-
-    if city_new == city:
-        logger.info("You are still in the same location")
-        p = get_producer()
-        if p:
-            p.send("speak", b"It would appear that I am in the same location as the last time")
-    else:
-        logger.info("Oh hello! Welcome to " + city_new)
-        p = get_producer()
-        if p:
-            p.send("speak", b"Welcome to " + city_new.encode("utf-8") + b" sir")
-            p.send("speak", b"I trust you enjoyed your travels")
-
+        logger.warning("Failed to find environment configuration for this host")
+        logger.info("Creating environment configuration for this host")
         try:
             cursor.execute(
-                "UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, latitude = %s, longitude = %s WHERE name = %s",
-                (country_new, state_new, city_new, ip_new, lat_new, long_new, ALFR3D_ENV_NAME),
+                "INSERT INTO environment (name) VALUES (%s)", (ALFR3D_ENV_NAME,)
             )
             db.commit()
-            logger.info("Environment updated")
+            logger.info("New environment created")
         except Exception:
-            logger.error("Failed to update Environment database")
+            logger.error("Failed to add new environment to DB")
             db.rollback()
             db.close()
+            logger.error("Environment check failed")
+            p = get_producer()
+            if p:
+                p.send("speak", b"Environment check failed")
+                p.flush()
             return [False, 0, 0]
+
+    myipv4, myipv6 = get_ip()
+    if not myipv4 and not myipv6:
+        db.close()
+        return [False, 0, 0]
+
+    new_data = geocode_ip(myipv4, myipv6, method, cursor)
+    if not new_data:
+        db.close()
+        return [False, 0, 0]
+
+    success = update_db(new_data, city, cursor, db, p)
+    if not success:
+        db.close()
+        return [False, 0, 0]
 
     db.close()
 
     # get latest weather info for new location
     try:
         logger.info("Getting latest weather")
-        weather_util.getWeather(lat_new, long_new)
+        weather_util.getWeather(new_data["lat"], new_data["long"])
     except Exception as e:
         logger.error("Failed to get weather")
         logger.error("Traceback " + str(e))
@@ -296,7 +338,9 @@ if __name__ == "__main__":
             consumer = KafkaConsumer("environment", bootstrap_servers=KAFKA_URL)
             logger.info("Connected to Kafka environment topic")
         except Exception:
-            logger.error("Failed to connect to Kafka environment topic, retrying in 5 seconds")
+            logger.error(
+                "Failed to connect to Kafka environment topic, retrying in 5 seconds"
+            )
             time.sleep(5)
 
     while True:
