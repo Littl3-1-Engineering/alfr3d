@@ -83,7 +83,8 @@ QUIP_WAIT_TIME = randint(5, 10)
 
 # set up logging
 logger = logging.getLogger("DaemonLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
@@ -106,6 +107,7 @@ def get_producer():
 class MyDaemon:
     def run(self):
         while True:
+            schedule.run_pending()  # Execute any pending scheduled tasks
             self.scan_devices()
             self.check_routines()
             if not self.check_mute_status():
@@ -116,18 +118,7 @@ class MyDaemon:
                 logger.error("Situational awareness check failed: " + str(e))
             time.sleep(60)
 
-    def checkGmail(self) -> None:
-        """
-        Description:
-                 Checks the unread count in gMail
-        """
-        logger.info("Checking email")
-
-        p = get_producer()
-        if p:
-            p.send("google", b"check gmail")
-
-    def beSmart(self) -> None:
+    def be_smart(self) -> None:
         """
         Description:
                  speak a quip
@@ -151,23 +142,23 @@ class MyDaemon:
                 "Next quip will be shouted in " + str(QUIP_WAIT_TIME) + " minutes."
             )
 
-    def playTune(self):
+    def play_tune(self):
         """
         Description:
                 pick a random song from current weather category and play it
         """
         logger.info("playing a tune")
 
-    def nightlight(self):
+    def night_light(self):
         """
         Description:
                 is anyone at home?
                 is it after dark?
                 turn the lights on or off as needed.
         """
-        logger.info("nightlight auto-check")
+        logger.info("night_light auto-check")
 
-    def checkMute(self):
+    def check_mute(self):
         """
         Description:
                 checks what time it is and decides if Alfr3d should be quiet
@@ -176,7 +167,7 @@ class MyDaemon:
                 - only when 'owner' is at home
         """
         logger.info("Checking if Alfr3d should be muted")
-        result = util_routines.checkMute()
+        result = util_routines.check_mute()
 
         return result
 
@@ -189,6 +180,12 @@ class MyDaemon:
     def decide_displays(self):
         """Collect up to 4 SA items: emails, events, gatherings; default to time + weather."""
         displays = []
+        time_card = self.check_time()
+        weather_card = self.check_weather()
+        if time_card:
+            displays.append(time_card)
+        if weather_card:
+            displays.append(weather_card)
         logger.info("Collecting displays: checking emails")
         emails = self.check_emails()
         if emails:
@@ -203,12 +200,11 @@ class MyDaemon:
             displays.append(gatherings)
         if not displays:
             logger.info("No priority displays, defaulting to time and weather")
-            time_card = self.check_time()
-            weather_card = self.check_weather()
-            if time_card:
-                displays.append(time_card)
-            if weather_card:
-                displays.append(weather_card)
+
+        # sort by priority
+        displays.sort(key=lambda x: x["priority"])
+
+        logger.debug("Final displays selected: " + str(displays))
         # Limit to 4
         return displays[:4]
 
@@ -267,16 +263,22 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
+            # Count everyone online (residents + guests) and guests separately
             cursor.execute(
-                # "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest', 'resident'))"
-                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest'))"
+                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND username != 'unknown'"
             )
-            result = cursor.fetchone()
-            if result:
-                count = result[0]
-            else:
-                count = 0
-            if count > 0:
+            total_row = cursor.fetchone()
+            cursor.execute(
+                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest')) AND username != 'unknown'"
+            )
+            guest_row = cursor.fetchone()
+            result = guest_row
+            logger.info("Gathering check result: " + str(result))
+            total_count = total_row[0] if total_row else 0
+            guest_count = guest_row[0] if guest_row else 0
+            if total_count > 0:
+                logger.info("Gathering detected with total people: " + str(total_count) + " (guests: " + str(guest_count) + ")")
+                # Suggest playlist based on time of day and environment description
                 hour = datetime.now().hour
                 if 6 <= hour < 18:
                     time_of_day = "day"
@@ -285,14 +287,23 @@ class MyDaemon:
                 else:
                     time_of_day = "night"
                 cursor.execute(
-                    "SELECT description FROM environment WHERE name = %s", (ENV_NAME,)
+                    "SELECT description, subjective_feel FROM environment WHERE name = %s", (ENV_NAME,)
                 )
                 desc_row = cursor.fetchone()
-                mood = (
-                    (desc_row[0] if desc_row else "unknown") + " kind of " + time_of_day
-                )
-                playlist = spotify_utils.get_playlist_suggestion(time_of_day, mood)
-                content = f"Play {playlist}"
+                desc, subj = desc_row if desc_row else (None, None)
+                weather_info = {"description": desc, "subjective_feel": subj}
+
+                # Use recommender to produce an actionable music suggestion
+                reco = spotify_utils.recommend(total_people=total_count, guest_count=guest_count, time_of_day=time_of_day, weather=weather_info)
+                logger.info(f"Recommendation: {reco}")
+
+                p = get_producer()
+                if p:
+                    p.send("event-stream", f"Detected {total_count} people ({guest_count} guests). Suggesting {reco['mood']} music ({reco['genre']}).".encode("utf-8"))
+
+                # Keep existing spotify_utils hook for playlist lookup; pass playlist hint/mood
+                playlist = spotify_utils.get_playlist_suggestion(reco.get("playlist_hint", reco.get("mood", "")))
+                content = f"Play {playlist} ({reco['genre']}, energy={reco['energy']})"
                 return {"mode": "music", "content": content, "priority": 3}
             db.close()
         except pymysql.Error as e:
@@ -307,14 +318,14 @@ class MyDaemon:
             )
             cursor = db.cursor()
             cursor.execute(
-                "SELECT city, description, low, high FROM environment WHERE name = %s",
+                "SELECT city, description, low, high, subjective_feel FROM environment WHERE name = %s",
                 (ENV_NAME,),
             )
             row = cursor.fetchone()
             db.close()
             if row:
-                city, desc, low, high = row
-                content = f"{city}: {desc}, {low}°C to {high}°C"
+                city, desc, low, high, feel = row
+                content = f"{city}: {feel}, {desc}, {low}°C to {high}°C"
                 return {"mode": "weather", "content": content, "priority": 4}
         except pymysql.Error as e:
             logger.error("Weather check error: " + str(e))
@@ -334,22 +345,22 @@ class MyDaemon:
 
     def check_routines(self):
         logger.info("Routine check")
-        util_routines.checkRoutines()
+        util_routines.check_routines()
 
     def check_mute_status(self):
         logger.info("Checking if mute")
-        return self.checkMute()
+        return self.check_mute()
 
     def perform_waking_hours_tasks(self):
         try:
             logger.info("Is it time for a smartass quip?")
-            self.beSmart()
+            self.be_smart()
         except KafkaError as e:
             logger.error("Failed to complete the quip block")
             logger.error("Traceback: " + str(e))
         try:
             logger.info("Time to check Gmail")
-            self.checkGmail()
+            self.check_emails
         except KafkaError as e:
             logger.error("Failed to check Gmail")
             logger.error("Traceback: " + str(e))
@@ -362,7 +373,7 @@ class MyDaemon:
             logger.info("Published situational awareness: " + str(data))
 
 
-def sunriseRoutine():
+def sunrise_routine():
     """
     Description:
             sunset routine - perform this routine 30 minutes before sunrise
@@ -371,7 +382,7 @@ def sunriseRoutine():
     logger.info("Pre-sunrise routine")
 
 
-def morningRoutine():
+def morning_routine():
     """
     Description:
             perform morning routine - ring alarm, speak weather, check email, etc..
@@ -379,7 +390,7 @@ def morningRoutine():
     logger.info("Time for morning routine")
 
 
-def sunsetRoutine():
+def sunset_routine():
     """
     Description:
             routine to perform at sunset - turn on ambient lights
@@ -387,7 +398,7 @@ def sunsetRoutine():
     logger.info("Time for sunset routine")
 
 
-def bedtimeRoutine():
+def bedtime_routine():
     """
     Description:
             routine to perform at bedtime - turn on ambient lights
@@ -395,13 +406,24 @@ def bedtimeRoutine():
     logger.info("Bedtime")
 
 
-def resetRoutines():
+def reset_routines():
     """
     Description:
             refresh some things at midnight
     """
     logger.info("Time to reset routines")
-    util_routines.resetRoutines()
+    util_routines.reset_routines()
+
+
+def check_weather_routine():
+    """
+    Description:
+            Send a weather check message to the environment topic every 4 hours.
+    """
+    logger.info("Scheduled weather check")
+    p = get_producer()
+    if p:
+        p.send("environment", b"check weather")
 
 
 def init_daemon():
@@ -421,6 +443,7 @@ def init_daemon():
     p = get_producer()
     if p:
         p.send("environment", b"check location")
+        p.send("environment", b"check weather")
 
     # set up some routine schedules
     try:
@@ -429,12 +452,13 @@ def init_daemon():
         if p:
             p.send("speak", b"Setting up scheduled routines")
         # utilities.createRoutines()
-        resetRoutines()
+        reset_routines()
 
         # "8.30" in the following function is just a placeholder
         # until i deploy a more configurable alarm clock
-        schedule.every().day.at("00:05").do(resetRoutines)
-        # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtimeRoutine)
+        schedule.every().day.at("00:05").do(reset_routines)
+        schedule.every(4).hours.do(check_weather_routine)
+        # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
         logger.error("Traceback: " + str(e))

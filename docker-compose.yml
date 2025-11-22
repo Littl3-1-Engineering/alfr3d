@@ -54,6 +54,7 @@ services:
     env_file: .env
     environment:
        - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+       - LOG_LEVEL=${LOG_LEVEL}
 
   service-api:
     build: ./services/service_api
@@ -73,6 +74,7 @@ services:
     env_file: .env
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-device:
     build: ./services/service_device
@@ -88,6 +90,7 @@ services:
     environment:
       - MYSQL_DATABASE=localhost
       - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-environment:
     build: ./services/service_environment
@@ -100,6 +103,7 @@ services:
     env_file: .env
     environment:
        - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+       - LOG_LEVEL=${LOG_LEVEL}
 
   service-daemon:
     build: ./services/service_daemon
@@ -112,6 +116,7 @@ services:
     env_file: .env
     environment:
        - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+       - LOG_LEVEL=${LOG_LEVEL}
 
   service-frontend:
     build:

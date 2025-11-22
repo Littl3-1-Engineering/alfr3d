@@ -18,7 +18,8 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("ApiLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -1053,7 +1054,7 @@ def get_weather():
         )
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override FROM environment WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1092,7 +1093,7 @@ def get_environment():
         )
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override FROM environment WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1118,6 +1119,7 @@ def get_environment():
                     "humidity": row[14],
                     "manual_override": row[15],
                     "manual_location_override": row[16],
+                    "subjective_feel": row[17],
                 }
             )
         else:
@@ -1144,6 +1146,7 @@ def update_environment():
         description (str): Weather description (optional).
         pressure (float): Pressure (optional).
         humidity (float): Humidity (optional).
+        subjective_feel (str): Subjective feel description (optional).
 
     Returns:
         JSON: Success message with manual_location_override status.
@@ -1170,6 +1173,7 @@ def update_environment():
             "description": "description",
             "pressure": "pressure",
             "humidity": "humidity",
+            "subjective_feel": "subjective_feel",
         }
         location_fields = ["latitude", "longitude", "city", "state", "country", "IP"]
         manual_location_override = (
@@ -1212,7 +1216,7 @@ def reset_environment():
         )
         cursor = db.cursor()
         cursor.execute(
-            "UPDATE environment SET manual_location_override = 0 WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         db.commit()

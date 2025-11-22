@@ -52,7 +52,7 @@ KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 
 
-def checkRoutines() -> bool:
+def check_routines() -> bool:
     """
     Description:
             Check if it is time to execute any routines and take action
@@ -136,7 +136,7 @@ def checkRoutines() -> bool:
     return True
 
 
-def resetRoutines() -> bool:
+def reset_routines() -> bool:
     """
     Description:
             refresh some things at midnight
@@ -190,7 +190,7 @@ def resetRoutines() -> bool:
     return True
 
 
-def checkMute() -> bool:
+def check_mute() -> bool:
     """
     Description:
             checks what time it is and decides if Alfr3d should be quiet
@@ -309,4 +309,4 @@ def checkMute() -> bool:
 
 if __name__ == "__main__":
     if sys.argv[1] == "reset":
-        resetRoutines()
+        reset_routines()
