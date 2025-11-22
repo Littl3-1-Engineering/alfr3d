@@ -18,7 +18,8 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("WeatherLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -95,6 +96,9 @@ def parse_weather(cursor, lat, lon):
     logger.info("Sunset:                         "+ datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"))
     logger.info("Parsed weather data\n")
 
+    subjective_feel = determine_subjective_feel(weatherData)
+    weatherData['subjective_feel'] = subjective_feel
+
     return weatherData
 
 def update_db_weather(db, cursor, weatherData):
@@ -103,7 +107,7 @@ def update_db_weather(db, cursor, weatherData):
     try:
         cursor.execute(
             "UPDATE environment SET description = %s, low = %s, high = %s, "
-            "sunrise = %s, sunset = %s, pressure = %s, humidity = %s WHERE name = %s",
+            "sunrise = %s, sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s WHERE name = %s",
             (
                 str(weatherData["weather"][0]["description"]),
                 int(weatherData["main"]["temp_min"]),
@@ -116,6 +120,7 @@ def update_db_weather(db, cursor, weatherData):
                 ),
                 int(weatherData["main"]["pressure"]),
                 int(weatherData["main"]["humidity"]),
+                weatherData['subjective_feel'],
                 ALFR3D_ENV_NAME,
             ),
         )
@@ -166,36 +171,65 @@ def update_routines(db, cursor, weatherData):
         return False
 
 
-def speak_weather(weatherData):
-    # Subjective weather
-    badDay = []
-    badDay_data = []
-    badDay.append(False)
-    badDay.append(badDay_data)
+def determine_subjective_feel(weatherData):
+    temp = weatherData["main"]["temp"]
+    humidity = weatherData["main"]["humidity"]
+    wind_kmh = weatherData["wind"]["speed"] * 3.6
 
-    # if weather is bad...
-    if weatherData["weather"][0]["main"] in [
-        "Thunderstorm",
-        "Drizzle",
-        "Rain",
-        "Snow",
-        "Atmosphere",
-        "Exreeme",
-    ]:
-        badDay[0] = True
-        badDay[1].append(weatherData["weather"][0]["description"])
-    elif weatherData["main"]["humidity"] > 80:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["humidity"])
-    if weatherData["main"]["temp_max"] > 27:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["temp_max"])
-    elif weatherData["main"]["temp_min"] < -5:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["temp_min"])
-    if weatherData["wind"]["speed"] > 10:
-        badDay[0] = True
-        badDay[1].append(weatherData["wind"]["speed"])
+    # Extremely cold
+    if temp < -20:
+        return "Extremely cold"
+    # Very cold
+    if -10 <= temp < 0:
+        return "Very cold"
+    # Cold
+    if 0 <= temp < 10 and wind_kmh < 30:
+        return "Cold"
+    # Cool
+    if 10 <= temp < 14 and wind_kmh < 20:
+        return "Cool"
+    # Perfect / Great day
+    if 20 <= temp <= 25 and 40 <= humidity <= 60 and wind_kmh < 15:
+        return "Perfect / Great day"
+    # Very pleasant
+    if ((17 <= temp <= 20) or (25 <= temp <= 28)) and 30 <= humidity <= 70 and wind_kmh < 20:
+        return "Very pleasant"
+    # Pleasant / Nice
+    if ((14 <= temp <= 17) or (28 <= temp <= 30)) and 30 <= humidity <= 70 and wind_kmh < 25:
+        return "Pleasant / Nice"
+    # Warm
+    if 28 <= temp <= 32 and humidity < 70:
+        return "Warm"
+    # Hot
+    if 32 <= temp <= 36 and wind_kmh < 20:
+        return "Hot"
+    # Very hot
+    if 36 <= temp <= 40:
+        return "Very hot"
+    # Extremely hot
+    if temp > 40:
+        return "Extremely hot"
+    # Oppressively humid
+    if temp >= 28 and humidity >= 70:
+        return "Oppressively humid"
+    # Very humid / Muggy
+    if temp >= 24 and humidity >= 75 and wind_kmh < 15:
+        return "Very humid / Muggy"
+    # Windy (unpleasant)
+    if wind_kmh > 40:
+        return "Windy (unpleasant)"
+    # Bad weather
+    weather_main = weatherData["weather"][0]["main"]
+    if weather_main in ["Thunderstorm", "Drizzle", "Rain", "Snow", "Atmosphere"]:
+        return "Bad weather: " + weather_main.lower()
+    # Default
+    return "Neutral"
+
+
+def speak_weather(db, cursor, weatherData):
+    subjective_weather = weatherData['subjective_feel']
+    bad_categories = ["Extremely cold", "Very cold", "Cold", "Extremely hot", "Very hot", "Hot", "Oppressively humid", "Very humid / Muggy", "Windy (unpleasant)"]
+    badDay = [subjective_weather in bad_categories, []]
 
     logger.info("Speaking weather data:\n")
     # Speak the weather data
@@ -214,31 +248,7 @@ def speak_weather(weatherData):
         return False
     if badDay[0]:
         producer.send("speak", b"I am afraid I don't have good news.")
-        greeting += "indicate "
-
-        for i in range(len(badDay[1])):
-            if badDay[1][i] == weatherData["weather"][0]["description"]:
-                greeting += badDay[1][i]
-            elif badDay[1][i] == weatherData["main"]["humidity"]:
-                greeting += "humidity of a steam bath"
-            elif badDay[1][i] == weatherData["main"]["temp_max"]:
-                greeting += "it is too hot for my gentle circuits"
-            elif badDay[1][i] == weatherData["main"]["temp_min"]:
-                greeting += "it is catalysmically cold"
-            elif badDay[1][i] == weatherData["wind"]["speed"]:
-                greeting += "the wind will seriously ruin your hair"
-
-            if len(badDay[1]) >= 2 and i < (len(badDay[1]) - 1):
-                add = [
-                    " , also, ",
-                    " , and if that isn't enough, ",
-                    " , and to make matters worse, ",
-                ]
-                greeting += add[randint(0, len(add) - 1)]
-            elif len(badDay[1]) > 2 and i == (len(badDay[1]) - 1):
-                greeting += " , and on top of everything, "
-            else:
-                logger.info(greeting + "\n")
+        greeting += "indicate " + subjective_weather
         producer.send("speak", greeting.encode("utf-8"))
     else:
         producer.send("speak", b"Weather today is just gorgeous!")
@@ -270,7 +280,7 @@ def speak_weather(weatherData):
     return True
 
 
-def getWeather(lat, lon):
+def get_weather(lat, lon):
     """
     Fetches current weather data for the given latitude and longitude from the OpenWeatherMap API,
     updates the environment and routines tables in the database with the retrieved data, and
@@ -316,15 +326,15 @@ def getWeather(lat, lon):
         db.close()
         return False
 
-    db.close()
-
-    if not speak_weather(weatherData):
+    if not speak_weather(db, cursor, weatherData):
+        db.close()
         return False
-
+    
+    db.close()
     return True
 
 
-def KtoC(tempK):
+def kto_c(tempK):
     """
     converts temperature in kelvin to celsius
     """
@@ -333,4 +343,4 @@ def KtoC(tempK):
 
 # purely for testing purposes
 if __name__ == "__main__":
-    getWeather(0.0, 0.0)
+    get_weather(0.0, 0.0)

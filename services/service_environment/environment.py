@@ -18,7 +18,8 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("EnvironmentLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -205,8 +206,8 @@ def update_db(new_data, existing_city, cursor, db, producer):
     return True
 
 
-# def checkLocation(method="freegeoip", speaker=None):
-def checkLocation(method="freegeoip"):
+# def check_location(method="freegeoip", speaker=None):
+def check_location(method="freegeoip"):
     """
     Performs geocoding to determine the current location based on the device's IP address.
 
@@ -303,16 +304,16 @@ def checkLocation(method="freegeoip"):
     db.close()
 
     # get latest weather info for new location
-    try:
-        logger.info("Getting latest weather")
-        weather_util.getWeather(new_data["lat"], new_data["long"])
-    except Exception as e:
-        logger.error("Failed to get weather")
-        logger.error("Traceback " + str(e))
+    # try:
+    #     logger.info("Getting latest weather")
+    #     weather_util.get_weather(new_data["lat"], new_data["long"])
+    # except Exception as e:
+    #     logger.error("Failed to get weather")
+    #     logger.error("Traceback " + str(e))
     return
 
 
-def checkWeather():
+def check_weather():
     logger.info("Checking latest weather reports")
     db = pymysql.connect(
         host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
@@ -323,7 +324,7 @@ def checkWeather():
     data = cursor.fetchone()
 
     if data and data[2] and data[3]:
-        weather_util.getWeather(data[2], data[3])
+        weather_util.get_weather(data[2], data[3])
     else:
         logger.warning("No location data available for weather check")
 
@@ -351,8 +352,8 @@ if __name__ == "__main__":
                 logger.info("Received exit request. Stopping service.")
                 sys.exit()
             if msg == "check location":
-                checkLocation()
+                check_location()
             if msg == "check weather":
-                checkWeather()
+                check_weather()
 
             time.sleep(10)

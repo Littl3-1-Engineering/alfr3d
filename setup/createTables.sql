@@ -153,6 +153,7 @@ CREATE TABLE `environment` (
   `humidity` INTEGER NULL DEFAULT NULL, -- Humidity percentage
   `manual_override` TINYINT NULL DEFAULT 0, -- Manual override flag (1=yes, 0=no)
   `manual_location_override` TINYINT NULL DEFAULT 0, -- Manual location override flag (1=yes, 0=no)
+  `subjective_feel` VARCHAR(64) NULL DEFAULT NULL, -- Subjective feel description
   PRIMARY KEY (`id`)
 );
 

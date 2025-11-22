@@ -16,7 +16,8 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("DevicesLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -402,7 +403,7 @@ def check_offline_devices():
     db.close()
 
 
-def checkLAN():
+def check_lan():
     """
     Scans the local network for online devices using ARP, updates the database with device information,
     and marks devices as offline if they haven't been seen for more than 30 minutes.
@@ -505,6 +506,6 @@ if __name__ == "__main__":
                 logger.info("Received exit request. Stopping service.")
                 sys.exit(1)
             if message.value.decode("ascii") == "scan net":
-                checkLAN()
+                check_lan()
 
             time.sleep(10)

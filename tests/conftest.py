@@ -90,7 +90,7 @@ def frontend_client(frontend_app):
     """Flask test client for frontend tests."""
     return frontend_app.test_client()
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def apply_database_schema(mysql_config):
     """Apply database schema and seed data for tests."""
     conn = pymysql.connect(**mysql_config)

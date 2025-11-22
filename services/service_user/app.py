@@ -15,7 +15,8 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("UsersLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -373,7 +374,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
 
 
 # refreshes state and last_online for all users
-def refreshAll():
+def refresh_all():
     """
     Refreshes the state and last_online timestamp for all users based on device activity.
     For each user, updates last_online to the most recent device last_online if newer,
@@ -446,7 +447,7 @@ if __name__ == "__main__":
                 logger.info("Received exit request. Stopping service.")
                 sys.exit(1)
             if message.value.decode("ascii") == "refresh-all":
-                refreshAll()
+                refresh_all()
             if message.key:
                 if message.key.decode("ascii") == "create":
                     usr = User()

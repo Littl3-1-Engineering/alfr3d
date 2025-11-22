@@ -1,26 +1,23 @@
 """Tests for the ALFR3D environment service."""
 import pytest
 import sys
+import os
 import json
-sys.path.append('../services/service_environment')
 from unittest.mock import patch, MagicMock
-import environment as env
 
-@pytest.fixture
-def mock_urlopen(mocker):
-    return mocker.patch('services.service_environment.environment.urlopen')
+# Add the service directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'services', 'service_environment'))
 
-@pytest.fixture
-def mock_connect(mocker):
-    return mocker.patch('services.service_environment.environment.pymysql.connect')
-
-@pytest.fixture
-def mock_producer(mocker):
-    return mocker.patch('services.service_environment.environment.get_producer')
-
-def test_checkLocation(mock_producer, mock_connect, mock_urlopen):
+@patch('services.service_environment.environment.get_producer')
+@patch('services.service_environment.environment.pymysql.connect')
+@patch('urllib.request.urlopen')
+def test_check_location(mock_urlopen, mock_connect, mock_producer):
     """Test checkLocation function with mocked DB and API calls."""
+    import os
+    os.environ['ALFR3D_ENV_NAME'] = 'test'
+    import environment as env
     from unittest.mock import MagicMock
+
     
     # Mock producer
     mock_prod = MagicMock()
@@ -32,8 +29,10 @@ def test_checkLocation(mock_producer, mock_connect, mock_urlopen):
     mock_connect.return_value = mock_db
     mock_db.cursor.return_value = mock_cursor
 
-    # Mock existing environment in DB
-    mock_cursor.fetchone.return_value = (1, 'test', None, None, 'OldCity', 'OldState', 'OldCountry', 'oldip', None, None, None, None, None, None)
+    # Mock existing environment in DB and config
+    env_tuple = (1, 'test', None, None, 'OldCity', 'OldState', 'OldCountry', 'oldip', None, None, None, None, None, None)
+    config_tuple = (1, 'ipstack', 'fake_api_key', None, None, None, None, None, None, None, None, None, None, None, None, 0)
+    mock_cursor.fetchone.side_effect = [env_tuple, config_tuple]
 
     # Mock IP fetch
     mock_ip_response = MagicMock()
@@ -44,15 +43,15 @@ def test_checkLocation(mock_producer, mock_connect, mock_urlopen):
     mock_urlopen.side_effect = [mock_ip_response, mock_api_response]
 
     # Call the function
-    env.checkLocation()
+    env.check_location()
 
     # Assert DB update was called with new data
-    mock_cursor.execute.assert_any_call("UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, latitude = %s, longitude = %s WHERE name = %s", ('NewCountry', 'NewCountry', 'NewCity', '192.168.1.1', '10.0', '20.0', 'test'))
+    mock_cursor.execute.assert_any_call("UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, latitude = %s, longitude = %s WHERE name = %s", ('NewCountry', 'NewCountry', 'NewCity', '192.168.1.1', 10.0, 20.0, 'test'))
     mock_db.commit.assert_called()
 
 @patch('services.service_environment.environment.weather_util.getWeather')
 @patch('services.service_environment.environment.pymysql.connect')
-def test_checkWeather(mock_connect, mock_weather):
+def test_check_weather(mock_connect, mock_weather):
     """Test checkWeather function with mocked DB."""
     # Mock DB
     mock_db = MagicMock()
@@ -64,7 +63,7 @@ def test_checkWeather(mock_connect, mock_weather):
     mock_cursor.fetchone.return_value = (1, 'test', 10.0, 20.0, 'City', 'State', 'Country', 'ip', None, None, None, None, None, None)
 
     # Call the function
-    env.checkWeather()
+    env.check_weather()
 
     # Assert weather_util.getWeather was called with lat/long
     mock_weather.assert_called_with(10.0, 20.0)
