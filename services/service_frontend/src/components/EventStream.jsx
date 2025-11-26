@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { formatLocalTime } from '../utils/timeUtils';
 
 const EventStream = () => {
   const [displayedEvents, setDisplayedEvents] = useState([]);
@@ -49,7 +50,7 @@ const EventStream = () => {
               {getIcon(event.type)}
               <div className="flex-1">
                 <p className="text-sm text-text-secondary">{event.message}</p>
-                <p className="text-xs text-text-tertiary mt-1">{event.time}</p>
+                 <p className="text-xs text-text-tertiary mt-1">{formatLocalTime(event.time)}</p>
               </div>
             </motion.div>
           ))}

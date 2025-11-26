@@ -8,7 +8,7 @@ import logging
 import json
 import pymysql  # Changed from MySQLdb to pymysql
 from kafka import KafkaConsumer, KafkaProducer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -118,7 +118,7 @@ class User:
             "id": f"user_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
             "type": "success",
             "message": f"New user {self.name} created",
-            "time": datetime.now().strftime("%I:%M %p"),
+            "time": datetime.now(timezone.utc).isoformat(),
         }
         producer.send("event-stream", json.dumps(event).encode("utf-8"))
         return True
@@ -340,7 +340,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",
                 "message": f"User {user[1]} came online",
-                "time": datetime.now().strftime("%I:%M %p"),
+                "time": datetime.now(timezone.utc).isoformat(),
             }
             producer.send("event-stream", json.dumps(event).encode("utf-8"))
     else:
@@ -360,7 +360,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "id": f"user_offline_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "warning",
                 "message": f"User {user[1]} went offline",
-                "time": datetime.now().strftime("%I:%M %p"),
+                "time": datetime.now(timezone.utc).isoformat(),
             }
             producer.send("event-stream", json.dumps(event).encode("utf-8"))
 

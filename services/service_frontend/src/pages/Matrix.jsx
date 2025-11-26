@@ -1,12 +1,15 @@
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { CheckCircle, XCircle, Mail, Calendar } from 'lucide-react';
 import Routines from '../components/Routines';
 import Personality from '../components/Personality';
 import Integrations from '../components/Integrations';
 import System from '../components/System';
+import { API_BASE_URL } from '../config';
 
 const Matrix = () => {
   const [activeTab, setActiveTab] = useState('routines');
+  const [integrationStatus, setIntegrationStatus] = useState({ gmail: false, calendar: false });
 
   const tabs = [
     { id: 'routines', label: 'Routines', component: Routines },
@@ -16,6 +19,21 @@ const Matrix = () => {
   ];
 
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component;
+
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/integrations/status`);
+        if (response.ok) {
+          const status = await response.json();
+          setIntegrationStatus(status);
+        }
+      } catch (error) {
+        console.error('Error fetching integration status:', error);
+      }
+    };
+    fetchStatus();
+  }, []);
 
   return (
     <motion.div
@@ -29,10 +47,37 @@ const Matrix = () => {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
-          className="text-4xl font-bold text-primary mb-8 text-center drop-shadow-lg"
+          className="text-4xl font-bold text-primary mb-4 text-center drop-shadow-lg"
         >
           ALFR3D Matrix
         </motion.h1>
+
+        {/* Integration Status */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4, duration: 0.5 }}
+          className="flex justify-center space-x-6 mb-8"
+        >
+          <div className="flex items-center space-x-2 glass rounded-lg px-4 py-2">
+            <Mail className="w-5 h-5 text-primary" />
+            <span className="text-sm font-medium text-text-primary">Gmail</span>
+            {integrationStatus.gmail ? (
+              <CheckCircle className="w-5 h-5 text-success" />
+            ) : (
+              <XCircle className="w-5 h-5 text-error" />
+            )}
+          </div>
+          <div className="flex items-center space-x-2 glass rounded-lg px-4 py-2">
+            <Calendar className="w-5 h-5 text-primary" />
+            <span className="text-sm font-medium text-text-primary">Calendar</span>
+            {integrationStatus.calendar ? (
+              <CheckCircle className="w-5 h-5 text-success" />
+            ) : (
+              <XCircle className="w-5 h-5 text-error" />
+            )}
+          </div>
+        </motion.div>
         
         <div className="flex">
           {/* Vertical Tabs */}

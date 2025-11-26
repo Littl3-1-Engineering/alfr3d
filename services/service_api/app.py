@@ -7,7 +7,7 @@ import subprocess
 import json
 import pymysql  # Changed from MySQLdb to pymysql
 import threading
-from kafka import KafkaConsumer, TopicPartition
+from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, Response
 from typing import Dict, Any, Optional, List
@@ -32,6 +32,12 @@ MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
+
+# Kafka producer for integrations
+producer = KafkaProducer(
+    bootstrap_servers=KAFKA_URL,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
 
 # Store recent events
 recent_events = []
@@ -173,7 +179,7 @@ def get_users():
                     "about_me": row[3],
                     "state": row[4],
                     "type": row[5],
-                    "last_online": str(row[6]),
+                    "last_online": row[6].isoformat() if row[6] else None,
                 }
             )
         db.close()
@@ -638,7 +644,7 @@ def get_devices():
                     "state": row[4],
                     "type": row[5],
                     "user": row[6],
-                    "last_online": str(row[7]),
+                    "last_online": row[7].isoformat() if row[7] else None,
                     "position": (
                         {"x": row[8], "y": row[9]}
                         if row[8] is not None and row[9] is not None
@@ -902,14 +908,14 @@ def get_device_history(device_id):
         )
         history = [
             {
-                "timestamp": str(row[0]),
+                "timestamp": row[0].isoformat() if row[0] else None,
                 "name": row[1],
                 "ip": row[2],
                 "mac": row[3],
                 "state": row[4],
                 "type": row[5],
                 "user": row[6],
-                "last_online": str(row[7]),
+                "last_online": row[7].isoformat() if row[7] else None,
             }
             for row in cursor.fetchall()
         ]
@@ -1067,8 +1073,8 @@ def get_weather():
                 "low": row[8],
                 "high": row[9],
                 "description": row[10],
-                "sunrise": str(row[11]) if row[11] else None,
-                "sunset": str(row[12]) if row[12] else None,
+                "sunrise": row[11].isoformat() if row[11] else None,
+                "sunset": row[12].isoformat() if row[12] else None,
                 "humidity": row[14],
             }
             return jsonify(weather)
@@ -1113,8 +1119,8 @@ def get_environment():
                     "temp_min": row[8],
                     "temp_max": row[9],
                     "description": row[10],
-                    "sunrise": str(row[11]) if row[11] else None,
-                    "sunset": str(row[12]) if row[12] else None,
+                    "sunrise": row[11].isoformat() if row[11] else None,
+                    "sunset": row[12].isoformat() if row[12] else None,
                     "pressure": row[13],
                     "humidity": row[14],
                     "manual_override": row[15],
@@ -1224,6 +1230,69 @@ def reset_environment():
         return jsonify({"message": "Environment reset to auto-detect"})
     except pymysql.Error as e:
         logger.error(f"Error resetting environment: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/integrations/calendar/sync", methods=["POST"])
+def trigger_calendar_sync():
+    """
+    Trigger calendar integration sync.
+
+    Returns:
+        JSON: Success message.
+    """
+    try:
+        message = {"type": "calendar", "action": "sync"}
+        producer.send("integrations", message)
+        producer.flush()
+        logger.info("Calendar sync triggered")
+        return jsonify({"message": "Calendar sync triggered"}), 200
+    except Exception as e:
+        logger.error(f"Error triggering calendar sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/integrations/gmail/sync", methods=["POST"])
+def trigger_gmail_sync():
+    """
+    Trigger Gmail integration sync.
+
+    Returns:
+        JSON: Success message.
+    """
+    try:
+        message = {"type": "gmail", "action": "sync"}
+        producer.send("integrations", message)
+        producer.flush()
+        logger.info("Gmail sync triggered")
+        return jsonify({"message": "Gmail sync triggered"}), 200
+    except Exception as e:
+        logger.error(f"Error triggering gmail sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/integrations/status")
+def get_integrations_status():
+    """
+    Check integration status by verifying if tokens exist in DB.
+
+    Returns:
+        JSON: Status for google integration (true if tokens exist).
+    """
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute("SELECT integration_type FROM integrations_tokens WHERE integration_type = 'google'")
+        rows = cursor.fetchall()
+        db.close()
+        connected = bool(rows)
+        return jsonify({
+            "google": connected
+        })
+    except pymysql.Error as e:
+        logger.error(f"Error checking integrations status: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
