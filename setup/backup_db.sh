@@ -3,7 +3,7 @@
 
 BACKUP_DIR="../backup"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-BACKUP_FILE="${BACKUP_DIR}/alfr3d_backup_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="${BACKUP_DIR}/alfr3d_backup_${TIMESTAMP}.sql"
 
 # Create backup dir
 mkdir -p $BACKUP_DIR

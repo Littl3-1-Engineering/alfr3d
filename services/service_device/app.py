@@ -8,7 +8,7 @@ import json
 import socket
 import pymysql  # Changed from MySQLdb
 from kafka import KafkaConsumer, KafkaProducer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 
 # current path from which python is executed
@@ -148,7 +148,7 @@ class Device:
             "id": f"device_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
             "type": "success",
             "message": f"New device {self.name} added to database",
-            "time": datetime.now().strftime("%I:%M %p"),
+            "time": datetime.now(timezone.utc).isoformat(),
         }
         producer.send("event-stream", json.dumps(event).encode("utf-8"))
         logger.info("Device created successfully")
@@ -254,13 +254,13 @@ class Device:
 
             db.commit()
 
-            event = {
-                "id": f"device_online_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                "type": "info",
-                "message": f"Device {self.name} came online",
-                "time": datetime.now().strftime("%I:%M %p"),
-            }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            # event = {
+            #     "id": f"device_online_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            #     "type": "info",
+            #     "message": f"Device {self.name} came online",
+            #     "time": datetime.now().strftime("%I:%M %p"),
+            # }
+            # producer.send("event-stream", json.dumps(event).encode("utf-8"))
         except Exception as e:
             logger.error("Failed to update the database")
             logger.error("Traceback: " + str(e))
@@ -390,13 +390,13 @@ def check_offline_devices():
                 )
                 db.commit()
 
-                event = {
-                    "id": f"device_offline_{device[3]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    "type": "warning",
-                    "message": f"Device {device[3]} went offline due to inactivity",
-                    "time": datetime.now().strftime("%I:%M %p"),
-                }
-                producer.send("event-stream", json.dumps(event).encode("utf-8"))
+                # event = {
+                #     "id": f"device_offline_{device[3]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                #     "type": "warning",
+                #     "message": f"Device {device[3]} went offline due to inactivity",
+                #     "time": datetime.now().strftime("%I:%M %p"),
+                # }
+                # producer.send("event-stream", json.dumps(event).encode("utf-8"))
         except Exception:
             logger.error("Error checking device offline status")
 

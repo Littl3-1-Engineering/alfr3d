@@ -172,7 +172,7 @@ CREATE TABLE `config` (
 
 -- ---
 -- Table 'quips'
--- 
+--
 -- ---
 
 CREATE TABLE `quips` (
@@ -180,6 +180,38 @@ CREATE TABLE `quips` (
   `type` VARCHAR(64) NULL DEFAULT NULL, -- Type of quip (e.g., smart, email, bedtime)
   `quips` VARCHAR(256) NULL DEFAULT NULL, -- The quip text
   PRIMARY KEY (`id`)
+);
+
+-- ---
+-- Table 'calendar_events'
+--
+-- ---
+
+CREATE TABLE `calendar_events` (
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for event
+  `title` VARCHAR(256) NULL DEFAULT NULL, -- Event title
+  `start_time` DATETIME NULL DEFAULT NULL, -- Event start time
+  `end_time` DATETIME NULL DEFAULT NULL, -- Event end time
+  `address` VARCHAR(256) NULL DEFAULT NULL, -- Event location address
+  `notes` TEXT NULL DEFAULT NULL, -- Additional notes
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- When the event was added to DB
+  PRIMARY KEY (`id`)
+);
+
+-- ---
+-- Table 'integrations_tokens'
+--
+-- ---
+
+CREATE TABLE `integrations_tokens` (
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for token
+  `integration_type` VARCHAR(64) NOT NULL, -- Type of integration (e.g., gmail, calendar)
+  `access_token` TEXT NULL DEFAULT NULL, -- OAuth access token
+  `refresh_token` TEXT NULL DEFAULT NULL, -- OAuth refresh token
+  `expires_at` DATETIME NULL DEFAULT NULL, -- Token expiration time
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- When the token was stored
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_integration` (`integration_type`) -- Ensure one token per integration type
 );
 
 
@@ -236,8 +268,23 @@ END;;
 
 DELIMITER ;
 
+CREATE TRIGGER `cleanup_old_calendar_events` AFTER INSERT ON `calendar_events`
+FOR EACH ROW
+BEGIN
+  DELETE FROM calendar_events WHERE end_time < DATE_SUB(NOW(), INTERVAL 24 HOUR);
+END;;
+
+CREATE TRIGGER `cleanup_old_device_history` AFTER INSERT ON `device_history`
+FOR EACH ROW
+BEGIN
+  DELETE FROM device_history WHERE timestamp < DATE_SUB(NOW(), INTERVAL 180 DAY);
+  OPTIMIZE TABLE device_history;
+END;;
+
+DELIMITER ;
+
 -- ---
--- set dome initial values 
+-- set dome initial values
 -- ---
 INSERT INTO `states` (`id`, `state`) VALUES ('1', 'offline');
 INSERT INTO `states` (`id`, `state`) VALUES ('2', 'online');

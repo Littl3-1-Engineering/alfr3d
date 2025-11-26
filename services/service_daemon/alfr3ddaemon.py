@@ -35,9 +35,10 @@ import os  # used to allow execution of system level commands
 import sys
 import schedule  # 3rd party lib used for alarm clock managment.
 from random import randint  # used for random number generator
-from kafka import KafkaProducer  # user to write messages to Kafka
-from datetime import datetime
+from kafka import KafkaProducer, KafkaConsumer  # user to write messages to Kafka
+from datetime import datetime, timedelta, timezone
 import json
+import threading
 import pymysql
 
 from kafka.errors import KafkaError
@@ -102,6 +103,32 @@ def get_producer():
             logger.error("Failed to connect to Kafka: " + str(e))
             return None
     return producer
+
+
+def consume_integrations() -> None:
+    """Consume integration messages from Kafka integrations topic."""
+    try:
+        logger.info(f"Integration consumer bootstrap servers: {KAFKA_URL}")
+        consumer = KafkaConsumer(
+            "integrations", bootstrap_servers=KAFKA_URL, auto_offset_reset="latest"
+        )
+        logger.info("Connected to Kafka integrations topic")
+        while True:
+            msg = consumer.poll(timeout_ms=1000)
+            if msg:
+                for tp, messages in msg.items():
+                    for message in messages:
+                        logger.info("Polling for integration message")
+                        try:
+                            data = json.loads(message.value.decode("utf-8"))
+                            if data.get("type") == "calendar" and data.get("action") == "sync":
+                                calendar_utils.sync_calendar()
+                            elif data.get("type") == "gmail" and data.get("action") == "sync":
+                                gmail_utils.sync_gmail()
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error processing integration message: {str(e)}")
+    except KafkaError as e:
+        logger.error(f"Error connecting to Kafka for integrations: {str(e)}")
 
 
 class MyDaemon:
@@ -179,6 +206,14 @@ class MyDaemon:
 
     def decide_displays(self):
         """Collect up to 4 SA items: emails, events, gatherings; default to time + weather."""
+        """
+        Priority mapping in the daemon:
+            1 — time (check_time)
+            2 — event (check_events)
+            3 — music/gathering suggestion (check_gatherings)
+            4 — email (check_emails)
+            5 — weather (check_weather)
+        """
         displays = []
         time_card = self.check_time()
         weather_card = self.check_weather()
@@ -201,6 +236,7 @@ class MyDaemon:
         if not displays:
             logger.info("No priority displays, defaulting to time and weather")
 
+        logger.debug("Displays before sorting: " + str(displays))
         # sort by priority
         displays.sort(key=lambda x: x["priority"])
 
@@ -210,13 +246,20 @@ class MyDaemon:
 
     def check_emails(self):
         """Check for unread emails using Gmail utils."""
-        return gmail_utils.check_unread_emails()
+        emails = gmail_utils.check_unread_emails()
+        if emails:
+            email = emails[0]  # Take first
+            content_lines = f"From: {email['sender']}, Subject: {email['subject']}"
+            content = f"Unread Email - {content_lines} | Total Unread: {len(emails)}"
+            return {"mode": "email", "content": content, "priority": 4}
 
     def check_events(self):
         """Check for upcoming events with addresses."""
         events = calendar_utils.get_upcoming_events()
         if events:
             event = events[0]  # Take first
+            if start_time - datetime.now(timezone.utc) > timedelta(hours=1):
+                return None  # Only care about events within next hour
             title = event["title"]
             start_time = event["start_time"]
             address = event["address"]
@@ -254,6 +297,11 @@ class MyDaemon:
                         return {"mode": "event", "content": content, "priority": 2}
             except Exception as e:
                 logger.error("Event location error: " + str(e))
+                # Fallback content
+                # If event is within next hour, just show time
+                if start_time - datetime.now(timezone.utc) <= timedelta(hours=1):
+                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+                    return {"mode": "event", "content": content, "priority": 2}
         return None
 
     def check_gatherings(self):
@@ -276,7 +324,7 @@ class MyDaemon:
             logger.info("Gathering check result: " + str(result))
             total_count = total_row[0] if total_row else 0
             guest_count = guest_row[0] if guest_row else 0
-            if total_count > 0:
+            if guest_count > 0:
                 logger.info("Gathering detected with total people: " + str(total_count) + " (guests: " + str(guest_count) + ")")
                 # Suggest playlist based on time of day and environment description
                 hour = datetime.now().hour
@@ -299,7 +347,13 @@ class MyDaemon:
 
                 p = get_producer()
                 if p:
-                    p.send("event-stream", f"Detected {total_count} people ({guest_count} guests). Suggesting {reco['mood']} music ({reco['genre']}).".encode("utf-8"))
+                    event = {
+                        "id": f"gathering_detected_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                        "type": "info",
+                        "message": f"Gathering detected with {total_count} people ({guest_count} guests). Suggesting {reco['mood']} music ({reco['genre']}).",
+                        "time": datetime.now(timezone.utc).isoformat(),
+                    }
+                    p.send("event-stream", json.dumps(event).encode("utf-8"))
 
                 # Keep existing spotify_utils hook for playlist lookup; pass playlist hint/mood
                 playlist = spotify_utils.get_playlist_suggestion(reco.get("playlist_hint", reco.get("mood", "")))
@@ -326,15 +380,15 @@ class MyDaemon:
             if row:
                 city, desc, low, high, feel = row
                 content = f"{city}: {feel}, {desc}, {low}°C to {high}°C"
-                return {"mode": "weather", "content": content, "priority": 4}
+                return {"mode": "weather", "content": content, "priority": 5}
         except pymysql.Error as e:
             logger.error("Weather check error: " + str(e))
         return None
 
     def check_time(self):
         """Get current time card."""
-        now = datetime.now()
-        content = now.strftime("%I:%M %p")
+        now = datetime.now(timezone.utc)
+        content = now.isoformat()
         return {"mode": "time", "content": content, "priority": 1}
 
     def scan_devices(self):
@@ -438,6 +492,12 @@ def init_daemon():
 
     faults = 0
 
+    logger.info("syncing calendar events")
+    calendar_utils.sync_calendar()
+
+    logger.info("syncing gmail emails")
+    gmail_utils.sync_gmail()
+
     # initial geo check
     logger.info("Running a geoscan")
     p = get_producer()
@@ -451,6 +511,13 @@ def init_daemon():
         p = get_producer()
         if p:
             p.send("speak", b"Setting up scheduled routines")
+            event = {
+                "id": f"schedule_setup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "info",
+                "message": f"Set up scheduled routines",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", json.dumps(event).encode("utf-8"))            
         # utilities.createRoutines()
         reset_routines()
 
@@ -474,6 +541,13 @@ def init_daemon():
             p.send(
                 "speak", b"Some faults were detected but system started successfully"
             )
+            event = {
+                "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "warning",
+                "message": f"System check finished with {faults} faults",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", json.dumps(event).encode("utf-8"))            
 
         # producer.send("speak", b"Total number of faults is "+str(faults))
 
@@ -482,6 +556,13 @@ def init_daemon():
         p = get_producer()
         if p:
             p.send("speak", b"All systems are up and operational")
+            event = {
+                "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "success",
+                "message": f"System check finished",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", json.dumps(event).encode("utf-8"))
 
     return
 
@@ -492,6 +573,7 @@ if __name__ == "__main__":
         if "start" == sys.argv[1]:
             logger.info("Alfr3d Daemon initializing")
             init_daemon()
+            threading.Thread(target=consume_integrations, daemon=True).start()
             logger.info("Alfr3d Daemon starting...")
             daemon.run()
         elif "test" == sys.argv[1]:

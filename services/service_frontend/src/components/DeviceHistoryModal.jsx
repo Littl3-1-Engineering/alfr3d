@@ -187,10 +187,11 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
                               <div key={entryIndex} className="history-entry">
                                 <div className="flex justify-between text-sm mb-1">
                                   <span className="text-primary font-medium">
-                                    {new Date(entry.timestamp).toLocaleTimeString('en-US', {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
+                                     {new Date(entry.timestamp).toLocaleTimeString('en-US', {
+                                       hour: '2-digit',
+                                       minute: '2-digit',
+                                       hour12: false
+                                     })}
                                   </span>
                                   <span className="text-text-tertiary">{entry.state}</span>
                                 </div>

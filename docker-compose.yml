@@ -21,7 +21,7 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=INTERNAL:${KAFKA_ADVERTISED_LISTENERS_1},EXTERNAL:${KAFKA_ADVERTISED_LISTENERS_2}
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
-      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1
+      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1
     ports:
       - "9092:9092"
     # Healthcheck ensures Kafka is ready to accept connections
@@ -113,10 +113,13 @@ services:
         condition: service_healthy
       mysql:
         condition: service_started
+    # Host network mode for internet access (required for OAuth token refresh)
+    network_mode: host
     env_file: .env
     environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-       - LOG_LEVEL=${LOG_LEVEL}
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-frontend:
     build:

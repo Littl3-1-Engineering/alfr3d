@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { formatLocalTime } from '../utils/timeUtils';
 
 const SituationalAwareness = () => {
   const [saData, setSaData] = useState([]);
@@ -52,7 +53,7 @@ const SituationalAwareness = () => {
               {getIcon(card.mode)}
               <div>
                 <p className="text-sm text-text-tertiary capitalize">{card.mode || 'Status'}</p>
-                <p className="text-lg font-mono text-text-primary">{card.content || 'No data'}</p>
+                <p className="text-lg font-mono text-text-primary">{card.mode === 'time' ? new Date(card.content).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : (card.content || 'No data')}</p>
                 <p className="text-xs text-text-tertiary">Priority: {card.priority || 4}</p>
               </div>
             </motion.div>
