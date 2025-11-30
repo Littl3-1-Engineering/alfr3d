@@ -1,7 +1,7 @@
 FROM python:3.9-slim
 
-# Install arp-scan
-RUN apt-get update && apt-get install -y arp-scan && rm -rf /var/lib/apt/lists/*
+# Install arp-scan and iproute2
+RUN apt-get update && apt-get install -y arp-scan iproute2 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

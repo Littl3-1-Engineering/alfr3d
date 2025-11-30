@@ -140,47 +140,47 @@ const Blueprint = ({ onDeviceSelect }) => {
 
         {/* Devices List */}
         <div className="ml-6 w-64">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-semibold text-primary">Devices</h3>
-            <button
-              onClick={() => setIsListExpanded(!isListExpanded)}
-              className="p-1 bg-card/50 rounded-lg hover:bg-card-hover/50"
-            >
-              {isListExpanded ? <ChevronUp className="w-4 h-4 text-primary" /> : <ChevronDown className="w-4 h-4 text-primary" />}
-            </button>
-          </div>
-          {isListExpanded && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="space-y-2"
-            >
-              {unpositionedDevices.map((device) => {
-                const Icon = getIcon(device.type);
-                return (
-                  <motion.div
-                    key={device.id}
-                    drag
-                    dragConstraints={{ left: 0, top: 0, right: 0, bottom: 0 }} // Allow drag anywhere
-                    onDragEnd={(event, info) => handleDragEnd(device, event, info)}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: device.id * 0.1, duration: 0.3 }}
-                    className="flex items-center p-2 bg-card/50 rounded-lg cursor-pointer hover:bg-card-hover/50"
-                    onClick={() => { setSelectedDevice(device); onDeviceSelect && onDeviceSelect(device); }}
-                  >
-                    <Icon className={`w-6 h-6 mr-3 ${device.state === 'online' ? 'text-primary' : 'text-text-tertiary'}`} />
-                    <div>
-                      <div className="text-sm font-medium text-text-inverse">{device.name}</div>
-                      <div className="text-xs text-text-tertiary">{device.type} - {device.state}</div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </motion.div>
-          )}
-        </div>
+           <div className="flex items-center justify-between mb-2">
+             <h3 className="text-lg font-semibold text-primary">Devices</h3>
+             <button
+               onClick={() => setIsListExpanded(!isListExpanded)}
+               className="p-1 bg-card/50 rounded-lg hover:bg-card-hover/50"
+             >
+               {isListExpanded ? <ChevronUp className="w-4 h-4 text-primary" /> : <ChevronDown className="w-4 h-4 text-primary" />}
+             </button>
+           </div>
+           {isListExpanded && (
+             <motion.div
+               initial={{ opacity: 0, height: 0 }}
+               animate={{ opacity: 1, height: 'auto' }}
+               exit={{ opacity: 0, height: 0 }}
+               className="space-y-2"
+             >
+               {unpositionedDevices.map((device) => {
+                 const Icon = getIcon(device.type);
+                 return (
+                   <motion.div
+                     key={device.id}
+                     drag
+                     dragConstraints={{ left: 0, top: 0, right: 0, bottom: 0 }} // Allow drag anywhere
+                     onDragEnd={(event, info) => handleDragEnd(device, event, info)}
+                     initial={{ opacity: 0, x: 20 }}
+                     animate={{ opacity: 1, x: 0 }}
+                     transition={{ delay: device.id * 0.1, duration: 0.3 }}
+                     className="flex items-center p-2 bg-card/50 rounded-lg cursor-pointer hover:bg-card-hover/50"
+                     onClick={() => { setSelectedDevice(device); onDeviceSelect && onDeviceSelect(device); }}
+                   >
+                     <Icon className={`w-6 h-6 mr-3 ${device.state === 'online' ? 'text-primary' : 'text-text-tertiary'}`} />
+                     <div>
+                       <div className="text-sm font-medium text-text-inverse">{device.name}</div>
+                       <div className="text-xs text-text-tertiary">{device.type} - {device.state}</div>
+                     </div>
+                   </motion.div>
+                 );
+               })}
+             </motion.div>
+           )}
+         </div>
       </div>
     </div>
   );

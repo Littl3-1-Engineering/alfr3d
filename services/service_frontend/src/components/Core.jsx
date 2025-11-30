@@ -1,7 +1,7 @@
 // src/components/Core.jsx
 
 import { motion } from 'framer-motion';
-import { Sun } from 'lucide-react';
+import { Sun, Lightbulb, Thermometer, Wifi } from 'lucide-react';
 import Lottie from 'lottie-react';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
@@ -34,12 +34,21 @@ const Satellite = ({ radius, angle, size, color, glowColor, children }) => {
   );
 };
 
+const getIcon = (type) => {
+  switch (type) {
+    case 'light': return Lightbulb;
+    case 'thermostat': return Thermometer;
+    default: return Wifi;
+  }
+};
+
 const Core = () => {
   const [animationData, setAnimationData] = useState(null);
   const [isIntroFinished, setIsIntroFinished] = useState(false);
   const [rotationAngle, setRotationAngle] = useState(0);
   const [containers, setContainers] = useState([]);
   const [users, setUsers] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [sunAngle, setSunAngle] = useState(0);
   const { themeColors } = useTheme();
 
@@ -82,6 +91,23 @@ const Core = () => {
     };
     fetchUsers();
     const interval = setInterval(fetchUsers, 5000); // Update every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const fetchDevices = async () => {
+      try {
+        const response = await fetch(API_BASE_URL + '/api/devices');
+        const data = await response.json();
+        setDevices(data);
+      } catch (error) {
+        console.error('Error fetching devices:', error);
+        // Fallback dummy data for testing
+        setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
+      }
+    };
+    fetchDevices();
+    const interval = setInterval(fetchDevices, 10000); // Update every 10 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -139,28 +165,55 @@ const Core = () => {
       <div className="absolute top-1/2 left-1/2 w-[60%] h-[60%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/20"></div>
       <div className="absolute top-1/2 left-1/2 w-[40%] h-[40%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/20"></div>
 
-      {/* User Orbit - Middle ring */}
-      {/* Orbit calculations: Rotates the entire ring 360° over 45 seconds linearly
-         Users are positioned evenly around the circle based on their index */}
-      <motion.div
-        className="absolute top-0 left-0 w-full h-full"
-        animate={{ rotate: 360 }}
-        transition={{ duration: 45, repeat: Infinity, ease: "linear" }}
-        style={{ zIndex: 10 }}
-      >
-        {users.map((user, index) => (
-          <Satellite
-            key={`user-${user.name}`}
-            radius={120} // 60% ring radius
-            angle={(index / users.length) * 2 * Math.PI}
-            size={10}
-            color={user.type === 'guest' ? themeColors.warning : themeColors.success}
-            glowColor={user.type === 'guest' ? themeColors.warning : themeColors.success}
-          />
-        ))}
-      </motion.div>
+       {/* User Orbit - Outer ring */}
+       {/* Orbit calculations: Rotates the entire ring -360° over 45 seconds linearly
+          Users are positioned evenly around the circle based on their index */}
+       <motion.div
+         className="absolute top-0 left-0 w-full h-full"
+         animate={{ rotate: -360 }}
+         transition={{ duration: 45, repeat: Infinity, ease: "linear" }}
+         style={{ zIndex: 10 }}
+       >
+         {users.map((user, index) => (
+           <Satellite
+             key={`user-${user.name}`}
+             radius={160} // 80% ring radius
+             angle={(index / users.length) * 2 * Math.PI}
+             size={10}
+             color={user.type === 'guest' ? themeColors.warning : themeColors.success}
+             glowColor={user.type === 'guest' ? themeColors.warning : themeColors.success}
+           />
+         ))}
+       </motion.div>
 
-      {/* Container Orbit - This div rotates on top of everything */}
+       {/* Alfr3d Devices Orbit - Middle ring */}
+       {/* Orbit calculations: Rotates the entire ring 360° over 45 seconds linearly
+          Alfr3d devices are positioned evenly around the circle based on their index */}
+       <motion.div
+         className="absolute top-0 left-0 w-full h-full"
+         animate={{ rotate: 360 }}
+         transition={{ duration: 45, repeat: Infinity, ease: "linear" }}
+         style={{ zIndex: 10 }}
+       >
+         {devices.filter(device => device.user === 'alfr3d').map((device, index) => {
+           const Icon = getIcon(device.type);
+           const deviceColor = device.state === 'online' ? themeColors.success : themeColors.warning;
+           return (
+             <Satellite
+               key={`device-${device.id}`}
+               radius={120} // 60% ring radius
+               angle={(index / devices.filter(d => d.user === 'alfr3d').length) * 2 * Math.PI}
+               size={12}
+               color="transparent"
+               glowColor={deviceColor}
+             >
+               <Icon className="w-full h-full" style={{ color: deviceColor }} />
+             </Satellite>
+           );
+         })}
+       </motion.div>
+
+       {/* Container Orbit - This div rotates on top of everything */}
       {/* Orbit calculations: Rotates counter-clockwise (-360°) over 45 seconds
          Containers positioned evenly around inner ring, color/size based on error count */}
       <motion.div
@@ -197,18 +250,18 @@ const Core = () => {
         })}
       </motion.div>
       
-       {/* Sun Orbit - Positioned based on time */}
-       <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
-          <Satellite
-            radius={160} // 80% ring radius
-            angle={sunAngle}
-            size={24}
-            color="transparent"
-            glowColor={themeColors.warning}
-          >
-            <Sun className="w-full h-full" style={{ color: themeColors.warning }}/>
-          </Satellite>
-       </div>
+        {/* Sun Orbit - Positioned based on time */}
+        <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
+           <Satellite
+             radius={240} // Outside the rings
+             angle={sunAngle}
+             size={24}
+             color="transparent"
+             glowColor={themeColors.warning}
+           >
+             <Sun className="w-full h-full" style={{ color: themeColors.warning }}/>
+           </Satellite>
+        </div>
     </div>
   );
 };

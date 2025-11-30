@@ -8,18 +8,22 @@ spec:
     matchLabels:
       app: service-device
   template:
-    metadata:
-      labels:
-        app: service-device
-    spec:
-      initContainers:
-      - name: wait-for-kafka
-        image: busybox
-        command: ['sh', '-c', 'until nc -z kafka 9092; do echo waiting for kafka; sleep 2; done;']
-      containers:
-      - name: service-device
-        image: alfr3d/service-device:latest
-        imagePullPolicy: Never
-        envFrom:
-        - configMapRef:
-            name: alfr3d-k8s-env
+     metadata:
+       labels:
+         app: service-device
+     spec:
+       hostNetwork: true
+       dnsPolicy: ClusterFirstWithHostNet
+       initContainers:
+       - name: wait-for-kafka
+         image: busybox
+         command: ['sh', '-c', 'until nc -z kafka 9092; do echo waiting for kafka; sleep 2; done;']
+       containers:
+       - name: service-device
+         image: alfr3d/service-device:latest
+         imagePullPolicy: Never
+         securityContext:
+           privileged: true
+         envFrom:
+         - configMapRef:
+             name: alfr3d-k8s-env
