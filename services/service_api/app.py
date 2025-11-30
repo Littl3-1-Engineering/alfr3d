@@ -849,10 +849,11 @@ def get_user_devices(user_id):
         cursor = db.cursor()
         cursor.execute(
             """
-            SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, d.last_online
+            SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, d.last_online, u.username
             FROM device d
             JOIN states s ON d.state = s.id
             JOIN device_types dt ON d.device_type = dt.id
+            LEFT JOIN user u ON d.user_id = u.id
             WHERE d.user_id = %s
             """,
             (user_id,),
@@ -866,6 +867,7 @@ def get_user_devices(user_id):
                 "state": row[4],
                 "type": row[5],
                 "last_online": str(row[6]),
+                "user": row[7],
             }
             for row in cursor.fetchall()
         ]

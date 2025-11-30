@@ -7,3 +7,4 @@ node_modules/
 dist/
 backup/
 alfr3d.wiki/
+k8s/configmap.yaml

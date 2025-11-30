@@ -1,15 +1,15 @@
 import PropTypes from 'prop-types';
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import Modal from 'react-modal';
 import { Monitor, X } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 Modal.setAppElement('#root');
 
 Modal.setAppElement('#root');
 
 const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
-  const [expandedDays, setExpandedDays] = useState(new Set());
 
   // Process history data into daily groups, limited to 6 months
   const dailyActivity = useMemo(() => {
@@ -43,15 +43,7 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
     return Object.values(dailyGroups).sort((a, b) => a.date.localeCompare(b.date));
   }, [history]);
 
-  const toggleDayExpansion = (date) => {
-    const newExpanded = new Set(expandedDays);
-    if (newExpanded.has(date)) {
-      newExpanded.delete(date);
-    } else {
-      newExpanded.add(date);
-    }
-    setExpandedDays(newExpanded);
-  };
+
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -72,11 +64,7 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
     }
   };
 
-  const getActivityLevel = (count) => {
-    if (count >= 10) return 'high';
-    if (count >= 5) return 'medium';
-    return 'low';
-  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -131,99 +119,31 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
           </div>
         </div>
 
-        {/* Timeline Section */}
+        {/* Activity Graph Section */}
         <div>
           <h3 className="text-xl font-bold text-primary mb-4">
-            Activity Timeline ({dailyActivity.length} days)
+            Activity Graph ({dailyActivity.length} days)
           </h3>
-          <div className="max-h-96 overflow-y-auto">
-            {dailyActivity.length > 0 ? (
-              <div className="timeline-container">
-                {dailyActivity.map((day, index) => (
-                  <motion.div
-                    key={day.date}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="timeline-item"
-                  >
-                    {/* Timeline connector */}
-                    <div className="timeline-connector">
-                      <div className="timeline-dot"></div>
-                      {index < dailyActivity.length - 1 && <div className="timeline-line"></div>}
-                    </div>
-
-                    {/* Timeline content */}
-                    <div className="timeline-content">
-                      <div
-                        className="timeline-header cursor-pointer"
-                        onClick={() => toggleDayExpansion(day.date)}
-                      >
-                        <div className="timeline-date">{formatDate(day.date)}</div>
-                        <div className="timeline-meta">
-                          <span className={`activity-badge activity-${getActivityLevel(day.count)}`}>
-                            {day.count} {day.count === 1 ? 'activity' : 'activities'}
-                          </span>
-                          <div className="state-indicators">
-                            {Array.from(day.states).map(state => (
-                              <span key={state} className={`state-badge state-${state?.toLowerCase()}`}>
-                                {state}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Expandable details */}
-                      {expandedDays.has(day.date) && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="timeline-details"
-                        >
-                          <div className="space-y-2">
-                            {day.entries.map((entry, entryIndex) => (
-                              <div key={entryIndex} className="history-entry">
-                                <div className="flex justify-between text-sm mb-1">
-                                  <span className="text-primary font-medium">
-                                     {new Date(entry.timestamp).toLocaleTimeString('en-US', {
-                                       hour: '2-digit',
-                                       minute: '2-digit',
-                                       hour12: false
-                                     })}
-                                  </span>
-                                  <span className="text-text-tertiary">{entry.state}</span>
-                                </div>
-                                <div className="text-xs text-text-secondary space-y-1">
-                                  {entry.name !== device?.name && (
-                                    <div>Name: <span className="text-text-inverse">{entry.name}</span></div>
-                                  )}
-                                  {entry.ip !== device?.ip && (
-                                    <div>IP: <span className="text-text-inverse">{entry.ip}</span></div>
-                                  )}
-                                  {entry.mac !== device?.mac && (
-                                    <div>MAC: <span className="text-text-inverse">{entry.mac}</span></div>
-                                  )}
-                                  {entry.user && (
-                                    <div>User: <span className="text-text-inverse">{entry.user}</span></div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center text-text-tertiary py-8">
-                No activity found for this device in the last 6 months
-              </div>
-            )}
-          </div>
+          {dailyActivity.length > 0 ? (
+            <div className="h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dailyActivity.map(day => ({ date: formatDate(day.date), count: day.count }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis dataKey="date" stroke="var(--color-text-secondary)" />
+                  <YAxis stroke="var(--color-text-secondary)" />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-primary)', borderRadius: '8px' }}
+                    labelStyle={{ color: 'var(--color-text-primary)' }}
+                  />
+                  <Line type="monotone" dataKey="count" stroke="var(--color-primary)" strokeWidth={2} dot={{ fill: 'var(--color-primary)' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center text-text-tertiary py-8">
+              No activity found for this device in the last 6 months
+            </div>
+          )}
         </div>
       </motion.div>
     </Modal>

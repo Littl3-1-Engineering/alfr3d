@@ -1,4 +1,4 @@
-kafka-python-ng
+kafka-python-ng==2.2.3
 schedule
 python-dotenv
 pymysql

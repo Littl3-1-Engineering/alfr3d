@@ -1,0 +1,148 @@
+# Docker Compose configuration for ALFR3D services
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
+    ports:
+      - "${ZOOKEEPER_CLIENT_PORT}:${ZOOKEEPER_CLIENT_PORT}"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    # Kafka depends on Zookeeper for cluster coordination and metadata management
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_BROKER_ID=${KAFKA_BROKER_ID}
+      - KAFKA_ZOOKEEPER_CONNECT=${KAFKA_ZOOKEEPER_CONNECT}
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_LISTENERS=INTERNAL:${KAFKA_LISTENERS_1},EXTERNAL:${KAFKA_LISTENERS_2}
+      - KAFKA_ADVERTISED_LISTENERS=INTERNAL:${KAFKA_ADVERTISED_LISTENERS_1},EXTERNAL:${KAFKA_ADVERTISED_LISTENERS_2}
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1
+    ports:
+      - "9092:9092"
+    # Healthcheck ensures Kafka is ready to accept connections
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PSWD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  service-user:
+    build: ./services/service_user
+    # Depends on Kafka for messaging and MySQL for user data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    env_file: .env
+    environment:
+       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+       - LOG_LEVEL=${LOG_LEVEL}
+
+  service-api:
+    build: ./services/service_api
+    # Depends on MySQL for database operations and Kafka for messaging
+    depends_on:
+      mysql:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5001:5001"
+    # Mounts Docker socket to allow container management
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Privileged mode grants elevated permissions for Docker operations
+    privileged: true
+    env_file: .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-device:
+    build: ./services/service_device
+    # Depends on Kafka for event streaming and MySQL for data storage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    # Host network mode enables ARP scanning and direct host access
+    network_mode: host  # To allow arp-scan on host network
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-environment:
+    build: ./services/service_environment
+    # Depends on Kafka for event publishing and MySQL for data persistence
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    env_file: .env
+    environment:
+       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+       - LOG_LEVEL=${LOG_LEVEL}
+
+  service-daemon:
+    build: ./services/service_daemon
+    # Depends on Kafka for inter-service communication and MySQL for state storage
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    # Host network mode for internet access (required for OAuth token refresh)
+    network_mode: host
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-frontend:
+    build:
+      context: ./services/service_frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    ports:
+      - "8000:8000"
+    env_file: .env
+
+  # Separate MySQL instance for testing to avoid interfering with production data
+  test-mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: testrootpassword
+      MYSQL_DATABASE: test_alfr3d_db
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+# Named volume for persistent MySQL data storage
+volumes:
+  mysql_data:
