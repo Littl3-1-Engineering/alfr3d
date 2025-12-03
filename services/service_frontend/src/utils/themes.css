@@ -103,5 +103,36 @@
 
   /* Glow utilities for light mode */
   --glow-orange:                0 0 12px hsla(24, 100%, 58%, 0.5);
-  --glow-orange-intense:        0 0 20px hsla(24, 100%, 58%, 0.8);
+   --glow-orange-intense:        0 0 20px hsla(24, 100%, 58%, 0.8);
+}
+
+/* Leaflet Map Dark Theme Overrides */
+.leaflet-control-container .leaflet-routing-container-hide {
+  display: none;
+}
+
+.leaflet-control-container .leaflet-control {
+  background-color: hsl(210, 8%, 4%, 0.85) !important;
+  border: 1px solid hsla(45, 100%, 58%, 0.4) !important;
+  border-radius: 0 !important;
+}
+
+.leaflet-control-container .leaflet-control a {
+  color: hsl(200, 20%, 92%) !important;
+  background-color: transparent !important;
+}
+
+.leaflet-control-container .leaflet-control a:hover {
+  background-color: hsla(45, 100%, 58%, 0.1) !important;
+}
+
+.leaflet-control-attribution {
+  background-color: hsl(210, 8%, 4%, 0.85) !important;
+  color: hsl(200, 15%, 70%) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: hsl(200, 15%, 70%) !important;
 }

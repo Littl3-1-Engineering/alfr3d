@@ -25,7 +25,11 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly']
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+]
 
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE")
 MYSQL_USER = os.environ.get("MYSQL_USER")
@@ -38,7 +42,7 @@ CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 def check_internet():
     """Check if internet is available by testing connection to Google's OAuth endpoint."""
     try:
-        urllib.request.urlopen('https://www.google.com', timeout=30)
+        urllib.request.urlopen("https://www.google.com", timeout=30)
         logger.debug("Internet connection available")
         return True
     except Exception as e:
@@ -52,12 +56,11 @@ def get_credentials():
     logger.debug("Getting Gmail credentials")
     creds = None
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-        )
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
         cursor.execute(
-            "SELECT access_token, refresh_token, expires_at FROM integrations_tokens WHERE integration_type = 'google'"
+            "SELECT access_token, refresh_token, expires_at "
+            "FROM integrations_tokens WHERE integration_type = 'google'"
         )
         row = cursor.fetchone()
         db.close()
@@ -69,15 +72,18 @@ def get_credentials():
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=CLIENT_ID,
                 client_secret=CLIENT_SECRET,
-                scopes=SCOPES
+                scopes=SCOPES,
             )
             if expires_at and datetime.utcnow() > expires_at:
                 if check_internet():
                     creds.refresh(Request())
                     # Update DB with new token
-                    update_tokens('google', creds)
+                    update_tokens("google", creds)
                 else:
-                    logger.warning("OAuth token expired and no internet available to refresh. Skipping Gmail checks.")
+                    logger.warning(
+                        "OAuth token expired and no internet available to refresh. "
+                        "Skipping Gmail checks."
+                    )
                     return None
     except Exception as e:
         logger.error(f"Error getting Gmail credentials: {e}")
@@ -88,14 +94,28 @@ def update_tokens(integration_type, creds):
     """Update tokens in DB."""
     logger.debug("Updating tokens in DB")
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-        )
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        expires_at = datetime.utcnow() + timedelta(seconds=creds.expiry.timestamp() - datetime.utcnow().timestamp()) if creds.expiry else None
+        expires_at = (
+            datetime.utcnow()
+            + timedelta(seconds=creds.expiry.timestamp() - datetime.utcnow().timestamp())
+            if creds.expiry
+            else None
+        )
         cursor.execute(
-            "INSERT INTO integrations_tokens (integration_type, access_token, refresh_token, expires_at) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE access_token=%s, refresh_token=%s, expires_at=%s",
-            (integration_type, creds.token, creds.refresh_token, expires_at, creds.token, creds.refresh_token, expires_at)
+            "INSERT INTO integrations_tokens "
+            "(integration_type, access_token, refresh_token, expires_at) "
+            "VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE access_token=%s, "
+            "refresh_token=%s, expires_at=%s",
+            (
+                integration_type,
+                creds.token,
+                creds.refresh_token,
+                expires_at,
+                creds.token,
+                creds.refresh_token,
+                expires_at,
+            ),
         )
         db.commit()
         db.close()
@@ -115,19 +135,19 @@ def check_unread_emails():
         return None
 
     try:
-        service = build('gmail', 'v1', credentials=creds)
-        results = service.users().messages().list(userId='me', q='is:unread').execute()
-        messages = results.get('messages', [])
+        service = build("gmail", "v1", credentials=creds)
+        results = service.users().messages().list(userId="me", q="is:unread").execute()
+        messages = results.get("messages", [])
 
         emails = []
         for msg in messages[:5]:  # Limit to 5
-            msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
-            headers = msg_data['payload']['headers']
-            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            headers = msg_data["payload"]["headers"]
+            sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
             # Parse it to get only the name (returns "John Doe")
             sender_name, sender_email = parseaddr(sender)
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
-            emails.append({'sender': sender_name, 'subject': subject})
+            subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+            emails.append({"sender": sender_name, "subject": subject})
 
         logger.info(f"Fetched {len(emails)} unread emails")
         return emails if emails else None
@@ -151,10 +171,10 @@ def authorize_google():
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
         },
-        scopes=SCOPES
+        scopes=SCOPES,
     )
     creds = flow.run_local_server(port=0)
-    update_tokens('google', creds)
+    update_tokens("google", creds)
     logger.info("Google authorized and tokens stored")
 
 

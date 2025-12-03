@@ -36,7 +36,7 @@ while producer is None:
         print("Connecting to Kafka at: " + KAFKA_URL)
         producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
         logger.info("Connected to Kafka")
-    except Exception as e:
+    except Exception:
         logger.error("Failed to connect to Kafka, retrying in 5 seconds")
         time.sleep(5)
 
@@ -89,9 +89,7 @@ class User:
                 db.close()
                 return False
             usrtype = data[0]
-            cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
-            )
+            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -100,7 +98,8 @@ class User:
                 return False
             envid = data[0]
             cursor.execute(
-                "INSERT INTO user(username, last_online, state, type, environment_id) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO user(username, last_online, state, type, environment_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
                 (self.name, self.last_online, usrstate, usrtype, envid),
             )
             db.commit()
@@ -137,9 +136,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -166,9 +163,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warn("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -191,10 +186,8 @@ class User:
                 db.rollback()
                 db.close()
                 return False
-            stateid = data[0]
-            cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
-            )
+
+            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -233,9 +226,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -333,9 +324,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "type": usr_type[1],
                 "last_online": str(user[6]),
             }
-            producer.send(
-                "speak", value=json.dumps(data).encode("utf-8"), key=b"welcome"
-            )
+            producer.send("speak", value=json.dumps(data).encode("utf-8"), key=b"welcome")
             event = {
                 "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",

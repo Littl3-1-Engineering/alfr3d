@@ -7,10 +7,11 @@ import subprocess
 import json
 import pymysql  # Changed from MySQLdb to pymysql
 import threading
-from kafka import KafkaConsumer, KafkaProducer, TopicPartition
+from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
-from flask import Flask, request, jsonify, Response
-from typing import Dict, Any, Optional, List
+from flask import Flask, request, jsonify
+from typing import Dict, Any, List
+from datetime import datetime
 from flask_cors import CORS
 
 # current path from which python is executed
@@ -36,7 +37,7 @@ ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 # Kafka producer for integrations
 producer = KafkaProducer(
     bootstrap_servers=KAFKA_URL,
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
 )
 
 # Store recent events
@@ -276,7 +277,8 @@ def create_user():
             return jsonify({"error": "Environment not found"}), 500
         env_id = env_row[0]
         cursor.execute(
-            "INSERT INTO user (username, email, about_me, state, type, environment_id) VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO user (username, email, about_me, state, type, environment_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (
                 data["name"],
                 data.get("email", ""),
@@ -339,9 +341,7 @@ def update_user(user_id: int):
                 params.append(type_id[0])
         if updates:
             params.append(user_id)
-            cursor.execute(
-                f"UPDATE user SET {', '.join(updates)} WHERE id = %s", params
-            )
+            cursor.execute(f"UPDATE user SET {', '.join(updates)} WHERE id = %s", params)
             db.commit()
         db.close()
         return jsonify({"message": "User updated"})
@@ -377,9 +377,7 @@ def delete_user(user_id):
 
 def run_docker_command(command: List[str], env: Dict[str, str]) -> str:
     """Run a Docker command via subprocess and return stdout."""
-    result = subprocess.run(
-        command, capture_output=True, text=True, timeout=10, env=env
-    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10, env=env)
     if result.returncode != 0:
         logger.error(f"Docker command failed: {result.stderr}")
         raise subprocess.CalledProcessError(
@@ -622,7 +620,8 @@ def get_devices():
         cursor = db.cursor()
         cursor.execute(
             """
-            SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, u.username, d.last_online, d.position_x, d.position_y
+            SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, u.username, d.last_online,
+                   d.position_x, d.position_y
             FROM device d
             JOIN states s ON d.state = s.id
             JOIN device_types dt ON d.device_type = dt.id
@@ -708,7 +707,8 @@ def create_device():
             if user_row:
                 user_id = user_row[0]
         cursor.execute(
-            "INSERT INTO device (name, IP, MAC, state, device_type, user_id, environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO device (name, IP, MAC, state, device_type, user_id, environment_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 data["name"],
                 data.get("ip", "10.0.0.125"),
@@ -766,18 +766,14 @@ def update_device(device_id):
             updates.append("MAC = %s")
             params.append(data["mac"])
         if "type" in data:
-            cursor.execute(
-                "SELECT id FROM device_types WHERE type = %s", (data["type"],)
-            )
+            cursor.execute("SELECT id FROM device_types WHERE type = %s", (data["type"],))
             type_row = cursor.fetchone()
             if type_row:
                 updates.append("device_type = %s")
                 params.append(type_row[0])
         if "user" in data:
             if data["user"]:
-                cursor.execute(
-                    "SELECT id FROM user WHERE username = %s", (data["user"],)
-                )
+                cursor.execute("SELECT id FROM user WHERE username = %s", (data["user"],))
                 user_row = cursor.fetchone()
                 if user_row:
                     updates.append("user_id = %s")
@@ -795,9 +791,7 @@ def update_device(device_id):
                 updates.append("position_y = NULL")
         if updates:
             params.append(device_id)
-            cursor.execute(
-                f"UPDATE device SET {', '.join(updates)} WHERE id = %s", params
-            )
+            cursor.execute(f"UPDATE device SET {', '.join(updates)} WHERE id = %s", params)
             db.commit()
         db.close()
         return jsonify({"message": "Device updated"})
@@ -942,9 +936,7 @@ def get_quips():
         )
         cursor = db.cursor()
         cursor.execute("SELECT id, type, quips FROM quips")
-        quips = [
-            {"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()
-        ]
+        quips = [{"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()]
         db.close()
         return jsonify(quips)
     except pymysql.Error as e:
@@ -1054,7 +1046,8 @@ def get_weather():
     Retrieve weather information for the environment.
 
     Returns:
-        JSON: Weather data including city, state, country, low, high, description, sunrise, sunset, humidity.
+        JSON: Weather data including city, state, country, low, high, description,
+        sunrise, sunset, humidity.
     """
     try:
         db = pymysql.connect(
@@ -1062,7 +1055,9 @@ def get_weather():
         )
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
+            "description, sunrise, sunset, pressure, humidity, manual_override, "
+            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1101,7 +1096,9 @@ def get_environment():
         )
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
+            "description, sunrise, sunset, pressure, humidity, manual_override, "
+            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1184,9 +1181,7 @@ def update_environment():
             "subjective_feel": "subjective_feel",
         }
         location_fields = ["latitude", "longitude", "city", "state", "country", "IP"]
-        manual_location_override = (
-            1 if any(field in data for field in location_fields) else 0
-        )
+        manual_location_override = 1 if any(field in data for field in location_fields) else 0
         for field, db_field in field_mappings.items():
             if field in data:
                 updates.append(f"{db_field} = %s")
@@ -1210,6 +1205,45 @@ def update_environment():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/calendar/events")
+def get_calendar_events():
+    """
+    Retrieve calendar events for today.
+
+    Returns:
+        JSON: List of calendar events for today.
+    """
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        today = datetime.now().date()
+        cursor.execute(
+            """
+            SELECT title, start_time, end_time, address, notes FROM calendar_events
+            WHERE DATE(start_time) = %s
+            ORDER BY start_time ASC
+            """,
+            (today,),
+        )
+        events = [
+            {
+                "title": row[0],
+                "start_time": row[1].isoformat() if row[1] else None,
+                "end_time": row[2].isoformat() if row[2] else None,
+                "address": row[3],
+                "notes": row[4],
+            }
+            for row in cursor.fetchall()
+        ]
+        db.close()
+        return jsonify(events)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching calendar events: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/environment/reset", methods=["POST"])
 def reset_environment():
     """
@@ -1224,10 +1258,12 @@ def reset_environment():
         )
         cursor = db.cursor()
         cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, description, sunrise, sunset, pressure, humidity, manual_override, manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
+            "description, sunrise, sunset, pressure, humidity, manual_override, "
+            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
-        db.commit()
+        _ = cursor.fetchone()
         db.close()
         return jsonify({"message": "Environment reset to auto-detect"})
     except pymysql.Error as e:
@@ -1286,13 +1322,13 @@ def get_integrations_status():
             host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
         )
         cursor = db.cursor()
-        cursor.execute("SELECT integration_type FROM integrations_tokens WHERE integration_type = 'google'")
+        cursor.execute(
+            "SELECT integration_type FROM integrations_tokens WHERE integration_type = 'google'"
+        )
         rows = cursor.fetchall()
         db.close()
         connected = bool(rows)
-        return jsonify({
-            "google": connected
-        })
+        return jsonify({"google": connected})
     except pymysql.Error as e:
         logger.error(f"Error checking integrations status: {str(e)}")
         return jsonify({"error": str(e)}), 500

@@ -27,13 +27,13 @@ const System = () => {
   return (
     <div>
       <h2 className="text-2xl font-bold text-primary mb-6 drop-shadow-lg">System Monitor</h2>
-      
+
       <div className="glass rounded-2xl p-6 font-mono text-sm">
         <div className="flex items-center space-x-2 mb-4">
           <Terminal className="w-5 h-5 text-primary" />
           <span className="text-primary">ALFR3D Terminal</span>
         </div>
-        
+
         <div className="bg-black/50 rounded-lg p-4 h-96 overflow-y-auto">
           {logs.map((log, index) => (
             <motion.div
@@ -48,7 +48,7 @@ const System = () => {
             </motion.div>
           ))}
         </div>
-        
+
         <div className="mt-4 flex items-center space-x-2">
           <span className="text-primary">alfr3d@matrix:~$</span>
           <span className="animate-pulse">_</span>

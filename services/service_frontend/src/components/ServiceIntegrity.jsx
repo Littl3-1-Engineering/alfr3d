@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { Activity, Users, Home, Zap } from 'lucide-react';
-import { useTheme } from '../utils/ThemeContext';
+import { useTheme } from '../utils/useTheme';
 
 const services = [
   { name: 'User Service', status: 'healthy', icon: Users, value: 95 },

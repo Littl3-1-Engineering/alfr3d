@@ -2,7 +2,6 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
 import { API_BASE_URL } from '../config';
-import { formatLocalTime } from '../utils/timeUtils';
 
 const SituationalAwareness = () => {
   const [saData, setSaData] = useState([]);
@@ -27,51 +26,47 @@ const SituationalAwareness = () => {
 
   const getIcon = (mode) => {
     switch (mode) {
-      case 'time': return <Clock className="w-6 h-6 text-primary drop-shadow-lg" />;
-      case 'weather': return <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />;
-      case 'email': return <Mail className="w-6 h-6 text-primary drop-shadow-lg" />;
-      case 'event': return <Calendar className="w-6 h-6 text-success drop-shadow-lg" />;
-      case 'music': return <Music className="w-6 h-6 text-secondary drop-shadow-lg" />;
-      default: return <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />;
+      case 'time': return <Clock className="w-6 h-6 text-fui-accent" />;
+      case 'weather': return <Thermometer className="w-6 h-6 text-error" />;
+      case 'email': return <Mail className="w-6 h-6 text-fui-accent" />;
+      case 'event': return <Calendar className="w-6 h-6 text-fui-accent" />;
+      case 'music': return <Music className="w-6 h-6 text-fui-text" />;
+      default: return <Thermometer className="w-6 h-6 text-error" />;
     }
   };
 
   return (
-    <div className="glass rounded-2xl p-6 border border-primary/30 bg-card/20">
-      <h2 className="text-xl font-bold text-primary mb-4 drop-shadow-lg">Situational Awareness</h2>
-
-      <div className="space-y-4">
-        {saData.length > 0 ? (
-          saData.slice(0, 4).map((card, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="flex items-center space-x-3"
-            >
-              {getIcon(card.mode)}
-              <div>
-                <p className="text-sm text-text-tertiary capitalize">{card.mode || 'Status'}</p>
-                <p className="text-lg font-mono text-text-primary">{card.mode === 'time' ? new Date(card.content).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : (card.content || 'No data')}</p>
-                <p className="text-xs text-text-tertiary">Priority: {card.priority || 4}</p>
-              </div>
-            </motion.div>
-          ))
-        ) : (
+    <div className="space-y-4">
+      {saData.length > 0 ? (
+        saData.slice(0, 4).map((card, index) => (
           <motion.div
+            key={index}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center space-x-3"
+            transition={{ delay: index * 0.1 }}
+            className="flex items-center space-x-3 p-2 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
           >
-            <Thermometer className="w-6 h-6 text-error drop-shadow-lg" />
+            {getIcon(card.mode)}
             <div>
-              <p className="text-sm text-text-tertiary">Loading</p>
-              <p className="text-lg font-mono text-text-primary">Fetching data...</p>
+              <p className="text-sm text-fui-text/60 font-mono uppercase">[{card.mode || 'STATUS'}]</p>
+              <p className="text-lg font-mono text-fui-text">{card.mode === 'time' ? new Date(card.content).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : (card.content || 'NO DATA')}</p>
+              <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
           </motion.div>
-        )}
-      </div>
+        ))
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center space-x-3 p-2 border border-fui-border/30"
+        >
+          <Thermometer className="w-6 h-6 text-error" />
+          <div>
+            <p className="text-sm text-fui-text/60 font-mono">[ LOADING ]</p>
+            <p className="text-lg font-mono text-fui-text">FETCHING DATA...</p>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 };

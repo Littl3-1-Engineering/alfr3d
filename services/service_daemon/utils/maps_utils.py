@@ -7,7 +7,7 @@ TODO: Integrate Google Maps API for travel time and directions.
 
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 logger = logging.getLogger("MapsUtils")
 

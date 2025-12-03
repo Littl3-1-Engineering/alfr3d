@@ -6,7 +6,6 @@ import time
 import atexit
 import logging
 from signal import SIGTERM
-from typing import Optional
 
 
 # set up logging
@@ -160,6 +159,6 @@ class Daemon:
 
     def run(self) -> None:
         """
-        You should override this method when you subclass Daemon. It will be called after the process has been
-        daemonized by start() or restart().
+        You should override this method when you subclass Daemon. It will be called after
+        the process has been daemonized by start() or restart().
         """

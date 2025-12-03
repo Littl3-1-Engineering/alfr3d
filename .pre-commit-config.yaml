@@ -1,0 +1,26 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-added-large-files
+- repo: https://github.com/psf/black
+  rev: 25.11.0
+  hooks:
+  - id: black
+    args: [--line-length=100]
+    files: \.py$
+- repo: https://github.com/pycqa/flake8
+  rev: 7.3.0
+  hooks:
+  - id: flake8
+    args: [--max-line-length=100, --ignore=E203, --ignore=F401, --ignore=W503]
+    files: \.py$
+- repo: https://github.com/Yelp/detect-secrets
+  rev: v1.5.0
+  hooks:
+  - id: detect-secrets
+    args: [--baseline, .secrets.baseline]
+    exclude: (\.secrets\.baseline$)

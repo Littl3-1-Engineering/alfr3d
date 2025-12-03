@@ -9,7 +9,7 @@ import socket
 import pymysql  # Changed from MySQLdb
 from kafka import KafkaConsumer, KafkaProducer
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from typing import Optional
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -94,9 +94,7 @@ class Device:
                 db.close()
                 return False
             devstate = devstate_data[0]
-            cursor.execute(
-                "SELECT * from device_types WHERE type = %s", (self.deviceType,)
-            )
+            cursor.execute("SELECT * from device_types WHERE type = %s", (self.deviceType,))
             devtype_data = cursor.fetchone()
             if not devtype_data:
                 logger.error("Device type not found")
@@ -112,9 +110,7 @@ class Device:
                 db.close()
                 return False
             usrid = usrid_data[0]
-            cursor.execute(
-                "SELECT * from environment WHERE name = %s", (self.environment,)
-            )
+            cursor.execute("SELECT * from environment WHERE name = %s", (self.environment,))
             envid_data = cursor.fetchone()
             if not envid_data:
                 logger.error("Environment not found")
@@ -123,7 +119,8 @@ class Device:
                 return False
             envid = envid_data[0]
             cursor.execute(
-                "INSERT INTO device(name, IP, MAC, last_online, state, device_type, user_id, environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO device(name, IP, MAC, last_online, state, device_type, user_id, "
+                "environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     self.name,
                     self.IP,
@@ -171,9 +168,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -214,9 +209,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warn("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -231,9 +224,7 @@ class Device:
                 db.close()
                 return False
             stateid = data[0]
-            cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
-            )
+            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -241,7 +232,8 @@ class Device:
                 return False
             envid = data[0]
             cursor.execute(
-                "UPDATE device SET name = %s, IP = %s, last_online = %s, state = %s, environment_id = %s WHERE MAC = %s",
+                "UPDATE device SET name = %s, IP = %s, last_online = %s, state = %s, "
+                "environment_id = %s WHERE MAC = %s",
                 (
                     self.name,
                     self.IP,
@@ -290,9 +282,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warn("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -381,9 +371,7 @@ def check_offline_devices():
             last_online = last_online_str
             delta = time_now - last_online
             if delta > timedelta(minutes=30) and device[4] == stat["online"]:
-                logger.info(
-                    "Setting device " + device[3] + " to offline due to inactivity"
-                )
+                logger.info("Setting device " + device[3] + " to offline due to inactivity")
                 cursor.execute(
                     "UPDATE device SET state = %s WHERE MAC = %s",
                     (stat["offline"], device[3]),
@@ -405,8 +393,8 @@ def check_offline_devices():
 
 def check_lan():
     """
-    Scans the local network for online devices using ARP, updates the database with device information,
-    and marks devices as offline if they haven't been seen for more than 30 minutes.
+    Scans the local network for online devices using ARP, updates the database with device
+    information, and marks devices as offline if they haven't been seen for more than 30 minutes.
 
     ARP Scan Logic:
     - Executes 'arp-scan --localnet' to perform an ARP scan on the local network.
@@ -420,8 +408,10 @@ def check_lan():
 
     DB Updates:
     - For each discovered MAC, checks if the device exists in the database.
-    - If the device exists, updates its IP address and last_online timestamp, setting state to 'online'.
-    - If the device does not exist, creates a new device entry with the MAC, IP, and resolved hostname (if available).
+    - If the device exists, updates its IP address and last_online timestamp, setting state to
+      'online'.
+    - If the device does not exist, creates a new device entry with the MAC, IP, and
+      resolved hostname (if available).
     - Sends Kafka events for device creation or coming online.
 
     Offline Checks:
@@ -495,9 +485,7 @@ if __name__ == "__main__":
             consumer = KafkaConsumer("device", bootstrap_servers=KAFKA_URL)
             logger.info("Connected to Kafka device topic")
         except Exception:
-            logger.error(
-                "Failed to connect to Kafka device topic, retrying in 5 seconds"
-            )
+            logger.error("Failed to connect to Kafka device topic, retrying in 5 seconds")
             time.sleep(5)
 
     while True:

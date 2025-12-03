@@ -40,18 +40,15 @@ from datetime import datetime, timedelta, timezone
 import json
 import threading
 import pymysql
-
+from utils import util_routines
+from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 from kafka.errors import KafkaError
+
+# import my own utilities
+sys.path.append(os.path.join(os.path.join(os.getcwd(), os.path.dirname(__file__)), "../"))
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
-
-# import my own utilities
-sys.path.append(
-    os.path.join(os.path.join(os.getcwd(), os.path.dirname(__file__)), "../")
-)
-from utils import util_routines
-from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 
 
 # set up daemon things
@@ -65,9 +62,7 @@ MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-OPENWEATHER_API_KEY = os.environ.get(
-    "OPENWEATHER_API_KEY"
-)  # For destination weather if needed
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")  # For destination weather if needed
 GAS_PRICE = float(os.environ.get("GAS_PRICE", "3.5"))  # Default gas price
 MPG = float(os.environ.get("MPG", "25"))  # Default MPG
 
@@ -165,9 +160,7 @@ class MyDaemon:
             print("Time until next quip: ", QUIP_WAIT_TIME)  # DEBUG
 
             logger.info("QUIP_START_TIME and QUIP_WAIT_TIME have been reset")
-            logger.info(
-                "Next quip will be shouted in " + str(QUIP_WAIT_TIME) + " minutes."
-            )
+            logger.info("Next quip will be shouted in " + str(QUIP_WAIT_TIME) + " minutes.")
 
     def play_tune(self):
         """
@@ -258,7 +251,7 @@ class MyDaemon:
         events = calendar_utils.get_upcoming_events()
         if events:
             event = events[0]  # Take first
-            if start_time - datetime.now(timezone.utc) > timedelta(hours=1):
+            if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=1):
                 return None  # Only care about events within next hour
             title = event["title"]
             start_time = event["start_time"]
@@ -277,9 +270,7 @@ class MyDaemon:
                 db.close()
                 if loc_row:
                     lat, lng = loc_row
-                    travel_info = maps_utils.get_travel_info(
-                        lat, lng, address, start_time
-                    )
+                    travel_info = maps_utils.get_travel_info(lat, lng, address, start_time)
                     if travel_info:
                         departure = travel_info["departure"]
                         fuel_cost = travel_info["fuel_cost"]
@@ -292,8 +283,10 @@ class MyDaemon:
                             else "shorts" if temp > 25 else "normal"
                         )
                         umbrella = "Bring umbrella" if rain_prob > 30 else ""
-                        content = (f"Leave at {departure.strftime('%I:%M %p')} for {title}. "
-                                   f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}")
+                        content = (
+                            f"Leave at {departure.strftime('%I:%M %p')} for {title}. "
+                            f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}"
+                        )
                         return {"mode": "event", "content": content, "priority": 2}
             except Exception as e:
                 logger.error("Event location error: " + str(e))
@@ -313,11 +306,14 @@ class MyDaemon:
             cursor = db.cursor()
             # Count everyone online (residents + guests) and guests separately
             cursor.execute(
-                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND username != 'unknown'"
+                "SELECT COUNT(*) FROM user WHERE state = "
+                "(SELECT id FROM states WHERE state = 'online') AND username != 'unknown'"
             )
             total_row = cursor.fetchone()
             cursor.execute(
-                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest')) AND username != 'unknown'"
+                "SELECT COUNT(*) FROM user WHERE state = "
+                "(SELECT id FROM states WHERE state = 'online') AND type IN "
+                "(SELECT id FROM user_types WHERE type IN ('guest')) AND username != 'unknown'"
             )
             guest_row = cursor.fetchone()
             result = guest_row
@@ -325,7 +321,13 @@ class MyDaemon:
             total_count = total_row[0] if total_row else 0
             guest_count = guest_row[0] if guest_row else 0
             if guest_count > 0:
-                logger.info("Gathering detected with total people: " + str(total_count) + " (guests: " + str(guest_count) + ")")
+                logger.info(
+                    "Gathering detected with total people: "
+                    + str(total_count)
+                    + " (guests: "
+                    + str(guest_count)
+                    + ")"
+                )
                 # Suggest playlist based on time of day and environment description
                 hour = datetime.now().hour
                 if 6 <= hour < 18:
@@ -335,14 +337,20 @@ class MyDaemon:
                 else:
                     time_of_day = "night"
                 cursor.execute(
-                    "SELECT description, subjective_feel FROM environment WHERE name = %s", (ENV_NAME,)
+                    "SELECT description, subjective_feel FROM environment WHERE name = %s",
+                    (ENV_NAME,),
                 )
                 desc_row = cursor.fetchone()
                 desc, subj = desc_row if desc_row else (None, None)
                 weather_info = {"description": desc, "subjective_feel": subj}
 
                 # Use recommender to produce an actionable music suggestion
-                reco = spotify_utils.recommend(total_people=total_count, guest_count=guest_count, time_of_day=time_of_day, weather=weather_info)
+                reco = spotify_utils.recommend(
+                    total_people=total_count,
+                    guest_count=guest_count,
+                    time_of_day=time_of_day,
+                    weather=weather_info,
+                )
                 logger.info(f"Recommendation: {reco}")
 
                 p = get_producer()
@@ -350,13 +358,19 @@ class MyDaemon:
                     event = {
                         "id": f"gathering_detected_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                         "type": "info",
-                        "message": f"Gathering detected with {total_count} people ({guest_count} guests). Suggesting {reco['mood']} music ({reco['genre']}).",
+                        "message": (
+                            f"Gathering detected with {total_count} people "
+                            f"({guest_count} guests). Suggesting {reco['mood']} music "
+                            f"({reco['genre']})."
+                        ),
                         "time": datetime.now(timezone.utc).isoformat(),
                     }
                     p.send("event-stream", json.dumps(event).encode("utf-8"))
 
                 # Keep existing spotify_utils hook for playlist lookup; pass playlist hint/mood
-                playlist = spotify_utils.get_playlist_suggestion(reco.get("playlist_hint", reco.get("mood", "")))
+                playlist = spotify_utils.get_playlist_suggestion(
+                    reco.get("playlist_hint", reco.get("mood", ""))
+                )
                 content = f"Play {playlist} ({reco['genre']}, energy={reco['energy']})"
                 return {"mode": "music", "content": content, "priority": 3}
             db.close()
@@ -372,7 +386,8 @@ class MyDaemon:
             )
             cursor = db.cursor()
             cursor.execute(
-                "SELECT city, description, low, high, subjective_feel FROM environment WHERE name = %s",
+                "SELECT city, description, low, high, subjective_feel "
+                "FROM environment WHERE name = %s",
                 (ENV_NAME,),
             )
             row = cursor.fetchone()
@@ -514,10 +529,10 @@ def init_daemon():
             event = {
                 "id": f"schedule_setup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",
-                "message": f"Set up scheduled routines",
+                "message": "Set up scheduled routines",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            p.send("event-stream", json.dumps(event).encode("utf-8"))            
+            p.send("event-stream", json.dumps(event).encode("utf-8"))
         # utilities.createRoutines()
         reset_routines()
 
@@ -538,16 +553,14 @@ def init_daemon():
         logger.warning("Some startup faults were detected")
         p = get_producer()
         if p:
-            p.send(
-                "speak", b"Some faults were detected but system started successfully"
-            )
+            p.send("speak", b"Some faults were detected but system started successfully")
             event = {
                 "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "warning",
                 "message": f"System check finished with {faults} faults",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            p.send("event-stream", json.dumps(event).encode("utf-8"))            
+            p.send("event-stream", json.dumps(event).encode("utf-8"))
 
         # producer.send("speak", b"Total number of faults is "+str(faults))
 
@@ -559,7 +572,7 @@ def init_daemon():
             event = {
                 "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "success",
-                "message": f"System check finished",
+                "message": "System check finished",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
             p.send("event-stream", json.dumps(event).encode("utf-8"))
