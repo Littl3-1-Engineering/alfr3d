@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Power, Settings } from 'lucide-react';
+import { X, Settings } from 'lucide-react';
 import { useState } from 'react';
+import PropTypes from 'prop-types';
 
 const ControlBlade = ({ device, onClose, style }) => {
   const [power, setPower] = useState(device?.active || false);
@@ -26,7 +27,7 @@ const ControlBlade = ({ device, onClose, style }) => {
               <X className="w-5 h-5 text-text-secondary" />
             </button>
           </div>
-          
+
            <div className="space-y-6">
              {/* Power Toggle */}
              <div className="flex items-center justify-between">
@@ -44,7 +45,7 @@ const ControlBlade = ({ device, onClose, style }) => {
                  />
                </motion.button>
              </div>
-            
+
              {/* Brightness Slider */}
              {device.type === 'light' && (
                <div>
@@ -62,7 +63,7 @@ const ControlBlade = ({ device, onClose, style }) => {
                  />
                </div>
              )}
-            
+
              {/* Device-specific controls */}
              {device.type === 'thermostat' && (
                <div>
@@ -76,7 +77,7 @@ const ControlBlade = ({ device, onClose, style }) => {
                  </div>
                </div>
              )}
-            
+
              {/* Settings */}
              <button className="w-full flex items-center justify-center space-x-2 py-3 bg-card/50 rounded-lg hover:bg-card-hover/50 transition-colors">
                <Settings className="w-5 h-5 text-primary" />
@@ -87,6 +88,12 @@ const ControlBlade = ({ device, onClose, style }) => {
       )}
     </AnimatePresence>
   );
+};
+
+ControlBlade.propTypes = {
+  device: PropTypes.object.isRequired,
+  onClose: PropTypes.func.isRequired,
+  style: PropTypes.object,
 };
 
 export default ControlBlade;

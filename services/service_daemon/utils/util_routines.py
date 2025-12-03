@@ -27,13 +27,12 @@ This is a utility for Routines for Alfr3d:
 #      or in part) from, or statically or dynamically links against any
 #      software/component specified under (i).
 
-import os, sys
+import os
+import sys
 import logging
-import socket
 import pymysql as MySQLdb
 from kafka import KafkaProducer
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
 # set up logging
 logger = logging.getLogger("RoutinesLog")
@@ -66,9 +65,7 @@ def check_routines() -> bool:
 
     # fetch available Routines
     try:
-        db = MySQLdb.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-        )
+        db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
     except Exception as e:
         logger.error("Failed to connect to database")
@@ -84,9 +81,7 @@ def check_routines() -> bool:
         return False
     env_id = data[0]
 
-    cursor.execute(
-        "SELECT * from routines WHERE environment_id = %s and enabled = 1;", (env_id,)
-    )
+    cursor.execute("SELECT * from routines WHERE environment_id = %s and enabled = 1;", (env_id,))
     routines = cursor.fetchall()
 
     for routine in routines:
@@ -113,9 +108,7 @@ def check_routines() -> bool:
             # set triggered flag = True
             try:
                 logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
-                cursor.execute(
-                    "UPDATE routines SET triggered = 1 WHERE id = %s;", (routine[0],)
-                )
+                cursor.execute("UPDATE routines SET triggered = 1 WHERE id = %s;", (routine[0],))
                 db.commit()
             except Exception as e:
                 logger.error("Failed to update the database")
@@ -148,9 +141,7 @@ def reset_routines() -> bool:
         return False
 
     try:
-        db = MySQLdb.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-        )
+        db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
     except Exception as e:
         logger.error("Failed to connect to database")
@@ -176,9 +167,7 @@ def reset_routines() -> bool:
         # set Triggered flag to false
         try:
             logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
-            cursor.execute(
-                "UPDATE routines SET triggered = 0 WHERE id = %s;", (routine[0],)
-            )
+            cursor.execute("UPDATE routines SET triggered = 0 WHERE id = %s;", (routine[0],))
             db.commit()
         except Exception as e:
             logger.error("Failed to update the database")
@@ -206,9 +195,7 @@ def check_mute() -> bool:
         return False
 
     try:
-        db = MySQLdb.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-        )
+        db = MySQLdb.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
     except Exception as e:
         logger.error("Failed to connect to database")

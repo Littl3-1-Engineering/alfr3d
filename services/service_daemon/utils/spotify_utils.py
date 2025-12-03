@@ -12,7 +12,6 @@ The implementation is intentionally simple and explainable so it can be
 extended later with ML models or third-party API lookups.
 """
 
-import os
 import logging
 from typing import Dict, Any
 
@@ -27,7 +26,8 @@ def get_playlist_suggestion(playlist_hint: str) -> str:
     """
     # Placeholder: Hardcoded for now
     return playlist_hint
-   
+
+
 def _normalize_time_of_day(hour: int) -> str:
     if 6 <= hour < 12:
         return "morning"
@@ -38,7 +38,9 @@ def _normalize_time_of_day(hour: int) -> str:
     return "night"
 
 
-def recommend(total_people: int, guest_count: int, time_of_day: str, weather: Any = None) -> Dict[str, Any]:
+def recommend(
+    total_people: int, guest_count: int, time_of_day: str, weather: Any = None
+) -> Dict[str, Any]:
     """
     Produce a recommendation dictionary.
 
@@ -60,15 +62,10 @@ def recommend(total_people: int, guest_count: int, time_of_day: str, weather: An
 
     # Extract simple weather indicators
     subj = None
-    weather_main = None
-    temp = None
     if isinstance(weather, dict):
         subj = weather.get("subjective_feel") or weather.get("description")
-        weather_main = weather.get("main") or (weather.get("description") or "").split()[0]
-        temp = weather.get("temp")
     elif isinstance(weather, str):
         subj = weather
-        weather_main = weather
 
     # Base energy from people count
     if total_people <= 1:
@@ -108,7 +105,9 @@ def recommend(total_people: int, guest_count: int, time_of_day: str, weather: An
         genre = "acoustic / ambient / lofi"
         mood = "relaxed"
         tempo = "slow"
-        playlist_hint = "chill, acoustic, lo-fi" if subj and "rain" in str(subj).lower() else "acoustic, mellow"
+        playlist_hint = (
+            "chill, acoustic, lo-fi" if subj and "rain" in str(subj).lower() else "acoustic, mellow"
+        )
     elif energy < 0.6:
         genre = "indie / soft pop / jazz"
         mood = "warm"
@@ -146,4 +145,3 @@ if __name__ == "__main__":
     ]
     for t in examples:
         print(t, "=>", recommend(*t))
-

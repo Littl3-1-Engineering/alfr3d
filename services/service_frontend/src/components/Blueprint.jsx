@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lightbulb, Thermometer, Wifi, ZoomIn, ZoomOut, ChevronDown, ChevronUp, X } from 'lucide-react';
+import PropTypes from 'prop-types';
 import BlueprintSVG from './cassiopeia_blueprint.svg?react';
 import ControlBlade from './ControlBlade';
 import { API_BASE_URL } from '../config';
@@ -184,6 +185,10 @@ const Blueprint = ({ onDeviceSelect }) => {
       </div>
     </div>
   );
+};
+
+Blueprint.propTypes = {
+  onDeviceSelect: PropTypes.func,
 };
 
 export default Blueprint;

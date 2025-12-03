@@ -1,13 +1,15 @@
 """Tests for MySQL database connectivity and operations in ALFR3D."""
-import pytest
+
 import pymysql
 import json
+
 
 def test_mysql_connection(mysql_config):
     """Test connecting to MySQL database."""
     conn = pymysql.connect(**mysql_config)
     assert conn.open, "Failed to connect to MySQL"
     conn.close()
+
 
 def test_mysql_select(mysql_config):
     """Test selecting data from MySQL tables."""
@@ -27,6 +29,7 @@ def test_mysql_select(mysql_config):
 
     cursor.close()
     conn.close()
+
 
 def test_mysql_insert_query(mysql_config):
     """Test inserting and querying data."""
@@ -51,8 +54,9 @@ def test_mysql_insert_query(mysql_config):
 
     # Insert
     cursor.execute(
-        "INSERT INTO user (username, last_online, state, type, environment_id) VALUES (%s, NOW(), %s, %s, %s)",
-        (test_username, state_id, type_id, env_id)
+        "INSERT INTO user (username, last_online, state, type, environment_id) "
+        "VALUES (%s, NOW(), %s, %s, %s)",
+        (test_username, state_id, type_id, env_id),
     )
     conn.commit()
 
@@ -73,44 +77,43 @@ def test_mysql_insert_query(mysql_config):
 def test_mysql_frontend_integration(frontend_client, mysql_config):
     """Test MySQL integration with frontend dashboard."""
     # Test that frontend can retrieve MySQL data
-    response = frontend_client.get('/dashboard/data')
+    response = frontend_client.get("/dashboard/data")
     assert response.status_code == 200
 
     data = json.loads(response.data)
-    assert 'mysql' in data
-    assert 'connections' in data['mysql']
+    assert "mysql" in data
+    assert "connections" in data["mysql"]
 
     # Test database pages load
-    response = frontend_client.get('/users')
+    response = frontend_client.get("/users")
     assert response.status_code == 200
-    assert b'Users' in response.data
+    assert b"Users" in response.data
 
-    response = frontend_client.get('/devices')
+    response = frontend_client.get("/devices")
     assert response.status_code == 200
-    assert b'Devices' in response.data
+    assert b"Devices" in response.data
 
-    response = frontend_client.get('/environment')
+    response = frontend_client.get("/environment")
     assert response.status_code == 200
-    assert b'Environment' in response.data
+    assert b"Environment" in response.data
 
     # Test user creation via frontend (integration test)
-    response = frontend_client.post('/user/add', data={
-        'username': 'mysql_test_user',
-        'email': 'mysql@test.com',
-        'type': 'guest'
-    })
+    response = frontend_client.post(
+        "/user/add",
+        data={"username": "mysql_test_user", "email": "mysql@test.com", "type": "guest"},
+    )
     # Should succeed or redirect
     assert response.status_code in [200, 302]
 
     # Verify user was created in database
     conn = pymysql.connect(**mysql_config)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM user WHERE username = %s", ('mysql_test_user',))
+    cursor.execute("SELECT * FROM user WHERE username = %s", ("mysql_test_user",))
     user = cursor.fetchone()
     assert user is not None, "User not created via frontend"
 
     # Clean up
-    cursor.execute("DELETE FROM user WHERE username = %s", ('mysql_test_user',))
+    cursor.execute("DELETE FROM user WHERE username = %s", ("mysql_test_user",))
     conn.commit()
     cursor.close()
     conn.close()

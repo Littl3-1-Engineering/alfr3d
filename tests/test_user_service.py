@@ -1,13 +1,14 @@
 """Tests for the ALFR3D user service."""
-import pytest
+
 import pymysql
 from confluent_kafka import Producer
-import time
 import json
+
 
 def test_user_service_create_user(kafka_bootstrap_servers, mysql_config):
     """Test creating a user by sending Kafka message to user topic."""
     from conftest import wait_for_db_user
+
     test_username = "test_user_service_123"
 
     # Clean up if exists
@@ -19,8 +20,8 @@ def test_user_service_create_user(kafka_bootstrap_servers, mysql_config):
     conn.close()
 
     # Send create message
-    producer = Producer({'bootstrap.servers': kafka_bootstrap_servers})
-    producer.produce("user", key=b"create", value=test_username.encode('utf-8'))
+    producer = Producer({"bootstrap.servers": kafka_bootstrap_servers})
+    producer.produce("user", key=b"create", value=test_username.encode("utf-8"))
     producer.flush()
 
     # Wait for user to be created in DB
@@ -46,9 +47,11 @@ def test_user_service_create_user(kafka_bootstrap_servers, mysql_config):
     cursor.close()
     conn.close()
 
+
 def test_user_service_delete_user(kafka_bootstrap_servers, mysql_config):
     """Test deleting a user by sending Kafka message."""
     from conftest import wait_for_db_user
+
     test_username = "test_user_delete_123"
 
     # First create user
@@ -62,16 +65,17 @@ def test_user_service_delete_user(kafka_bootstrap_servers, mysql_config):
     cursor.execute("SELECT id FROM environment WHERE name = 'test'")
     env_id = cursor.fetchone()[0]
     cursor.execute(
-        "INSERT INTO user (username, last_online, state, type, environment_id) VALUES (%s, NOW(), %s, %s, %s)",
-        (test_username, state_id, type_id, env_id)
+        "INSERT INTO user (username, last_online, state, type, environment_id) "
+        "VALUES (%s, NOW(), %s, %s, %s)",
+        (test_username, state_id, type_id, env_id),
     )
     conn.commit()
     cursor.close()
     conn.close()
 
     # Send delete message
-    producer = Producer({'bootstrap.servers': kafka_bootstrap_servers})
-    producer.produce("user", key=b"delete", value=test_username.encode('utf-8'))
+    producer = Producer({"bootstrap.servers": kafka_bootstrap_servers})
+    producer.produce("user", key=b"delete", value=test_username.encode("utf-8"))
     producer.flush()
 
     # Wait for user to be deleted
@@ -82,31 +86,30 @@ def test_user_service_delete_user(kafka_bootstrap_servers, mysql_config):
 def test_user_service_frontend_integration(frontend_client, mysql_config):
     """Test user service integration with frontend dashboard."""
     # Test that frontend can retrieve user data
-    response = frontend_client.get('/dashboard/data')
+    response = frontend_client.get("/dashboard/data")
     assert response.status_code == 200
 
     data = json.loads(response.data)
-    assert 'user' in data
-    assert 'status' in data['user']
+    assert "user" in data
+    assert "status" in data["user"]
 
     # Test users page loads
-    response = frontend_client.get('/users')
+    response = frontend_client.get("/users")
     assert response.status_code == 200
-    assert b'Users' in response.data
+    assert b"Users" in response.data
 
     # Test user creation via frontend
-    response = frontend_client.post('/user/add', data={
-        'username': 'frontend_test_user',
-        'email': 'frontend@test.com',
-        'type': 'guest'
-    })
+    response = frontend_client.post(
+        "/user/add",
+        data={"username": "frontend_test_user", "email": "frontend@test.com", "type": "guest"},
+    )
     # Should redirect on success
     assert response.status_code in [200, 302]
 
     # Clean up test user
     conn = pymysql.connect(**mysql_config)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM user WHERE username = %s", ('frontend_test_user',))
+    cursor.execute("DELETE FROM user WHERE username = %s", ("frontend_test_user",))
     conn.commit()
     cursor.close()
     conn.close()

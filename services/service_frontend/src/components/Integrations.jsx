@@ -79,7 +79,7 @@ const Integrations = () => {
   return (
     <div>
       <h2 className="text-2xl font-bold text-primary mb-6 drop-shadow-lg">Third-Party Integrations</h2>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {integrations.map((integration, index) => (
           <motion.div
@@ -99,7 +99,7 @@ const Integrations = () => {
 
             <h3 className="text-lg font-semibold text-text-primary mb-2">{integration.name}</h3>
             <p className="text-sm text-text-tertiary mb-4">{integration.description}</p>
-            
+
             <div className="flex items-center justify-between">
               <span className={`text-sm font-medium ${getStatusColor(integration.status)}`}>
                 {integration.status === 'connected' ? 'Connected' :

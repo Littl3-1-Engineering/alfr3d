@@ -9,11 +9,11 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- ---
 -- Table 'user'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `user`;
-		
+
 CREATE TABLE `user` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each user
   `username` VARCHAR(128) NULL DEFAULT NULL, -- User's chosen username
@@ -29,11 +29,11 @@ CREATE TABLE `user` (
 
 -- ---
 -- Table 'device'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `device`;
-		
+
 CREATE TABLE `device` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each device
   `name` VARCHAR(128) NULL DEFAULT NULL, -- Human-readable name of the device
@@ -73,11 +73,11 @@ CREATE TABLE `device_history` (
 
 -- ---
 -- Table 'user_types'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `user_types`;
-		
+
 CREATE TABLE `user_types` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for user type
   `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the user type (e.g., technoking, resident, guest)
@@ -86,11 +86,11 @@ CREATE TABLE `user_types` (
 
 -- ---
 -- Table 'device_types'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `device_types`;
-		
+
 CREATE TABLE `device_types` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for device type
   `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the device type (e.g., alfr3d, HW, guest, light, resident)
@@ -99,11 +99,11 @@ CREATE TABLE `device_types` (
 
 -- ---
 -- Table 'states'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `states`;
-		
+
 CREATE TABLE `states` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for state
   `state` VARCHAR(8) NULL DEFAULT NULL, -- Name of the state (e.g., offline, online)
@@ -112,11 +112,11 @@ CREATE TABLE `states` (
 
 -- ---
 -- Table 'routines'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `routines`;
-		
+
 CREATE TABLE `routines` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for routine
   `name` VARCHAR(128) NULL DEFAULT NULL, -- Name of the routine
@@ -130,11 +130,11 @@ CREATE TABLE `routines` (
 
 -- ---
 -- Table 'environment'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `environment`;
-		
+
 CREATE TABLE `environment` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for environment
   `name` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the environment
@@ -159,11 +159,11 @@ CREATE TABLE `environment` (
 
 -- ---
 -- Table 'config'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `config`;
-		
+
 CREATE TABLE `config` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
   `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting

@@ -90,37 +90,40 @@ def parse_weather(cursor, lat, lon):
     logger.info("Humidity                        " + str(weatherData["main"]["humidity"]))
     logger.info("Today's Low:                    " + str(weatherData["main"]["temp_min"]))
     logger.info("Today's High:                   " + str(weatherData["main"]["temp_max"]))
-    logger.info("Description:                    "+ str(weatherData["weather"][0]["description"]))
+    logger.info("Description:                    " + str(weatherData["weather"][0]["description"]))
     logger.info("Current Temperature:            " + str(weatherData["main"]["temp"]))
-    logger.info("Sunrise:                        "+ datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S"))
-    logger.info("Sunset:                         "+ datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info(
+        "Sunrise:                        "
+        + datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S")
+    )
+    logger.info(
+        "Sunset:                         "
+        + datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S")
+    )
     logger.info("Parsed weather data\n")
 
     subjective_feel = determine_subjective_feel(weatherData)
-    weatherData['subjective_feel'] = subjective_feel
+    weatherData["subjective_feel"] = subjective_feel
 
     return weatherData
+
 
 def update_db_weather(db, cursor, weatherData):
     logger.info("Updating weather data in DB")
 
     try:
         cursor.execute(
-            "UPDATE environment SET description = %s, low = %s, high = %s, "
-            "sunrise = %s, sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s WHERE name = %s",
+            "UPDATE environment SET description = %s, low = %s, high = %s, sunrise = %s, "
+            "sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s WHERE name = %s",
             (
                 str(weatherData["weather"][0]["description"]),
                 int(weatherData["main"]["temp_min"]),
                 int(weatherData["main"]["temp_max"]),
-                datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-                datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"),
                 int(weatherData["main"]["pressure"]),
                 int(weatherData["main"]["humidity"]),
-                weatherData['subjective_feel'],
+                weatherData["subjective_feel"],
                 ALFR3D_ENV_NAME,
             ),
         )
@@ -140,9 +143,9 @@ def update_routines(db, cursor, weatherData):
     # actual event so that listeners have time to take action
     try:
         logger.info("Updating routines")
-        sunrise_trig = datetime.fromtimestamp(
-            weatherData["sys"]["sunrise"]
-        ) - timedelta(hours=0, minutes=30)
+        sunrise_trig = datetime.fromtimestamp(weatherData["sys"]["sunrise"]) - timedelta(
+            hours=0, minutes=30
+        )
         sunset_trig = datetime.fromtimestamp(weatherData["sys"]["sunset"]) - timedelta(
             hours=0, minutes=30
         )
@@ -227,8 +230,18 @@ def determine_subjective_feel(weatherData):
 
 
 def speak_weather(db, cursor, weatherData):
-    subjective_weather = weatherData['subjective_feel']
-    bad_categories = ["Extremely cold", "Very cold", "Cold", "Extremely hot", "Very hot", "Hot", "Oppressively humid", "Very humid / Muggy", "Windy (unpleasant)"]
+    subjective_weather = weatherData["subjective_feel"]
+    bad_categories = [
+        "Extremely cold",
+        "Very cold",
+        "Cold",
+        "Extremely hot",
+        "Very hot",
+        "Hot",
+        "Oppressively humid",
+        "Very humid / Muggy",
+        "Windy (unpleasant)",
+    ]
     badDay = [subjective_weather in bad_categories, []]
 
     logger.info("Speaking weather data:\n")
@@ -329,7 +342,6 @@ def get_weather(lat, lon):
     if not speak_weather(db, cursor, weatherData):
         db.close()
         return False
-    
     db.close()
     return True
 

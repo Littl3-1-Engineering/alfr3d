@@ -1,6 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatLocalTime } from '../utils/timeUtils';
 
@@ -27,35 +26,32 @@ const EventStream = () => {
 
   const getIcon = (type) => {
     switch (type) {
-      case 'warning': return <AlertTriangle className="w-4 h-4 text-warning" />;
-      case 'success': return <CheckCircle className="w-4 h-4 text-success" />;
-      default: return <Clock className="w-4 h-4 text-primary" />;
+      case 'warning': return <div className="w-3 h-3 border-2 border-warning" />;
+      case 'success': return <div className="w-3 h-3 border-2 border-fui-accent bg-fui-accent" />;
+      default: return <div className="w-3 h-3 border-2 border-fui-text" />;
     }
   };
 
   return (
-    <div className="glass rounded-2xl p-6 h-96 border border-primary/30 bg-card/20">
-      <h2 className="text-xl font-bold text-primary mb-4 drop-shadow-lg">Event Stream</h2>
-      <div className="space-y-3 h-full pb-4">
-        <AnimatePresence>
-          {displayedEvents.map((event, index) => (
-            <motion.div
-              key={event.id}
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1 - (index * 0.2), y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.95 }}
-              transition={{ duration: 0.3 }}
-              className="flex items-start space-x-3 p-3 rounded-lg bg-card/30 w-full"
-            >
-              {getIcon(event.type)}
-              <div className="flex-1">
-                <p className="text-sm text-text-secondary">{event.message}</p>
-                 <p className="text-xs text-text-tertiary mt-1">{formatLocalTime(event.time)}</p>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+    <div className="space-y-3 h-full pb-4">
+      <AnimatePresence>
+        {displayedEvents.map((event, index) => (
+          <motion.div
+            key={event.id}
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1 - (index * 0.2), y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.3 }}
+            className="flex items-start space-x-3 p-3 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
+          >
+            {getIcon(event.type)}
+            <div className="flex-1">
+              <p className="text-sm text-fui-text font-mono">{event.message}</p>
+               <p className="text-xs text-fui-text/60 mt-1 font-mono">[{formatLocalTime(event.time)}]</p>
+            </div>
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 };

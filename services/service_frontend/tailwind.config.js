@@ -10,6 +10,8 @@ export default {
     extend: {
       fontFamily: {
         'exo2': ['Exo 2', 'sans-serif'],
+        'tech': ['Rajdhani', 'sans-serif'],
+        'mono': ['JetBrains Mono', 'monospace'],
       },
       colors: {
         // Theme-aware colors (dark theme as default)
@@ -59,7 +61,18 @@ export default {
         // Legacy colors for backward compatibility
         'navy-dark': '#0A0F14',
         'charcoal': '#05070A',
+        // Tactical FUI colors
+        'fui-bg': '#0b0c0f',       // Deep matte black
+        'fui-panel': '#141619',    // Slightly lighter panel bg
+        'fui-border': '#33363d',   // Grey borders
+        'fui-accent': '#eab308',   // Amber/Yellow accent
+        'fui-text': '#94a3b8',     // Muted text
+        'fui-dim': 'rgba(234, 179, 8, 0.1)', // Dim amber background
+        'fui-grid': '#222',        // Grid lines
       },
+       backgroundImage: {
+         'tech-grid': "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+       }
     },
   },
   plugins: [],

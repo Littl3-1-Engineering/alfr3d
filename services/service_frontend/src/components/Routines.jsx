@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { Plus, Play } from 'lucide-react';
-import { useTheme } from '../utils/ThemeContext';
+import { useTheme } from '../utils/useTheme';
 
 const Routines = () => {
   const { themeColors } = useTheme();
@@ -26,7 +26,7 @@ const Routines = () => {
   return (
     <div>
       <h2 className="text-2xl font-bold text-primary mb-6 drop-shadow-lg">Automation Routines</h2>
-      
+
       <div className="flex space-x-6">
         {/* Sidebar */}
         <div className="w-48">
@@ -45,7 +45,7 @@ const Routines = () => {
             ))}
           </div>
         </div>
-        
+
         {/* Canvas */}
         <div className="flex-1 glass rounded-lg p-4 min-h-[400px] relative overflow-hidden">
           <div className="absolute inset-0 opacity-10">
@@ -54,7 +54,7 @@ const Routines = () => {
               backgroundSize: '20px 20px'
             }}></div>
           </div>
-          
+
           {canvasBlocks.map((block) => (
             <motion.div
               key={block.id}
@@ -69,7 +69,7 @@ const Routines = () => {
               {blocks.find(b => b.id === block.type)?.label}
             </motion.div>
           ))}
-          
+
           {canvasBlocks.length === 0 && (
             <div className="flex items-center justify-center h-full text-text-tertiary">
               <div className="text-center">
@@ -80,7 +80,7 @@ const Routines = () => {
           )}
         </div>
       </div>
-      
+
       {/* Run Button */}
       <div className="mt-6 flex justify-end">
         <motion.button

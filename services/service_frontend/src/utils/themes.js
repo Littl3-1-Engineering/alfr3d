@@ -48,6 +48,17 @@ export const themes = {
     input: 'hsla(220, 25%, 8%, 0.75)',
     inputBorder: 'hsla(45, 100%, 58%, 0.4)',
     inputFocus: 'hsl(45, 100%, 58%)',
+
+    // Tactical FUI additions
+    tactical: {
+      bg: '#0b0c0f',       // Deep matte black
+      panel: '#141619',    // Slightly lighter panel bg
+      border: '#33363d',   // Grey borders
+      accent: '#eab308',   // Amber/Yellow accent
+      text: '#94a3b8',     // Muted text
+      dim: 'rgba(234, 179, 8, 0.1)', // Dim amber background
+      grid: '#222',        // Grid lines
+    }
   },
 
   light: {
@@ -95,6 +106,17 @@ export const themes = {
     input: 'hsl(217, 33%, 17%)',
     inputBorder: 'hsl(217, 33%, 25%)',
     inputFocus: 'hsl(217, 91%, 60%)',
+
+    // Tactical FUI additions for light theme
+    tactical: {
+      bg: '#f8fafc',       // Light tactical background
+      panel: '#ffffff',    // White panels
+      border: '#e2e8f0',   // Light grey borders
+      accent: '#ea580c',   // Orange accent for light theme
+      text: '#475569',     // Muted text
+      dim: 'rgba(234, 88, 12, 0.1)', // Dim orange background
+      grid: '#e2e8f0',     // Light grid lines
+    }
   }
 };
 

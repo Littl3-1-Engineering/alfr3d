@@ -1,5 +1,6 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
-"""Main module for the ALFR3D environment service, handling location detection and weather updates."""
+"""Main module for the ALFR3D environment service, handling location detection and
+weather updates."""
 import os
 import re
 import sys
@@ -44,7 +45,7 @@ def get_producer():
             print("Connecting to Kafka at: " + KAFKA_URL)
             producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
             logger.info("Connected to Kafka")
-        except Exception as e:
+        except Exception:
             logger.error("Failed to connect to Kafka")
             return None
     return producer
@@ -62,9 +63,7 @@ def get_ip():
         logger.error("Traceback " + str(e))
         logger.info("Trying to get our IPV6")
         try:
-            myipv6 = (
-                urlopen("http://ipv6bot.whatismyipaddress.com").read().decode("ascii")
-            )
+            myipv6 = urlopen("http://ipv6bot.whatismyipaddress.com").read().decode("ascii")
         except Exception as e:
             logger.error("Error getting my IPV6")
             logger.error("Traceback " + str(e))
@@ -84,12 +83,7 @@ def geocode_ip(myipv4, myipv6, method, cursor):
             return None
         try:
             if myipv4:
-                url = (
-                    "http://api.db-ip.com/addrinfo?addr="
-                    + myipv4
-                    + "&api_key="
-                    + apikey
-                )
+                url = "http://api.db-ip.com/addrinfo?addr=" + myipv4 + "&api_key=" + apikey
                 info = json.loads(urlopen(url).read().decode("utf-8"))
                 if info.get("city"):
                     return {
@@ -101,12 +95,7 @@ def geocode_ip(myipv4, myipv6, method, cursor):
                         "long": "n/a",
                     }
             if myipv6:
-                url = (
-                    "http://api.db-ip.com/addrinfo?addr="
-                    + myipv6
-                    + "&api_key="
-                    + apikey
-                )
+                url = "http://api.db-ip.com/addrinfo?addr=" + myipv6 + "&api_key=" + apikey
                 info = json.loads(urlopen(url).read().decode("utf-8"))
                 if info.get("country"):
                     return {
@@ -186,7 +175,8 @@ def update_db(new_data, existing_city, cursor, db, producer):
             producer.flush()
         try:
             cursor.execute(
-                "UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, latitude = %s, longitude = %s WHERE name = %s",
+                "UPDATE environment SET country = %s, state = %s, city = %s, IP = %s, "
+                "latitude = %s, longitude = %s WHERE name = %s",
                 (
                     country_new,
                     state_new,
@@ -212,26 +202,31 @@ def check_location(method="freegeoip"):
     Performs geocoding to determine the current location based on the device's IP address.
 
     The geocoding flow involves the following steps:
-    1. Checks the database for a manual location override flag. If active, skips auto-update and returns early.
-    2. Retrieves existing location data (country, state, city) from the database for the current environment name.
-       If no data exists, creates a new environment entry in the database.
-    3. Fetches the current public IP address (IPv4 first, falls back to IPv6 if necessary) using external services.
+    1. Checks the database for a manual location override flag. If active, skips auto-update and
+       returns early.
+    2. Retrieves existing location data (country, state, city) from the database for the current
+       environment name. If no data exists, creates a new environment entry in the database.
+    3. Fetches the current public IP address (IPv4 first, falls back to IPv6 if necessary)
+       using external services.
     4. Depending on the specified method ("dbip" or "freegeoip"):
        - Retrieves the corresponding API key from the database.
        - Checks for a manual override flag for the API key; if active, skips update.
        - Constructs the API URL with the IP address and API key.
        - Sends a request to the geocoding API and parses the JSON response.
        - Extracts location details: country, state/province, city, IP, latitude, and longitude.
-    5. Cleans up the retrieved data (e.g., removes non-alphabetic characters from city names).
-    6. Compares the new location with the existing one. If different, updates the database and sends welcome messages via Kafka.
-    7. Triggers a weather update for the new location using the latitude and longitude.
-    8. Returns a status indicating success or failure.
+     5. Cleans up the retrieved data (e.g., removes non-alphabetic characters from city names).
+      6. Compares the new location with the existing one. If different, updates the database and
+         sends welcome messages via Kafka.
+     7. Triggers a weather update for the new location using the latitude and longitude.
+     8. Returns a status indicating success or failure.
 
     Args:
-        method (str): The geocoding method to use. Supported values are "dbip" and "freegeoip". Defaults to "freegeoip".
+        method (str): The geocoding method to use. Supported values are "dbip" and "freegeoip".
+        Defaults to "freegeoip".
 
     Returns:
-        None: The function does not return a value but updates the database and sends Kafka messages.
+        None: The function does not return a value but updates the database and sends Kafka
+        messages.
     """
     logger.info("Checking environment info")
     p = get_producer()
@@ -245,10 +240,7 @@ def check_location(method="freegeoip"):
     )
     cursor = db.cursor()
 
-    country = "unknown"
-    state = "unknown"
     city = "unknown"
-    ip = "unknown"
 
     cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
     data = cursor.fetchone()
@@ -259,20 +251,14 @@ def check_location(method="freegeoip"):
 
     if data:
         logger.info("Found environment configuration for this host")
-        print(data)
-        if len(data) > 6:
-            country = data[6]
-        if len(data) > 5:
-            state = data[5]
+
         if len(data) > 4:
             city = data[4]
     else:
         logger.warning("Failed to find environment configuration for this host")
         logger.info("Creating environment configuration for this host")
         try:
-            cursor.execute(
-                "INSERT INTO environment (name) VALUES (%s)", (ALFR3D_ENV_NAME,)
-            )
+            cursor.execute("INSERT INTO environment (name) VALUES (%s)", (ALFR3D_ENV_NAME,))
             db.commit()
             logger.info("New environment created")
         except Exception:
@@ -339,9 +325,7 @@ if __name__ == "__main__":
             consumer = KafkaConsumer("environment", bootstrap_servers=KAFKA_URL)
             logger.info("Connected to Kafka environment topic")
         except Exception:
-            logger.error(
-                "Failed to connect to Kafka environment topic, retrying in 5 seconds"
-            )
+            logger.error("Failed to connect to Kafka environment topic, retrying in 5 seconds")
             time.sleep(5)
 
     while True:
