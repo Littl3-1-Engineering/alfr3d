@@ -335,12 +335,13 @@ const Core = () => {
   const { themeColors } = useTheme();
 
   useEffect(() => {
-    // Corrected the path to be absolute from the public directory
-    fetch('/lottie/logo.json')
+    fetch('/assets/lottie/logo.json')
       .then(response => response.json())
       .then(data => setAnimationData(data))
       .catch(error => console.error('Error fetching animation data:', error));
   }, []);
+
+
 
   useEffect(() => {
     const fetchContainers = async () => {
@@ -482,6 +483,7 @@ const Core = () => {
             loop={false}
             autoplay={true}
             onComplete={() => setIsIntroFinished(true)}
+            options={{ expressions: false }}
           />
         )}
       </motion.div>

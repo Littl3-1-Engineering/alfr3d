@@ -98,8 +98,8 @@ class User:
                 return False
             envid = data[0]
             cursor.execute(
-                "INSERT INTO user(username, last_online, state, type, environment_id) "
-                "VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO user(username, last_online, created_at, state, type, environment_id) "
+                "VALUES (%s, %s, NOW(), %s, %s, %s)",
                 (self.name, self.last_online, usrstate, usrtype, envid),
             )
             db.commit()
@@ -177,7 +177,7 @@ class User:
             )
             cursor.execute(
                 "UPDATE user SET last_online = %s WHERE username = %s",
-                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.name),
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), self.name),
             )
             cursor.execute("SELECT * from states WHERE state = %s", ("online",))
             data = cursor.fetchone()
@@ -295,9 +295,9 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
     Sends Kafka events for state changes.
     """
     try:
-        time_now = datetime.now()
+        time_now = datetime.now(timezone.utc)
         if last_online:
-            delta = time_now - last_online
+            delta = time_now - last_online.replace(tzinfo=timezone.utc)
         else:
             delta = timedelta(minutes=60)
     except Exception:

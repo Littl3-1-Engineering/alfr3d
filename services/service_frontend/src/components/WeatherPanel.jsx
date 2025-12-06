@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 
@@ -43,27 +42,7 @@ const WeatherPanel = () => {
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-      className="relative bg-fui-panel border border-fui-border rounded-none"
-    >
-      {/* Corner Markers */}
-      <div className="absolute -top-px -left-px w-3 h-3 border-t-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -top-px -right-px w-3 h-3 border-t-2 border-r-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -left-px w-3 h-3 border-b-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -right-px w-3 h-3 border-b-2 border-r-2 border-fui-accent z-10" />
-
-      {/* Custom Folder Tab Header */}
-      <div className="absolute top-0 right-0 border-l-4 border-fui-accent bg-black/60 px-2 py-1 z-20">
-        <h3 className="font-tech text-lg text-white uppercase">
-          WEATHER
-        </h3>
-      </div>
-
-      {/* Content Area */}
-      <div className="p-4 relative pt-8">
+    <div className="p-4 relative">
         {isLoading ? (
           <div className="text-center">
             <p className="text-fui-accent font-mono uppercase text-sm">LOADING WEATHER...</p>
@@ -100,15 +79,14 @@ const WeatherPanel = () => {
                 <span className="text-fui-text/60 font-mono">HUMIDITY:</span>
                 <span className="text-fui-text font-mono ml-1">{weatherData.humidity || 'N/A'}%</span>
               </div>
-              <div>
-                <span className="text-fui-text/60 font-mono">PRESSURE:</span>
-                <span className="text-fui-text font-mono ml-1">{weatherData.pressure || 'N/A'} hPa</span>
-              </div>
+               <div>
+                 <span className="text-fui-text/60 font-mono">PRESSURE:</span>
+                 <span className="text-fui-text font-mono ml-1">{weatherData.pressure != null ? weatherData.pressure : 'N/A'} hPa</span>
+               </div>
             </div>
           </div>
         )}
-      </div>
-    </motion.div>
+    </div>
   );
 };
 

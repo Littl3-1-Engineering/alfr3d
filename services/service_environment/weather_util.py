@@ -105,6 +105,9 @@ def parse_weather(cursor, lat, lon):
     subjective_feel = determine_subjective_feel(weatherData)
     weatherData["subjective_feel"] = subjective_feel
 
+    # Get timezone offset in seconds
+    weatherData["timezone"] = weatherData.get("timezone", 0)
+
     return weatherData
 
 
@@ -114,7 +117,8 @@ def update_db_weather(db, cursor, weatherData):
     try:
         cursor.execute(
             "UPDATE environment SET description = %s, low = %s, high = %s, sunrise = %s, "
-            "sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s WHERE name = %s",
+            "sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s, timezone = %s "
+            "WHERE name = %s",
             (
                 str(weatherData["weather"][0]["description"]),
                 int(weatherData["main"]["temp_min"]),
@@ -124,6 +128,7 @@ def update_db_weather(db, cursor, weatherData):
                 int(weatherData["main"]["pressure"]),
                 int(weatherData["main"]["humidity"]),
                 weatherData["subjective_feel"],
+                weatherData["timezone"],
                 ALFR3D_ENV_NAME,
             ),
         )

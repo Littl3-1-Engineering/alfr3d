@@ -22,6 +22,7 @@ CREATE TABLE `user` (
   `about_me` VARCHAR(256) NULL DEFAULT NULL, -- Short description or bio of the user
   `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
   `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp when user was created
   `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment the user belongs to (foreign key to environment.id)
   `type` INTEGER NULL DEFAULT NULL, -- User type (references user_types table: 1=technoking, 2=resident, 3=guest)
   PRIMARY KEY (`id`)
@@ -274,12 +275,13 @@ BEGIN
   DELETE FROM calendar_events WHERE end_time < DATE_SUB(NOW(), INTERVAL 24 HOUR);
 END;;
 
-CREATE TRIGGER `cleanup_old_device_history` AFTER INSERT ON `device_history`
-FOR EACH ROW
-BEGIN
-  DELETE FROM device_history WHERE timestamp < DATE_SUB(NOW(), INTERVAL 180 DAY);
-  OPTIMIZE TABLE device_history;
-END;;
+-- Event to cleanup old device history daily
+DELIMITER ;
+CREATE EVENT `cleanup_device_history_event`
+ON SCHEDULE EVERY 1 DAY
+DO
+   DELETE FROM device_history WHERE timestamp < DATE_SUB(NOW(), INTERVAL 180 DAY);
+DELIMITER ;;
 
 DELIMITER ;
 
@@ -299,8 +301,8 @@ INSERT INTO `device_types` (`id`, `type`) VALUES ('3', 'guest');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('4', 'light');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('5', 'resident');
 
-INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', '\'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf\'', '', '1000-01-01 00:00:00', 1, 1, 1);
-INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `state`, `type`, `environment_id`) VALUES ('2', 'unknown', '', '', '', '1000-01-01 00:00:00', 1, 3, 1);
+INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', '\'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf\'', '', '1000-01-01 00:00:00', NOW(), 1, 1, 1);
+INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('2', 'unknown', '', '', '', '1000-01-01 00:00:00', NOW(), 1, 3, 1);
 INSERT INTO `environment` (`name`) VALUES ('test');
 
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"It is good to see you.");

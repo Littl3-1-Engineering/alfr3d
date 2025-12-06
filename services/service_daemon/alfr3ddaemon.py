@@ -251,7 +251,7 @@ class MyDaemon:
         events = calendar_utils.get_upcoming_events()
         if events:
             event = events[0]  # Take first
-            if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=1):
+            if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=3):
                 return None  # Only care about events within next hour
             title = event["title"]
             start_time = event["start_time"]
@@ -288,11 +288,15 @@ class MyDaemon:
                             f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}"
                         )
                         return {"mode": "event", "content": content, "priority": 2}
+                else:
+                    logger.warning("No location data found in environment table")
+                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+                    return {"mode": "event", "content": content, "priority": 2}
             except Exception as e:
                 logger.error("Event location error: " + str(e))
                 # Fallback content
                 # If event is within next hour, just show time
-                if start_time - datetime.now(timezone.utc) <= timedelta(hours=1):
+                if start_time - datetime.now(timezone.utc) <= timedelta(hours=3):
                     content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
                     return {"mode": "event", "content": content, "priority": 2}
         return None

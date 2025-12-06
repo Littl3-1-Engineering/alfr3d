@@ -1,30 +1,39 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { getGravatarUrl } from '../utils/gravatarUtils';
+import { formatCreatedDate } from '../utils/timeUtils';
 
 const OnlineUsers = () => {
   const [residents, setResidents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
+  const hasLoadedInitially = useRef(false);
 
   useEffect(() => {
     const fetchResidents = async () => {
       try {
-        setIsLoading(true);
+        setIsLoading(!hasLoadedInitially.current);
         setError(false);
         const response = await fetch(`${API_BASE_URL}/api/users?online=true`);
         if (response.ok) {
           const data = await response.json();
           const onlineResidents = data.filter(user => ['technoking', 'owner', 'resident'].includes(user.type));
           setResidents(onlineResidents);
+          if (!hasLoadedInitially.current) {
+            hasLoadedInitially.current = true;
+          }
         } else {
-          setError(true);
+          if (!hasLoadedInitially.current) {
+            setError(true);
+          }
         }
       } catch (error) {
         console.error('Failed to fetch online residents:', error);
-        setError(true);
+        if (!hasLoadedInitially.current) {
+          setError(true);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -40,10 +49,7 @@ const OnlineUsers = () => {
     return new Date(dateString).toLocaleDateString();
   };
 
-  const formatTime = (dateString) => {
-    if (!dateString) return 'UNKNOWN';
-    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+
 
   // Generate random barcode lines
   const generateBarcode = () => {
@@ -133,11 +139,11 @@ const OnlineUsers = () => {
               )}
             </div>
 
-            {/* Info */}
-            <div className="flex-1">
-              <h3 className="font-tech text-xl uppercase text-white mb-1">{resident.name}</h3>
-              <p className="font-mono text-sm text-fui-text">{resident.email}</p>
-            </div>
+             {/* Info */}
+             <div className="flex-1 min-w-0 overflow-hidden">
+               <h3 className="font-tech text-xl uppercase text-white mb-1">{resident.name}</h3>
+                <p className="font-mono text-sm text-fui-text" style={{ maskImage: 'linear-gradient(to right, black 80%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to right, black 80%, transparent 100%)' }}>{resident.email}</p>
+             </div>
 
             {/* Barcode */}
             <div className="flex-shrink-0 w-10 h-20 bg-black/20 flex flex-col items-center justify-center relative">
@@ -154,16 +160,16 @@ const OnlineUsers = () => {
                   />
                 ))}
               </div>
-              <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2 origin-center rotate-[-90deg]">
-                <span className="font-mono text-xs text-fui-text">{formatTime(resident.last_online)}</span>
-              </div>
+                <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2 origin-center rotate-[-90deg]">
+                  <span className="font-mono text-xs text-fui-text">{formatCreatedDate(resident.created_at)}</span>
+                </div>
             </div>
           </div>
 
-          {/* Footer */}
-          <div className="bg-fui-accent text-black font-mono text-xs px-4 py-2 text-center">
-            LAST ONLINE: {formatDate(resident.last_online)}
-          </div>
+           {/* Footer */}
+            <div className="bg-fui-accent text-black font-mono text-xs px-4 py-2 text-center">
+              LAST ONLINE: {formatDate(resident.last_online)}
+            </div>
         </motion.div>
       ))}
     </div>

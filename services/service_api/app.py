@@ -136,7 +136,8 @@ def get_users():
         online (str): If 'true', return only online users. Defaults to 'false'.
 
     Returns:
-        JSON: List of user dictionaries with id, name, email, about_me, state, type, last_online.
+        JSON: List of user dicts with id, name, email, about_me, state, type,
+        last_online, created_at.
     """
     online = request.args.get("online", "false").lower() == "true"
     try:
@@ -148,19 +149,22 @@ def get_users():
         if online:
             cursor.execute(
                 """
-                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type, u.last_online
+                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
+                       u.last_online, u.created_at
                 FROM user u
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 JOIN environment e ON u.environment_id = e.id
-                WHERE s.state = 'online' AND u.username NOT IN ('unknown', 'alfr3d') AND e.name = %s
+                WHERE s.state = 'online' AND u.username NOT IN ('unknown', 'alfr3d')
+                      AND e.name = %s
             """,
                 (ALFR3D_ENV_NAME,),
             )
         else:
-            cursor.execute(
+            cursor.execute(  # noqa: E501
                 """
-                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type, u.last_online
+                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
+                u.last_online, u.created_at
                 FROM user u
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
@@ -181,6 +185,7 @@ def get_users():
                     "state": row[4],
                     "type": row[5],
                     "last_online": row[6].isoformat() if row[6] else None,
+                    "created_at": row[7].isoformat() if row[7] else None,
                 }
             )
         db.close()
@@ -277,8 +282,8 @@ def create_user():
             return jsonify({"error": "Environment not found"}), 500
         env_id = env_row[0]
         cursor.execute(
-            "INSERT INTO user (username, email, about_me, state, type, environment_id) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO user (username, email, about_me, created_at, state, type, environment_id) "
+            "VALUES (%s, %s, %s, NOW(), %s, %s, %s)",
             (
                 data["name"],
                 data.get("email", ""),
@@ -1072,6 +1077,7 @@ def get_weather():
                 "description": row[10],
                 "sunrise": row[11].isoformat() if row[11] else None,
                 "sunset": row[12].isoformat() if row[12] else None,
+                "pressure": row[13],
                 "humidity": row[14],
             }
             return jsonify(weather)
@@ -1098,7 +1104,7 @@ def get_environment():
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
             "description, sunrise, sunset, pressure, humidity, manual_override, "
-            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1125,6 +1131,7 @@ def get_environment():
                     "manual_override": row[15],
                     "manual_location_override": row[16],
                     "subjective_feel": row[17],
+                    "timezone": row[18],
                 }
             )
         else:
@@ -1230,8 +1237,8 @@ def get_calendar_events():
         events = [
             {
                 "title": row[0],
-                "start_time": row[1].isoformat() if row[1] else None,
-                "end_time": row[2].isoformat() if row[2] else None,
+                "start_time": row[1].isoformat() + "Z" if row[1] else None,
+                "end_time": row[2].isoformat() + "Z" if row[2] else None,
                 "address": row[3],
                 "notes": row[4],
             }
