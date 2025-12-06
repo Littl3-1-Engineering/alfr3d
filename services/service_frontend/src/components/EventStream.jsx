@@ -33,8 +33,16 @@ const EventStream = () => {
   };
 
   return (
-    <div className="space-y-3 h-full pb-4">
-      <AnimatePresence>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6 }}
+      className="relative bg-fui-panel rounded-none"
+    >
+      {/* Content Area */}
+      <div className="p-2 relative pt-4">
+        <div className="space-y-3 h-full pb-4">
+          <AnimatePresence>
         {displayedEvents.map((event, index) => (
           <motion.div
             key={event.id}
@@ -52,7 +60,9 @@ const EventStream = () => {
           </motion.div>
         ))}
       </AnimatePresence>
-    </div>
+        </div>
+      </div>
+    </motion.div>
   );
 };
 

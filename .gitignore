@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+nginx.conf
 mysql_data/
 AGENTS.md
 node_modules/

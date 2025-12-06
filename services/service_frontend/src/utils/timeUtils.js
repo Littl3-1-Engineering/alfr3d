@@ -18,12 +18,21 @@
    return angle;
  };
 
-  export const formatLocalTime = (isoString) => {
-    try {
-      const date = new Date(isoString);
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch (e) {
-      // Fallback if not ISO
-      return isoString;
-    }
+   export const formatLocalTime = (isoString) => {
+     try {
+       const date = new Date(isoString);
+       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+     } catch (e) {
+       // Fallback if not ISO
+       return isoString;
+     }
+   };
+
+  export const formatCreatedDate = (dateString) => {
+    if (!dateString) return 'UNKNOWN';
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `D${day}M${month} Y${year}`;
   };

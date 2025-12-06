@@ -1,11 +1,11 @@
-import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { MapContainer, TileLayer, Marker, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { API_BASE_URL } from '../config';
 
-const LocationPanel = () => {
+const LocationPanel = ({ setTitle }) => {
   const [envData, setEnvData] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -70,6 +70,13 @@ const LocationPanel = () => {
     return () => clearInterval(envTimer);
   }, []);
 
+  useEffect(() => {
+    if (setTitle && envData.city) {
+      const cityAbbrev = abbreviateCity(envData.city);
+      setTitle(`LOCATION ${cityAbbrev}-42`);
+    }
+  }, [envData.city, setTitle]);
+
   const abbreviateCity = (city) => {
     if (!city) return 'UNK';
     const words = city.split(' ');
@@ -89,7 +96,6 @@ const LocationPanel = () => {
     return degrees + '°' + minutes + "'" + seconds + '"';
   };
 
-  const cityAbbrev = abbreviateCity(envData.city);
   const latFormatted = formatCoord(envData.latitude);
   const longFormatted = formatCoord(envData.longitude);
 
@@ -97,28 +103,8 @@ const LocationPanel = () => {
   const hasValidCoords = envData.latitude != null && envData.longitude != null && !error;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-      className="relative bg-fui-panel border border-fui-border rounded-none"
-    >
-      {/* Corner Markers */}
-      <div className="absolute -top-px -left-px w-3 h-3 border-t-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -top-px -right-px w-3 h-3 border-t-2 border-r-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -left-px w-3 h-3 border-b-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -right-px w-3 h-3 border-b-2 border-r-2 border-fui-accent z-10" />
-
-      {/* Custom Folder Tab Header */}
-      <div className="absolute top-0 right-0 border-l-4 border-fui-accent bg-black/60 px-2 py-1 z-20">
-        <h3 className="font-tech text-lg text-white uppercase">
-          LOCATION {cityAbbrev}-42
-        </h3>
-      </div>
-
-      {/* Content Area */}
-      <div className="p-4 relative pt-8">
-        {/* Map Area */}
+    <div className="p-4 relative">
+      {/* Map Area */}
         {isLoading ? (
           <div className="min-h-[240px] bg-tech-grid bg-[length:20px_20px] relative flex items-center justify-center">
             <p className="text-fui-accent font-mono uppercase text-sm">LOCATING...</p>
@@ -166,9 +152,12 @@ const LocationPanel = () => {
             <p className="text-lg font-mono text-fui-text">{longFormatted}</p>
           </div>
         </div>
-      </div>
-    </motion.div>
+    </div>
   );
+};
+
+LocationPanel.propTypes = {
+  setTitle: PropTypes.func,
 };
 
 export default LocationPanel;

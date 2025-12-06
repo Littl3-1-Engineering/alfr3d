@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 
@@ -78,27 +77,7 @@ const CalendarPanel = () => {
   const year = currentDate.getFullYear();
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-      className="relative bg-fui-panel border border-fui-border rounded-none"
-    >
-      {/* Corner Markers */}
-      <div className="absolute -top-px -left-px w-3 h-3 border-t-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -top-px -right-px w-3 h-3 border-t-2 border-r-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -left-px w-3 h-3 border-b-2 border-l-2 border-fui-accent z-10" />
-      <div className="absolute -bottom-px -right-px w-3 h-3 border-b-2 border-r-2 border-fui-accent z-10" />
-
-      {/* Custom Folder Tab Header */}
-      <div className="absolute top-0 right-0 border-l-4 border-fui-accent bg-black/60 px-2 py-1 z-20">
-        <h3 className="font-tech text-lg text-white uppercase">
-          CALENDAR
-        </h3>
-      </div>
-
-      {/* Content Area */}
-      <div className="p-4 relative pt-8">
+    <div className="p-4 relative">
         {/* Month Header */}
         <div className="text-center mb-3">
           <h4 className="text-sm font-mono text-fui-accent uppercase">
@@ -154,8 +133,7 @@ const CalendarPanel = () => {
             </div>
           )}
         </div>
-      </div>
-    </motion.div>
+    </div>
   );
 };
 

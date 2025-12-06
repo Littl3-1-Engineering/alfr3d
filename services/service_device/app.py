@@ -141,13 +141,14 @@ class Device:
             return False
 
         db.close()
-        event = {
-            "id": f"device_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "type": "success",
-            "message": f"New device {self.name} added to database",
-            "time": datetime.now(timezone.utc).isoformat(),
-        }
-        producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        if producer:
+            event = {
+                "id": f"device_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "success",
+                "message": f"New device {self.name} added to database",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            producer.send("event-stream", json.dumps(event).encode("utf-8"))
         logger.info("Device created successfully")
         return True
 
@@ -237,7 +238,7 @@ class Device:
                 (
                     self.name,
                     self.IP,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                     stateid,
                     envid,
                     self.MAC,
@@ -364,29 +365,33 @@ def check_offline_devices():
     cursor.execute("SELECT * FROM device;")
     devices = cursor.fetchall()
 
-    time_now = datetime.now()
+    time_now = datetime.now(timezone.utc)
     for device in devices:
         last_online_str = device[5]
         try:
-            last_online = last_online_str
-            delta = time_now - last_online
-            if delta > timedelta(minutes=30) and device[4] == stat["online"]:
-                logger.info("Setting device " + device[3] + " to offline due to inactivity")
-                cursor.execute(
-                    "UPDATE device SET state = %s WHERE MAC = %s",
-                    (stat["offline"], device[3]),
-                )
-                db.commit()
+            if last_online_str:
+                last_online = last_online_str
+                if last_online.tzinfo is None:
+                    last_online = last_online.replace(tzinfo=timezone.utc)
+                delta = time_now - last_online
+                if delta > timedelta(minutes=30) and device[4] == stat["online"]:
+                    logger.info("Setting device " + device[3] + " to offline due to inactivity")
+                    cursor.execute(
+                        "UPDATE device SET state = %s WHERE MAC = %s",
+                        (stat["offline"], device[3]),
+                    )
+                    db.commit()
 
-                # event = {
-                #     "id": f"device_offline_{device[3]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                #     "type": "warning",
-                #     "message": f"Device {device[3]} went offline due to inactivity",
-                #     "time": datetime.now().strftime("%I:%M %p"),
-                # }
-                # producer.send("event-stream", json.dumps(event).encode("utf-8"))
-        except Exception:
-            logger.error("Error checking device offline status")
+                    # event = {
+                    #     "id": f"device_offline_{device[3]}_
+                    #         {datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    #     "type": "warning",
+                    #     "message": f"Device {device[3]} went offline due to inactivity",
+                    #     "time": datetime.now().strftime("%I:%M %p"),
+                    # }
+                    # producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        except Exception as e:
+            logger.error("Error checking device offline status: " + str(e))
 
     db.close()
 
@@ -472,7 +477,8 @@ def check_lan():
     logger.info("Cleaning up temporary files")
     os.system("rm -rf " + netclientsfile)
 
-    producer.send("user", b"refresh-all")
+    if producer:
+        producer.send("user", b"refresh-all")
 
 
 if __name__ == "__main__":

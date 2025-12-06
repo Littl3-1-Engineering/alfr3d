@@ -113,7 +113,7 @@ def get_upcoming_events():
         future = now + timedelta(hours=2)
         cursor.execute(
             "SELECT title, start_time, address, notes FROM calendar_events "
-            "WHERE start_time BETWEEN %s AND %s AND address IS NOT NULL AND address != '' "
+            "WHERE start_time BETWEEN %s AND %s "
             "ORDER BY start_time ASC LIMIT 1",
             (now, future),
         )
@@ -162,8 +162,10 @@ def sync_calendar():
             else:
                 logger.warning(f"Calendar '{name}' not found")
 
-        now = datetime.utcnow().isoformat() + "Z"
-        future = (datetime.utcnow() + timedelta(days=7)).isoformat() + "Z"
+        now_dt = datetime.utcnow()
+        future_dt = now_dt + timedelta(days=7)
+        now = now_dt.isoformat() + "Z"
+        future = future_dt.isoformat() + "Z"
 
         all_events = []
         for cal_id in calendar_ids:
@@ -186,21 +188,35 @@ def sync_calendar():
         # Delete existing events in the sync range to avoid duplicates
         cursor.execute(
             "DELETE FROM calendar_events WHERE start_time >= %s AND start_time <= %s",
-            (now, future),
+            (now_dt, future_dt),
         )
 
         for event in all_events:
             start_str = event["start"].get("dateTime", event["start"].get("date"))
             end_str = event["end"].get("dateTime", event["end"].get("date"))
             # Parse datetime strings, handle 'Z' suffix
-            if start_str and "T" in start_str:
-                start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            if start_str:
+                if "T" in start_str:
+                    start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(
+                        microsecond=0, tzinfo=None
+                    )
+                else:
+                    # all-day event, start at beginning of day
+                    start = datetime.fromisoformat(start_str + "T00:00:00+00:00").replace(
+                        tzinfo=None
+                    )
             else:
-                start = start_str
-            if end_str and "T" in end_str:
-                end = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                start = None
+            if end_str:
+                if "T" in end_str:
+                    end = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(
+                        microsecond=0, tzinfo=None
+                    )
+                else:
+                    # all-day event, end at beginning of next day
+                    end = datetime.fromisoformat(end_str + "T00:00:00+00:00").replace(tzinfo=None)
             else:
-                end = end_str
+                end = None
             title = event.get("summary", "No Title")
             location = event.get("location", "")
             description = event.get("description", "")
@@ -210,8 +226,8 @@ def sync_calendar():
                 "VALUES (%s, %s, %s, %s, %s)",
                 (
                     title,
-                    start,
-                    end,
+                    start.strftime("%Y-%m-%d %H:%M:%S") if start else None,
+                    end.strftime("%Y-%m-%d %H:%M:%S") if end else None,
                     location,
                     description,
                 ),
