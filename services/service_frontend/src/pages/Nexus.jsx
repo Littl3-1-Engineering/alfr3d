@@ -39,7 +39,7 @@ const Nexus = () => {
           ALFR3D Nexus
         </motion.h1>
 
-          <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[220px_300px_450px_300px_220px] md:grid-nexus">
+          <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[260px_300px_450px_300px_280px] md:grid-nexus">
            {/* Column 1: Time, Weather, Calendar */}
              <motion.div
                initial={{ opacity: 0, x: -50 }}

@@ -1,16 +1,20 @@
 # ALFR3D
 
-A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, and Python services. Includes a modern Flask web frontend with real-time dashboard monitoring and comprehensive user/device management.
+A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, and Python services. Includes a modern React web frontend with real-time dashboard monitoring and comprehensive user/device management.
 
 ## Screenshot
 
-![ALFR3D Dashboard](screenshot.png)
+![ALFR3D Dashboard](Nexus.png)
+
+## Database Architecture
+
+![Database Architecture](db_arch.png)
 
 ## Features
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
 - **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines.
-- **Messaging**: Kafka-based communication between services with topics: `speak`, `google`, `user`, `device`, `environment`.
+- **Messaging**: Kafka-based communication between services with topics: `speak`, `google`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
