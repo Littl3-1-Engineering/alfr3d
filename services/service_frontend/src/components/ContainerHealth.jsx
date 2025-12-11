@@ -63,7 +63,7 @@ const ContainerHealth = () => {
             <p className="text-red-400 font-mono uppercase text-sm">CONTAINERS FAILURE</p>
           </motion.div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-4">
             {containers.map((container, index) => (
         <motion.div
           key={container.name}
