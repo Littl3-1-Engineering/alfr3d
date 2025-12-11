@@ -13,10 +13,17 @@ import EventStream from '../components/EventStream';
 import TimeDatePanel from '../components/TimeDatePanel';
 import WeatherPanel from '../components/WeatherPanel';
 import CalendarPanel from '../components/CalendarPanel';
+import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
 
 const Nexus = () => {
   const [systemHealth] = useState('cyan');
   const [locationTitle, setLocationTitle] = useState('');
+  const [openPanels, setOpenPanels] = useState({
+    timeDate: false,
+    weather: false,
+    calendar: false,
+    containerHealth: false
+  });
 
   return (
     <motion.div
@@ -39,25 +46,8 @@ const Nexus = () => {
           ALFR3D Nexus
         </motion.h1>
 
-          <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[260px_300px_450px_300px_280px] md:grid-nexus">
-           {/* Column 1: Time, Weather, Calendar */}
-             <motion.div
-               initial={{ opacity: 0, x: -50 }}
-               animate={{ opacity: 1, x: 0 }}
-               transition={{ delay: 0.4, duration: 0.6 }}
-               className="flex flex-col gap-4 order-4 md:order-none"
-             >
-              <TacticalPanelVariant1 title="TIME & DATE">
-                <TimeDatePanel />
-              </TacticalPanelVariant1>
-              <TacticalPanelVariant2 title="WEATHER">
-                <WeatherPanel />
-              </TacticalPanelVariant2>
-              <TacticalPanelVariant3 title="C4lendar">
-                <CalendarPanel />
-              </TacticalPanelVariant3>
-             </motion.div>
-             {/* Column 2: Residents Roster + Event Stream */}
+           <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[300px_450px_300px]">
+              {/* Column 2: Residents Roster + Event Stream */}
                <motion.div
                  initial={{ opacity: 0, y: -20 }}
                  animate={{ opacity: 1, y: 0 }}
@@ -100,18 +90,64 @@ const Nexus = () => {
                  </TacticalPanelVariant3>
              </motion.div>
 
-           {/* Column 5: Container Health */}
-             <motion.div
-               initial={{ opacity: 0, x: 50 }}
-               animate={{ opacity: 1, x: 0 }}
-               transition={{ delay: 0.8, duration: 0.6 }}
-               className="flex flex-col order-5 md:order-none"
-             >
-               <TacticalPanelVariant2 title="Container Health">
-                 <ContainerHealth />
-               </TacticalPanelVariant2>
-            </motion.div>
-        </div>
+         </div>
+
+         {/* Collapsible Side Panels */}
+         <CollapsibleSidePanel
+           position="left"
+           title="TIME & DAT3"
+           isOpen={openPanels.timeDate}
+           onToggle={() => setOpenPanels(prev => ({ ...prev, timeDate: !prev.timeDate }))}
+           onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
+           tabTop="calc(50vh - 200px)"
+           tabIndex={0}
+         >
+           <TacticalPanelVariant1 title="TIME & DATE">
+             <TimeDatePanel />
+           </TacticalPanelVariant1>
+         </CollapsibleSidePanel>
+
+         <CollapsibleSidePanel
+           position="left"
+           title="W3ATH3R"
+           isOpen={openPanels.weather}
+           onToggle={() => setOpenPanels(prev => ({ ...prev, weather: !prev.weather }))}
+           onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
+           tabTop="calc(50vh - 20px)"
+           tabIndex={1}
+         >
+           <TacticalPanelVariant2 title="WEATHER">
+             <WeatherPanel />
+           </TacticalPanelVariant2>
+         </CollapsibleSidePanel>
+
+         <CollapsibleSidePanel
+           position="left"
+           title="C4L3ND4R"
+           isOpen={openPanels.calendar}
+           onToggle={() => setOpenPanels(prev => ({ ...prev, calendar: !prev.calendar }))}
+           onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
+           tabTop="calc(50vh + 160px)"
+           tabIndex={2}
+         >
+           <TacticalPanelVariant3 title="C4lendar">
+             <CalendarPanel />
+           </TacticalPanelVariant3>
+         </CollapsibleSidePanel>
+
+         <CollapsibleSidePanel
+           position="right"
+           title="C0NT41N3R H3ALTH"
+           isOpen={openPanels.containerHealth}
+           onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
+           onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
+           tabTop="calc(50vh - 40px)"
+           tabIndex={0}
+         >
+           <TacticalPanelVariant2 title="Container Health">
+             <ContainerHealth />
+           </TacticalPanelVariant2>
+         </CollapsibleSidePanel>
       </div>
     </motion.div>
   );
