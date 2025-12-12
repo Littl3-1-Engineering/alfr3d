@@ -46,7 +46,8 @@ const Nexus = () => {
           ALFR3D Nexus
         </motion.h1>
 
-           <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[300px_450px_300px]">
+            <div className="flex justify-center">
+                <div className="grid gap-8 grid-cols-1 md:grid-cols-[300px_450px_300px]">
               {/* Column 2: Residents Roster + Event Stream */}
                <motion.div
                  initial={{ opacity: 0, y: -20 }}
@@ -90,7 +91,8 @@ const Nexus = () => {
                  </TacticalPanelVariant3>
              </motion.div>
 
-         </div>
+                </div>
+            </div>
 
          {/* Collapsible Side Panels */}
          <CollapsibleSidePanel
@@ -141,7 +143,7 @@ const Nexus = () => {
            isOpen={openPanels.containerHealth}
            onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
            onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
-           tabTop="calc(50vh - 40px)"
+           tabTop="60px"
            tabIndex={0}
          >
            <TacticalPanelVariant2 title="Container Health">
