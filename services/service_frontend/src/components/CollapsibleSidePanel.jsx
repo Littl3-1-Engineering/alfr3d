@@ -28,6 +28,7 @@ const CollapsibleSidePanel = ({
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={onToggle}
+        tabIndex={tabIndex}
       >
         <div className="bg-fui-panel border border-fui-border rounded-none p-0.5 shadow-lg w-[20px] h-[140px] flex items-center justify-center">
           {/* Corner Markers - Only on inner edge facing screen */}
