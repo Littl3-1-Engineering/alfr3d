@@ -269,8 +269,6 @@ END;;
 
 DELIMITER ;
 
-
-
 -- Event to cleanup old device history daily
 DELIMITER ;
 CREATE EVENT `cleanup_device_history_event`

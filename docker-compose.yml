@@ -64,9 +64,10 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
-    # Mounts Docker socket to allow container management
+    # Mounts Docker socket to allow container management and shared audio volume
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - audio_data:/tmp/audio
     # Privileged mode grants elevated permissions for Docker operations
     privileged: true
     env_file: .env
@@ -104,6 +105,19 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
       - LOG_LEVEL=${LOG_LEVEL}
+
+  service-speak:
+    build: ./services/service_speak
+    # Depends on Kafka for message consumption
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - audio_data:/tmp/audio
 
   service-daemon:
     build: ./services/service_daemon
@@ -156,6 +170,7 @@ services:
       timeout: 20s
       retries: 10
 
-# Named volume for persistent MySQL data storage
+# Named volumes for persistent data storage
 volumes:
   mysql_data:
+  audio_data:
