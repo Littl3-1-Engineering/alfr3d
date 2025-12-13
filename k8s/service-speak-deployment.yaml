@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alfr3d-service-speak
+  labels:
+    app: alfr3d-service-speak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alfr3d-service-speak
+  template:
+    metadata:
+      labels:
+        app: alfr3d-service-speak
+    spec:
+      containers:
+      - name: speak
+        image: alfr3d-service-speak:latest
+        env:
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: alfr3d-config
+              key: mysql-database
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: alfr3d-secrets
+              key: mysql-user
+        - name: MYSQL_PSWD
+          valueFrom:
+            secretKeyRef:
+              name: alfr3d-secrets
+              key: mysql-password
+        - name: MYSQL_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alfr3d-config
+              key: mysql-database-name
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: alfr3d-config
+              key: kafka-bootstrap-servers
+        - name: ALFR3D_ENV_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alfr3d-config
+              key: alfr3d-env-name
+        - name: LOG_LEVEL
+          value: INFO
+        - name: AUDIO_STORAGE_PATH
+          value: /tmp/audio
+        - name: AUDIO_RETENTION_MINUTES
+          value: "5"
+        volumeMounts:
+        - name: audio-storage
+          mountPath: /tmp/audio
+      volumes:
+      - name: audio-storage
+        emptyDir: {}

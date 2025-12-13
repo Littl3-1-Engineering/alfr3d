@@ -21,3 +21,9 @@ spec:
         envFrom:
         - configMapRef:
             name: alfr3d-k8s-env
+        volumeMounts:
+        - name: audio-storage
+          mountPath: /tmp/audio
+      volumes:
+      - name: audio-storage
+        emptyDir: {}

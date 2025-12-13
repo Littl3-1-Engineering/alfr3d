@@ -28,6 +28,7 @@ const EventStream = () => {
     switch (type) {
       case 'warning': return <div className="w-3 h-3 border-2 border-warning" />;
       case 'success': return <div className="w-3 h-3 border-2 border-fui-accent bg-fui-accent" />;
+      case 'audio': return <div className="w-3 h-3 border-2 border-blue-500 bg-blue-500" />;
       default: return <div className="w-3 h-3 border-2 border-fui-text" />;
     }
   };
