@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import PersonnelRoster from '../components/PersonnelRoster';
 import EnvironmentSettings from '../components/EnvironmentSettings';
 import ControlBlade from '../components/ControlBlade';
@@ -8,8 +9,37 @@ import TacticalPanel from '../components/TacticalPanel';
 const Blueprint = lazy(() => import('../components/Blueprint'));
 
 const Domain = () => {
-  const [activeView, setActiveView] = useState('blueprint');
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const tabParam = searchParams.get('tab');
+  const userIdParam = searchParams.get('userId');
+
+  console.log('Domain: URL params - tab:', tabParam, 'userId:', userIdParam);
+
+  const [activeView, setActiveView] = useState(tabParam === 'personnel' ? 'personnel' : 'blueprint');
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [initialUserId, setInitialUserId] = useState(userIdParam);
+
+  useEffect(() => {
+    // Store the userId before clearing URL parameters
+    if (userIdParam && !initialUserId) {
+      console.log('Domain: Storing initialUserId:', userIdParam);
+      setInitialUserId(userIdParam);
+    }
+
+    // Clear URL parameters after processing
+    if (tabParam || userIdParam) {
+      console.log('Domain: Clearing URL parameters');
+      navigate('/domain', { replace: true });
+    }
+  }, [tabParam, userIdParam, navigate, initialUserId]);
+
+  useEffect(() => {
+    // Clear URL parameters after processing
+    if (tabParam || userIdParam) {
+      navigate('/domain', { replace: true });
+    }
+  }, [tabParam, userIdParam, navigate]);
 
   return (
     <motion.div
@@ -76,11 +106,11 @@ const Domain = () => {
               </TacticalPanel>
             </Suspense>
           )}
-          {activeView === 'personnel' && (
-            <TacticalPanel title="Personnel Roster">
-              <PersonnelRoster />
-            </TacticalPanel>
-          )}
+           {activeView === 'personnel' && (
+             <TacticalPanel title="Personnel Roster">
+               <PersonnelRoster initialUserId={initialUserId} />
+             </TacticalPanel>
+           )}
           {activeView === 'environment' && (
             <TacticalPanel title="Environment Settings">
               <EnvironmentSettings />

@@ -1,11 +1,14 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
+import { useNavigate } from 'react-router-dom';
 import { User, Monitor, Edit, Trash2, Plus, Save, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
 
-const PersonnelRoster = () => {
+const PersonnelRoster = ({ initialUserId }) => {
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [editingUser, setEditingUser] = useState(null);
@@ -21,16 +24,40 @@ const PersonnelRoster = () => {
   const [userDevices, setUserDevices] = useState([]);
   const [deviceHistory, setDeviceHistory] = useState([]);
 
+  console.log('PersonnelRoster: Received initialUserId:', initialUserId);
+
   useEffect(() => {
     console.log('PersonnelRoster component mounted');
     fetchUsers();
     fetchDevices();
   }, []);
 
+  useEffect(() => {
+    console.log('PersonnelRoster useEffect triggered - initialUserId:', initialUserId, 'users.length:', users.length);
+    if (initialUserId && users.length > 0) {
+      console.log('PersonnelRoster: Looking for user with ID:', initialUserId);
+      console.log('PersonnelRoster: Available users:', users.map(u => ({ id: u.id, name: u.name })));
+      const user = users.find(u => u.id.toString() === initialUserId.toString());
+      if (user) {
+        console.log('PersonnelRoster: Found user, opening modal:', user);
+        handleUserClick(user);
+      } else {
+        console.error(`User with ID ${initialUserId} not found`);
+        // Send error to event stream
+        sendEventToStream({
+          type: 'error',
+          message: `User with ID ${initialUserId} not found`
+        });
+        navigate('/');
+      }
+    }
+  }, [initialUserId, users, navigate]);
+
   const fetchUsers = async () => {
     try {
       const response = await fetch(API_BASE_URL + '/api/users');
       const data = await response.json();
+      console.log('PersonnelRoster: Fetched users:', data.length, 'users');
       setUsers(data);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -198,6 +225,23 @@ const PersonnelRoster = () => {
     setModalDevice(null);
     setDeviceHistory([]);
   };
+
+  // Helper function to send events to stream
+  const sendEventToStream = async (eventData) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(eventData)
+      });
+    } catch (error) {
+      console.error('Failed to send event to stream:', error);
+    }
+  };
+
+PersonnelRoster.propTypes = {
+  initialUserId: PropTypes.string
+};
 
   console.log('Rendering PersonnelRoster with modals:', { showUserModal, showDeviceModal, userDevices: userDevices.length, deviceHistory: deviceHistory.length });
 

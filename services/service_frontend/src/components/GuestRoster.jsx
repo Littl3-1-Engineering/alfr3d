@@ -1,11 +1,13 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
 
 const GuestRoster = () => {
+  const navigate = useNavigate();
   const [guests, setGuests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -111,8 +113,9 @@ const GuestRoster = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: index * 0.1, duration: 0.5 }}
-          className="relative bg-fui-panel border border-fui-border rounded-none overflow-hidden"
-        >
+           className="relative bg-fui-panel border border-fui-border rounded-none overflow-hidden cursor-pointer"
+          onClick={() => navigate(`/domain?tab=personnel&userId=${guest.id}`)}
+          >
           {/* Corner Markers */}
           <div className="absolute -top-px -left-px w-3 h-3 border-t-2 border-l-2 border-fui-accent z-10" />
           <div className="absolute -top-px -right-px w-3 h-3 border-t-2 border-r-2 border-fui-accent z-10" />

@@ -116,12 +116,12 @@ const AudioPlayer = () => {
           setAudioQueue(prevQueue => {
             const existingUrls = prevQueue.map(item => item.audio_url);
             const now = new Date();
-            const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000); // 5 minutes ago
+            const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
 
             const newItems = audioEvents.filter(event => {
-              // Check if event is recent (within last 5 minutes)
+              // Check if event is recent (within last 10 minutes)
               const eventTime = new Date(event.time);
-              if (eventTime < fiveMinutesAgo) {
+              if (eventTime < tenMinutesAgo) {
                 console.log('Skipping old audio event:', event.audio_url, 'time:', event.time);
                 return false; // Skip old events
               }
