@@ -76,7 +76,6 @@ def update_tokens(integration_type, creds):
 
 
 def main():
-    logger.info(f"CLIENT_ID: {CLIENT_ID}")
     logger.info(f"CLIENT_SECRET: {'*' * len(CLIENT_SECRET) if CLIENT_SECRET else None}")
     if not CLIENT_ID or not CLIENT_SECRET:
         logger.error("CLIENT_ID and CLIENT_SECRET environment variables must be set")
