@@ -17,6 +17,7 @@ spec:
       containers:
       - name: speak
         image: alfr3d-service-speak:latest
+        imagePullPolicy: Never
         env:
         - name: MYSQL_DATABASE
           valueFrom:

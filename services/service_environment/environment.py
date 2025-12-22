@@ -35,6 +35,7 @@ MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
 KAFKA_URL = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
 
+# Kafka producer for integrations
 producer = None
 
 
@@ -42,7 +43,7 @@ def get_producer():
     global producer
     if producer is None:
         try:
-            print("Connecting to Kafka at: " + KAFKA_URL)
+            logger.info("Connecting to Kafka at: " + KAFKA_URL)
             producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
             logger.info("Connected to Kafka")
         except Exception:

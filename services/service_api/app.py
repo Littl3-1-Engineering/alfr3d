@@ -35,10 +35,23 @@ KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
 # Kafka producer for integrations
-producer = KafkaProducer(
-    bootstrap_servers=KAFKA_URL,
-    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-)
+producer = None
+
+
+def get_producer():
+    global producer
+    if producer is None:
+        try:
+            logger.info("Connecting to Kafka at: " + KAFKA_URL)
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_URL,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+            )
+            logger.info("Connected to Kafka")
+        except KafkaError as e:
+            logger.error("Failed to connect to Kafka: " + str(e))
+    return producer
+
 
 # Store recent events
 recent_events = []
