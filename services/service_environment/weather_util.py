@@ -8,9 +8,11 @@ import socket
 import pymysql  # Changed from MySQLdb
 import sys
 from kafka import KafkaProducer
+from kafka.errors import KafkaError
 from time import strftime, localtime  # needed to obtain time
 from datetime import datetime, timedelta
 from urllib.request import urlopen  # used to make calls to www
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
 
 # current path from which python is executed
@@ -44,8 +46,8 @@ def get_producer():
             print("Connecting to Kafka at: " + KAFKA_URL)
             producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
             logger.info("Connected to Kafka")
-        except Exception:
-            logger.error("Failed to connect to Kafka")
+        except KafkaError as e:
+            logger.error("Failed to connect to Kafka: " + str(e))
             return None
     return producer
 
@@ -74,9 +76,16 @@ def parse_weather(cursor, lat, lon):
     )
     try:
         weatherData = json.loads(urlopen(url).read().decode("utf-8"))
+
     except Exception as e:
         logger.error("Failed to get weather data\n")
-        logger.error("URL: " + url)
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        if "appid" in query_params:
+            del query_params["appid"]
+        sanitized_query = urlencode(query_params, doseq=True)
+        sanitized_url = urlunparse(parsed_url._replace(query=sanitized_query))
+        logger.error("URL: " + sanitized_url)
         logger.error("Traceback " + str(e))
         return None
 
