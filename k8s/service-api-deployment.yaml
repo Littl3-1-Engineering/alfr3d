@@ -14,8 +14,8 @@ spec:
     spec:
       containers:
       - name: service-api
-        image: alfr3d/service-api:latest
-        imagePullPolicy: Never
+        image: docker.io/library/alfr3d-service-api:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5001
         envFrom:

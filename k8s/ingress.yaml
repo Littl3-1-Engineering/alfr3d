@@ -4,9 +4,15 @@ metadata:
   name: alfr3d-ingress
 spec:
   rules:
-  - host: alfr3d.local  # Change to your domain
-    http:
+  - http:
       paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: service-api
+            port:
+              number: 5002
       - path: /
         pathType: Prefix
         backend:

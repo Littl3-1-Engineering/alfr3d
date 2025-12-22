@@ -80,22 +80,22 @@ services:
   service-device:
     build: ./services/service_device
     # Depends on Kafka for event streaming and MySQL for data storage
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mysql:
-        condition: service_started
+    #depends_on:
+    #  kafka:
+    #    condition: service_healthy
+    #  mysql:
+    #    condition: service_started
     # Host network mode enables ARP scanning and direct host access
     network_mode: host # To allow arp-scan on host network
     env_file: .env
     environment:
-      - MYSQL_DATABASE=localhost
+      - MYSQL_DATABASE=localhost:30306
       - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
       - LOG_LEVEL=${LOG_LEVEL}
 
   service-environment:
     build: ./services/service_environment
-    # Depends on Kafka for event publishing and MySQL for data persistence
+    # Depends on Kafka for event  blishing and MySQL for data persistence
     depends_on:
       kafka:
         condition: service_healthy
