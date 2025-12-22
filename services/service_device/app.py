@@ -73,7 +73,7 @@ class Device:
         data = cursor.fetchone()
 
         if data:
-            logger.warning("device already exists.... aborting")
+            logger.warninging("device already exists.... aborting")
             db.close()
             return False
 
@@ -169,7 +169,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
+            logger.warninging("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -210,7 +210,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn("Failed to find a device with MAC: " + self.MAC + " in the database")
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -283,7 +283,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn("Failed to find a device with MAC: " + self.MAC + " in the database")
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
