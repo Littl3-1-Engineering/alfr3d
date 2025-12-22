@@ -347,8 +347,14 @@ const Core = () => {
     const fetchContainers = async () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/containers');
-        const data = await response.json();
-        setContainers(data);
+        if (response.ok) {
+          const data = await response.json();
+          setContainers(data);
+        } else {
+          console.error('Error fetching containers:', response.status);
+          // Fallback dummy data for testing
+          setContainers([{ name: 'test-container', errors: 0 }]);
+        }
       } catch (error) {
         console.error('Error fetching containers:', error);
         // Fallback dummy data for testing
@@ -364,8 +370,14 @@ const Core = () => {
     const fetchUsers = async () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/users?online=true');
-        const data = await response.json();
-        setUsers(data);
+        if (response.ok) {
+          const data = await response.json();
+          setUsers(data);
+        } else {
+          console.error('Error fetching users:', response.status);
+          // Fallback dummy data for testing
+          setUsers([{ name: 'test-user', type: 'user' }]);
+        }
       } catch (error) {
         console.error('Error fetching users:', error);
         // Fallback dummy data for testing
@@ -381,8 +393,14 @@ const Core = () => {
     const fetchDevices = async () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/devices');
-        const data = await response.json();
-        setDevices(data);
+        if (response.ok) {
+          const data = await response.json();
+          setDevices(data);
+        } else {
+          console.error('Error fetching devices:', response.status);
+          // Fallback dummy data for testing
+          setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
+        }
       } catch (error) {
         console.error('Error fetching devices:', error);
         // Fallback dummy data for testing

@@ -30,7 +30,7 @@ const Nexus = () => {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.8 }}
-      className="min-h-screen p-8 bg-fui-bg"
+      className="min-h-screen p-8 bg-fui-bg relative"
       style={{
         backgroundImage: "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
         backgroundSize: '20px 20px'
@@ -46,7 +46,8 @@ const Nexus = () => {
           ALFR3D Nexus
         </motion.h1>
 
-           <div className="grid gap-8 w-full grid-cols-1 md:grid-cols-[300px_450px_300px]">
+            <div className="flex justify-center">
+                <div className="grid gap-8 grid-cols-1 md:grid-cols-[300px_450px_300px]">
               {/* Column 2: Residents Roster + Event Stream */}
                <motion.div
                  initial={{ opacity: 0, y: -20 }}
@@ -90,60 +91,57 @@ const Nexus = () => {
                  </TacticalPanelVariant3>
              </motion.div>
 
-         </div>
+                </div>
+            </div>
 
          {/* Collapsible Side Panels */}
-         <CollapsibleSidePanel
-           position="left"
-           title="TIME & DAT3"
-           isOpen={openPanels.timeDate}
-           onToggle={() => setOpenPanels(prev => ({ ...prev, timeDate: !prev.timeDate }))}
-           onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
-           tabTop="calc(50vh - 200px)"
-           tabIndex={0}
-         >
+          <CollapsibleSidePanel
+            position="left"
+            title="TIME & DAT3"
+            isOpen={openPanels.timeDate}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, timeDate: !prev.timeDate }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
+            tabIndex={0}
+          >
            <TacticalPanelVariant1 title="TIME & DATE">
              <TimeDatePanel />
            </TacticalPanelVariant1>
          </CollapsibleSidePanel>
 
-         <CollapsibleSidePanel
-           position="left"
-           title="W3ATH3R"
-           isOpen={openPanels.weather}
-           onToggle={() => setOpenPanels(prev => ({ ...prev, weather: !prev.weather }))}
-           onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
-           tabTop="calc(50vh - 20px)"
-           tabIndex={1}
-         >
+          <CollapsibleSidePanel
+            position="left"
+            title="W3ATH3R"
+            isOpen={openPanels.weather}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, weather: !prev.weather }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
+            tabIndex={1}
+          >
            <TacticalPanelVariant2 title="WEATHER">
              <WeatherPanel />
            </TacticalPanelVariant2>
          </CollapsibleSidePanel>
 
-         <CollapsibleSidePanel
-           position="left"
-           title="C4L3ND4R"
-           isOpen={openPanels.calendar}
-           onToggle={() => setOpenPanels(prev => ({ ...prev, calendar: !prev.calendar }))}
-           onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
-           tabTop="calc(50vh + 160px)"
-           tabIndex={2}
-         >
+          <CollapsibleSidePanel
+            position="left"
+            title="C4L3ND4R"
+            isOpen={openPanels.calendar}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, calendar: !prev.calendar }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
+            tabIndex={2}
+          >
            <TacticalPanelVariant3 title="C4lendar">
              <CalendarPanel />
            </TacticalPanelVariant3>
          </CollapsibleSidePanel>
 
-         <CollapsibleSidePanel
-           position="right"
-           title="C0NT41N3R H3ALTH"
-           isOpen={openPanels.containerHealth}
-           onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
-           onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
-           tabTop="calc(50vh - 40px)"
-           tabIndex={0}
-         >
+          <CollapsibleSidePanel
+            position="right"
+            title="C0NT41N3R H3ALTH"
+            isOpen={openPanels.containerHealth}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
+            tabIndex={0}
+          >
            <TacticalPanelVariant2 title="Container Health">
              <ContainerHealth />
            </TacticalPanelVariant2>

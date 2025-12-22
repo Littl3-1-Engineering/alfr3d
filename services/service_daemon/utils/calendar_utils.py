@@ -8,7 +8,7 @@ Integrates with Google Calendar API for fetching events.
 import os
 import sys
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pymysql
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -123,7 +123,7 @@ def get_upcoming_events():
             return [
                 {
                     "title": row[0],
-                    "start_time": row[1],
+                    "start_time": row[1].replace(tzinfo=timezone.utc),
                     "address": row[2],
                     "notes": row[3],
                 }

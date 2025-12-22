@@ -4,6 +4,7 @@ import { useEffect } from 'react'; // <--- 1. IMPORT useEffect
 import Nexus from './pages/Nexus';
 import Domain from './pages/Domain';
 import Matrix from './pages/Matrix';
+import AudioPlayer from './components/AudioPlayer';
 
 function App() {
 
@@ -20,6 +21,7 @@ function App() {
 
   return (
     <Router>
+      <AudioPlayer />
       <div className="min-h-screen relative overflow-hidden">
         {/* Temporary Navbar */}
         <nav className="fixed top-0 left-0 right-0 z-20 bg-card/80 backdrop-blur-sm border-b border-primary/20">
