@@ -26,7 +26,7 @@ services:
       - "9092:9092"
     # Healthcheck ensures Kafka is ready to accept connections
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,7 +35,7 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_DATABASE: ${MYSQL_NAME}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PSWD}
     ports:
@@ -53,8 +53,8 @@ services:
         condition: service_started
     env_file: .env
     environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-       - LOG_LEVEL=${LOG_LEVEL}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-api:
     build: ./services/service_api
@@ -64,9 +64,10 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
-    # Mounts Docker socket to allow container management
+    # Mounts Docker socket to allow container management and shared audio volume
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - audio_data:/tmp/audio
     # Privileged mode grants elevated permissions for Docker operations
     privileged: true
     env_file: .env
@@ -79,22 +80,22 @@ services:
   service-device:
     build: ./services/service_device
     # Depends on Kafka for event streaming and MySQL for data storage
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mysql:
-        condition: service_started
+    #depends_on:
+    #  kafka:
+    #    condition: service_healthy
+    #  mysql:
+    #    condition: service_started
     # Host network mode enables ARP scanning and direct host access
-    network_mode: host  # To allow arp-scan on host network
+    network_mode: host # To allow arp-scan on host network
     env_file: .env
     environment:
-      - MYSQL_DATABASE=localhost
+      - MYSQL_DATABASE=localhost:30306
       - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
       - LOG_LEVEL=${LOG_LEVEL}
 
   service-environment:
     build: ./services/service_environment
-    # Depends on Kafka for event publishing and MySQL for data persistence
+    # Depends on Kafka for event  blishing and MySQL for data persistence
     depends_on:
       kafka:
         condition: service_healthy
@@ -102,8 +103,21 @@ services:
         condition: service_started
     env_file: .env
     environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-       - LOG_LEVEL=${LOG_LEVEL}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-speak:
+    build: ./services/service_speak
+    # Depends on Kafka for message consumption
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - audio_data:/tmp/audio
 
   service-daemon:
     build: ./services/service_daemon
@@ -143,7 +157,7 @@ services:
       - service-api
     restart: unless-stopped
 
-   # Separate MySQL instance for testing to avoid interfering with production data
+  # Separate MySQL instance for testing to avoid interfering with production data
   test-mysql:
     image: mysql:8.0
     environment:
@@ -152,10 +166,11 @@ services:
     ports:
       - "3307:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       timeout: 20s
       retries: 10
 
-# Named volume for persistent MySQL data storage
+# Named volumes for persistent data storage
 volumes:
   mysql_data:
+  audio_data:

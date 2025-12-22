@@ -14,7 +14,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
 - **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines.
-- **Messaging**: Kafka-based communication between services with topics: `speak`, `google`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`.
+- **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
@@ -26,14 +26,15 @@ A containerized microservices project for home automation, featuring Kafka messa
 ## Services
 
 - **Zookeeper**: Required for Kafka coordination and cluster management.
-- **Kafka**: Message broker with auto-created topics (`speak`, `google`, `user`, `device`, `environment`) for inter-service communication.
+- **Kafka**: Message broker with auto-created topics (`speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`) for inter-service communication.
 - **MySQL**: Database with comprehensive schema including users, devices, environments, routines, and states.
-- **Service Daemon**: Core orchestration service handling voice commands, Google integration, and message routing.
+- **Service Daemon**: Core orchestration service handling voice commands, Google integrations, situational awareness with event-based travel planning and gathering detection, and message routing.
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
-- **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring.
+- **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring. Runs as a standalone container on the host machine for direct network access.
 - **Service Environment**: Handles geolocation, weather updates, and environmental data collection.
 - **Service API**: REST API gateway providing endpoints for users and container metrics, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard, user/device management, and control panel.
+- **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
 
 ## Quick Start
 
@@ -51,9 +52,11 @@ A containerized microservices project for home automation, featuring Kafka messa
    docker-compose up --build
    ```
 5. **Access the Application**:
-   - Dashboard: `http://localhost:8000`
-   - Real-time metrics update every 5 seconds
-   - Control panel for user/device management
+    - Dashboard: `http://localhost:8000`
+    - Real-time metrics update every 5 seconds
+    - Control panel for user/device management
+
+Note: Service Device runs as a standalone container for network scanning and should be deployed separately on the host machine.
 
 ### Ports
 
@@ -62,6 +65,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Zookeeper**: 2181
 - **Service Frontend**: 8000
 - **Service API**: 5001
+- **Service Speak**: 8080
 - **Service Daemon**: 8080
 - **Service Device**: 8080
 - **Service Environment**: 8080
@@ -97,6 +101,22 @@ pytest --cov=services/ tests/
 - `kafka_bootstrap_servers`: Kafka connection configuration
 - `mysql_config`: Database connection parameters
 - Automatic service startup/teardown for integration tests
+
+## Setup and Maintenance
+
+The `setup/` directory contains scripts for database initialization, maintenance, and integration setup:
+
+### Database Setup
+- **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
+- **`migration_001_calendar_cleanup.sql`**: Database migration for calendar cleanup functionality
+- **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
+
+### Maintenance Scripts
+- **`backup_db.sh`**: Automated database backup script
+- **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
+- **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
+
+Run these scripts as needed for database maintenance, backups, and integration configuration.
 
 ## Linting
 
@@ -185,6 +205,10 @@ The ALFR3D dashboard provides real-time monitoring and control:
   - `GET /api/environment`: Retrieve environment data and override status
   - `PUT /api/environment`: Update environment data and override mode
   - `POST /api/environment/reset`: Reset to automatic detection
+- `GET /api/situational-awareness`: Retrieve situational awareness data
+- `GET /api/audio/<filename>`: Serve generated audio files
+- `GET /api/integrations/status`: Check integration sync status
+- `POST /api/integrations/sync/<type>`: Trigger integration sync (e.g., gmail, calendar)
 - **Service Frontend**:
   - `GET /`: Landing page
   - `GET /dashboard`: Real-time monitoring dashboard
@@ -266,3 +290,7 @@ kubectl top pods
 kubectl delete -f k8s/
 minikube delete && minikube start
 ```
+
+For Docker Compose troubleshooting, consider using [lazydocker](https://github.com/jesseduffield/lazydocker), a simple terminal UI for docker and docker-compose.
+
+For Kubernetes troubleshooting, use [k9s](https://github.com/derailed/k9s), a terminal-based UI to interact with your Kubernetes clusters.

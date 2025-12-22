@@ -269,18 +269,18 @@ END;;
 
 DELIMITER ;
 
-CREATE TRIGGER `cleanup_old_calendar_events` AFTER INSERT ON `calendar_events`
-FOR EACH ROW
-BEGIN
-  DELETE FROM calendar_events WHERE end_time < DATE_SUB(NOW(), INTERVAL 24 HOUR);
-END;;
-
 -- Event to cleanup old device history daily
 DELIMITER ;
 CREATE EVENT `cleanup_device_history_event`
 ON SCHEDULE EVERY 1 DAY
 DO
    DELETE FROM device_history WHERE timestamp < DATE_SUB(NOW(), INTERVAL 180 DAY);
+DELIMITER ;;
+
+CREATE EVENT `cleanup_calendar_events_event`
+ON SCHEDULE EVERY 1 DAY
+DO
+   DELETE FROM calendar_events WHERE end_time < DATE_SUB(NOW(), INTERVAL 24 HOUR);
 DELIMITER ;;
 
 DELIMITER ;
