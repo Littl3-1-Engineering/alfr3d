@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { API_BASE_URL } from '../config';
 
 const AudioPlayer = () => {
   const [audioQueue, setAudioQueue] = useState([]);
@@ -16,7 +17,7 @@ const AudioPlayer = () => {
     const checkFileExists = async (retries = 3) => {
       for (let i = 0; i < retries; i++) {
         try {
-          const response = await fetch(nextAudio.audio_url, { method: 'HEAD' });
+          const response = await fetch(API_BASE_URL + nextAudio.audio_url, { method: 'HEAD' });
           if (response.ok) {
             return true;
           }
@@ -50,9 +51,21 @@ const AudioPlayer = () => {
     setIsPlaying(true);
 
     if (audioRef.current) {
+      console.log('Attempting to play audio:', nextAudio.audio_url);
       audioRef.current.src = nextAudio.audio_url;
-      audioRef.current.play().catch(error => {
+      audioRef.current.load(); // Force reload of the audio element
+
+      audioRef.current.play().then(() => {
+        console.log('Audio started playing successfully');
+      }).catch(error => {
         console.error('Audio playback failed:', error);
+        console.error('Audio element error details:', {
+          src: audioRef.current.src,
+          error: error.message,
+          networkState: audioRef.current.networkState,
+          readyState: audioRef.current.readyState,
+          duration: audioRef.current.duration
+        });
         // Mark as played and remove from queue
         setPlayedAudioUrls(current => new Set([...current, nextAudio.audio_url]));
         setAudioQueue(prev => prev.slice(1));
@@ -105,7 +118,7 @@ const AudioPlayer = () => {
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        const response = await fetch('/api/events');
+        const response = await fetch(API_BASE_URL + '/api/events');
         const events = await response.json();
 
         // Find new audio events
@@ -113,30 +126,21 @@ const AudioPlayer = () => {
 
         if (audioEvents.length > 0) {
           // Add to queue if not already there, not previously played, and recent
-          setAudioQueue(prevQueue => {
-            const existingUrls = prevQueue.map(item => item.audio_url);
-            const now = new Date();
-            const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
+           setAudioQueue(prevQueue => {
+             const existingUrls = prevQueue.map(item => item.audio_url);
 
-            const newItems = audioEvents.filter(event => {
-              // Check if event is recent (within last 10 minutes)
-              const eventTime = new Date(event.time);
-              if (eventTime < tenMinutesAgo) {
-                console.log('Skipping old audio event:', event.audio_url, 'time:', event.time);
-                return false; // Skip old events
-              }
+             const newItems = audioEvents.filter(event => {
+               const isAlreadyQueued = existingUrls.includes(event.audio_url);
+               const isAlreadyPlayed = playedUrlsRef.current.has(event.audio_url);
 
-              const isAlreadyQueued = existingUrls.includes(event.audio_url);
-              const isAlreadyPlayed = playedUrlsRef.current.has(event.audio_url);
+               if (isAlreadyPlayed) {
+                 console.log('Skipping already played audio:', event.audio_url);
+               }
 
-              if (isAlreadyPlayed) {
-                console.log('Skipping already played audio:', event.audio_url);
-              }
-
-              return !isAlreadyQueued && !isAlreadyPlayed;
-            });
-            return [...prevQueue, ...newItems];
-          });
+               return !isAlreadyQueued && !isAlreadyPlayed;
+             });
+             return [...prevQueue, ...newItems];
+           });
         }
       } catch (error) {
         console.error('Error fetching events for audio:', error);
@@ -196,6 +200,10 @@ const AudioPlayer = () => {
       ref={audioRef}
       onEnded={handleAudioEnded}
       onError={handleAudioError}
+      onLoadedData={() => console.log('Audio data loaded successfully')}
+      onCanPlay={() => console.log('Audio can play')}
+      onCanPlayThrough={() => console.log('Audio can play through')}
+      preload="auto"
       style={{ display: 'none' }}
     />
   );

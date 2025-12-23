@@ -1,7 +1,7 @@
 // src/components/Core.jsx
 
 import { motion } from 'framer-motion';
-import { Sun, Lightbulb, Thermometer, Wifi } from 'lucide-react';
+import { Sun } from 'lucide-react';
 import Lottie from 'lottie-react';
 import PropTypes from 'prop-types';
 import { useState, useEffect } from 'react';
@@ -44,13 +44,7 @@ Satellite.propTypes = {
   children: PropTypes.node,
 };
 
-const getIcon = (type) => {
-  switch (type) {
-    case 'light': return Lightbulb;
-    case 'thermostat': return Thermometer;
-    default: return Wifi;
-  }
-};
+
 
 // SVG Reticle Component for Technical HUD Display
 const SVGReticle = ({ className = "", animate = true, variant = "crosshair" }) => {
@@ -508,89 +502,86 @@ const Core = () => {
 
 
 
-        {/* SVG Technical Reticles */}
-        <motion.div animate={reticle1Animate} className="absolute inset-0">
-          <SVGReticle animate={false} variant="crosshair3" />
-        </motion.div>
-        <motion.div animate={reticle2Animate} className="absolute inset-0">
-          <SVGReticle className="scale-75 opacity-30" animate={false} variant="crosshair2" />
-        </motion.div>
-        <motion.div animate={reticle3Animate} className="absolute inset-0">
-          <SVGReticle className="scale-50 opacity-20" animate={false} variant="crosshair1" />
-        </motion.div>
+      {/* SVG Technical Reticles */}
+      <motion.div animate={reticle1Animate} className="absolute inset-0">
+        <SVGReticle animate={false} variant="crosshair3" />
+      </motion.div>
+      <motion.div animate={reticle2Animate} className="absolute inset-0">
+        <SVGReticle className="scale-75 opacity-30" animate={false} variant="crosshair2" />
+      </motion.div>
+      <motion.div animate={reticle3Animate} className="absolute inset-0">
+        <SVGReticle className="scale-50 opacity-20" animate={false} variant="crosshair1" />
+      </motion.div>
 
-         {/* User Orbit - Outer ring */}
-         {/* Orbit calculations: Tactical stuttering rotation over 30 seconds */}
-          <motion.div
-            className="absolute top-0 left-0 w-full h-full"
-            animate={{
-              rotate: 360,
-              transition: {
-                duration: 30,
-                repeat: Infinity,
-                ease: "linear"
-              }
-            }}
-            style={{ zIndex: 10 }}
-          >
-         {users.map((user, index) => (
-           <Satellite
-             key={`user-${user.name}`}
-             radius={160} // 80% ring radius
-             angle={(index / users.length) * 2 * Math.PI}
-             size={10}
-             color={user.type === 'guest' ? themeColors.warning : themeColors.success}
-             glowColor={user.type === 'guest' ? themeColors.warning : themeColors.success}
-           />
-         ))}
-       </motion.div>
+      {/* User Orbit - Outer ring */}
+      {/* Orbit calculations: Tactical stuttering rotation over 30 seconds */}
+      <motion.div
+        className="absolute top-0 left-0 w-full h-full"
+        animate={{
+          rotate: 360,
+          transition: {
+            duration: 30,
+            repeat: Infinity,
+            ease: "linear"
+          }
+        }}
+        style={{ zIndex: 10 }}
+      >
+        {users.map((user, index) => (
+          <Satellite
+            key={`user-${user.name}`}
+            radius={160} // 80% ring radius
+            angle={(index / users.length) * 2 * Math.PI}
+            size={10}
+            color={user.type === 'guest' ? themeColors.warning : themeColors.success}
+            glowColor={user.type === 'guest' ? themeColors.warning : themeColors.success}
+          />
+        ))}
+      </motion.div>
 
-         {/* Alfr3d Devices Orbit - Middle ring */}
-         {/* Orbit calculations: Tactical scanning rotation with stuttering */}
-          <motion.div
-            className="absolute top-0 left-0 w-full h-full"
-            animate={{
-              rotate: -360,
-              transition: {
-                duration: 60,
-                repeat: Infinity,
-                ease: "linear"
-              }
-            }}
-            style={{ zIndex: 10 }}
-          >
-         {devices.filter(device => device.user === 'alfr3d').map((device, index) => {
-           const Icon = getIcon(device.type);
-           const deviceColor = device.state === 'online' ? themeColors.success : themeColors.warning;
-           return (
-             <Satellite
-               key={`device-${device.id}`}
-               radius={120} // 60% ring radius
-               angle={(index / devices.filter(d => d.user === 'alfr3d').length) * 2 * Math.PI}
-               size={12}
-               color="transparent"
-               glowColor={deviceColor}
-             >
-               <Icon className="w-full h-full" style={{ color: deviceColor }} />
-             </Satellite>
-           );
-         })}
-       </motion.div>
+      {/* Alfr3d Devices Orbit - Middle ring */}
+      {/* Orbit calculations: Tactical scanning rotation with stuttering */}
+      <motion.div
+        className="absolute top-0 left-0 w-full h-full"
+        animate={{
+          rotate: -360,
+          transition: {
+            duration: 60,
+            repeat: Infinity,
+            ease: "linear"
+          }
+        }}
+        style={{ zIndex: 10 }}
+      >
+        {devices.filter(device => device.user === 'alfr3d').map((device, index) => {
+          const deviceColor = device.state === 'online' ? themeColors.success : themeColors.warning;
+          return (
+            <Satellite
+              key={`device-${device.id}`}
+              radius={120} // 60% ring radius
+              angle={(index / devices.filter(d => d.user === 'alfr3d').length) * 2 * Math.PI}
+              size={8}
+              color={deviceColor}
+              glowColor={deviceColor}
+            />
+          );
+        })}
+      </motion.div>
 
-         {/* Container Orbit - This div rotates on top of everything */}
-        {/* Orbit calculations: Tactical counter-clockwise rotation with scanning patterns */}
-         <motion.div
-           className="absolute top-0 left-0 w-full h-full"
-           animate={{
-             rotate: 360,
-             transition: {
-               duration: 60,
-               repeat: Infinity,
-               ease: "linear"
-             }
-           }}
-           style={{ zIndex: 10 }}
-         >
+      {/* Container Orbit - This div rotates on top of everything */}
+      {/* Orbit calculations: Tactical counter-clockwise rotation with scanning patterns */}
+      <motion.div
+        className="absolute top-0 left-0 w-full h-full"
+        animate={{
+          rotate: 360,
+          transition: {
+            duration: 60,
+            repeat: Infinity,
+            ease: "linear"
+          }
+        }}
+        style={{ zIndex: 10 }}
+      >
         {containers.map((container, index) => {
           let color, glowColor, size;
           if (container.errors === 0) {
@@ -619,18 +610,18 @@ const Core = () => {
         })}
       </motion.div>
 
-        {/* Sun Orbit - Positioned based on time */}
-        <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
-           <Satellite
-             radius={240} // Outside the rings
-             angle={sunAngle}
-             size={24}
-             color="transparent"
-             glowColor={themeColors.warning}
-           >
-             <Sun className="w-full h-full" style={{ color: themeColors.warning }}/>
-           </Satellite>
-        </div>
+      {/* Sun Orbit - Positioned based on time */}
+      <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
+        <Satellite
+          radius={240} // Outside the rings
+          angle={sunAngle}
+          size={24}
+          color="transparent"
+          glowColor={themeColors.warning}
+        >
+          <Sun className="w-full h-full" style={{ color: themeColors.warning }} />
+        </Satellite>
+      </div>
     </div>
   );
 };

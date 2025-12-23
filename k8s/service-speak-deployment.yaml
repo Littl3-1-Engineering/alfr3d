@@ -55,6 +55,8 @@ spec:
           value: /tmp/audio
         - name: AUDIO_RETENTION_MINUTES
           value: "5"
+        - name: COQUI_TOS_AGREED
+          value: "1"
         volumeMounts:
         - name: audio-storage
           mountPath: /tmp/audio

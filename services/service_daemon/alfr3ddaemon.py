@@ -151,9 +151,21 @@ class MyDaemon:
         if time.time() - QUIP_START_TIME > QUIP_WAIT_TIME * 60:
             logger.info("It is time to be a smartass")
 
+            # grab a quip from db
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT quips FROM quips ORDER BY RAND() LIMIT 1, \
+                WHERE type = 'smart'"
+            )
+            quip = cursor.fetchone()
+            db.close()
+
             p = get_producer()
             if p:
-                p.send("speak", b"alfr3d-speak.random")
+                p.send("speak", quip.encode("utf-8"))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)
@@ -512,13 +524,16 @@ def init_daemon():
     faults = 0
 
     logger.info("syncing calendar events")
+    p.send("speak", b"Synchronising calendar events")
     calendar_utils.sync_calendar()
 
     logger.info("syncing gmail emails")
+    p.send("speak", b"Synchronising gmail emails")
     gmail_utils.sync_gmail()
 
     # initial geo check
     logger.info("Running a geoscan")
+    p.send("speak", b"Running a geoscan")
     p = get_producer()
     if p:
         p.send("environment", b"check location")
