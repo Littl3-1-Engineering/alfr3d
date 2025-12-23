@@ -41,8 +41,23 @@ os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
 # Global producer
 producer = None
 
-# Global TTS instance
-tts = None
+# Global TTS instances (cache multiple models)
+tts_instances = {}
+
+
+def list_available_speakers(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):
+    """List available speakers for a given model"""
+    try:
+        tts_instance = get_tts(model_name)
+        if tts_instance and hasattr(tts_instance, "speakers") and tts_instance.speakers:
+            logger.info(f"Available speakers for {model_name}: {tts_instance.speakers}")
+            return tts_instance.speakers
+        else:
+            logger.info(f"No speakers available for {model_name}")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to list speakers for {model_name}: {str(e)}")
+        return []
 
 
 def get_producer():
@@ -65,10 +80,10 @@ def send_event(event_type, message, audio_url=None, text=None):
     p = get_producer()
     if p:
         event = {
-            "id": f"speak_{datetime.now().isoformat()}",
+            "id": f"speak_{datetime.utcnow().isoformat()}",
             "type": event_type,
             "message": message,
-            "time": datetime.now().isoformat(),
+            "time": datetime.utcnow().isoformat() + "Z",
         }
         if audio_url:
             event["audio_url"] = audio_url
@@ -82,45 +97,70 @@ def send_event(event_type, message, audio_url=None, text=None):
             logger.error(f"Failed to send event: {str(e)}")
 
 
-def get_tts():
-    """Get or initialize TTS instance"""
-    global tts
-    if tts is None:
+def get_tts(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):
+    """Get or initialize TTS instance for specified model"""
+    if model_name not in tts_instances:
         try:
-            logger.info("Initializing Coqui TTS model...")
-            tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to("cpu")
-            logger.info("Coqui TTS model loaded successfully")
+            logger.info(f"Initializing Coqui TTS model: {model_name}")
+            tts_instances[model_name] = TTS(model_name).to("cpu")
+            logger.info(f"Coqui TTS model {model_name} loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load Coqui TTS model: {str(e)}")
-            tts = None
-    return tts
+            logger.error(f"Failed to load Coqui TTS model {model_name}: {str(e)}")
+            tts_instances[model_name] = None
+    return tts_instances[model_name]
 
 
-def generate_tts(text):
-    """Generate TTS audio using Coqui TTS with UK female voice, fallback to gTTS"""
-    try:
-        # Try Coqui TTS first
-        tts_instance = get_tts()
-        if tts_instance:
-            # Generate unique filename
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-            filename = f"speech_{timestamp}.mp3"
-            filepath = os.path.join(AUDIO_STORAGE_PATH, filename)
+def generate_tts(
+    text,
+    engine="gTTS",
+    model="tts_models/multilingual/multi-dataset/xtts_v2",
+    speaker=None,
+    speaker_wav=None,
+):
+    """Generate TTS audio using specified engine and model, with fallback"""
+    if engine == "Coqui":
+        try:
+            # Try Coqui TTS first
+            tts_instance = get_tts(model)
+            if tts_instance:
+                # Generate unique filename
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+                filename = f"speech_{timestamp}.wav"  # XTTS outputs WAV
+                filepath = os.path.join(AUDIO_STORAGE_PATH, filename)
 
-            # Generate speech with UK female voice (Claribel Dervox)
-            tts_instance.tts_to_file(
-                text=text, speaker="Claribel Dervox", language="en", file_path=filepath
-            )
+                # Generate speech
+                if "xtts" in model:
+                    # XTTS v2 supports built-in speakers and voice cloning
+                    if speaker_wav:
+                        # Use specified voice file for cloning
+                        logger.info(f"Using voice cloning with speaker_wav: {speaker_wav}")
+                        tts_instance.tts_to_file(
+                            text=text, file_path=filepath, speaker_wav=speaker_wav, language="en"
+                        )
+                    else:
+                        # Use specified speaker or default to Claribel Dervla
+                        speaker_to_use = speaker if speaker else "Claribel Dervla"
+                        logger.info(f"Using speaker: {speaker_to_use}")
+                        tts_instance.tts_to_file(
+                            text=text, file_path=filepath, speaker=speaker_to_use, language="en"
+                        )
+                elif "vits" in model and speaker:
+                    # VITS models support speaker_idx for multi-speaker models
+                    tts_instance.tts_to_file(
+                        text=text, file_path=filepath, speaker_idx=int(speaker)
+                    )
+                else:
+                    # Single-speaker models
+                    tts_instance.tts_to_file(text=text, file_path=filepath)
 
-            logger.info(f"Generated Coqui TTS audio: {filepath}")
-            return filename
-        else:
-            logger.warning("Coqui TTS not available, falling back to gTTS")
+                logger.info(f"Generated Coqui TTS audio: {filepath}")
+                return filename
+            else:
+                logger.warning("Coqui TTS not available, falling back to gTTS")
+        except Exception as e:
+            logger.error(f"Coqui TTS generation failed: {str(e)}, falling back to gTTS")
 
-    except Exception as e:
-        logger.error(f"Coqui TTS generation failed: {str(e)}, falling back to gTTS")
-
-    # Fallback to gTTS
+    # Fallback to gTTS (or primary if gTTS was requested)
     try:
         # Generate unique filename
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -143,16 +183,34 @@ def generate_tts(text):
 def process_speak_message(message):
     """Process incoming speak message"""
     try:
-        # Handle both string and bytes
-        if isinstance(message.value, bytes):
-            text = message.value.decode("utf-8")
-        else:
-            text = str(message.value)
+        # Handle both string and bytes, and parse JSON if possible
+        raw_value = message.value
+        if isinstance(raw_value, bytes):
+            raw_value = raw_value.decode("utf-8")
 
-        logger.info(f"Processing speak message: {text}")
+        # Try to parse as JSON first
+        try:
+            message_data = json.loads(raw_value)
+            text = message_data.get("text", str(raw_value))
+            engine = message_data.get("engine", "Coqui")
+            model = message_data.get("model", "tts_models/multilingual/multi-dataset/xtts_v2")
+            speaker = message_data.get("speaker")  # Optional speaker parameter
+            speaker_wav = message_data.get("speaker_wav")  # Optional voice file for XTTS
+        except (json.JSONDecodeError, TypeError):
+            # Not JSON, treat as plain text
+            text = str(raw_value)
+            engine = "Coqui"
+            model = "tts_models/multilingual/multi-dataset/xtts_v2"
+            speaker = None
+            speaker_wav = None
+
+        logger.info(
+            f"Processing speak message: {text[:50]}... "
+            f"(engine: {engine}, model: {model}, speaker: {speaker}, speaker_wav: {speaker_wav})"
+        )
 
         # Generate TTS
-        filename = generate_tts(text)
+        filename = generate_tts(text, engine, model, speaker, speaker_wav)
         if filename:
             audio_url = f"/api/audio/{filename}"
             send_event("audio", f"Playing: {text[:50]}...", audio_url=audio_url, text=text)
@@ -220,5 +278,40 @@ def main():
         time.sleep(30)
 
 
+def test_xtts_speakers():
+    """Test function to list XTTS speakers and provide usage info"""
+    print("=== XTTS v2 Speaker Information ===")
+    print("XTTS v2 is a voice cloning model that can:")
+    print("1. Clone voices from audio samples (recommended)")
+    print("2. Use built-in speakers if available")
+    print()
+
+    speakers = list_available_speakers("tts_models/multilingual/multi-dataset/xtts_v2")
+    if speakers and speakers != ["voice_cloning_required"]:
+        print("Available built-in speakers:")
+        for i, speaker in enumerate(speakers):
+            print(f"  {i}: {speaker}")
+        print()
+        print("Usage examples:")
+        print('  {"text": "Hello", "speaker": "Ana Florence"}')
+    else:
+        print("No built-in speakers found.")
+        print("XTTS v2 primarily uses voice cloning.")
+    print()
+    print("Voice cloning usage:")
+    print('  {"text": "Hello", "speaker_wav": "/path/to/voice_sample.wav"}')
+    print("  (voice_sample.wav should be 3-6 seconds of the target voice)")
+    print()
+    print(
+        "Supported languages: en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja, hi"
+    )
+    return speakers
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--list-speakers":
+        test_xtts_speakers()
+    else:
+        main()
