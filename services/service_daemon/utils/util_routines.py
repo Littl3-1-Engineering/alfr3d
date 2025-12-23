@@ -31,7 +31,6 @@ import os
 import sys
 import logging
 import pymysql as MySQLdb
-from kafka import KafkaProducer
 from datetime import datetime
 
 # set up logging
@@ -116,14 +115,6 @@ def check_routines() -> bool:
                 db.rollback()
                 db.close()
                 return False
-
-            logger.info("Sending routine to speaker")
-            try:
-                producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-                producer.send("speak", key=b"routine", value=bytes(routine[1], "utf-8"))
-            except Exception as e:
-                logger.error("Failed to send to Kafka")
-                logger.error("Traceback: " + str(e))
 
     db.close()
     return True
