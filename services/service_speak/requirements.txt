@@ -3,4 +3,4 @@ kafka-python==2.0.2
 coqui-tts
 gtts
 schedule==1.2.0
-pymysql==1.1.0
+pymysql==1.1.1
