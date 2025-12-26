@@ -1,7 +1,7 @@
 Flask==2.3.3
 flask-cors==6.0.0
-pymysql==1.1.1
+pymysql==1.1.2
 kafka-python-ng==2.2.3
 docker==7.0.0
-cryptography==42.0.5
-requests==2.31.0
+cryptography==44.0.1
+requests==2.32.4
