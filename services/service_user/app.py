@@ -136,9 +136,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warninging(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -228,9 +226,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warninging(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
