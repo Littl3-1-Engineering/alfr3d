@@ -14,7 +14,6 @@ import schedule
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
-from TTS.api import TTS
 from gtts import gTTS
 
 # Set up logging
@@ -101,6 +100,8 @@ def get_tts(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):
     """Get or initialize TTS instance for specified model"""
     if model_name not in tts_instances:
         try:
+            from TTS.api import TTS  # Lazy import to handle CUDA issues
+
             logger.info(f"Initializing Coqui TTS model: {model_name}")
             tts_instances[model_name] = TTS(model_name).to("cpu")
             logger.info(f"Coqui TTS model {model_name} loaded successfully")

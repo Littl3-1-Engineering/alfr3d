@@ -1,12 +1,16 @@
 __pycache__/
-*.pyc
 .env
+*.pyc
 *.bak
+.pytest_cache/
+.venv/
+alfr3d.code-workspace
 nginx.conf
 mysql_data/
 AGENTS.md
 node_modules/
 dist/
+**/dist/
 backup/
 alfr3d.wiki/
 k8s/configmap.yaml
