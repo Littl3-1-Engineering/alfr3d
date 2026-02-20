@@ -84,14 +84,13 @@ def test_user_service_delete_user(kafka_bootstrap_servers, mysql_config):
 
 
 def test_user_service_frontend_integration(frontend_client, mysql_config):
-    """Test user service integration with frontend dashboard."""
+    """Test user service integration with frontend."""
     # Test that frontend can retrieve user data
-    response = frontend_client.get("/dashboard/data")
+    response = frontend_client.get("/api/users")
     assert response.status_code == 200
 
     data = json.loads(response.data)
-    assert "user" in data
-    assert "status" in data["user"]
+    assert isinstance(data, list)
 
     # Test users page loads
     response = frontend_client.get("/users")

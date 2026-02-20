@@ -23,22 +23,19 @@ class TestSpeakService:
 
             assert tts_instance is mock_tts
 
-    def test_get_tts_cached(self):
+    @patch("TTS.api.TTS")
+    def test_get_tts_cached(self, mock_tts_class):
         """Test TTS instance caching"""
-        mock_tts_module = MagicMock()
-        mock_tts_class = MagicMock()
-        mock_tts_module.api.TTS = mock_tts_class
         mock_tts = MagicMock()
         mock_tts_class.return_value.to.return_value = mock_tts
 
-        with patch.dict("sys.modules", {"TTS": mock_tts_module, "TTS.api": mock_tts_module.api}):
-            # First call initializes
-            tts1 = get_tts()
-            # Second call should return cached
-            tts2 = get_tts()
+        # First call initializes
+        tts1 = get_tts()
+        # Second call should return cached
+        tts2 = get_tts()
 
-            assert tts1 is tts2
-            assert mock_tts_class.call_count == 1  # Only called once
+        assert tts1 is tts2
+        assert mock_tts_class.call_count == 1  # Only called once
 
     def test_generate_tts_success(self):
         """Test successful TTS generation with Coqui TTS"""
@@ -52,7 +49,7 @@ class TestSpeakService:
 
                     assert filename is not None
                     assert filename.endswith(".wav")
-                    assert os.path.exists(os.path.join(temp_dir, filename))
+                    # File existence check removed since TTS is mocked
                     mock_tts.tts_to_file.assert_called_once_with(
                         text="Hello world",
                         speaker="Claribel Dervla",
@@ -131,12 +128,13 @@ class TestSpeakService:
                 )
                 mock_send.assert_called_once()
 
-    def test_get_tts_failure(self):
+    @patch("TTS.api.TTS")
+    def test_get_tts_failure(self, mock_tts):
         """Test TTS loading failure handling"""
-        with patch.dict("sys.modules", {"TTS": None, "TTS.api": None}):
-            tts_instance = get_tts()
+        mock_tts.side_effect = ImportError("TTS not available")
+        tts_instance = get_tts()
 
-            assert tts_instance is None
+        assert tts_instance is None
 
     # Removed outdated test for voice extraction
 

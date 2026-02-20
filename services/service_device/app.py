@@ -86,38 +86,23 @@ class Device:
         )
         cursor = db.cursor()
         try:
-            cursor.execute("SELECT * from states WHERE state = %s", (self.state,))
-            devstate_data = cursor.fetchone()
-            if not devstate_data:
-                logger.error("State not found")
+            cursor.execute(
+                """
+                SELECT s.id as state_id, dt.id as type_id, u.id as user_id, e.id as env_id
+                FROM states s, device_types dt, user u, environment e
+                WHERE s.state = %s AND dt.type = %s AND u.username = %s AND e.name = %s
+                """,
+                (self.state, self.deviceType, self.user, self.environment),
+            )
+            result = cursor.fetchone()
+            if not result:
+                logger.error("Failed to get lookup IDs")
                 db.rollback()
                 db.close()
                 return False
-            devstate = devstate_data[0]
-            cursor.execute("SELECT * from device_types WHERE type = %s", (self.deviceType,))
-            devtype_data = cursor.fetchone()
-            if not devtype_data:
-                logger.error("Device type not found")
-                db.rollback()
-                db.close()
-                return False
-            devtype = devtype_data[0]
-            cursor.execute("SELECT * from user WHERE username = %s", (self.user,))
-            usrid_data = cursor.fetchone()
-            if not usrid_data:
-                logger.error("User not found")
-                db.rollback()
-                db.close()
-                return False
-            usrid = usrid_data[0]
-            cursor.execute("SELECT * from environment WHERE name = %s", (self.environment,))
-            envid_data = cursor.fetchone()
-            if not envid_data:
-                logger.error("Environment not found")
-                db.rollback()
-                db.close()
-                return False
-            envid = envid_data[0]
+
+            devstate, devtype, usrid, envid = result
+
             cursor.execute(
                 "INSERT INTO device(name, IP, MAC, last_online, state, device_type, user_id, "
                 "environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -165,7 +150,16 @@ class Device:
             database=MYSQL_DB,
         )
         cursor = db.cursor()
-        cursor.execute("SELECT * from device WHERE MAC = %s", (mac,))
+        cursor.execute(
+            """
+            SELECT d.id, d.name, d.IP, d.MAC, d.state, d.last_online,
+                   d.device_type, d.user_id, d.environment_id, u.username
+            FROM device d
+            LEFT JOIN user u ON d.user_id = u.id
+            WHERE d.MAC = %s
+            """,
+            (mac,),
+        )
         data = cursor.fetchone()
 
         if not data:
@@ -183,10 +177,7 @@ class Device:
         self.state = data[4]
         self.last_online = data[5]
         self.deviceType = data[6]
-        # Get username from user_id
-        cursor.execute("SELECT username FROM user WHERE id = %s", (data[7],))
-        user_data = cursor.fetchone()
-        self.user = user_data[0] if user_data else "unknown"
+        self.user = data[9] if data[9] else "unknown"
         self.environment = data[8]
 
         db.close()
@@ -218,20 +209,22 @@ class Device:
         logger.debug(data)
 
         try:
-            cursor.execute("SELECT * from states WHERE state = %s", ("online",))
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Online state not found")
+            cursor.execute(
+                """
+                SELECT s.id as state_id, e.id as env_id
+                FROM states s, environment e
+                WHERE s.state = 'online' AND e.name = %s
+                """,
+                (ALFR3D_ENV_NAME,),
+            )
+            result = cursor.fetchone()
+            if not result:
+                logger.error("Failed to get lookup IDs")
                 db.close()
                 return False
-            stateid = data[0]
-            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Environment not found")
-                db.close()
-                return False
-            envid = data[0]
+
+            stateid, envid = result
+
             cursor.execute(
                 "UPDATE device SET name = %s, IP = %s, last_online = %s, state = %s, "
                 "environment_id = %s WHERE MAC = %s",
@@ -354,44 +347,26 @@ def check_offline_devices():
     )
     cursor = db.cursor()
 
-    # Get state mappings
-    stat = {}
-    cursor.execute("SELECT * FROM states;")
-    states = cursor.fetchall()
-    for state in states:
-        stat[state[1]] = state[0]
-
-    # Get all devices
-    cursor.execute("SELECT * FROM device;")
-    devices = cursor.fetchall()
-
     time_now = datetime.now(timezone.utc)
-    for device in devices:
-        last_online_str = device[5]
-        try:
-            if last_online_str:
-                last_online = last_online_str
-                if last_online.tzinfo is None:
-                    last_online = last_online.replace(tzinfo=timezone.utc)
-                delta = time_now - last_online
-                if delta > timedelta(minutes=30) and device[4] == stat["online"]:
-                    logger.info("Setting device " + device[3] + " to offline due to inactivity")
-                    cursor.execute(
-                        "UPDATE device SET state = %s WHERE MAC = %s",
-                        (stat["offline"], device[3]),
-                    )
-                    db.commit()
+    cutoff_time = (time_now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
 
-                    # event = {
-                    #     "id": f"device_offline_{device[3]}_
-                    #         {datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    #     "type": "warning",
-                    #     "message": f"Device {device[3]} went offline due to inactivity",
-                    #     "time": datetime.now().strftime("%I:%M %p"),
-                    # }
-                    # producer.send("event-stream", json.dumps(event).encode("utf-8"))
-        except Exception as e:
-            logger.error("Error checking device offline status: " + str(e))
+    try:
+        cursor.execute(
+            """
+            UPDATE device d
+            JOIN states s_online ON d.state = s_online.id
+            JOIN states s_offline ON s_offline.state = 'offline'
+            SET d.state = s_offline.id
+            WHERE s_online.state = 'online'
+            AND (d.last_online < %s OR d.last_online IS NULL)
+            """,
+            (cutoff_time,),
+        )
+        db.commit()
+        logger.info(f"Marked {cursor.rowcount} devices as offline")
+    except Exception as e:
+        logger.error(f"Error updating offline devices: {e}")
+        db.rollback()
 
     db.close()
 
