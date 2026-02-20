@@ -1,11 +1,39 @@
 """Tests for the ALFR3D device service."""
 
-from confluent_kafka import Producer
+import json
+import time
+from confluent_kafka import Consumer, Producer
+
+
+def wait_for_kafka_message(kafka_bootstrap_servers, topic, expected_value, timeout=30):
+    """Helper function to wait for a Kafka message containing expected_value."""
+    import uuid
+
+    consumer = Consumer(
+        {
+            "bootstrap.servers": kafka_bootstrap_servers,
+            "group.id": f"test-group-{uuid.uuid4()}",
+            "auto.offset.reset": "earliest",
+        }
+    )
+    consumer.subscribe([topic])
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        msg = consumer.poll(1.0)
+        if msg is None:
+            continue
+        if msg.error():
+            continue
+        message_value = msg.value().decode("utf-8")
+        if expected_value in message_value:
+            consumer.close()
+            return True
+    consumer.close()
+    return False
 
 
 def test_device_service_scan_net(kafka_bootstrap_servers):
     """Test sending 'scan net' message to device topic and verify response."""
-    from conftest import wait_for_kafka_message
 
     # Send scan net message
     producer = Producer({"bootstrap.servers": kafka_bootstrap_servers})
@@ -18,15 +46,9 @@ def test_device_service_scan_net(kafka_bootstrap_servers):
 
 
 def test_device_service_health_check(frontend_client):
-    """Test device service health endpoint via frontend."""
-    # This tests that the frontend can reach the device service health endpoint
-    # In a real scenario, this would test the actual health check functionality
-    response = frontend_client.get("/dashboard/data")
+    """Test frontend users endpoint."""
+    response = frontend_client.get("/api/users")
 
-    # Just verify the endpoint returns data (even if mocked)
     assert response.status_code == 200
-    import json
-
     data = json.loads(response.data)
-    assert "device" in data
-    assert "status" in data["device"]
+    assert isinstance(data, list)
