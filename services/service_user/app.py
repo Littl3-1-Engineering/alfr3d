@@ -343,15 +343,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
             if not usr_type:
                 logger.error("User type not found")
                 return
-            data = {
-                "user": user[1],
-                "type": usr_type[1],
-                "last_online": str(user[6]),
-            }
-            if not check_mute():
-                producer.send("speak", value=json.dumps(data).encode("utf-8"), key=b"welcome")
-            else:
-                send_event("info", f"Speak request muted: Welcome message for {user[1]}")
+            speak_welcome(producer, user[1], usr_type[1], user[6])
             event = {
                 "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",
@@ -387,6 +379,57 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
         db.rollback()
         db.close()
         raise
+
+
+def speak_welcome(producer, user_name, user_type, last_online):
+    """
+    Speaks a welcome message to a user who just came online.
+    Greeting varies by user type and time since last seen.
+    """
+    try:
+        time_now = datetime.now(timezone.utc)
+        if last_online:
+            tz = last_online.tzinfo
+            last_online_aware = (
+                last_online.replace(tzinfo=timezone.utc) if tz is None else last_online
+            )
+            time_away = time_now - last_online_aware
+        else:
+            time_away = timedelta(days=365)
+    except Exception:
+        time_away = timedelta(days=1)
+
+    time_away_hours = time_away.total_seconds() / 3600
+
+    user_type_lower = user_type.lower() if user_type else "guest"
+
+    if user_type_lower == "owner":
+        base_greeting = f"Welcome home, {user_name}"
+    elif user_type_lower == "resident":
+        base_greeting = f"Hello {user_name}, welcome back"
+    elif user_type_lower == "guest":
+        base_greeting = f"Welcome {user_name}"
+    else:
+        base_greeting = f"Hello {user_name}"
+
+    if time_away_hours >= 168:
+        time_suffix = "Long time no see"
+    elif time_away_hours >= 24:
+        time_suffix = "It's been a while"
+    elif time_away_hours >= 1:
+        time_suffix = "Good to see you"
+    else:
+        time_suffix = None
+
+    if time_suffix:
+        full_greeting = f"{base_greeting}. {time_suffix}"
+    else:
+        full_greeting = base_greeting
+
+    if not check_mute():
+        producer.send("speak", full_greeting.encode("utf-8"))
+    else:
+        send_event("info", f"Speak request muted: {full_greeting}")
 
 
 # refreshes state and last_online for all users
