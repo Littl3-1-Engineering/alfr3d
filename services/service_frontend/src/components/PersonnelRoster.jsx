@@ -94,6 +94,26 @@ const PersonnelRoster = ({ initialUserId }) => {
     }
   };
 
+  const handleModalSaveUser = async (updatedUser) => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedUser),
+      });
+      if (response.ok) {
+        await fetchUsers();
+        // Update the modal user with the new data
+        setModalUser(updatedUser);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating user from modal:', error);
+      return false;
+    }
+  };
+
   const handleDeleteUser = async (id) => {
     if (window.confirm('Are you sure you want to delete this user?')) {
       try {
@@ -144,6 +164,26 @@ const PersonnelRoster = ({ initialUserId }) => {
       }
     } catch (error) {
       console.error('Error updating device:', error);
+    }
+  };
+
+  const handleModalSaveDevice = async (updatedDevice) => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDevice),
+      });
+      if (response.ok) {
+        await fetchDevices();
+        // Update the modal device with the new data
+        setModalDevice(updatedDevice);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating device from modal:', error);
+      return false;
     }
   };
 
@@ -600,6 +640,7 @@ PersonnelRoster.propTypes = {
           user={modalUser}
           devices={userDevices}
           onDeviceClick={handleDeviceHistoryClick}
+          onSave={handleModalSaveUser}
         />
 
         <DeviceHistoryModal
@@ -607,6 +648,8 @@ PersonnelRoster.propTypes = {
           onClose={closeDeviceModal}
           device={modalDevice}
           history={deviceHistory}
+          users={users}
+          onSave={handleModalSaveDevice}
         />
       </div>
     </div>

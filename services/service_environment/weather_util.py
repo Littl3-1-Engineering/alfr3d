@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from urllib.request import urlopen  # used to make calls to www
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
+from db_utils import check_mute_optimized
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -37,6 +38,35 @@ KAFKA_URL = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
 
 producer = None
+
+
+def check_mute() -> bool:
+    """
+    Description:
+             checks what time it is and decides if Alfr3d should be quiet
+             - between wake-up time and bedtime
+             - only when Athos is at home
+             - only when 'owner' is at home
+    """
+    return check_mute_optimized(ALFR3D_ENV_NAME)
+
+
+def send_event(event_type, message):
+    """Send event to event-stream topic"""
+    p = get_producer()
+    if p:
+        event = {
+            "id": f"weather_{event_type}_{datetime.now().isoformat()}",
+            "type": event_type,
+            "message": message,
+            "time": datetime.now().isoformat() + "Z",
+        }
+        try:
+            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.flush()
+            logger.info(f"Sent event: {event}")
+        except Exception as e:
+            logger.error(f"Failed to send event: {str(e)}")
 
 
 def get_producer():
@@ -274,13 +304,25 @@ def speak_weather(db, cursor, weatherData):
         logger.error("No Kafka producer available, cannot speak weather")
         return False
     if badDay[0]:
-        producer.send("speak", b"I am afraid I don't have good news.")
+        if not check_mute():
+            producer.send("speak", b"I am afraid I don't have good news.")
+        else:
+            send_event("info", "Speak request muted: I am afraid I don't have good news.")
         greeting += "indicate " + subjective_weather
-        producer.send("speak", greeting.encode("utf-8"))
+        if not check_mute():
+            producer.send("speak", greeting.encode("utf-8"))
+        else:
+            send_event("info", f"Speak request muted: {greeting}")
     else:
-        producer.send("speak", b"Weather today is just gorgeous!")
+        if not check_mute():
+            producer.send("speak", b"Weather today is just gorgeous!")
+        else:
+            send_event("info", "Speak request muted: Weather today is just gorgeous!")
         greeting += "indicate " + weatherData["weather"][0]["description"]
-        producer.send("speak", greeting.encode("utf-8"))
+        if not check_mute():
+            producer.send("speak", greeting.encode("utf-8"))
+        else:
+            send_event("info", f"Speak request muted: {greeting}")
         logger.info(greeting + "\n")
 
     producer.send(
