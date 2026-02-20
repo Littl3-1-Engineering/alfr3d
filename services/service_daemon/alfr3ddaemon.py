@@ -156,15 +156,13 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute(
-                "SELECT quips FROM quips ORDER BY RAND() LIMIT 1, \
-                WHERE type = 'smart'"
-            )
-            quip = cursor.fetchone()
+            cursor.execute("SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1")
+            result = cursor.fetchone()
+            quip = result[0] if result else None
             db.close()
 
             p = get_producer()
-            if p:
+            if p and quip:
                 p.send("speak", quip.encode("utf-8"))
 
             QUIP_START_TIME = time.time()
@@ -320,22 +318,21 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            # Count everyone online (residents + guests) and guests separately
             cursor.execute(
-                "SELECT COUNT(*) FROM user WHERE state = "
-                "(SELECT id FROM states WHERE state = 'online') AND username != 'unknown'"
+                """
+                SELECT
+                    SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
+                    COUNT(*) as total_count
+                FROM user u
+                JOIN states s ON u.state = s.id
+                JOIN user_types ut ON u.type = ut.id
+                WHERE s.state = 'online' AND u.username != 'unknown'
+                """
             )
-            total_row = cursor.fetchone()
-            cursor.execute(
-                "SELECT COUNT(*) FROM user WHERE state = "
-                "(SELECT id FROM states WHERE state = 'online') AND type IN "
-                "(SELECT id FROM user_types WHERE type IN ('guest')) AND username != 'unknown'"
-            )
-            guest_row = cursor.fetchone()
-            result = guest_row
-            logger.info("Gathering check result: " + str(result))
-            total_count = total_row[0] if total_row else 0
-            guest_count = guest_row[0] if guest_row else 0
+            row = cursor.fetchone()
+            guest_count = row[0] if row and row[0] else 0
+            total_count = row[1] if row and row[1] else 0
+
             if guest_count > 0:
                 logger.info(
                     "Gathering detected with total people: "
@@ -344,7 +341,6 @@ class MyDaemon:
                     + str(guest_count)
                     + ")"
                 )
-                # Suggest playlist based on time of day and environment description
                 hour = datetime.now().hour
                 if 6 <= hour < 18:
                     time_of_day = "day"
@@ -456,39 +452,6 @@ class MyDaemon:
         if p:
             p.send("situational-awareness", json.dumps(data).encode("utf-8"))
             logger.info("Published situational awareness: " + str(data))
-
-
-def sunrise_routine():
-    """
-    Description:
-            sunset routine - perform this routine 30 minutes before sunrise
-            giving the users time to go see sunrise
-    """
-    logger.info("Pre-sunrise routine")
-
-
-def morning_routine():
-    """
-    Description:
-            perform morning routine - ring alarm, speak weather, check email, etc..
-    """
-    logger.info("Time for morning routine")
-
-
-def sunset_routine():
-    """
-    Description:
-            routine to perform at sunset - turn on ambient lights
-    """
-    logger.info("Time for sunset routine")
-
-
-def bedtime_routine():
-    """
-    Description:
-            routine to perform at bedtime - turn on ambient lights
-    """
-    logger.info("Bedtime")
 
 
 def reset_routines():

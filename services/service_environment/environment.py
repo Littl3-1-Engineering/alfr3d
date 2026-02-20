@@ -8,10 +8,13 @@ import time
 import socket
 import json
 import logging
+import datetime
+from datetime import timezone
 import weather_util
 import pymysql  # Changed from MySQLdb
 from kafka import KafkaConsumer, KafkaProducer
 from urllib.request import urlopen
+from db_utils import check_mute_optimized
 
 
 # current path from which python is executed
@@ -50,6 +53,35 @@ def get_producer():
             logger.error("Failed to connect to Kafka")
             return None
     return producer
+
+
+def check_mute() -> bool:
+    """
+    Description:
+             checks what time it is and decides if Alfr3d should be quiet
+             - between wake-up time and bedtime
+             - only when Athos is at home
+             - only when 'owner' is at home
+    """
+    return check_mute_optimized(ALFR3D_ENV_NAME)
+
+
+def send_event(event_type, message):
+    """Send event to event-stream topic"""
+    p = get_producer()
+    if p:
+        event = {
+            "id": f"environment_{event_type}_{datetime.datetime.now(timezone.utc).isoformat()}",
+            "type": event_type,
+            "message": message,
+            "time": datetime.datetime.now(timezone.utc).isoformat() + "Z",
+        }
+        try:
+            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.flush()
+            logger.info(f"Sent event: {event}")
+        except Exception as e:
+            logger.error(f"Failed to send event: {str(e)}")
 
 
 def get_ip():
@@ -171,8 +203,12 @@ def update_db(new_data, existing_city, cursor, db, producer):
     else:
         logger.info("Oh hello! Welcome to " + city_new)
         if producer:
-            producer.send("speak", b"Welcome to " + city_new.encode("utf-8") + b" sir")
-            producer.send("speak", b"I trust you enjoyed your travels")
+            if not check_mute():
+                producer.send("speak", b"Welcome to " + city_new.encode("utf-8") + b" sir")
+                producer.send("speak", b"I trust you enjoyed your travels")
+            else:
+                send_event("info", f"Speak request muted: Welcome to {city_new}")
+                send_event("info", "Speak request muted: I trust you enjoyed your travels")
             producer.flush()
         try:
             cursor.execute(
