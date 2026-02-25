@@ -3,24 +3,26 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
-  },
+   "scripts": {
+     "dev": "vite",
+     "build": "vite build",
+     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+     "preview": "vite preview",
+     "test": "vitest"
+   },
   "dependencies": {
     "crypto-js": "^4.2.0",
     "framer-motion": "^10.12.4",
     "leaflet": "^1.9.4",
     "lottie-react": "^2.4.1",
-    "lucide-react": "^0.555.0",
+    "lucide-react": "^0.562.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-leaflet": "^4.2.1",
     "react-modal": "^3.16.3",
     "react-router-dom": "^6.30.2",
     "recharts": "^3.5.1",
+    "socket.io-client": "^4.8.1",
     "vite-plugin-svgr": "^4.5.0"
   },
   "devDependencies": {
@@ -34,6 +36,6 @@
     "eslint-plugin-react-refresh": "^0.3.4",
     "postcss": "^8.4.23",
     "tailwindcss": "^3.3.1",
-    "vite": "^5.4.21"
+    "vite": "^7.3.0"
   }
 }

@@ -11,6 +11,7 @@ import threading
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, send_file
+from flask_socketio import SocketIO
 from typing import Dict, Any, List
 from datetime import datetime
 from flask_cors import CORS
@@ -82,6 +83,8 @@ def consume_events() -> None:
                             # Keep only the most recent 20 events
                             recent_events[:] = recent_events[-20:]
                             logger.info(f"Received events: {data}")
+                            # Emit events to connected WebSocket clients
+                            socketio.emit("events", recent_events)
                             # Send events to nfty.sh
                             events_to_send = data if isinstance(data, list) else [data]
                             for event in events_to_send:
@@ -121,6 +124,8 @@ def consume_sa() -> None:
                             else:
                                 recent_sa.append(data)
                             logger.info(f"Received SA: {data}")
+                            # Emit SA to connected WebSocket clients
+                            socketio.emit("situational_awareness", recent_sa)
                         except json.JSONDecodeError as e:
                             logger.error(f"Error processing SA message: {str(e)}")
     except KafkaError as e:
@@ -147,6 +152,7 @@ except subprocess.SubprocessError as e:
 
 # Flask API
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 CORS(app)
 
 
@@ -1404,4 +1410,13 @@ if __name__ == "__main__":
     # Start event consumer threads
     threading.Thread(target=consume_events, daemon=True).start()
     threading.Thread(target=consume_sa, daemon=True).start()
+
+    # Run Flask REST API on port 5001
+    # Run SocketIO on port 5002 in background thread
+    def run_socketio_server():
+        socketio.run(app, host="0.0.0.0", port=5002, debug=False, use_reloader=False)
+
+    threading.Thread(target=run_socketio_server, daemon=True).start()
+
+    # Run Flask REST API on port 5001
     app.run(host="0.0.0.0", port=5001, debug=False)
