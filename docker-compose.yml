@@ -76,6 +76,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     expose:
       - "5001"
+      - "5002"
+    ports:
+      - "5002:5002"
 
   service-device:
     build: ./services/service_device
