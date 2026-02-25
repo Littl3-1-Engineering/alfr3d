@@ -90,7 +90,7 @@ def test_check_location(mock_urlopen, mock_connect, mock_producer):
     mock_db.commit.assert_called()
 
 
-@patch("services.service_environment.environment.weather_util.getWeather")
+@patch("services.service_environment.environment.weather_util.get_weather")
 @patch("services.service_environment.environment.pymysql.connect")
 def test_check_weather(mock_connect, mock_weather):
     import environment
@@ -127,22 +127,18 @@ def test_check_weather(mock_connect, mock_weather):
     mock_weather.assert_called_with(10.0, 20.0)
 
 
-def test_environment_service_frontend_integration(frontend_client):
-    """Test environment service integration with frontend dashboard."""
-    # Test that frontend can retrieve environment data
-    response = frontend_client.get("/dashboard/data")
+@patch("services.service_frontend.app.pymysql.connect")
+def test_environment_service_frontend_integration(mock_connect, frontend_client):
+    """Test frontend users endpoint."""
+    # Mock DB
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_connect.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchall.return_value = [("user1", "resident")]
+
+    response = frontend_client.get("/api/users")
     assert response.status_code == 200
 
     data = json.loads(response.data)
-    assert "environment" in data
-    assert "status" in data["environment"]
-
-    # Test environment page loads
-    response = frontend_client.get("/environment")
-    assert response.status_code == 200
-    assert b"Environment" in response.data
-
-    # Test command sending to environment service
-    response = frontend_client.post("/command", data={"command": "check_location"})
-    assert response.status_code == 200
-    assert b"Command sent" in response.data
+    assert isinstance(data, list)

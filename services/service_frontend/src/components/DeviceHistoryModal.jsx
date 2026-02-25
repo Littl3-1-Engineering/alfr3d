@@ -1,15 +1,39 @@
 import PropTypes from 'prop-types';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Modal from 'react-modal';
-import { Monitor, X } from 'lucide-react';
+import { Monitor, X, Edit, Save, RotateCcw } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 Modal.setAppElement('#root');
 
-Modal.setAppElement('#root');
+const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedDevice, setEditedDevice] = useState(null);
 
-const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
+  const handleEdit = () => {
+    setIsEditing(true);
+    setEditedDevice({ ...device });
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditedDevice(null);
+  };
+
+  const handleSave = async () => {
+    if (onSave && editedDevice) {
+      const success = await onSave(editedDevice);
+      if (success) {
+        setIsEditing(false);
+        setEditedDevice(null);
+      }
+    }
+  };
+
+  const handleInputChange = (field, value) => {
+    setEditedDevice(prev => ({ ...prev, [field]: value }));
+  };
 
   // Process history data into daily groups, limited to 6 months
   const dailyActivity = useMemo(() => {
@@ -84,39 +108,141 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
           <div className="flex items-center space-x-3">
             <Monitor className="w-8 h-8 text-primary" />
             <div>
-              <h2 className="text-2xl font-bold text-primary">{device?.name}</h2>
-              <p className="text-sm text-primary uppercase">{device?.type}</p>
+              {isEditing ? (
+                <div className="space-y-1">
+                  <input
+                    value={editedDevice?.name || ''}
+                    onChange={(e) => handleInputChange('name', e.target.value)}
+                    className="text-2xl font-bold text-primary bg-transparent border-b border-primary/50 focus:border-primary outline-none"
+                  />
+                  <select
+                    value={editedDevice?.type || 'guest'}
+                    onChange={(e) => handleInputChange('type', e.target.value)}
+                    className="text-sm text-primary uppercase bg-transparent border border-primary/50 rounded px-2 py-1 focus:border-primary outline-none"
+                  >
+                    <option value="alfr3d">Alfr3d</option>
+                    <option value="HW">HW</option>
+                    <option value="guest">Guest</option>
+                    <option value="light">Light</option>
+                    <option value="resident">Resident</option>
+                  </select>
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-primary">{device?.name}</h2>
+                  <p className="text-sm text-primary uppercase">{device?.type}</p>
+                </>
+              )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-text-tertiary hover:text-primary transition-colors text-2xl"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {!isEditing ? (
+              <button
+                onClick={handleEdit}
+                className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                title="Edit Device"
+              >
+                <Edit className="w-5 h-5" />
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleSave}
+                  className="p-2 text-success hover:bg-success/20 rounded-lg transition-colors"
+                  title="Save Changes"
+                >
+                  <Save className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="p-2 text-warning hover:bg-warning/20 rounded-lg transition-colors"
+                  title="Cancel Edit"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 text-text-tertiary hover:text-primary transition-colors"
+              title="Close Modal"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         {/* Device Details */}
         <div className="mb-6 grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">IP:</span> {device?.ip}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">MAC:</span> {device?.mac}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">State:</span> {device?.state}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">User:</span> {device?.user || 'None'}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">Last Online:</span> {device?.last_online}
-            </div>
-          </div>
+          {isEditing ? (
+            <>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">IP:</span>
+                  <input
+                    value={editedDevice?.ip || ''}
+                    onChange={(e) => handleInputChange('ip', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                    placeholder="IP Address"
+                  />
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">MAC:</span>
+                  <input
+                    value={editedDevice?.mac || ''}
+                    onChange={(e) => handleInputChange('mac', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                    placeholder="MAC Address"
+                  />
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">State:</span>
+                  <span className="ml-2">{device?.state}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">User:</span>
+                  <select
+                    value={editedDevice?.user || ''}
+                    onChange={(e) => handleInputChange('user', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                  >
+                    <option value="">No User</option>
+                    {users?.map(user => (
+                      <option key={user.id} value={user.name}>{user.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">Last Online:</span>
+                  <span className="ml-2">{device?.last_online}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">IP:</span> {device?.ip}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">MAC:</span> {device?.mac}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">State:</span> {device?.state}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">User:</span> {device?.user || 'None'}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">Last Online:</span> {device?.last_online}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Activity Graph Section */}
@@ -155,6 +281,8 @@ DeviceHistoryModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   device: PropTypes.object,
   history: PropTypes.array,
+  users: PropTypes.array,
+  onSave: PropTypes.func,
 };
 
 export default DeviceHistoryModal;

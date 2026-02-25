@@ -40,7 +40,7 @@ services:
     volumes:
     - mysql_data:/var/lib/mysql
   service-user:
-    build: ./services/service_user
+    build: ../services/service_user
     depends_on:
       kafka:
         condition: service_healthy
@@ -51,7 +51,7 @@ services:
     - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
     - LOG_LEVEL=${LOG_LEVEL}
   service-api:
-    build: ./services/service_api
+    build: ../services/service_api
     depends_on:
       mysql:
         condition: service_started
@@ -67,7 +67,7 @@ services:
     - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
     - LOG_LEVEL=${LOG_LEVEL}
   service-device:
-    build: ./services/service_device
+    build: ../services/service_device
     depends_on:
       kafka:
         condition: service_healthy
@@ -80,7 +80,7 @@ services:
     - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
     - LOG_LEVEL=${LOG_LEVEL}
   service-environment:
-    build: ./services/service_environment
+    build: ../services/service_environment
     depends_on:
       kafka:
         condition: service_healthy
@@ -91,7 +91,7 @@ services:
     - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
     - LOG_LEVEL=${LOG_LEVEL}
   service-daemon:
-    build: ./services/service_daemon
+    build: ../services/service_daemon
     depends_on:
       kafka:
         condition: service_healthy
@@ -105,11 +105,9 @@ services:
     - LOG_LEVEL=${LOG_LEVEL}
   service-frontend:
     build:
-      context: ./services/service_frontend
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      context: ../services/service_frontend
     ports:
-    - 8000:8000
+    - 8001:8000
     env_file: .env
   test-mysql:
     image: mysql:8.0

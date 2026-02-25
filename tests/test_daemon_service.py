@@ -222,8 +222,7 @@ class TestUtilRoutines:
         },
     )
     @patch("services.service_daemon.utils.util_routines.MySQLdb.connect")
-    @patch("services.service_daemon.utils.util_routines.KafkaProducer")
-    def test_check_routines_success(self, mock_kafka, mock_connect):
+    def test_check_routines_success(self, mock_connect):
         """Test checkRoutines processes enabled routines."""
         from services.service_daemon.utils.util_routines import check_routines
 
@@ -238,10 +237,6 @@ class TestUtilRoutines:
             (1,),  # environment id
             ((1, "Test Routine", timedelta(hours=10), None, 0),),  # routine
         ]
-
-        # Mock Kafka producer
-        mock_producer = MagicMock()
-        mock_kafka.return_value = mock_producer
 
         result = check_routines()
 

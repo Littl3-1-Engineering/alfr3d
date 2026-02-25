@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
 const SituationalAwareness = () => {
   const [saData, setSaData] = useState([]);
@@ -20,8 +21,14 @@ const SituationalAwareness = () => {
     };
 
     fetchSA();
-    const saTimer = setInterval(fetchSA, 60000); // Poll every 60s
-    return () => clearInterval(saTimer);
+
+    socket.on('situational_awareness', (data) => {
+      setSaData(data || []);
+    });
+
+    return () => {
+      socket.off('situational_awareness');
+    };
   }, []);
 
   const getIcon = (mode) => {

@@ -11,41 +11,31 @@ from services.service_speak.app import (
 
 class TestSpeakService:
     def test_get_tts_initialization(self):
-        """Test TTS instance initialization and voice extraction"""
-        with patch("services.service_speak.app.TTS") as mock_tts_class:
-            with patch("services.service_speak.app.torch.load") as mock_torch_load:
-                with patch("services.service_speak.app.os.path.exists") as mock_exists:
-                    with patch("services.service_speak.app.os.makedirs") as _:
-                        with patch("services.service_speak.app.torch.save") as mock_torch_save:
-                            mock_tts = MagicMock()
-                            mock_tts_class.return_value.to.return_value = mock_tts
+        """Test TTS instance initialization"""
+        mock_tts_module = MagicMock()
+        mock_tts_class = MagicMock()
+        mock_tts_module.api.TTS = mock_tts_class
+        mock_tts = MagicMock()
+        mock_tts_class.return_value.to.return_value = mock_tts
 
-                            # Mock speakers file exists and contains Claribel Dervox
-                            mock_exists.side_effect = (
-                                lambda path: "Claribel_Dervox.pth" not in path
-                            )  # File doesn't exist initially
-                            mock_speakers = {"Claribel Dervox": MagicMock()}
-                            mock_torch_load.return_value = mock_speakers
+        with patch.dict("sys.modules", {"TTS": mock_tts_module, "TTS.api": mock_tts_module.api}):
+            tts_instance = get_tts()
 
-                            tts_instance = get_tts()
+            assert tts_instance is mock_tts
 
-                            assert tts_instance is mock_tts
-                            mock_torch_load.assert_called_once()
-                            mock_torch_save.assert_called_once()
-
-    def test_get_tts_cached(self):
+    @patch("TTS.api.TTS")
+    def test_get_tts_cached(self, mock_tts_class):
         """Test TTS instance caching"""
-        with patch("services.service_speak.app.TTS") as mock_tts_class:
-            mock_tts = MagicMock()
-            mock_tts_class.return_value.to.return_value = mock_tts
+        mock_tts = MagicMock()
+        mock_tts_class.return_value.to.return_value = mock_tts
 
-            # First call initializes
-            tts1 = get_tts()
-            # Second call should return cached
-            tts2 = get_tts()
+        # First call initializes
+        tts1 = get_tts()
+        # Second call should return cached
+        tts2 = get_tts()
 
-            assert tts1 is tts2
-            assert mock_tts_class.call_count == 1  # Only called once
+        assert tts1 is tts2
+        assert mock_tts_class.call_count == 1  # Only called once
 
     def test_generate_tts_success(self):
         """Test successful TTS generation with Coqui TTS"""
@@ -55,14 +45,14 @@ class TestSpeakService:
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 with patch("services.service_speak.app.AUDIO_STORAGE_PATH", temp_dir):
-                    filename = generate_tts("Hello world")
+                    filename = generate_tts("Hello world", engine="Coqui")
 
                     assert filename is not None
-                    assert filename.endswith(".mp3")
-                    assert os.path.exists(os.path.join(temp_dir, filename))
+                    assert filename.endswith(".wav")
+                    # File existence check removed since TTS is mocked
                     mock_tts.tts_to_file.assert_called_once_with(
                         text="Hello world",
-                        speaker="Claribel Dervox",
+                        speaker="Claribel Dervla",
                         language="en",
                         file_path=os.path.join(temp_dir, filename),
                     )
@@ -109,7 +99,13 @@ class TestSpeakService:
 
                 process_speak_message(message)
 
-                mock_generate.assert_called_once_with("Test message")
+                mock_generate.assert_called_once_with(
+                    "Test message",
+                    "Coqui",
+                    "tts_models/multilingual/multi-dataset/xtts_v2",
+                    None,
+                    None,
+                )
                 mock_send.assert_called_once()
 
     def test_process_speak_message_bytes(self):
@@ -123,50 +119,24 @@ class TestSpeakService:
 
                 process_speak_message(message)
 
-                mock_generate.assert_called_once_with("Test message")
+                mock_generate.assert_called_once_with(
+                    "Test message",
+                    "Coqui",
+                    "tts_models/multilingual/multi-dataset/xtts_v2",
+                    None,
+                    None,
+                )
                 mock_send.assert_called_once()
 
-    def test_get_tts_voice_extraction_failure(self):
-        """Test voice extraction failure handling"""
-        with patch("services.service_speak.app.TTS") as mock_tts_class:
-            with patch("services.service_speak.app.torch.load") as mock_torch_load:
-                with patch("services.service_speak.app.os.path.exists") as mock_exists:
-                    with patch("services.service_speak.app.os.makedirs") as _:
-                        with patch("services.service_speak.app.logger") as mock_logger:
-                            mock_tts = MagicMock()
-                            mock_tts_class.return_value.to.return_value = mock_tts
+    @patch("TTS.api.TTS")
+    def test_get_tts_failure(self, mock_tts):
+        """Test TTS loading failure handling"""
+        mock_tts.side_effect = ImportError("TTS not available")
+        tts_instance = get_tts()
 
-                            # Mock speakers file doesn't exist
-                            mock_exists.side_effect = lambda path: False
-                            mock_torch_load.side_effect = Exception("Load failed")
+        assert tts_instance is None
 
-                            tts_instance = get_tts()
-
-                            assert tts_instance is mock_tts
-                            mock_logger.error.assert_called_once_with(
-                                "speakers_xtts.pth not found; voice extraction failed."
-                            )
-
-    def test_get_tts_voice_not_found(self):
-        """Test when Claribel Dervox is not in speakers"""
-        with patch("services.service_speak.app.TTS") as mock_tts_class:
-            with patch("services.service_speak.app.torch.load") as mock_torch_load:
-                with patch("services.service_speak.app.os.path.exists") as mock_exists:
-                    with patch("services.service_speak.app.os.makedirs") as _:
-                        with patch("services.service_speak.app.logger") as mock_logger:
-                            mock_tts = MagicMock()
-                            mock_tts_class.return_value.to.return_value = mock_tts
-
-                            mock_exists.side_effect = lambda path: "Claribel_Dervox.pth" not in path
-                            mock_speakers = {"Other Speaker": MagicMock()}
-                            mock_torch_load.return_value = mock_speakers
-
-                            tts_instance = get_tts()
-
-                            assert tts_instance is mock_tts
-                            mock_logger.warning.assert_called_once_with(
-                                "Claribel Dervox not found in speakers_xtts.pth."
-                            )
+    # Removed outdated test for voice extraction
 
     def test_cleanup_old_audio(self):
         """Test cleanup of old audio files"""
