@@ -13,8 +13,9 @@ A containerized microservices project for home automation, featuring Kafka messa
 ## Features
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
-- **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines.
+- **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines. WebSocket-powered instant updates.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
+- **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
@@ -64,7 +65,7 @@ Note: Service Device runs as a standalone container for network scanning and sho
 - **MySQL**: 3306
 - **Zookeeper**: 2181
 - **Service Frontend**: 8000
-- **Service API**: 5001
+- **Service API**: 5001 (REST), 5002 (WebSocket/SocketIO)
 - **Service Speak**: 8080
 - **Service Daemon**: 8080
 - **Service Device**: 8080
@@ -148,7 +149,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - **Live CPU/Memory**: Actual system resource usage for all services
 - **Health Indicators**: Visual status (🟢 Healthy, 🟡 Warning, 🔴 Unhealthy)
 - **Connection Lines**: Animated Kafka topic flows between services
-- **Auto-Refresh**: Data updates every 5 seconds
+- **Instant Updates**: WebSocket-powered real-time data via SocketIO on port 5002
 
 ### Management Interface
 - **User Management**: Registration, editing, deletion with role-based access
@@ -209,6 +210,8 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - `GET /api/audio/<filename>`: Serve generated audio files
 - `GET /api/integrations/status`: Check integration sync status
 - `POST /api/integrations/sync/<type>`: Trigger integration sync (e.g., gmail, calendar)
+- **WebSocket**:
+  - `WS /ws/socket.io/`: Real-time events and situational awareness via SocketIO (port 5002)
 - **Service Frontend**:
   - `GET /`: Landing page
   - `GET /dashboard`: Real-time monitoring dashboard
