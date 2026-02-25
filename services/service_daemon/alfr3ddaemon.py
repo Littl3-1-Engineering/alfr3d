@@ -156,14 +156,15 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1")
-            result = cursor.fetchone()
-            quip = result[0] if result else None
+            cursor.execute(
+                "SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1"
+            )
+            quip = cursor.fetchone()
             db.close()
 
             p = get_producer()
-            if p and quip:
-                p.send("speak", quip.encode("utf-8"))
+            if p:
+                p.send("speak", quip[0].encode("utf-8"))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)
