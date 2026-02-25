@@ -253,13 +253,9 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-<<<<<<< HEAD
             logger.warning(
                 "Failed to find user with username: " + self.name + " in the database"
             )
-=======
-            logger.warning("Failed to find user with username: " + self.name + " in the database")
->>>>>>> f8eb2689bd7ff1e87c4f137a5af13ec834cea404
             db.close()
             return False
 
