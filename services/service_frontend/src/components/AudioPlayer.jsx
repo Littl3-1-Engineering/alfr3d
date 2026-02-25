@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
 const AudioPlayer = () => {
   const [audioQueue, setAudioQueue] = useState([]);
@@ -115,41 +116,52 @@ const AudioPlayer = () => {
   const playedUrlsRef = useRef(playedAudioUrls);
   playedUrlsRef.current = playedAudioUrls;
 
+  const processAudioEvents = (events) => {
+    const audioEvents = events.filter(event => event.type === 'audio' && event.audio_url);
+
+    if (audioEvents.length > 0) {
+      setAudioQueue(prevQueue => {
+        const existingUrls = prevQueue.map(item => item.audio_url);
+
+        const newItems = audioEvents.filter(event => {
+          const isAlreadyQueued = existingUrls.includes(event.audio_url);
+          const isAlreadyPlayed = playedUrlsRef.current.has(event.audio_url);
+
+          if (isAlreadyPlayed) {
+            console.log('Skipping already played audio:', event.audio_url);
+          }
+
+          return !isAlreadyQueued && !isAlreadyPlayed;
+        });
+        return [...prevQueue, ...newItems];
+      });
+    }
+  };
+
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/events');
         const events = await response.json();
-
-        // Find new audio events
-        const audioEvents = events.filter(event => event.type === 'audio' && event.audio_url);
-
-        if (audioEvents.length > 0) {
-          // Add to queue if not already there, not previously played, and recent
-           setAudioQueue(prevQueue => {
-             const existingUrls = prevQueue.map(item => item.audio_url);
-
-             const newItems = audioEvents.filter(event => {
-               const isAlreadyQueued = existingUrls.includes(event.audio_url);
-               const isAlreadyPlayed = playedUrlsRef.current.has(event.audio_url);
-
-               if (isAlreadyPlayed) {
-                 console.log('Skipping already played audio:', event.audio_url);
-               }
-
-               return !isAlreadyQueued && !isAlreadyPlayed;
-             });
-             return [...prevQueue, ...newItems];
-           });
-        }
+        processAudioEvents(events);
       } catch (error) {
         console.error('Error fetching events for audio:', error);
       }
     };
 
     fetchEvents();
-    const interval = setInterval(fetchEvents, 2000); // Check more frequently for audio
+    const interval = setInterval(fetchEvents, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    socket.on('events', (events) => {
+      processAudioEvents(events);
+    });
+
+    return () => {
+      socket.off('events');
+    };
   }, []);
 
   useEffect(() => {

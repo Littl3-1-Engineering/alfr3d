@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import { formatLocalTime } from '../utils/timeUtils';
+import socket from '../utils/socket';
 
 const EventStream = () => {
   const [displayedEvents, setDisplayedEvents] = useState([]);
@@ -11,7 +12,6 @@ const EventStream = () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/events');
         const events = await response.json();
-        // Reverse to show newest first, limit to 4
         const latestEvents = events.reverse().slice(0, 4);
         setDisplayedEvents(latestEvents);
       } catch (error) {
@@ -20,8 +20,15 @@ const EventStream = () => {
     };
 
     fetchEvents();
-    const interval = setInterval(fetchEvents, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
+
+    socket.on('events', (events) => {
+      const latestEvents = events.reverse().slice(0, 4);
+      setDisplayedEvents(latestEvents);
+    });
+
+    return () => {
+      socket.off('events');
+    };
   }, []);
 
   const getIcon = (type) => {
