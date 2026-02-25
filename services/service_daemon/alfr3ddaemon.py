@@ -157,15 +157,14 @@ class MyDaemon:
             )
             cursor = db.cursor()
             cursor.execute(
-                "SELECT quips FROM quips ORDER BY RAND() LIMIT 1, \
-                WHERE type = 'smart'"
+                "SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1"
             )
             quip = cursor.fetchone()
             db.close()
 
             p = get_producer()
             if p:
-                p.send("speak", quip.encode("utf-8"))
+                p.send("speak", quip[0].encode("utf-8"))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)
