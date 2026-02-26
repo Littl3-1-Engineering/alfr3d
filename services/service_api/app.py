@@ -23,7 +23,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 logger = logging.getLogger("ApiLog")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, log_level))
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
