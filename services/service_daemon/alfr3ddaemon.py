@@ -28,21 +28,23 @@ This is the main Alfr3d daemon running most standard services
 # 	  software/component specified under (i).
 #
 
-# Imports
+# Standard library imports
 import logging
 import time
 import os  # used to allow execution of system level commands
 import sys
-import schedule  # 3rd party lib used for alarm clock managment.
 from random import randint  # used for random number generator
-from kafka import KafkaProducer, KafkaConsumer  # user to write messages to Kafka
 from datetime import datetime, timedelta, timezone
 import json
 import threading
+
+# Third party imports
 import pymysql
+import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
 from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 from kafka.errors import KafkaError
+from kafka import KafkaProducer, KafkaConsumer  # user to write messages to Kafka
 
 # import my own utilities
 sys.path.append(os.path.join(os.path.join(os.getcwd(), os.path.dirname(__file__)), "../"))
@@ -156,9 +158,7 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute(
-                "SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1"
-            )
+            cursor.execute("SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1")
             quip = cursor.fetchone()
             db.close()
 

@@ -1,15 +1,18 @@
 # Modified for containerization: logging to stdout instead of file
 """Main application for the ALFR3D user service, handling user management and state tracking."""
+# Standard library imports
 import os
 import sys
 import time
 import logging
+from datetime import datetime, timedelta, timezone
 
+# Third-party imports
 import json
 import pymysql  # Changed from MySQLdb to pymysql
 from kafka import KafkaConsumer, KafkaProducer
-from datetime import datetime, timedelta, timezone
 
+# Local imports
 from db_utils import check_mute_optimized
 
 # current path from which python is executed
@@ -161,9 +164,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -253,9 +254,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 

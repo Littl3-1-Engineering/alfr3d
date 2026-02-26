@@ -1,19 +1,22 @@
 # Modified for containerization: logging to stdout instead of file
 """REST API service for ALFR3D, providing endpoints for users, devices, containers, and events."""
+# Standard library imports
 import os
 import sys
 import logging
 import subprocess
-import json
-import requests
-import pymysql  # Changed from MySQLdb to pymysql
 import threading
+from typing import Dict, Any, List
+from datetime import datetime
+import json
+
+# Third party imports
+import pymysql
+import requests
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, send_file
 from flask_socketio import SocketIO
-from typing import Dict, Any, List
-from datetime import datetime
 from flask_cors import CORS
 
 # current path from which python is executed

@@ -17,7 +17,7 @@ if command -v kubectl &> /dev/null && kubectl get pods mysql &> /dev/null; then
 else
     # Docker Compose environment
     MYSQL_HOST="localhost"
-    MYSQL_ROOT_PASSWORD="rootpassword"
+    MYSQL_ROOT_PASSWORD="rootpassword"  # pragma: allowlist secret
     MYSQL_NAME="alfr3d_db"
     DUMP_CMD="docker compose exec -T mysql mysqldump"
 fi
