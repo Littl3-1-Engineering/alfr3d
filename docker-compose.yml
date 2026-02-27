@@ -68,6 +68,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - audio_data:/tmp/audio
+      - .:/project:ro
     # Privileged mode grants elevated permissions for Docker operations
     privileged: true
     env_file: .env

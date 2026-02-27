@@ -14,6 +14,7 @@ import TimeDatePanel from '../components/TimeDatePanel';
 import WeatherPanel from '../components/WeatherPanel';
 import CalendarPanel from '../components/CalendarPanel';
 import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
+import ProjectTreeViz from '../components/ProjectTreeViz';
 
 const Nexus = () => {
   const [systemHealth] = useState('cyan');
@@ -22,7 +23,8 @@ const Nexus = () => {
     timeDate: false,
     weather: false,
     calendar: false,
-    containerHealth: false
+    containerHealth: false,
+    projectTree: false
   });
 
   return (
@@ -134,7 +136,7 @@ const Nexus = () => {
            </TacticalPanelVariant3>
          </CollapsibleSidePanel>
 
-          <CollapsibleSidePanel
+<CollapsibleSidePanel
             position="right"
             title="C0NT41N3R H3ALTH"
             isOpen={openPanels.containerHealth}
@@ -142,10 +144,23 @@ const Nexus = () => {
             onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
             tabIndex={0}
           >
-           <TacticalPanelVariant2 title="Container Health">
-             <ContainerHealth />
-           </TacticalPanelVariant2>
-         </CollapsibleSidePanel>
+            <TacticalPanelVariant2 title="Container Health">
+              <ContainerHealth />
+            </TacticalPanelVariant2>
+          </CollapsibleSidePanel>
+
+          <CollapsibleSidePanel
+            position="right"
+            title="PR0J3CT TR33"
+            isOpen={openPanels.projectTree}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, projectTree: !prev.projectTree }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, projectTree: false }))}
+            tabIndex={1}
+          >
+            <TacticalPanelVariant1 title="Pr0j3ct Tr33">
+              <ProjectTreeViz />
+            </TacticalPanelVariant1>
+          </CollapsibleSidePanel>
       </div>
     </motion.div>
   );
