@@ -59,11 +59,11 @@ const CollapsibleSidePanel = ({
       <AnimatePresence>
         {isOpen && (
            <motion.div
-             initial={{ x: isLeft ? -400 : 400 }}
-             animate={{ x: 0 }}
-             exit={{ x: isLeft ? -400 : 400 }}
+           initial={{ x: isLeft ? -1100 : 1100 }}
+           animate={{ x: 0 }}
+           exit={{ x: isLeft ? -1100 : 1100 }}
              transition={{ duration: 0.3, ease: 'easeInOut' }}
-              className={`absolute ${isLeft ? 'left-0' : 'right-0'} w-auto max-w-sm h-auto z-40 bg-fui-panel/95 backdrop-blur-md border-r border-fui-border ${className}`}
+              className={`absolute ${isLeft ? 'left-0' : 'right-0'} w-auto max-w-4xl z-40 bg-fui-panel/95 backdrop-blur-md border-r border-fui-border ${className}`}
               style={{ top: `${80 + tabIndex * 180}px`, marginLeft: isLeft ? '30px' : 'auto', marginRight: isLeft ? 'auto' : '30px' }}
            >
 
