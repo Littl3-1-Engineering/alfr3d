@@ -19,6 +19,8 @@ from flask import Flask, request, jsonify, send_file
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
+from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher
+
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -157,6 +159,8 @@ except subprocess.SubprocessError as e:
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 CORS(app)
+
+app.register_blueprint(PROJECT_TREE_BLUEPRINT)
 
 
 @app.route("/api/users")
@@ -1413,6 +1417,9 @@ if __name__ == "__main__":
     # Start event consumer threads
     threading.Thread(target=consume_events, daemon=True).start()
     threading.Thread(target=consume_sa, daemon=True).start()
+
+    # Start project tree file watcher
+    threading.Thread(target=start_file_watcher, args=(socketio,), daemon=True).start()
 
     # Run Flask REST API on port 5001
     # Run SocketIO on port 5002 in background thread
