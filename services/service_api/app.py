@@ -1,20 +1,25 @@
 # Modified for containerization: logging to stdout instead of file
 """REST API service for ALFR3D, providing endpoints for users, devices, containers, and events."""
+# Standard library imports
 import os
 import sys
 import logging
 import subprocess
-import json
-import requests
-import pymysql  # Changed from MySQLdb to pymysql
 import threading
+from typing import Dict, Any, List
+from datetime import datetime
+import json
+
+# Third party imports
+import pymysql
+import requests
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, send_file
 from flask_socketio import SocketIO
-from typing import Dict, Any, List
-from datetime import datetime
 from flask_cors import CORS
+
+from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -23,7 +28,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 logger = logging.getLogger("ApiLog")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, log_level))
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
@@ -154,6 +159,8 @@ except subprocess.SubprocessError as e:
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 CORS(app)
+
+app.register_blueprint(PROJECT_TREE_BLUEPRINT)
 
 
 @app.route("/api/users")
@@ -1410,6 +1417,9 @@ if __name__ == "__main__":
     # Start event consumer threads
     threading.Thread(target=consume_events, daemon=True).start()
     threading.Thread(target=consume_sa, daemon=True).start()
+
+    # Start project tree file watcher
+    threading.Thread(target=start_file_watcher, args=(socketio,), daemon=True).start()
 
     # Run Flask REST API on port 5001
     # Run SocketIO on port 5002 in background thread

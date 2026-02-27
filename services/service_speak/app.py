@@ -3,19 +3,21 @@
 Speak Service for ALFR3D - Text-to-Speech using Google Cloud TTS
 Consumes messages from 'speak' Kafka topic, generates audio, and notifies frontend
 """
-
+# Standard libraries
 import os
 import sys
 import logging
 import threading
 import time
 import json
-import schedule
 from datetime import datetime
+
+# Third-party libraries
+import schedule
+import pymysql
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from gtts import gTTS
-import pymysql
 
 # Set up logging
 logger = logging.getLogger("SpeakService")

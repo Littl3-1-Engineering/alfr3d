@@ -14,6 +14,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
 - **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines. WebSocket-powered instant updates.
+- **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
 - **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
@@ -208,6 +209,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
   - `POST /api/environment/reset`: Reset to automatic detection
 - `GET /api/situational-awareness`: Retrieve situational awareness data
 - `GET /api/audio/<filename>`: Serve generated audio files
+- `GET /api/project-tree`: Retrieve project directory tree structure for visualization
 - `GET /api/integrations/status`: Check integration sync status
 - `POST /api/integrations/sync/<type>`: Trigger integration sync (e.g., gmail, calendar)
 - **WebSocket**:

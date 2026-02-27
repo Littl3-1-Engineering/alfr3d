@@ -1,6 +1,7 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Main module for the ALFR3D environment service, handling location detection and
 weather updates."""
+# Standard libraries
 import os
 import re
 import sys
@@ -10,12 +11,15 @@ import json
 import logging
 import datetime
 from datetime import timezone
-import weather_util
+from urllib.request import urlopen
+
+# Third-party libraries
 import pymysql  # Changed from MySQLdb
 from kafka import KafkaConsumer, KafkaProducer
-from urllib.request import urlopen
-from db_utils import check_mute_optimized
 
+# Local imports
+from db_utils import check_mute_optimized
+import weather_util
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)

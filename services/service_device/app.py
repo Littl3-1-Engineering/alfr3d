@@ -1,15 +1,18 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Main application for the ALFR3D device service, managing device tracking and network scanning."""
+# Standard libraries
 import os
 import sys
 import time
 import logging
 import json
 import socket
-import pymysql  # Changed from MySQLdb
-from kafka import KafkaConsumer, KafkaProducer
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+# Third-party libraries
+import pymysql  # Changed from MySQLdb
+from kafka import KafkaConsumer, KafkaProducer
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
