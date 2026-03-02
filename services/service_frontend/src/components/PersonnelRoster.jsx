@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
-import { User, Monitor, Edit, Trash2, Plus, Save, X } from 'lucide-react';
+import { User, Monitor, Plus } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
@@ -11,8 +11,6 @@ const PersonnelRoster = ({ initialUserId }) => {
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
-  const [editingUser, setEditingUser] = useState(null);
-  const [editingDevice, setEditingDevice] = useState(null);
   const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '' });
   const [newDevice, setNewDevice] = useState({ name: '', type: 'guest', ip: '', mac: '', user: '' });
   const [showAddUser, setShowAddUser] = useState(false);
@@ -74,26 +72,6 @@ const PersonnelRoster = ({ initialUserId }) => {
     }
   };
 
-  const handleEditUser = (user) => {
-    setEditingUser({ ...user });
-  };
-
-  const handleSaveUser = async () => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/users/' + editingUser.id, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingUser),
-      });
-      if (response.ok) {
-        await fetchUsers();
-        setEditingUser(null);
-      }
-    } catch (error) {
-      console.error('Error updating user:', error);
-    }
-  };
-
   const handleModalSaveUser = async (updatedUser) => {
     try {
       const response = await fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
@@ -103,7 +81,6 @@ const PersonnelRoster = ({ initialUserId }) => {
       });
       if (response.ok) {
         await fetchUsers();
-        // Update the modal user with the new data
         setModalUser(updatedUser);
         return true;
       }
@@ -122,6 +99,7 @@ const PersonnelRoster = ({ initialUserId }) => {
         });
         if (response.ok) {
           await fetchUsers();
+          closeUserModal();
         }
       } catch (error) {
         console.error('Error deleting user:', error);
@@ -147,26 +125,6 @@ const PersonnelRoster = ({ initialUserId }) => {
     }
   };
 
-  const handleEditDevice = (device) => {
-    setEditingDevice({ ...device });
-  };
-
-  const handleSaveDevice = async () => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/devices/' + editingDevice.id, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingDevice),
-      });
-      if (response.ok) {
-        await fetchDevices();
-        setEditingDevice(null);
-      }
-    } catch (error) {
-      console.error('Error updating device:', error);
-    }
-  };
-
   const handleModalSaveDevice = async (updatedDevice) => {
     try {
       const response = await fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
@@ -176,7 +134,6 @@ const PersonnelRoster = ({ initialUserId }) => {
       });
       if (response.ok) {
         await fetchDevices();
-        // Update the modal device with the new data
         setModalDevice(updatedDevice);
         return true;
       }
@@ -195,6 +152,7 @@ const PersonnelRoster = ({ initialUserId }) => {
         });
         if (response.ok) {
           await fetchDevices();
+          closeDeviceModal();
         }
       } catch (error) {
         console.error('Error deleting device:', error);
@@ -314,83 +272,14 @@ PersonnelRoster.propTypes = {
             >
               <div className="flex items-center justify-between mb-4">
                   <User className={'w-6 h-6 ' + (user.type !== 'guest' ? 'text-success' : 'text-warning')} />
-                <div className="flex space-x-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditUser(user);
-                    }}
-                    className="p-1 text-primary hover:bg-primary/20 rounded"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteUser(user.id);
-                    }}
-                    className="p-1 text-error hover:bg-error/20 rounded"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
-              {editingUser && editingUser.id === user.id ? (
-                <div className="space-y-2">
-                  <input
-                    value={editingUser.name}
-                    onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    placeholder="Name"
-                  />
-                  <select
-                    value={editingUser.type}
-                    onChange={(e) => setEditingUser({ ...editingUser, type: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                  >
-                    <option value="technoking">Technoking</option>
-                    <option value="resident">Resident</option>
-                    <option value="guest">Guest</option>
-                  </select>
-                  <input
-                    value={editingUser.email}
-                    onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    placeholder="Email"
-                  />
-                  <textarea
-                    value={editingUser.about_me}
-                    onChange={(e) => setEditingUser({ ...editingUser, about_me: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    rows={2}
-                    placeholder="About Me"
-                  />
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleSaveUser}
-                      className="px-3 py-1 bg-success/20 border border-success rounded text-success hover:bg-success/30"
-                    >
-                      <Save className="w-4 h-4 inline mr-1" />
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingUser(null)}
-                      className="px-3 py-1 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
-                    >
-                      <X className="w-4 h-4 inline mr-1" />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <h3 className="text-lg font-semibold text-text-primary">{user.name}</h3>
-                  <p className="text-sm text-primary uppercase">{user.type}</p>
-                  <p className="text-xs text-text-tertiary">{user.email}</p>
-                  <p className="text-xs text-text-tertiary">{user.about_me}</p>
-                  <p className="text-xs text-text-tertiary">State: {user.state}</p>
-                </div>
-              )}
+              <div>
+                <h3 className="text-lg font-semibold text-text-primary">{user.name}</h3>
+                <p className="text-sm text-primary uppercase">{user.type}</p>
+                <p className="text-xs text-text-tertiary">{user.email}</p>
+                <p className="text-xs text-text-tertiary">{user.about_me}</p>
+                <p className="text-xs text-text-tertiary">State: {user.state}</p>
+              </div>
             </motion.div>
           ))}
         </div>
@@ -476,95 +365,15 @@ PersonnelRoster.propTypes = {
             >
               <div className="flex items-center justify-between mb-4">
                 <Monitor className="w-6 h-6 text-primary" />
-                <div className="flex space-x-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditDevice(device);
-                    }}
-                    className="p-1 text-primary hover:bg-primary/20 rounded"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteDevice(device.id);
-                    }}
-                    className="p-1 text-error hover:bg-error/20 rounded"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
-              {editingDevice && editingDevice.id === device.id ? (
-                <div className="space-y-2">
-                  <input
-                    value={editingDevice.name}
-                    onChange={(e) => setEditingDevice({ ...editingDevice, name: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    placeholder="Name"
-                  />
-                  <select
-                    value={editingDevice.type}
-                    onChange={(e) => setEditingDevice({ ...editingDevice, type: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                  >
-                    <option value="alfr3d">Alfr3d</option>
-                    <option value="HW">HW</option>
-                    <option value="guest">Guest</option>
-                    <option value="light">Light</option>
-                    <option value="resident">Resident</option>
-                  </select>
-                  <input
-                    value={editingDevice.ip}
-                    onChange={(e) => setEditingDevice({ ...editingDevice, ip: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    placeholder="IP"
-                  />
-                  <input
-                    value={editingDevice.mac}
-                    onChange={(e) => setEditingDevice({ ...editingDevice, mac: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                    placeholder="MAC"
-                  />
-                  <select
-                    value={editingDevice.user || ''}
-                    onChange={(e) => setEditingDevice({ ...editingDevice, user: e.target.value })}
-                    className="w-full p-2 bg-card rounded text-text-primary"
-                  >
-                    <option value="">No User</option>
-                    {users.map(user => (
-                      <option key={user.id} value={user.name}>{user.name}</option>
-                    ))}
-                  </select>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleSaveDevice}
-                      className="px-3 py-1 bg-success/20 border border-success rounded text-success hover:bg-success/30"
-                    >
-                      <Save className="w-4 h-4 inline mr-1" />
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingDevice(null)}
-                      className="px-3 py-1 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
-                    >
-                      <X className="w-4 h-4 inline mr-1" />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
-                  <p className="text-sm text-primary uppercase">{device.type}</p>
-                  <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
-                  <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
-                  <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
-                  <p className="text-xs text-text-tertiary">State: {device.state}</p>
-                </div>
-              )}
+              <div>
+                <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
+                <p className="text-sm text-primary uppercase">{device.type}</p>
+                <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
+                <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
+                <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
+                <p className="text-xs text-text-tertiary">State: {device.state}</p>
+              </div>
             </motion.div>
           ))}
         </div>
@@ -641,6 +450,7 @@ PersonnelRoster.propTypes = {
           devices={userDevices}
           onDeviceClick={handleDeviceHistoryClick}
           onSave={handleModalSaveUser}
+          onDelete={handleDeleteUser}
         />
 
         <DeviceHistoryModal
@@ -650,6 +460,7 @@ PersonnelRoster.propTypes = {
           history={deviceHistory}
           users={users}
           onSave={handleModalSaveDevice}
+          onDelete={handleDeleteDevice}
         />
       </div>
     </div>
