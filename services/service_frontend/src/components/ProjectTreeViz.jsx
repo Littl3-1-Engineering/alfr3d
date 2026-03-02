@@ -8,6 +8,7 @@ const ProjectTreeViz = () => {
   const [treeData, setTreeData] = useState(null);
   const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, content: '' });
   const simulationRef = useRef(null);
+  const zoomRef = useRef(null);
 
   useEffect(() => {
     fetch('/api/project-tree')
@@ -39,15 +40,19 @@ const ProjectTreeViz = () => {
       .attr('width', width)
       .attr('height', height);
 
-    const g = svg.append('g');
+    const zoomLayer = svg.append('g');
+    const breatheLayer = zoomLayer.append('g');
+
+    const g = breatheLayer;
 
     const zoom = d3.zoom()
       .scaleExtent([0.3, 3])
       .on('zoom', (event) => {
-        g.attr('transform', event.transform);
+        zoomLayer.attr('transform', event.transform);
       });
 
     svg.call(zoom);
+    zoomRef.current = zoom;
 
     svg.call(zoom.transform, d3.zoomIdentity
       .translate(width / 2, height / 2)
@@ -69,21 +74,29 @@ const ProjectTreeViz = () => {
     const nodes = root.descendants();
 
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(50))
-      .force('charge', d3.forceManyBody().strength(-80))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(15));
+      .alphaDecay(0)
+      .force('link', d3.forceLink(links)
+        .id(d => d.data.name)
+        .distance(40))
+      .force('charge', d3.forceManyBody().strength(-150))
+      .force('collision', d3.forceCollide().radius(20))
+      .force('r', d3.forceRadial(
+        d => d.depth * 55,
+        width / 2,
+        height / 2
+      ).strength(0.5));
 
     simulationRef.current = simulation;
 
     const link = g.append('g')
       .attr('class', 'links')
-      .selectAll('line')
+      .selectAll('path')
       .data(links)
-      .join('line')
+      .join('path')
+      .attr('fill', 'none')
       .attr('stroke', '#00FFFF')
       .attr('stroke-opacity', 0.4)
-      .attr('stroke-width', 1);
+      .attr('stroke-width', 2);
 
     const node = g.append('g')
       .attr('class', 'nodes')
@@ -121,7 +134,7 @@ const ProjectTreeViz = () => {
       .text(d => d.data.name)
       .attr('x', 12)
       .attr('y', 4)
-      .attr('fill', '#fff')
+      .attr('fill', d => d.data.children && d.data.children.length > 0 ? '#888888' : '#555555')
       .attr('font-size', '9px')
       .attr('font-family', 'Orbitron, monospace')
       .style('pointer-events', 'none');
@@ -194,7 +207,7 @@ const ProjectTreeViz = () => {
         .text(d => d.data.name)
         .attr('x', 12)
         .attr('y', 4)
-        .attr('fill', '#fff')
+        .attr('fill', d => d.data.children && d.data.children.length > 0 ? '#888888' : '#555555')
         .attr('font-size', '9px')
         .attr('font-family', 'Orbitron, monospace')
         .style('pointer-events', 'none');
@@ -220,20 +233,23 @@ const ProjectTreeViz = () => {
 
     let time = 0;
     function tick() {
-      time += 0.05;
+      time += 0.03;
 
-      nodes.forEach((d) => {
-        const depthFactor = d.depth * 0.3;
-        d.y += Math.sin(time + d.depth * 0.5) * 0.2 * depthFactor;
+      const breathScale = 1 + Math.sin(time * 0.5) * 0.10;
+      g.attr('transform', `translate(${width / 2}, ${height / 2}) scale(${breathScale}) translate(${-width / 2}, ${-height / 2})`);
+
+      link.attr('d', d => {
+        const sx = d.source.x, sy = d.source.y;
+        const tx = d.target.x, ty = d.target.y;
+        const mx = (sx + tx) / 2, my = (sy + ty) / 2;
+        return `M${sx},${sy}Q${mx},${my} ${tx},${ty}`;
       });
 
-      link
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
-
-      node.attr('transform', d => `translate(${d.x},${d.y})`);
+      node.attr('transform', d => {
+        const swayX = Math.sin(time + d.depth * 0.3) * 5 * d.depth * 0.1;
+        const swayY = Math.cos(time + d.depth * 0.2) * 3 * d.depth * 0.1;
+        return `translate(${d.x + swayX},${d.y + swayY})`;
+      });
     }
 
     simulation.on('tick', tick);
@@ -266,11 +282,34 @@ const ProjectTreeViz = () => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const handleZoomIn = () => {
+    if (svgRef.current && zoomRef.current) {
+      d3.select(svgRef.current).transition().call(zoomRef.current.scaleBy, 1.3);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (svgRef.current && zoomRef.current) {
+      d3.select(svgRef.current).transition().call(zoomRef.current.scaleBy, 0.7);
+    }
+  };
+
+  const handleFitToView = () => {
+    if (svgRef.current && zoomRef.current && containerRef.current) {
+      const width = containerRef.current.clientWidth;
+      const height = containerRef.current.clientHeight;
+      d3.select(svgRef.current).transition().call(
+        zoomRef.current.transform,
+        d3.zoomIdentity.translate(width / 2, height / 2).scale(0.5).translate(-width / 2, -height / 2)
+      );
+    }
+  };
+
   return (
     <div
       ref={containerRef}
       id="project-viz-panel"
-      className="relative w-[1000px] h-[400px] overflow-hidden rounded"
+      className="relative w-[500px] h-[600px] overflow-hidden rounded"
     >
       <svg ref={svgRef} className="w-full h-full bg-[#0a0a0a]" />
 
@@ -295,6 +334,30 @@ const ProjectTreeViz = () => {
 
       <div className="absolute bottom-2 left-2 text-[8px] text-amber-400 font-mono">
         Click nodes to expand/collapse | Drag to move
+      </div>
+
+      <div className="absolute bottom-2 right-2 flex gap-1">
+        <button
+          onClick={handleZoomIn}
+          className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
+          title="Zoom In"
+        >
+          +
+        </button>
+        <button
+          onClick={handleZoomOut}
+          className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
+          title="Zoom Out"
+        >
+          -
+        </button>
+        <button
+          onClick={handleFitToView}
+          className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
+          title="Fit to View"
+        >
+          ⊡
+        </button>
       </div>
     </div>
   );
