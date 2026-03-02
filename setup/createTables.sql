@@ -294,6 +294,8 @@ INSERT INTO `states` (`id`, `state`) VALUES ('2', 'online');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('1', 'technoking');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('2', 'resident');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('3', 'guest');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('4', 'owner');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('5', 'alfr3d');
 
 INSERT INTO `device_types` (`id`, `type`) VALUES ('1', 'alfr3d');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('2', 'HW');
