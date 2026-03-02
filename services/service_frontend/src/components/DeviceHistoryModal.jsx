@@ -2,12 +2,12 @@ import PropTypes from 'prop-types';
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Modal from 'react-modal';
-import { Monitor, X, Edit, Save, RotateCcw } from 'lucide-react';
+import { Monitor, X, Edit, Save, RotateCcw, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 Modal.setAppElement('#root');
 
-const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave }) => {
+const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave, onDelete }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedDevice, setEditedDevice] = useState(null);
 
@@ -137,13 +137,22 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave })
           </div>
           <div className="flex items-center space-x-2">
             {!isEditing ? (
-              <button
-                onClick={handleEdit}
-                className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
-                title="Edit Device"
-              >
-                <Edit className="w-5 h-5" />
-              </button>
+              <>
+                <button
+                  onClick={handleEdit}
+                  className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                  title="Edit Device"
+                >
+                  <Edit className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => onDelete && onDelete(device?.id)}
+                  className="p-2 text-error hover:bg-error/20 rounded-lg transition-colors"
+                  title="Delete Device"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -283,6 +292,7 @@ DeviceHistoryModal.propTypes = {
   history: PropTypes.array,
   users: PropTypes.array,
   onSave: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 export default DeviceHistoryModal;

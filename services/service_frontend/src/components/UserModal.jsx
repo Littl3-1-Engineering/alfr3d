@@ -2,11 +2,11 @@ import PropTypes from 'prop-types';
 import { useState } from 'react';
 import Modal from 'react-modal';
 import { motion } from 'framer-motion';
-import { User, Monitor, X, Edit, Save, RotateCcw } from 'lucide-react';
+import { User, Monitor, X, Edit, Save, RotateCcw, Trash2 } from 'lucide-react';
 
 Modal.setAppElement('#root');
 
-const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave }) => {
+const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDelete }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedUser, setEditedUser] = useState(null);
 
@@ -79,13 +79,22 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave }) =>
           </div>
           <div className="flex items-center space-x-2">
             {!isEditing ? (
-              <button
-                onClick={handleEdit}
-                className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
-                title="Edit User"
-              >
-                <Edit className="w-5 h-5" />
-              </button>
+              <>
+                <button
+                  onClick={handleEdit}
+                  className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                  title="Edit User"
+                >
+                  <Edit className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => onDelete && onDelete(user?.id)}
+                  className="p-2 text-error hover:bg-error/20 rounded-lg transition-colors"
+                  title="Delete User"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -212,6 +221,7 @@ UserModal.propTypes = {
   devices: PropTypes.array,
   onDeviceClick: PropTypes.func.isRequired,
   onSave: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 export default UserModal;
