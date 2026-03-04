@@ -80,6 +80,13 @@ def get_ha_devices():
         domain = entity_id.split(".")[0] if "." in entity_id else ""
 
         if domain in ["light", "switch", "fan", "climate", "cover", "lock", "media_player"]:
+            connections = state.get("attributes", {}).get("connections", [])
+            mac_address = None
+            for conn_type, conn_value in connections:
+                if conn_type == "mac":
+                    mac_address = conn_value.upper()
+                    break
+
             device = {
                 "entity_id": entity_id,
                 "name": state.get("attributes", {}).get("friendly_name", entity_id),
@@ -87,6 +94,7 @@ def get_ha_devices():
                 "domain": domain,
                 "last_changed": state.get("last_changed"),
                 "attributes": state.get("attributes", {}),
+                "mac_address": mac_address,
             }
 
             if "brightness" in state.get("attributes", {}):
@@ -174,20 +182,22 @@ def sync_ha_devices():
         name = device["name"]
         device_type = device["domain"]
         state = device["state"]
+        mac_address = device.get("mac_address")
 
         cursor.execute(
             """
             INSERT INTO smarthome_devices
-                (name, source, ha_entity_id, device_type, online,
+                (name, source, ha_entity_id, mac_address, device_type, online,
                  last_state, environment_id)
-            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s)
+            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
+                mac_address = COALESCE(VALUES(mac_address), mac_address),
                 device_type = VALUES(device_type),
                 online = VALUES(online),
                 last_state = VALUES(last_state)
         """,
-            (name, entity_id, device_type, state == "on", json.dumps(device), env_id),
+            (name, entity_id, mac_address, device_type, state == "on", json.dumps(device), env_id),
         )
         synced += 1
 

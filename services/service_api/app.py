@@ -1622,10 +1622,12 @@ def get_iot_devices():
 
         cursor.execute(
             """
-            SELECT id, name, source, ha_entity_id, st_device_id, device_type,
-                   room, capabilities, online, last_state
-            FROM smarthome_devices
-            WHERE source = %s
+            SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
+                   sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
+                   sd.mac_address, d.id as local_device_id, d.IP, d.position_x, d.position_y
+            FROM smarthome_devices sd
+            LEFT JOIN device d ON UPPER(d.MAC) = UPPER(sd.mac_address)
+            WHERE sd.source = %s
         """,
             (provider,),
         )
@@ -1644,6 +1646,17 @@ def get_iot_devices():
                     "capabilities": json.loads(row[7]) if row[7] else [],
                     "online": bool(row[8]),
                     "last_state": json.loads(row[9]) if row[9] else {},
+                    "mac_address": row[10],
+                    "local_device": (
+                        {
+                            "id": row[11],
+                            "IP": row[12],
+                            "position_x": row[13],
+                            "position_y": row[14],
+                        }
+                        if row[11]
+                        else None
+                    ),
                 }
             )
         db.close()
