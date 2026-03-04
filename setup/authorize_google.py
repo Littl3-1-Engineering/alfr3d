@@ -15,11 +15,16 @@ import pymysql
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SCOPES = [
+SCOPES_GMAIL = [
     "https://www.googleapis.com/auth/gmail.readonly",
+]
+
+SCOPES_CALENDAR = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events.readonly",
 ]
+
+SCOPES = SCOPES_GMAIL + SCOPES_CALENDAR
 
 # Load .env file if it exists
 env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -75,7 +80,7 @@ def update_tokens(integration_type, creds):
         logger.error(f"Error updating tokens: {e}")
 
 
-def main():
+def main(integration_type=None):
     logger.info(f"CLIENT_SECRET: {'*' * len(CLIENT_SECRET) if CLIENT_SECRET else None}")
     if not CLIENT_ID or not CLIENT_SECRET:
         logger.error("CLIENT_ID and CLIENT_SECRET environment variables must be set")
@@ -89,7 +94,15 @@ def main():
         )
         sys.exit(1)
 
-    logger.info("Starting Google OAuth flow...")
+    # Select scopes based on integration type
+    if integration_type == "gmail":
+        scopes = SCOPES_GMAIL
+    elif integration_type == "calendar":
+        scopes = SCOPES_CALENDAR
+    else:
+        scopes = SCOPES
+
+    logger.info(f"Starting Google OAuth flow for: {integration_type or 'all'}...")
 
     flow = InstalledAppFlow.from_client_config(
         {
@@ -101,13 +114,28 @@ def main():
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
         },
-        scopes=SCOPES,
+        scopes=scopes,
     )
 
     creds = flow.run_local_server(port=8081)
-    update_tokens("google", creds)
+
+    # Determine integration type for DB
+    if integration_type:
+        db_integration_type = integration_type
+    else:
+        db_integration_type = "google"
+
+    update_tokens(db_integration_type, creds)
     logger.info("Google authorized and tokens stored successfully!")
 
 
 if __name__ == "__main__":
-    main()
+    integration_type = None
+    if len(sys.argv) > 1:
+        integration_type = sys.argv[1]
+        valid_types = ["gmail", "calendar"]
+        if integration_type not in valid_types:
+            logger.error(f"Invalid integration type. Choose from: {valid_types}")
+            logger.error("Note: Google Smart Home uses service account authentication, not OAuth.")
+            sys.exit(1)
+    main(integration_type)

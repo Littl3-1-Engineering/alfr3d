@@ -474,10 +474,26 @@ if __name__ == "__main__":
 
     while True:
         for message in consumer:
-            if message.value.decode("ascii") == "alfr3d-device.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit(1)
-            if message.value.decode("ascii") == "scan net":
-                check_lan()
+            try:
+                data = json.loads(message.value.decode("utf-8"))
+                action = data.get("action")
+
+                if action == "exit":
+                    logger.info("Received exit request. Stopping service.")
+                    sys.exit(1)
+                elif action == "scan_net":
+                    check_lan()
+                elif action == "iot_ha_sync":
+                    from ha_utils import sync_ha_devices
+
+                    sync_ha_devices()
+                elif action == "iot_st_sync":
+                    from st_utils import sync_st_devices
+
+                    sync_st_devices()
+            except json.JSONDecodeError:
+                logger.warning("Received non-JSON message, ignoring")
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
 
             time.sleep(10)

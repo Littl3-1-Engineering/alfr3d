@@ -423,7 +423,7 @@ class MyDaemon:
         logger.info("Time for localnet scan")
         p = get_producer()
         if p:
-            p.send("device", b"scan net")
+            p.send("device", json.dumps({"action": "scan_net"}).encode("utf-8"))
 
     def check_routines(self):
         logger.info("Routine check")
