@@ -475,6 +475,18 @@ def check_weather_routine():
         p.send("environment", b"check weather")
 
 
+def sync_iot_devices():
+    """
+    Description:
+            Send IoT sync messages to the device topic every 15 minutes.
+    """
+    logger.info("Scheduled IoT device sync")
+    p = get_producer()
+    if p:
+        p.send("device", json.dumps({"action": "iot_ha_sync"}).encode("utf-8"))
+        p.send("device", json.dumps({"action": "iot_st_sync"}).encode("utf-8"))
+
+
 def init_daemon():
     """
     Description:
@@ -523,6 +535,7 @@ def init_daemon():
         # until i deploy a more configurable alarm clock
         schedule.every().day.at("00:05").do(reset_routines)
         schedule.every(4).hours.do(check_weather_routine)
+        schedule.every(15).minutes.do(sync_iot_devices)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
