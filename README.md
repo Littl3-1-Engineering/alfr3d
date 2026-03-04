@@ -17,6 +17,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
 - **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
+- **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, and blueprint display with MAC-based device linking.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
@@ -37,6 +38,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Service API**: REST API gateway providing endpoints for users and container metrics, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard, user/device management, and control panel.
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
+- **IoT Integration**: Unified IoT layer supporting Home Assistant and SmartThings with automatic device syncing and blueprint visualization.
 
 ## Quick Start
 
@@ -111,7 +113,39 @@ The `setup/` directory contains scripts for database initialization, maintenance
 ### Database Setup
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
 - **`migration_001_calendar_cleanup.sql`**: Database migration for calendar cleanup functionality
+- **`migration_002_iot.sql`**: Database migration for IoT integration (smarthome_devices table, MAC address linking)
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
+
+### IoT Integration
+
+ALFR3D supports integration with Home Assistant and SmartThings for unified smart home control:
+
+#### Features
+- **Unified Device Management**: View and control HA and ST devices from a single interface
+- **Automatic Sync**: Devices sync automatically every 15 minutes via the daemon service
+- **Blueprint Visualization**: IoT devices appear on the floorplan alongside local network devices
+- **MAC Address Linking**: IoT devices with known MAC addresses link to local network devices for position tracking
+- **Warning Indicators**: Unlinked devices show warning indicators with MAC address information
+
+#### Configuration
+1. Configure Home Assistant via the Integrations page:
+   - HA URL (e.g., `http://192.168.1.x:8123`)
+   - Long-Lived Access Token
+
+2. Configure SmartThings via the Integrations page:
+   - Personal Access Token (PAT)
+
+3. Set default provider in IoT settings
+
+#### Database Schema
+- **`smarthome_devices`**: Stores synced IoT devices with source (homeassistant/smartthings), entity IDs, MAC addresses, and linked local device references
+- **`device_command_history`**: Tracks device control commands for audit logs
+
+#### Sync Mechanism
+- Daemon sends Kafka messages (`iot_ha_sync`, `iot_st_sync`) every 15 minutes
+- Device service fetches devices from HA/ST APIs and updates the database
+- MAC addresses extracted from HA entity connections for device linking
+- Frontend fetches merged device data with local device position info
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
@@ -212,6 +246,22 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - `GET /api/project-tree`: Retrieve project directory tree structure for visualization
 - `GET /api/integrations/status`: Check integration sync status
 - `POST /api/integrations/sync/<type>`: Trigger integration sync (e.g., gmail, calendar)
+- **IoT (Home Assistant/SmartThings)**:
+  - `GET /api/iot/status`: Get connection status for HA and ST
+  - `GET /api/iot/providers`: List available IoT providers
+  - `PUT /api/iot/provider`: Set default IoT provider
+  - `GET /api/iot/ha/status`: Home Assistant connection status
+  - `GET /api/iot/ha/devices`: Get HA devices
+  - `POST /api/iot/ha/devices/<entity_id>/control`: Control HA device
+  - `PUT /api/iot/ha/config`: Configure HA (URL, token)
+  - `POST /api/iot/ha/sync`: Trigger HA device sync
+  - `GET /api/iot/st/status`: SmartThings connection status
+  - `GET /api/iot/st/devices`: Get SmartThings devices
+  - `POST /api/iot/st/devices/<device_id>/control`: Control ST device
+  - `PUT /api/iot/st/config`: Configure ST (PAT)
+  - `POST /api/iot/st/sync`: Trigger ST device sync
+  - `GET /api/iot/devices`: Get all IoT devices (merged with local devices)
+  - `POST /api/iot/devices/<device_id>/control`: Control IoT device
 - **WebSocket**:
   - `WS /ws/socket.io/`: Real-time events and situational awareness via SocketIO (port 5002)
 - **Service Frontend**:

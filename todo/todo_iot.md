@@ -16,21 +16,21 @@
 
 ## Phase 2: Database Schema Updates
 
-### To Do
-- Run migration to add columns to smarthome_devices table:
+### Completed
+- Migration `migration_002_iot.sql` adds columns to smarthome_devices table:
   - source (VARCHAR: 'homeassistant' or 'smartthings')
   - mac_address
   - ha_entity_id
   - st_device_id
-- Add config entries for IoT settings
+- Config entries: iot_provider, ha_url, ha_token, st_pat
 
 ---
 
 ## Phase 3: Home Assistant Integration
 
-### To Do
-- Create `ha_utils.py` in service_device
-- API endpoints:
+### Completed
+- Created `services/service_device/ha_utils.py`
+- API endpoints implemented in service_api/app.py:
   - GET /api/iot/ha/status
   - GET /api/iot/ha/devices
   - POST /api/iot/ha/devices/<entity_id>/control
@@ -41,9 +41,9 @@
 
 ## Phase 4: SmartThings Integration
 
-### To Do
-- Create `st_utils.py` in service_device
-- API endpoints:
+### Completed
+- Created `services/service_device/st_utils.py`
+- API endpoints implemented in service_api/app.py:
   - GET /api/iot/st/status
   - GET /api/iot/st/devices
   - POST /api/iot/st/devices/<device_id>/control
@@ -54,14 +54,16 @@
 
 ## Phase 5: Unified IoT Layer
 
-### To Do
-- Unified API endpoints:
+### Completed
+- Unified API endpoints in service_api/app.py:
   - GET /api/iot/status
   - GET /api/iot/devices
   - POST /api/iot/devices/<id>/control
   - GET /api/iot/providers
   - PUT /api/iot/provider
 - Merge by MAC address logic with device table
+- Devices displayed on Blueprint alongside local devices
+- 15-minute periodic sync via daemon Kafka messages
 
 ---
 
