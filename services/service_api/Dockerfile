@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY tree_of_alfr3d.py .
+COPY ha_utils.py .
+COPY st_utils.py .
 
 EXPOSE 5001
 

@@ -1413,6 +1413,331 @@ def get_audio(filename):
     return send_file(audio_path, mimetype=mimetype)
 
 
+@app.route("/api/iot/ha/status")
+def get_ha_status():
+    try:
+        import ha_utils
+
+        connected, message = ha_utils.test_ha_connection()
+        return jsonify({"connected": connected, "message": message})
+    except Exception as e:
+        logger.error(f"Error checking HA status: {str(e)}")
+        return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route("/api/iot/ha/devices")
+def get_ha_devices():
+    try:
+        import ha_utils
+
+        devices = ha_utils.get_ha_devices()
+        return jsonify(devices)
+    except Exception as e:
+        logger.error(f"Error fetching HA devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/devices/<entity_id>/control", methods=["POST"])
+def control_ha_device(entity_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    params = data.get("params", {})
+
+    service_map = {
+        "turn_on": "turn_on",
+        "turn_off": "turn_off",
+        "toggle": "toggle",
+        "set_brightness": "turn_on",
+    }
+
+    service = service_map.get(command, command)
+
+    try:
+        import ha_utils
+
+        success, message = ha_utils.ha_control_device(entity_id, service, params)
+        if success:
+            return jsonify({"message": message, "entity_id": entity_id, "command": command})
+        else:
+            return jsonify({"error": message}), 500
+    except Exception as e:
+        logger.error(f"Error controlling HA device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/config", methods=["PUT"])
+def save_ha_config():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    ha_url = data.get("ha_url", "")
+    ha_token = data.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return jsonify({"error": "HA URL and token are required"}), 400
+
+    try:
+        import ha_utils
+
+        ha_utils.save_ha_config(ha_url, ha_token)
+        return jsonify({"message": "Configuration saved"})
+    except Exception as e:
+        logger.error(f"Error saving HA config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/sync", methods=["POST"])
+def trigger_ha_sync():
+    try:
+        producer = get_producer()
+        if producer:
+            producer.send("device", {"action": "iot_ha_sync"})
+            producer.flush()
+            logger.info("HA sync triggered")
+            return jsonify({"message": "Sync triggered"}), 200
+        else:
+            return jsonify({"error": "Failed to connect to Kafka"}), 500
+    except Exception as e:
+        logger.error(f"Error triggering HA sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/status")
+def get_st_status():
+    try:
+        import st_utils
+
+        connected, message = st_utils.test_st_connection()
+        return jsonify({"connected": connected, "message": message})
+    except Exception as e:
+        logger.error(f"Error checking ST status: {str(e)}")
+        return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route("/api/iot/st/devices")
+def get_st_devices():
+    try:
+        import st_utils
+
+        devices = st_utils.get_st_devices()
+        return jsonify(devices)
+    except Exception as e:
+        logger.error(f"Error fetching ST devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/devices/<device_id>/control", methods=["POST"])
+def control_st_device(device_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    capability = data.get("capability", "switch")
+    args = data.get("args", [])
+
+    try:
+        import st_utils
+
+        success, message = st_utils.st_control_device(device_id, capability, command, args)
+        if success:
+            return jsonify({"message": message, "device_id": device_id, "command": command})
+        else:
+            return jsonify({"error": message}), 500
+    except Exception as e:
+        logger.error(f"Error controlling ST device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/config", methods=["PUT"])
+def save_st_config():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    st_pat = data.get("st_pat", "")
+
+    if not st_pat:
+        return jsonify({"error": "PAT is required"}), 400
+
+    try:
+        import st_utils
+
+        st_utils.save_st_config(st_pat)
+        return jsonify({"message": "Configuration saved"})
+    except Exception as e:
+        logger.error(f"Error saving ST config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/sync", methods=["POST"])
+def trigger_st_sync():
+    try:
+        producer = get_producer()
+        if producer:
+            producer.send("device", {"action": "iot_st_sync"})
+            producer.flush()
+            logger.info("ST sync triggered")
+            return jsonify({"message": "Sync triggered"}), 200
+        else:
+            return jsonify({"error": "Failed to connect to Kafka"}), 500
+    except Exception as e:
+        logger.error(f"Error triggering ST sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/status")
+def get_iot_status():
+    try:
+        import ha_utils
+
+        ha_connected, ha_message = ha_utils.test_ha_connection()
+
+        return jsonify(
+            {
+                "ha": {"connected": ha_connected, "message": ha_message},
+                "st": {"connected": False, "message": "Not configured"},
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error checking IoT status: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/devices")
+def get_iot_devices():
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+
+        cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
+        row = cursor.fetchone()
+        provider = row[0] if row else "homeassistant"
+
+        cursor.execute(
+            """
+            SELECT id, name, source, ha_entity_id, st_device_id, device_type,
+                   room, capabilities, online, last_state
+            FROM smarthome_devices
+            WHERE source = %s
+        """,
+            (provider,),
+        )
+
+        devices = []
+        for row in cursor.fetchall():
+            devices.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "source": row[2],
+                    "ha_entity_id": row[3],
+                    "st_device_id": row[4],
+                    "device_type": row[5],
+                    "room": row[6],
+                    "capabilities": json.loads(row[7]) if row[7] else [],
+                    "online": bool(row[8]),
+                    "last_state": json.loads(row[9]) if row[9] else {},
+                }
+            )
+        db.close()
+        return jsonify(devices)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching IoT devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/devices/<device_id>/control", methods=["POST"])
+def control_iot_device(device_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    params = data.get("params", {})
+
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT source, ha_entity_id FROM smarthome_devices WHERE id = %s", (device_id,)
+        )
+        row = cursor.fetchone()
+        db.close()
+
+        if not row:
+            return jsonify({"error": "Device not found"}), 404
+
+        source, ha_entity_id = row[0], row[1]
+
+        if source == "homeassistant" and ha_entity_id:
+            import ha_utils
+
+            service_map = {
+                "turn_on": "turn_on",
+                "turn_off": "turn_off",
+                "toggle": "toggle",
+                "set_brightness": "turn_on",
+            }
+            service = service_map.get(command, command)
+            success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
+            if success:
+                return jsonify({"message": message, "device_id": device_id, "command": command})
+            else:
+                return jsonify({"error": message}), 500
+        else:
+            return jsonify({"error": "Unsupported source or device"}), 400
+
+    except Exception as e:
+        logger.error(f"Error controlling IoT device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/providers")
+def get_iot_providers():
+    return jsonify(
+        [
+            {"id": "homeassistant", "name": "Home Assistant", "status": "configured"},
+            {"id": "smartthings", "name": "SmartThings", "status": "not_configured"},
+        ]
+    )
+
+
+@app.route("/api/iot/provider", methods=["PUT"])
+def set_iot_provider():
+    data = request.get_json()
+    if not data or "provider" not in data:
+        return jsonify({"error": "Missing provider"}), 400
+
+    provider = data.get("provider")
+    if provider not in ["homeassistant", "smartthings"]:
+        return jsonify({"error": "Invalid provider"}), 400
+
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (provider,))
+        db.commit()
+        db.close()
+        return jsonify({"message": f"Provider set to {provider}"})
+    except Exception as e:
+        logger.error(f"Error setting IoT provider: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Placeholder for future endpoints
+
+
 if __name__ == "__main__":
     # Start event consumer threads
     threading.Thread(target=consume_events, daemon=True).start()

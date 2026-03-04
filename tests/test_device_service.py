@@ -33,11 +33,11 @@ def wait_for_kafka_message(kafka_bootstrap_servers, topic, expected_value, timeo
 
 
 def test_device_service_scan_net(kafka_bootstrap_servers):
-    """Test sending 'scan net' message to device topic and verify response."""
+    """Test sending 'scan_net' message to device topic and verify response."""
 
-    # Send scan net message
+    # Send scan_net message as JSON
     producer = Producer({"bootstrap.servers": kafka_bootstrap_servers})
-    producer.produce("device", value=b"scan net")
+    producer.produce("device", value=json.dumps({"action": "scan_net"}).encode("utf-8"))
     producer.flush()
 
     # Wait for response on user topic
