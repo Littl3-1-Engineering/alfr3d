@@ -30,8 +30,11 @@ This is a utility for Routines for Alfr3d:
 import os
 import sys
 import logging
+import json
 import pymysql as MySQLdb
 from datetime import datetime
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
 from utils.db_utils import check_mute_optimized
 
 # set up logging
@@ -49,6 +52,75 @@ MYSQL_USER = os.environ.get("MYSQL_USER") or "user"
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD") or "password"
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
+
+try:
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_URL,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    )
+except KafkaError:
+    logger.warning("Failed to create Kafka producer, actions will not be sent")
+    producer = None
+
+
+def execute_actions(actions_json):
+    """Execute actions from JSON array via Kafka."""
+    if not actions_json:
+        return 0
+
+    try:
+        actions = json.loads(actions_json) if isinstance(actions_json, str) else actions_json
+    except (json.JSONDecodeError, TypeError):
+        logger.error("Invalid actions JSON")
+        return 0
+
+    if not producer:
+        logger.error("Kafka producer not available")
+        return 0
+
+    executed = 0
+    for action in actions:
+        action_type = action.get("type")
+        action_params = action.get("params", {})
+
+        try:
+            if action_type == "speak":
+                message = {"text": action_params.get("text", ""), "engine": "Coqui"}
+                producer.send("speak", message)
+                producer.flush()
+                logger.info(f"Executed speak action: {action_params.get('text', '')[:50]}")
+
+            elif action_type == "device":
+                message = {
+                    "device_id": action_params.get("device_id"),
+                    "action": action_params.get("action", "on"),
+                }
+                producer.send("device", message)
+                producer.flush()
+                logger.info(f"Executed device action: {action_params.get('device_id')}")
+
+            elif action_type == "email":
+                message = {
+                    "type": "email",
+                    "to": action_params.get("to", ""),
+                    "subject": action_params.get("subject", ""),
+                    "body": action_params.get("body", ""),
+                }
+                producer.send("user", message)
+                producer.flush()
+                logger.info(f"Executed email action to: {action_params.get('to', '')}")
+
+            elif action_type == "scene":
+                message = {"scene": action_params.get("scene_id", "")}
+                producer.send("device", message)
+                producer.flush()
+                logger.info(f"Executed scene action: {action_params.get('scene_id', '')}")
+
+            executed += 1
+        except Exception as e:
+            logger.error(f"Failed to execute action {action_type}: {str(e)}")
+
+    return executed
 
 
 def check_routines() -> bool:
@@ -99,16 +171,33 @@ def check_routines() -> bool:
             hour=int(routine_time.seconds / 3600),
             minute=int((routine_time.seconds // 60) % 60),
         )
-        routine_trigger = routine[4]
+        routine_trigger = routine[6]
+        recurrence = routine[4] if len(routine) > 4 else "daily"
+        actions = routine[5] if len(routine) > 5 else None
         cur_time = datetime.now()
+        cur_weekday = cur_time.weekday()
 
-        # does routine need to be triggered??
+        should_trigger = False
         if cur_time > routine_time and not routine_trigger:
+            if recurrence == "once":
+                should_trigger = True
+            elif recurrence == "daily":
+                should_trigger = True
+            elif recurrence == "weekdays" and cur_weekday < 5:
+                should_trigger = True
+            elif recurrence == "weekly":
+                should_trigger = True
+
+        if should_trigger:
             logger.info(routine[1] + " routine is being triggered")
-            # set triggered flag = True
+            if actions:
+                executed = execute_actions(actions)
+                logger.info(f"Executed {executed} actions for routine {routine[1]}")
             try:
-                logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
-                cursor.execute("UPDATE routines SET triggered = 1 WHERE id = %s;", (routine[0],))
+                cursor.execute(
+                    "UPDATE routines SET triggered = 1, last_run = NOW() WHERE id = %s;",
+                    (routine[0],),
+                )
                 db.commit()
             except Exception as e:
                 logger.error("Failed to update the database")

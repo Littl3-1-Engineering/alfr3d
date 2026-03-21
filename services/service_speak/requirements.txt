@@ -4,3 +4,4 @@ coqui-tts
 gtts
 schedule==1.2.0
 pymysql==1.1.1
+anthropic>=0.18.0

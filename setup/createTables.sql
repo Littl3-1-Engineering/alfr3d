@@ -168,7 +168,7 @@ DROP TABLE IF EXISTS `config`;
 CREATE TABLE `config` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
   `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting
-  `value` VARCHAR(45) NULL DEFAULT NULL -- Value of the configuration setting
+  `value` VARCHAR(512) NULL DEFAULT NULL -- Value of the configuration setting (512 for API keys)
 );
 
 -- ---

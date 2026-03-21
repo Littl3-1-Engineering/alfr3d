@@ -19,6 +19,15 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from gtts import gTTS
 
+# Local imports
+from personality import (
+    get_blended_personality,
+    build_llm_system_prompt,
+    get_quips_for_environment,
+    select_quip_by_traits,
+)
+from llm_client import call_claude_haiku, get_claude_config, check_usage_limit
+
 # Set up logging
 logger = logging.getLogger("SpeakService")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -215,6 +224,31 @@ def send_event(event_type, message, audio_url=None, text=None):
             logger.error(f"Failed to send event: {str(e)}")
 
 
+def send_personality_state(personality, llm_used=False):
+    """Send personality state to personality Kafka topic and event-stream"""
+    p = get_producer()
+    if p:
+        blended = personality.get("blended", {})
+        state = {
+            "id": f"personality_{datetime.utcnow().isoformat()}",
+            "type": "personality_state",
+            "sarcasm": blended.get("sarcasm", 0.5),
+            "formality": blended.get("formality", 0.5),
+            "warmth": blended.get("warmth", 0.5),
+            "patience": blended.get("patience", 1.0),
+            "mood": personality.get("mood", "neutral"),
+            "llm_used": llm_used,
+            "time": datetime.utcnow().isoformat() + "Z",
+        }
+        try:
+            p.send("personality", state)
+            p.send("event-stream", {"id": state["id"], "type": "personality_state", **state})
+            p.flush()
+            logger.info(f"Sent personality state: {state['mood']}")
+        except Exception as e:
+            logger.error(f"Failed to send personality state: {str(e)}")
+
+
 def get_tts(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):
     """Get or initialize TTS instance for specified model"""
     if model_name not in tts_instances:
@@ -301,7 +335,7 @@ def generate_tts(
 
 
 def process_speak_message(message):
-    """Process incoming speak message"""
+    """Process incoming speak message with personality enhancement"""
     try:
         # Handle both string and bytes, and parse JSON if possible
         raw_value = message.value
@@ -314,15 +348,16 @@ def process_speak_message(message):
             text = message_data.get("text", str(raw_value))
             engine = message_data.get("engine", "Coqui")
             model = message_data.get("model", "tts_models/multilingual/multi-dataset/xtts_v2")
-            speaker = message_data.get("speaker")  # Optional speaker parameter
-            speaker_wav = message_data.get("speaker_wav")  # Optional voice file for XTTS
+            speaker = message_data.get("speaker")
+            speaker_wav = message_data.get("speaker_wav")
+            skip_personality = message_data.get("skip_personality", False)
         except (json.JSONDecodeError, TypeError):
-            # Not JSON, treat as plain text
             text = str(raw_value)
             engine = "Coqui"
             model = "tts_models/multilingual/multi-dataset/xtts_v2"
             speaker = None
             speaker_wav = None
+            skip_personality = False
 
         logger.info(
             f"Processing speak message: {text[:50]}... "
@@ -332,6 +367,47 @@ def process_speak_message(message):
         if check_mute():
             logger.info("Alfr3d is muted, discarding speak request")
             return
+
+        llm_used = False
+        if not skip_personality:
+            try:
+                personality = get_blended_personality()
+                blended = personality.get("blended", {})
+
+                config = get_claude_config()
+                if config.get("api_key"):
+                    allowed, _ = check_usage_limit()
+                    if allowed:
+                        logger.info(
+                            f"Using personality: {personality.get('name')}, "
+                            f"mood: {personality.get('mood')}"
+                        )
+
+                        system_prompt = build_llm_system_prompt(personality)
+                        llm_text = call_claude_haiku(system_prompt, text)
+
+                        if llm_text:
+                            text = llm_text
+                            llm_used = True
+                            logger.info(f"LLM enhanced text: {text[:50]}...")
+                        else:
+                            quips = get_quips_for_environment()
+                            if quips:
+                                selected_quip = select_quip_by_traits(blended, quips)
+                                if selected_quip:
+                                    text = selected_quip
+                                    logger.info(f"Selected quip: {text[:50]}...")
+                else:
+                    quips = get_quips_for_environment()
+                    if quips:
+                        selected_quip = select_quip_by_traits(blended, quips)
+                        if selected_quip:
+                            text = selected_quip
+
+                send_personality_state(personality, llm_used)
+
+            except Exception as e:
+                logger.warning(f"Personality processing failed: {str(e)}, using original text")
 
         # Generate TTS
         filename = generate_tts(text, engine, model, speaker, speaker_wav)

@@ -200,6 +200,47 @@ def update_routines(db, cursor, weatherData):
             logger.error("Environment not found for " + ALFR3D_ENV_NAME)
             return False
         env_id = env_data[0]
+
+        # Check if Sunrise/Sunset routines exist
+        cursor.execute(
+            "SELECT name FROM routines WHERE name IN ('Sunrise', 'Sunset') AND environment_id = %s",
+            (env_id,),
+        )
+        existing_routines = {row[0] for row in cursor.fetchall()}
+
+        # Create Sunrise routine if it doesn't exist
+        if "Sunrise" not in existing_routines:
+            logger.info("Creating Sunrise routine")
+            cursor.execute(
+                "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    "Sunrise",
+                    sunrise_trig.strftime("%H:%M:%S"),
+                    1,
+                    "daily",
+                    "[]",
+                    env_id,
+                ),
+            )
+
+        # Create Sunset routine if it doesn't exist
+        if "Sunset" not in existing_routines:
+            logger.info("Creating Sunset routine")
+            cursor.execute(
+                "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    "Sunset",
+                    sunset_trig.strftime("%H:%M:%S"),
+                    1,
+                    "daily",
+                    "[]",
+                    env_id,
+                ),
+            )
+
+        # Update times for both routines
         cursor.execute(
             "UPDATE routines SET time = CASE name WHEN 'Sunrise' THEN %s "
             "WHEN 'Sunset' THEN %s END, triggered = 0 WHERE name IN ('Sunrise', 'Sunset') "
@@ -211,9 +252,10 @@ def update_routines(db, cursor, weatherData):
             ),
         )
         db.commit()
+        logger.info("Sunrise/Sunset routines updated successfully")
         return True
-    except Exception:
-        logger.error("Failed to update Routines database with daytime info")
+    except Exception as e:
+        logger.error("Failed to update Routines database with daytime info: " + str(e))
         db.rollback()
         return False
 
