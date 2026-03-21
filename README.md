@@ -18,6 +18,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
 - **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
 - **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, and blueprint display with MAC-based device linking.
+- **Routine Automation**: Time-based automation with recurrence options (daily, weekly, weekdays), action builder supporting speak, device, email, and scene actions.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
@@ -114,6 +115,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
 - **`migration_001_calendar_cleanup.sql`**: Database migration for calendar cleanup functionality
 - **`migration_002_iot.sql`**: Database migration for IoT integration (smarthome_devices table, MAC address linking)
+- **`migration_003_routines.sql`**: Database migration for routine management (recurrence, actions JSON, last_run tracking)
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
 
 ### IoT Integration
@@ -146,6 +148,31 @@ ALFR3D supports integration with Home Assistant and SmartThings for unified smar
 - Device service fetches devices from HA/ST APIs and updates the database
 - MAC addresses extracted from HA entity connections for device linking
 - Frontend fetches merged device data with local device position info
+
+### Routine Automation
+
+ALFR3D supports time-based automation with the following features:
+
+#### Features
+- **Recurrence Options**: Run routines once, daily, on weekdays, or weekly
+- **Action Types**: Speak (TTS), device control, email, and scene activation
+- **Manual Execution**: Run routines on-demand from the Matrix page
+- **Action Builder**: Visual interface for creating multi-step routines
+
+#### Supported Actions
+- **Speak**: Text-to-speech messages via the speak service
+- **Device**: Control IoT devices (on/off)
+- **Email**: Send email notifications
+- **Scene**: Activate device scenes
+
+#### Configuration
+1. Navigate to Matrix page in the frontend
+2. Click "New Routine" to create a routine
+3. Set time, recurrence, and add actions
+4. Save and enable the routine
+
+#### Database Schema
+- **`routines`**: Stores routine definitions with name, time, recurrence (once/daily/weekdays/weekly), actions (JSON), and last_run timestamp
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
@@ -190,7 +217,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - **User Management**: Registration, editing, deletion with role-based access
 - **Device Control**: Network scanning, device state monitoring
 - **Environment Settings**: Location and weather data configuration
-- **Routine Automation**: Scheduled task management
+- **Routine Automation**: Time-based task management with speak, device, email, and scene actions
 
 ### Visual Design
 - **Dark Theme**: Professional UI with consistent styling
@@ -262,6 +289,12 @@ The ALFR3D dashboard provides real-time monitoring and control:
   - `POST /api/iot/st/sync`: Trigger ST device sync
   - `GET /api/iot/devices`: Get all IoT devices (merged with local devices)
   - `POST /api/iot/devices/<device_id>/control`: Control IoT device
+- **Routines**:
+  - `GET /api/routines`: List all routines for current environment
+  - `POST /api/routines`: Create a new routine
+  - `PUT /api/routines/<id>`: Update an existing routine
+  - `DELETE /api/routines/<id>`: Delete a routine
+  - `POST /api/routines/<id>/run`: Manually execute a routine
 - **WebSocket**:
   - `WS /ws/socket.io/`: Real-time events and situational awareness via SocketIO (port 5002)
 - **Service Frontend**:

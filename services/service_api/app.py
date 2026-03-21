@@ -163,6 +163,19 @@ CORS(app)
 app.register_blueprint(PROJECT_TREE_BLUEPRINT)
 
 
+def normalize_time(time_str):
+    """Convert HH:MM to HH:MM:SS format for database."""
+    if not time_str:
+        return time_str
+    if len(time_str) == 8:
+        return time_str
+    if len(time_str) == 5 and ":" in time_str:
+        parts = time_str.split(":")
+        hour = parts[0].zfill(2)
+        return f"{hour}:{parts[1]}:00"
+    return time_str
+
+
 @app.route("/api/users")
 def get_users():
     """
@@ -1749,6 +1762,504 @@ def set_iot_provider():
 
 
 # Placeholder for future endpoints
+
+
+# ============== ROUTINES ==============
+
+
+@app.route("/api/routines", methods=["GET"])
+def get_routines():
+    """Get all routines for the current environment."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        cursor.execute(
+            "SELECT id, name, time, enabled, triggered, recurrence, actions, last_run "
+            "FROM routines WHERE environment_id = (SELECT id FROM environment WHERE name = %s) "
+            "ORDER BY time",
+            (ALFR3D_ENV_NAME,),
+        )
+        routines = cursor.fetchall()
+
+        for routine in routines:
+            if routine.get("actions"):
+                routine["actions"] = json.loads(routine["actions"])
+            if routine.get("time"):
+                routine["time"] = str(routine["time"])
+            if routine.get("last_run"):
+                routine["last_run"] = str(routine["last_run"])
+
+        db.close()
+        return jsonify(routines), 200
+    except pymysql.Error as e:
+        logger.error(f"Error fetching routines: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines", methods=["POST"])
+def create_routine():
+    """Create a new routine."""
+    data = request.get_json()
+    if not data or not data.get("name"):
+        return jsonify({"error": "Missing required field: name"}), 400
+
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+
+        cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        env_row = cursor.fetchone()
+        if not env_row:
+            db.close()
+            return jsonify({"error": "Environment not found"}), 400
+        env_id = env_row[0]
+
+        actions_json = json.dumps(data.get("actions", []))
+        recurrence = data.get("recurrence", "daily")
+        routine_time = normalize_time(data.get("time", "08:00:00"))
+
+        cursor.execute(
+            "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (data["name"], routine_time, data.get("enabled", 1), recurrence, actions_json, env_id),
+        )
+        db.commit()
+        routine_id = cursor.lastrowid
+        db.close()
+
+        logger.info(f"Created routine: {data['name']} (ID: {routine_id})")
+        return jsonify({"id": routine_id, "message": "Routine created"}), 201
+    except pymysql.Error as e:
+        logger.error(f"Error creating routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>", methods=["PUT"])
+def update_routine(routine_id):
+    """Update an existing routine."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+
+        updates = []
+        values = []
+        if "name" in data:
+            updates.append("name = %s")
+            values.append(data["name"])
+        if "time" in data:
+            updates.append("time = %s")
+            values.append(normalize_time(data["time"]))
+        if "enabled" in data:
+            updates.append("enabled = %s")
+            values.append(data["enabled"])
+        if "recurrence" in data:
+            updates.append("recurrence = %s")
+            values.append(data["recurrence"])
+        if "actions" in data:
+            updates.append("actions = %s")
+            values.append(json.dumps(data["actions"]))
+
+        if not updates:
+            db.close()
+            return jsonify({"error": "No valid fields to update"}), 400
+
+        values.append(routine_id)
+        query = f"UPDATE routines SET {', '.join(updates)} WHERE id = %s"
+        cursor.execute(query, values)
+        db.commit()
+        db.close()
+
+        logger.info(f"Updated routine ID: {routine_id}")
+        return jsonify({"message": "Routine updated"}), 200
+    except pymysql.Error as e:
+        logger.error(f"Error updating routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>", methods=["DELETE"])
+def delete_routine(routine_id):
+    """Delete a routine."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute("DELETE FROM routines WHERE id = %s", (routine_id,))
+        db.commit()
+        db.close()
+
+        logger.info(f"Deleted routine ID: {routine_id}")
+        return jsonify({"message": "Routine deleted"}), 200
+    except pymysql.Error as e:
+        logger.error(f"Error deleting routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>/run", methods=["POST"])
+def run_routine(routine_id):
+    """Manually trigger a routine to run now."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        cursor.execute(
+            "SELECT r.*, e.name as env_name FROM routines r "
+            "JOIN environment e ON r.environment_id = e.id WHERE r.id = %s",
+            (routine_id,),
+        )
+        routine = cursor.fetchone()
+
+        if not routine:
+            db.close()
+            return jsonify({"error": "Routine not found"}), 404
+
+        if routine.get("actions"):
+            actions = json.loads(routine["actions"])
+        else:
+            actions = []
+
+        cursor.execute("UPDATE routines SET last_run = NOW() WHERE id = %s", (routine_id,))
+        db.commit()
+        db.close()
+
+        kafka_producer = get_producer()
+        if not kafka_producer:
+            return jsonify({"error": "Kafka not available"}), 500
+
+        for action in actions:
+            action_type = action.get("type")
+            action_params = action.get("params", {})
+
+            if action_type == "speak":
+                message = {"text": action_params.get("text", ""), "engine": "Coqui"}
+                kafka_producer.send("speak", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent speak action")
+
+            elif action_type == "device":
+                device_id = action_params.get("device_id")
+                device_action = action_params.get("action", "on")
+                message = {"device_id": device_id, "action": device_action}
+                kafka_producer.send("device", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent device action")
+
+            elif action_type == "email":
+                message = {
+                    "type": "email",
+                    "to": action_params.get("to", ""),
+                    "subject": action_params.get("subject", ""),
+                    "body": action_params.get("body", ""),
+                }
+                kafka_producer.send("user", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent email action")
+
+        return jsonify({"message": "Routine executed", "actions_run": len(actions)}), 200
+    except Exception as e:
+        logger.error(f"Error running routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============== PERSONALITY ==============
+
+
+def get_environment_id():
+    """Get environment ID for current environment."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        row = cursor.fetchone()
+        db.close()
+        return row[0] if row else 1
+    except Exception:
+        return 1
+
+
+@app.route("/api/personality", methods=["GET"])
+def get_personality():
+    """Get current personality settings."""
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM personality WHERE type = 'current' AND "
+            "(environment_id = %s OR environment_id IS NULL) "
+            "ORDER BY environment_id DESC LIMIT 1",
+            (env_id,),
+        )
+        row = cursor.fetchone()
+        db.close()
+        if row:
+            return jsonify(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "sarcasm": float(row["sarcasm"]),
+                    "formality": float(row["formality"]),
+                    "warmth": float(row["warmth"]),
+                    "patience": float(row["patience"]),
+                    "linguistic_style": row["linguistic_style"] or "",
+                    "forbidden_words": row["forbidden_words"] or "",
+                    "verbal_tics": row["verbal_tics"] or "",
+                }
+            )
+        return jsonify({"error": "Personality not found"}), 404
+    except pymysql.Error as e:
+        logger.error(f"Error fetching personality: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality", methods=["PUT"])
+def update_personality():
+    """Update current personality settings."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE personality SET "
+            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+            "name = %s WHERE type = 'current' AND environment_id = %s",
+            (
+                data.get("sarcasm", 0.5),
+                data.get("formality", 0.5),
+                data.get("warmth", 0.5),
+                data.get("patience", 1.0),
+                data.get("linguistic_style", ""),
+                data.get("forbidden_words", ""),
+                data.get("verbal_tics", ""),
+                data.get("name", "Custom"),
+                env_id,
+            ),
+        )
+        db.commit()
+        db.close()
+        return jsonify({"message": "Personality updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating personality: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/presets", methods=["GET"])
+def get_personality_presets():
+    """Get all personality presets."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
+        rows = cursor.fetchall()
+        db.close()
+        presets = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "sarcasm": float(row["sarcasm"]),
+                "formality": float(row["formality"]),
+                "warmth": float(row["warmth"]),
+                "patience": float(row["patience"]),
+                "linguistic_style": row["linguistic_style"] or "",
+                "forbidden_words": row["forbidden_words"] or "",
+                "verbal_tics": row["verbal_tics"] or "",
+            }
+            for row in rows
+        ]
+        return jsonify(presets)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching presets: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/apply-preset", methods=["POST"])
+def apply_personality_preset():
+    """Apply a personality preset."""
+    data = request.get_json()
+    if not data or "preset" not in data:
+        return jsonify({"error": "Missing preset name"}), 400
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM personality WHERE type = 'preset' AND name = %s",
+            (data["preset"],),
+        )
+        preset = cursor.fetchone()
+        if not preset:
+            db.close()
+            return jsonify({"error": "Preset not found"}), 404
+
+        cursor.execute(
+            "UPDATE personality SET "
+            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+            "name = %s WHERE type = 'current' AND environment_id = %s",
+            (
+                preset["sarcasm"],
+                preset["formality"],
+                preset["warmth"],
+                preset["patience"],
+                preset["linguistic_style"],
+                preset["forbidden_words"],
+                preset["verbal_tics"],
+                preset["name"],
+                env_id,
+            ),
+        )
+        db.commit()
+        db.close()
+        return jsonify({"message": f"Applied preset: {data['preset']}"})
+    except pymysql.Error as e:
+        logger.error(f"Error applying preset: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/context", methods=["GET"])
+def get_personality_context():
+    """Get current personality context (mood state)."""
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM context WHERE environment_id = %s LIMIT 1",
+            (env_id,),
+        )
+        row = cursor.fetchone()
+        db.close()
+        if row:
+            return jsonify(
+                {
+                    "repeat_count": row["repeat_count"],
+                    "hour": row["hour"],
+                    "weather": row["weather"] or "clear",
+                    "mood": row["mood"],
+                    "last_error_count": row["last_error_count"],
+                    "llm_calls_today": row["llm_calls_today"],
+                }
+            )
+        return jsonify({"error": "Context not found"}), 404
+    except pymysql.Error as e:
+        logger.error(f"Error fetching context: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/context", methods=["PUT"])
+def update_personality_context():
+    """Update personality context."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        updates = []
+        values = []
+        allowed_fields = ["repeat_count", "hour", "weather", "mood", "last_error_count"]
+        for field in allowed_fields:
+            if field in data:
+                updates.append(f"{field} = %s")
+                values.append(data[field])
+        if updates:
+            values.append(env_id)
+            cursor.execute(
+                f"UPDATE context SET {', '.join(updates)} WHERE environment_id = %s",
+                values,
+            )
+            db.commit()
+        db.close()
+        return jsonify({"message": "Context updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating context: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/llm-config", methods=["GET"])
+def get_llm_config():
+    """Get LLM configuration."""
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
+        )
+        rows = cursor.fetchall()
+        db.close()
+        config = {row[0]: row[1] for row in rows}
+        return jsonify(
+            {
+                "api_key": config.get("llm_api_key", ""),
+                "usage_limit": int(config.get("llm_usage_limit", 10)),
+            }
+        )
+    except pymysql.Error as e:
+        logger.error(f"Error fetching LLM config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/llm-config", methods=["PUT"])
+def update_llm_config():
+    """Update LLM configuration."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        db = pymysql.connect(
+            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+        )
+        cursor = db.cursor()
+        if "api_key" in data:
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
+                (data["api_key"],),
+            )
+        if "usage_limit" in data:
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
+                (str(data["usage_limit"]),),
+            )
+        db.commit()
+        db.close()
+        return jsonify({"message": "LLM config updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating LLM config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
