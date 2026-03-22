@@ -65,8 +65,8 @@ def check_mute_optimized(env_name) -> bool:
     try:
         db = get_db_connection()
         cursor = db.cursor()
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
+    except pymysql.Error as e:
+        logger.error(f"Database connection error: {e}")
         return False
 
     try:

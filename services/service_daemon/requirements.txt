@@ -2,6 +2,7 @@ kafka-python-ng==2.2.3
 schedule
 python-dotenv
 pymysql
+DBUtils==3.1.0
 cryptography
 googlemaps
 google-api-python-client

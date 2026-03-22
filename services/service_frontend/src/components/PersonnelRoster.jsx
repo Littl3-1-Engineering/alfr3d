@@ -1,11 +1,70 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { User, Monitor, Plus } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
+
+const UserCard = memo(({ user, onClick }) => (
+  <motion.div
+    key={user.id}
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ delay: 0 }}
+    className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
+    onClick={() => onClick(user)}
+  >
+    <div className="flex items-center justify-between mb-4">
+      <User className={'w-6 h-6 ' + (user.type !== 'guest' ? 'text-success' : 'text-warning')} />
+    </div>
+    <div>
+      <h3 className="text-lg font-semibold text-text-primary">{user.name}</h3>
+      <p className="text-sm text-primary uppercase">{user.type}</p>
+      <p className="text-xs text-text-tertiary">{user.email}</p>
+      <p className="text-xs text-text-tertiary">{user.about_me}</p>
+      <p className="text-xs text-text-tertiary">State: {user.state}</p>
+    </div>
+  </motion.div>
+));
+
+UserCard.displayName = 'UserCard';
+
+UserCard.propTypes = {
+  user: PropTypes.object.isRequired,
+  onClick: PropTypes.func.isRequired,
+};
+
+const DeviceCard = memo(({ device, onClick }) => (
+  <motion.div
+    key={device.id}
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ delay: 0 }}
+    className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
+    onClick={() => onClick(device)}
+  >
+    <div className="flex items-center justify-between mb-4">
+      <Monitor className="w-6 h-6 text-primary" />
+    </div>
+    <div>
+      <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
+      <p className="text-sm text-primary uppercase">{device.type}</p>
+      <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
+      <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
+      <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
+      <p className="text-xs text-text-tertiary">State: {device.state}</p>
+    </div>
+  </motion.div>
+));
+
+DeviceCard.displayName = 'DeviceCard';
+
+DeviceCard.propTypes = {
+  device: PropTypes.object.isRequired,
+  onClick: PropTypes.func.isRequired,
+};
 
 const PersonnelRoster = ({ initialUserId }) => {
   const navigate = useNavigate();
@@ -22,47 +81,17 @@ const PersonnelRoster = ({ initialUserId }) => {
   const [userDevices, setUserDevices] = useState([]);
   const [deviceHistory, setDeviceHistory] = useState([]);
 
-  console.log('PersonnelRoster: Received initialUserId:', initialUserId);
-
-  useEffect(() => {
-    console.log('PersonnelRoster component mounted');
-    fetchUsers();
-    fetchDevices();
-  }, []);
-
-  useEffect(() => {
-    console.log('PersonnelRoster useEffect triggered - initialUserId:', initialUserId, 'users.length:', users.length);
-    if (initialUserId && users.length > 0) {
-      console.log('PersonnelRoster: Looking for user with ID:', initialUserId);
-      console.log('PersonnelRoster: Available users:', users.map(u => ({ id: u.id, name: u.name })));
-      const user = users.find(u => u.id.toString() === initialUserId.toString());
-      if (user) {
-        console.log('PersonnelRoster: Found user, opening modal:', user);
-        handleUserClick(user);
-      } else {
-        console.error(`User with ID ${initialUserId} not found`);
-        // Send error to event stream
-        sendEventToStream({
-          type: 'error',
-          message: `User with ID ${initialUserId} not found`
-        });
-        navigate('/');
-      }
-    }
-  }, [initialUserId, users, navigate]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       const response = await fetch(API_BASE_URL + '/api/users');
       const data = await response.json();
-      console.log('PersonnelRoster: Fetched users:', data.length, 'users');
       setUsers(data);
     } catch (error) {
       console.error('Error fetching users:', error);
     }
-  };
+  }, []);
 
-  const fetchDevices = async () => {
+  const fetchDevices = useCallback(async () => {
     try {
       const response = await fetch(API_BASE_URL + '/api/devices');
       const data = await response.json();
@@ -70,9 +99,30 @@ const PersonnelRoster = ({ initialUserId }) => {
     } catch (error) {
       console.error('Error fetching devices:', error);
     }
-  };
+  }, []);
 
-  const handleModalSaveUser = async (updatedUser) => {
+  useEffect(() => {
+    fetchUsers();
+    fetchDevices();
+  }, [fetchUsers, fetchDevices]);
+
+  useEffect(() => {
+    if (initialUserId && users.length > 0) {
+      const user = users.find(u => u.id.toString() === initialUserId.toString());
+      if (user) {
+        handleUserClick(user);
+      } else {
+        console.error(`User with ID ${initialUserId} not found`);
+        sendEventToStream({
+          type: 'error',
+          message: `User with ID ${initialUserId} not found`
+        });
+        navigate('/');
+      }
+    }
+  }, [initialUserId, users, navigate, handleUserClick, sendEventToStream]);
+
+  const handleModalSaveUser = useCallback(async (updatedUser) => {
     try {
       const response = await fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
         method: 'PUT',
@@ -89,9 +139,9 @@ const PersonnelRoster = ({ initialUserId }) => {
       console.error('Error updating user from modal:', error);
       return false;
     }
-  };
+  }, [fetchUsers]);
 
-  const handleDeleteUser = async (id) => {
+  const handleDeleteUser = useCallback(async (id) => {
     if (window.confirm('Are you sure you want to delete this user?')) {
       try {
         const response = await fetch(API_BASE_URL + '/api/users/' + id, {
@@ -105,9 +155,9 @@ const PersonnelRoster = ({ initialUserId }) => {
         console.error('Error deleting user:', error);
       }
     }
-  };
+  }, [fetchUsers, closeUserModal]);
 
-  const handleAddUser = async () => {
+  const handleAddUser = useCallback(async () => {
     if (!newUser.name || !newUser.type) return;
     try {
       const response = await fetch(API_BASE_URL + '/api/users', {
@@ -123,9 +173,9 @@ const PersonnelRoster = ({ initialUserId }) => {
     } catch (error) {
       console.error('Error adding user:', error);
     }
-  };
+  }, [newUser, fetchUsers]);
 
-  const handleModalSaveDevice = async (updatedDevice) => {
+  const handleModalSaveDevice = useCallback(async (updatedDevice) => {
     try {
       const response = await fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
         method: 'PUT',
@@ -142,9 +192,9 @@ const PersonnelRoster = ({ initialUserId }) => {
       console.error('Error updating device from modal:', error);
       return false;
     }
-  };
+  }, [fetchDevices]);
 
-  const handleDeleteDevice = async (id) => {
+  const handleDeleteDevice = useCallback(async (id) => {
     if (window.confirm('Are you sure you want to delete this device?')) {
       try {
         const response = await fetch(API_BASE_URL + '/api/devices/' + id, {
@@ -158,9 +208,9 @@ const PersonnelRoster = ({ initialUserId }) => {
         console.error('Error deleting device:', error);
       }
     }
-  };
+  }, [fetchDevices, closeDeviceModal]);
 
-  const handleAddDevice = async () => {
+  const handleAddDevice = useCallback(async () => {
     if (!newDevice.name || !newDevice.type) return;
     try {
       const response = await fetch(API_BASE_URL + '/api/devices', {
@@ -176,56 +226,47 @@ const PersonnelRoster = ({ initialUserId }) => {
     } catch (error) {
       console.error('Error adding device:', error);
     }
-  };
+  }, [newDevice, fetchDevices]);
 
-  const handleUserClick = async (user) => {
-    console.log('handleUserClick called with user:', user);
+  const handleUserClick = useCallback(async (user) => {
     setModalUser(user);
     setUserDevices([]);
     setShowUserModal(true);
-    console.log('Opening user modal for:', user);
     try {
       const response = await fetch(API_BASE_URL + '/api/users/' + user.id + '/devices');
       const devices = await response.json();
-      console.log('Received devices:', devices);
       setUserDevices(devices);
-      console.log('User modal opened with devices');
     } catch (error) {
       console.error('Error fetching user devices:', error);
     }
-  };
+  }, []);
 
-  const handleDeviceHistoryClick = async (device) => {
-    console.log('handleDeviceHistoryClick called with device:', device);
+  const handleDeviceHistoryClick = useCallback(async (device) => {
     setModalDevice(device);
     setDeviceHistory([]);
     setShowDeviceModal(true);
-    console.log('Opening device history modal for:', device);
     try {
       const response = await fetch(API_BASE_URL + '/api/devices/' + device.id + '/history');
       const history = await response.json();
-      console.log('Received history:', history);
       setDeviceHistory(history);
-      console.log('Device history modal opened');
     } catch (error) {
       console.error('Error fetching device history:', error);
     }
-  };
+  }, []);
 
-  const closeUserModal = () => {
+  const closeUserModal = useCallback(() => {
     setShowUserModal(false);
     setModalUser(null);
     setUserDevices([]);
-  };
+  }, []);
 
-  const closeDeviceModal = () => {
+  const closeDeviceModal = useCallback(() => {
     setShowDeviceModal(false);
     setModalDevice(null);
     setDeviceHistory([]);
-  };
+  }, []);
 
-  // Helper function to send events to stream
-  const sendEventToStream = async (eventData) => {
+  const sendEventToStream = useCallback(async (eventData) => {
     try {
       await fetch(`${API_BASE_URL}/api/events`, {
         method: 'POST',
@@ -235,13 +276,19 @@ const PersonnelRoster = ({ initialUserId }) => {
     } catch (error) {
       console.error('Failed to send event to stream:', error);
     }
-  };
+  }, []);
+
+  const setNewUserHandler = useCallback((updater) => {
+    setNewUser(prev => typeof updater === 'function' ? updater(prev) : updater);
+  }, []);
+
+  const setNewDeviceHandler = useCallback((updater) => {
+    setNewDevice(prev => typeof updater === 'function' ? updater(prev) : updater);
+  }, []);
 
 PersonnelRoster.propTypes = {
   initialUserId: PropTypes.string
 };
-
-  console.log('Rendering PersonnelRoster with modals:', { showUserModal, showDeviceModal, userDevices: userDevices.length, deviceHistory: deviceHistory.length });
 
   return (
     <div className="space-y-8">
@@ -258,29 +305,8 @@ PersonnelRoster.propTypes = {
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {users.map((user, index) => (
-            <motion.div
-              key={user.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1, duration: 0.5 }}
-              className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
-              onClick={() => {
-                console.log('User card clicked!');
-                handleUserClick(user);
-              }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                  <User className={'w-6 h-6 ' + (user.type !== 'guest' ? 'text-success' : 'text-warning')} />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-text-primary">{user.name}</h3>
-                <p className="text-sm text-primary uppercase">{user.type}</p>
-                <p className="text-xs text-text-tertiary">{user.email}</p>
-                <p className="text-xs text-text-tertiary">{user.about_me}</p>
-                <p className="text-xs text-text-tertiary">State: {user.state}</p>
-              </div>
-            </motion.div>
+          {users.map((user) => (
+            <UserCard key={user.id} user={user} onClick={handleUserClick} />
           ))}
         </div>
         {showAddUser && (
@@ -293,13 +319,13 @@ PersonnelRoster.propTypes = {
             <div className="space-y-3">
               <input
                 value={newUser.name}
-                onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                onChange={(e) => setNewUserHandler(prev => ({ ...prev, name: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newUser.type}
-                onChange={(e) => setNewUser({ ...newUser, type: e.target.value })}
+                onChange={(e) => setNewUserHandler(prev => ({ ...prev, type: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="technoking">Technoking</option>
@@ -308,13 +334,13 @@ PersonnelRoster.propTypes = {
               </select>
               <input
                 value={newUser.email}
-                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                onChange={(e) => setNewUserHandler(prev => ({ ...prev, email: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Email"
               />
               <textarea
                 value={newUser.about_me}
-                onChange={(e) => setNewUser({ ...newUser, about_me: e.target.value })}
+                onChange={(e) => setNewUserHandler(prev => ({ ...prev, about_me: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 rows={2}
                 placeholder="About Me"
@@ -351,30 +377,8 @@ PersonnelRoster.propTypes = {
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {devices.map((device, index) => (
-            <motion.div
-              key={device.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1, duration: 0.5 }}
-              className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
-                  onClick={() => {
-                    console.log('User device card clicked!');
-                    handleDeviceHistoryClick(device);
-                  }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <Monitor className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
-                <p className="text-sm text-primary uppercase">{device.type}</p>
-                <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
-                <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
-                <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
-                <p className="text-xs text-text-tertiary">State: {device.state}</p>
-              </div>
-            </motion.div>
+          {devices.map((device) => (
+            <DeviceCard key={device.id} device={device} onClick={handleDeviceHistoryClick} />
           ))}
         </div>
         {showAddDevice && (
@@ -387,13 +391,13 @@ PersonnelRoster.propTypes = {
             <div className="space-y-3">
               <input
                 value={newDevice.name}
-                onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
+                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, name: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newDevice.type}
-                onChange={(e) => setNewDevice({ ...newDevice, type: e.target.value })}
+                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, type: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="alfr3d">Alfr3d</option>
@@ -404,19 +408,19 @@ PersonnelRoster.propTypes = {
               </select>
               <input
                 value={newDevice.ip}
-                onChange={(e) => setNewDevice({ ...newDevice, ip: e.target.value })}
+                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, ip: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="IP"
               />
               <input
                 value={newDevice.mac}
-                onChange={(e) => setNewDevice({ ...newDevice, mac: e.target.value })}
+                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, mac: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="MAC"
               />
               <select
                 value={newDevice.user}
-                onChange={(e) => setNewDevice({ ...newDevice, user: e.target.value })}
+                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, user: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="">No User</option>

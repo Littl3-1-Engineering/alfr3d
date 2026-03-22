@@ -45,9 +45,11 @@ def check_internet():
         urllib.request.urlopen("https://www.google.com", timeout=30)
         logger.debug("Internet connection available")
         return True
+    except OSError as e:
+        logger.warning(f"No internet connection available: {e}")
+        return False
     except Exception as e:
-        logger.warning("No internet connection available")
-        logger.warning(str(e))
+        logger.warning(f"Unexpected error checking internet: {e}")
         return False
 
 

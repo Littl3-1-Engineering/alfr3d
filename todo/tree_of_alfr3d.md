@@ -60,12 +60,12 @@ Animated D3.js force-directed tree visualization of the ALFR3D project structure
 ## Pending Tasks
 
 ### High Priority
-- [ ] **Increase panel size significantly** - Current 300px height is too small; expand to fill more of the screen
-- [ ] **Style panel consistently** - Match TacticalPanelVariant styling (corner markers, header bar, borders, colors, background)
+- [x] **Increase panel size significantly** - Current 300px height is too small; expand to fill more of the screen
+- [x] **Style panel consistently** - Match TacticalPanelVariant styling (corner markers, header bar, borders, colors, background)
 
 ### Medium Priority
 - [ ] Add search/filter functionality to find files quickly
-- [ ] Add zoom controls (zoom in/out/reset buttons)
+- [x] Add zoom controls (zoom in/out/reset buttons)
 - [ ] Optimize for large directories (virtualization or level limits)
 
 ---

@@ -5,14 +5,20 @@ import os
 import sys
 import time
 import logging
-import json
+import orjson
 import socket
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+shutdown_event = threading.Event()
+
 # Third-party libraries
-import pymysql  # Changed from MySQLdb
-from kafka import KafkaConsumer, KafkaProducer
+import pymysql  # Changed from MySQLdb  # noqa: E402
+from kafka import KafkaConsumer  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, get_kafka_url, ha_utils, st_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -31,13 +37,12 @@ MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 
 producer = None
 while producer is None:
     try:
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
+        producer = get_producer()
         logger.info("Connected to Kafka")
     except Exception:
         logger.error("Failed to connect to Kafka, retrying in 5 seconds")
@@ -121,9 +126,8 @@ class Device:
                 ),
             )
             db.commit()
-        except Exception as e:
-            logger.error("Failed to create a new entry in the database")
-            logger.error("Traceback: " + str(e))
+        except pymysql.Error as e:
+            logger.error(f"Database error creating device entry: {e}")
             db.rollback()
             db.close()
             return False
@@ -136,7 +140,7 @@ class Device:
                 "message": f"New device {self.name} added to database",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
         logger.info("Device created successfully")
         return True
 
@@ -250,9 +254,8 @@ class Device:
             #     "time": datetime.now().strftime("%I:%M %p"),
             # }
             # producer.send("event-stream", json.dumps(event).encode("utf-8"))
-        except Exception as e:
-            logger.error("Failed to update the database")
-            logger.error("Traceback: " + str(e))
+        except pymysql.Error as e:
+            logger.error(f"Database error updating device: {e}")
             db.rollback()
             db.close()
             return False
@@ -289,9 +292,8 @@ class Device:
         try:
             cursor.execute("DELETE from device WHERE MAC = %s", (self.MAC,))
             db.commit()
-        except Exception as e:
-            logger.error("Failed to update the database")
-            logger.error("Traceback: " + str(e))
+        except pymysql.Error as e:
+            logger.error(f"Database error deleting device: {e}")
             db.rollback()
             db.close()
             return False
@@ -460,24 +462,44 @@ def check_lan():
 
 
 if __name__ == "__main__":
-    # get all instructions from Kafka
-    # topic: device
     logger.info("Starting Alfr3d's device service")
     consumer = None
-    while consumer is None:
+    retry_count = 0
+    while consumer is None and not shutdown_event.is_set():
         try:
-            consumer = KafkaConsumer("device", bootstrap_servers=KAFKA_URL)
+            consumer = KafkaConsumer("device", bootstrap_servers=get_kafka_url())
             logger.info("Connected to Kafka device topic")
         except Exception:
-            logger.error("Failed to connect to Kafka device topic, retrying in 5 seconds")
-            time.sleep(5)
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(
+                f"Failed to connect to Kafka device topic, " f"retrying in {wait_time} seconds"
+            )
+            shutdown_event.wait(wait_time)
 
-    while True:
-        for message in consumer:
-            if message.value.decode("ascii") == "alfr3d-device.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit(1)
-            if message.value.decode("ascii") == "scan net":
-                check_lan()
+    if shutdown_event.is_set():
+        logger.info("Shutdown requested during connection attempt")
+        sys.exit(0)
 
-            time.sleep(10)
+    while not shutdown_event.is_set():
+        messages = consumer.poll(timeout_ms=1000)
+        for topic_partition, msgs in messages.items():
+            for message in msgs:
+                try:
+                    data = orjson.loads(message.value)
+                    action = data.get("action")
+
+                    if action == "exit":
+                        logger.info("Received exit request. Stopping service.")
+                        shutdown_event.set()
+                        break
+                    elif action == "scan_net":
+                        check_lan()
+                    elif action == "iot_ha_sync":
+                        ha_utils.sync_ha_devices()
+                    elif action == "iot_st_sync":
+                        st_utils.sync_st_devices()
+                except orjson.JSONDecodeError:
+                    logger.warning("Received non-JSON message, ignoring")
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")

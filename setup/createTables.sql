@@ -168,7 +168,7 @@ DROP TABLE IF EXISTS `config`;
 CREATE TABLE `config` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
   `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting
-  `value` VARCHAR(45) NULL DEFAULT NULL -- Value of the configuration setting
+  `value` VARCHAR(512) NULL DEFAULT NULL -- Value of the configuration setting (512 for API keys)
 );
 
 -- ---
@@ -294,6 +294,8 @@ INSERT INTO `states` (`id`, `state`) VALUES ('2', 'online');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('1', 'technoking');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('2', 'resident');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('3', 'guest');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('4', 'owner');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('5', 'alfr3d');
 
 INSERT INTO `device_types` (`id`, `type`) VALUES ('1', 'alfr3d');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('2', 'HW');

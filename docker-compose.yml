@@ -21,7 +21,7 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=INTERNAL:${KAFKA_ADVERTISED_LISTENERS_1},EXTERNAL:${KAFKA_ADVERTISED_LISTENERS_2}
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
-      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1
+      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1,personality:1:1
     ports:
       - "9092:9092"
     # Healthcheck ensures Kafka is ready to accept connections
@@ -44,7 +44,9 @@ services:
       - mysql_data:/var/lib/mysql
 
   service-user:
-    build: ./services/service_user
+    build:
+      context: ./services
+      dockerfile: ./service_user/Dockerfile
     # Depends on Kafka for messaging and MySQL for user data
     depends_on:
       kafka:
@@ -57,7 +59,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
 
   service-api:
-    build: ./services/service_api
+    build:
+      context: ./services
+      dockerfile: ./service_api/Dockerfile
     # Depends on MySQL for database operations and Kafka for messaging
     depends_on:
       mysql:
@@ -82,7 +86,9 @@ services:
       - "5002:5002"
 
   service-device:
-    build: ./services/service_device
+    build:
+      context: ./services
+      dockerfile: ./service_device/Dockerfile
     # Depends on Kafka for event streaming and MySQL for data storage
     depends_on:
       kafka:
@@ -98,7 +104,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
 
   service-environment:
-    build: ./services/service_environment
+    build:
+      context: ./services
+      dockerfile: ./service_environment/Dockerfile
     # Depends on Kafka for event  blishing and MySQL for data persistence
     depends_on:
       kafka:
@@ -111,7 +119,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
 
   service-speak:
-    build: ./services/service_speak
+    build:
+      context: ./services
+      dockerfile: ./service_speak/Dockerfile
     # Depends on Kafka for message consumption
     depends_on:
       kafka:
@@ -124,7 +134,9 @@ services:
       - audio_data:/tmp/audio
 
   service-daemon:
-    build: ./services/service_daemon
+    build:
+      context: ./services
+      dockerfile: ./service_daemon/Dockerfile
     # Depends on Kafka for inter-service communication and MySQL for state storage
     depends_on:
       kafka:
