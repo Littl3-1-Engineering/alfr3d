@@ -36,6 +36,10 @@ def get_claude_config():
             "api_key": config.get("llm_api_key", ""),
             "usage_limit": int(config.get("llm_usage_limit", 10)),
         }
+    except pymysql.Error as e:
+        logger.error(f"Database error getting Claude config: {e}")
+        db.rollback()
+        return {"api_key": "", "usage_limit": 10}
     finally:
         db.close()
 
@@ -56,8 +60,8 @@ def save_claude_config(api_key=None, usage_limit=None):
             )
         db.commit()
         return True
-    except Exception as e:
-        logger.error(f"Error saving Claude config: {e}")
+    except pymysql.Error as e:
+        logger.error(f"Database error saving Claude config: {e}")
         db.rollback()
         return False
     finally:
@@ -77,6 +81,10 @@ def _get_calls_today():
         )
         result = cursor.fetchone()
         return result[0] if result else 0
+    except pymysql.Error as e:
+        logger.error(f"Database error getting calls today: {e}")
+        db.rollback()
+        return 0
     finally:
         db.close()
 
@@ -108,6 +116,9 @@ def increment_llm_calls():
             (env_id,),
         )
         db.commit()
+    except pymysql.Error as e:
+        logger.error(f"Database error incrementing LLM calls: {e}")
+        db.rollback()
     finally:
         db.close()
 
@@ -168,5 +179,8 @@ def reset_daily_calls():
             (env_id,),
         )
         db.commit()
+    except pymysql.Error as e:
+        logger.error(f"Database error resetting daily calls: {e}")
+        db.rollback()
     finally:
         db.close()

@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Settings, RefreshCw } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 
@@ -16,7 +16,7 @@ const ControlBlade = ({ device, onClose, style }) => {
     }
   }, [device?.last_state]);
 
-  const handlePowerToggle = async () => {
+  const handlePowerToggle = useCallback(async () => {
     const newPowerState = !power;
     setPower(newPowerState);
 
@@ -40,9 +40,9 @@ const ControlBlade = ({ device, onClose, style }) => {
         setLoading(false);
       }
     }
-  };
+  }, [device?.id, device?.source, power]);
 
-  const handleBrightnessChange = async (value) => {
+  const handleBrightnessChange = useCallback(async (value) => {
     const newBrightness = parseInt(value, 10);
     const oldBrightness = brightness;
     setBrightness(newBrightness);
@@ -68,7 +68,7 @@ const ControlBlade = ({ device, onClose, style }) => {
         setLoading(false);
       }
     }
-  };
+  }, [device?.id, device?.source, brightness]);
 
   const isSmartHomeDevice = device?.source !== undefined;
 

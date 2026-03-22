@@ -14,7 +14,6 @@ const ContainerHealth = () => {
         setError(false);
         const response = await fetch(API_BASE_URL + '/api/containers');
         const data = await response.json();
-        console.log('Fetched containers for ContainerHealth:', data);
         setContainers(data);
       } catch (error) {
         console.error('Error fetching containers for ContainerHealth:', error);

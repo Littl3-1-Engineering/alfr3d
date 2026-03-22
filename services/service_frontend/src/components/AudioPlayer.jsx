@@ -42,7 +42,6 @@ const AudioPlayer = () => {
       // Mark as played to prevent future attempts
       setPlayedAudioUrls(current => {
         const newSet = new Set([...current, nextAudio.audio_url]);
-        console.log('Marked missing file as played, total played URLs:', newSet.size);
         return newSet;
       });
       setAudioQueue(prev => prev.slice(1));
@@ -52,13 +51,10 @@ const AudioPlayer = () => {
     setIsPlaying(true);
 
     if (audioRef.current) {
-      console.log('Attempting to play audio:', nextAudio.audio_url);
       audioRef.current.src = nextAudio.audio_url;
-      audioRef.current.load(); // Force reload of the audio element
+      audioRef.current.load();
 
-      audioRef.current.play().then(() => {
-        console.log('Audio started playing successfully');
-      }).catch(error => {
+      audioRef.current.play().catch(error => {
         console.error('Audio playback failed:', error);
         console.error('Audio element error details:', {
           src: audioRef.current.src,
@@ -128,7 +124,7 @@ const AudioPlayer = () => {
           const isAlreadyPlayed = playedUrlsRef.current.has(event.audio_url);
 
           if (isAlreadyPlayed) {
-            console.log('Skipping already played audio:', event.audio_url);
+            return false;
           }
 
           return !isAlreadyQueued && !isAlreadyPlayed;
@@ -175,14 +171,10 @@ const AudioPlayer = () => {
   }, [audioQueue, isPlaying, playNextAudio, userInteracted]);
 
   const handleAudioEnded = () => {
-    // Mark this audio as played and remove from queue
     setAudioQueue(prev => {
       if (prev.length > 0) {
-        console.log('Marking audio as played:', prev[0].audio_url);
         setPlayedAudioUrls(current => {
-          const newSet = new Set([...current, prev[0].audio_url]);
-          console.log('Played URLs count:', newSet.size);
-          return newSet;
+          return new Set([...current, prev[0].audio_url]);
         });
       }
       return prev.slice(1);
@@ -191,15 +183,10 @@ const AudioPlayer = () => {
   };
 
   const handleAudioError = () => {
-    console.error('Audio error occurred');
-    // Mark failed audio as played and remove from queue
     setAudioQueue(prev => {
       if (prev.length > 0) {
-        console.log('Marking failed audio as played:', prev[0].audio_url);
         setPlayedAudioUrls(current => {
-          const newSet = new Set([...current, prev[0].audio_url]);
-          console.log('Played URLs count after error:', newSet.size);
-          return newSet;
+          return new Set([...current, prev[0].audio_url]);
         });
       }
       return prev.slice(1);
@@ -212,9 +199,6 @@ const AudioPlayer = () => {
       ref={audioRef}
       onEnded={handleAudioEnded}
       onError={handleAudioError}
-      onLoadedData={() => console.log('Audio data loaded successfully')}
-      onCanPlay={() => console.log('Audio can play')}
-      onCanPlayThrough={() => console.log('Audio can play through')}
       preload="auto"
       style={{ display: 'none' }}
     />

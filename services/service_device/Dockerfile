@@ -5,11 +5,12 @@ RUN apt-get update && apt-get install -y arp-scan iproute2 && rm -rf /var/lib/ap
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY service_device/requirements.txt .
 
 RUN pip install -r requirements.txt
 
-COPY . .
+COPY service_device/ ./
+COPY common/ ./common/
 
 # Run as root to allow arp-scan
 USER root

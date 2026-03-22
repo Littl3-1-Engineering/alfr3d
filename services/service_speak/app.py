@@ -9,24 +9,27 @@ import sys
 import logging
 import threading
 import time
-import json
+import orjson
 from datetime import datetime
 
 # Third-party libraries
 import schedule
 import pymysql
-from kafka import KafkaConsumer, KafkaProducer
+from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from gtts import gTTS
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer as _get_producer, get_kafka_url  # noqa: E402
+
 # Local imports
-from personality import (
+from personality import (  # noqa: E402
     get_blended_personality,
     build_llm_system_prompt,
     get_quips_for_environment,
     select_quip_by_traits,
 )
-from llm_client import call_claude_haiku, get_claude_config, check_usage_limit
+from llm_client import call_claude_haiku, get_claude_config, check_usage_limit  # noqa: E402
 
 # Set up logging
 logger = logging.getLogger("SpeakService")
@@ -42,16 +45,12 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE")
 MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 MYSQL_DB = os.environ.get("MYSQL_NAME")
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 AUDIO_STORAGE_PATH = os.environ.get("AUDIO_STORAGE_PATH", "/tmp/audio")
 AUDIO_RETENTION_MINUTES = int(os.environ.get("AUDIO_RETENTION_MINUTES", "5"))
 
 # Ensure audio directory exists
 os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
-
-# Global producer
-producer = None
 
 # Global TTS instances (cache multiple models)
 tts_instances = {}
@@ -75,9 +74,8 @@ def check_mute() -> bool:
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-    except Exception as e:
-        logger.error("Failed to connect to database")
-        logger.error("Traceback: " + str(e))
+    except pymysql.Error as e:
+        logger.error(f"Database connection error: {e}")
         return False
 
     # get environemnt id of current environment
@@ -187,24 +185,9 @@ def list_available_speakers(model_name="tts_models/multilingual/multi-dataset/xt
         return []
 
 
-def get_producer():
-    global producer
-    if producer is None:
-        try:
-            producer = KafkaProducer(
-                bootstrap_servers=[KAFKA_URL],
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            )
-            logger.info("Connected to Kafka producer")
-        except KafkaError as e:
-            logger.error("Failed to connect to Kafka producer: " + str(e))
-            return None
-    return producer
-
-
 def send_event(event_type, message, audio_url=None, text=None):
     """Send event to event-stream topic"""
-    p = get_producer()
+    p = _get_producer()
     if p:
         event = {
             "id": f"speak_{datetime.utcnow().isoformat()}",
@@ -220,13 +203,15 @@ def send_event(event_type, message, audio_url=None, text=None):
             p.send("event-stream", event)
             p.flush()
             logger.info(f"Sent event: {event}")
+        except KafkaError as e:
+            logger.error(f"Kafka error sending event: {e}")
         except Exception as e:
-            logger.error(f"Failed to send event: {str(e)}")
+            logger.error(f"Failed to send event: {e}")
 
 
 def send_personality_state(personality, llm_used=False):
     """Send personality state to personality Kafka topic and event-stream"""
-    p = get_producer()
+    p = _get_producer()
     if p:
         blended = personality.get("blended", {})
         state = {
@@ -344,14 +329,14 @@ def process_speak_message(message):
 
         # Try to parse as JSON first
         try:
-            message_data = json.loads(raw_value)
+            message_data = orjson.loads(raw_value)
             text = message_data.get("text", str(raw_value))
             engine = message_data.get("engine", "Coqui")
             model = message_data.get("model", "tts_models/multilingual/multi-dataset/xtts_v2")
             speaker = message_data.get("speaker")
             speaker_wav = message_data.get("speaker_wav")
             skip_personality = message_data.get("skip_personality", False)
-        except (json.JSONDecodeError, TypeError):
+        except (orjson.JSONDecodeError, TypeError):
             text = str(raw_value)
             engine = "Coqui"
             model = "tts_models/multilingual/multi-dataset/xtts_v2"
@@ -425,10 +410,11 @@ def process_speak_message(message):
 def consume_speak():
     """Consume messages from speak topic"""
     try:
-        logger.info(f"Speak consumer bootstrap servers: {KAFKA_URL}")
+        kafka_url = get_kafka_url()
+        logger.info(f"Speak consumer bootstrap servers: {kafka_url}")
         consumer = KafkaConsumer(
             "speak",
-            bootstrap_servers=KAFKA_URL,
+            bootstrap_servers=kafka_url,
             auto_offset_reset="latest",
             group_id="speak-service",
         )
@@ -465,17 +451,16 @@ def cleanup_old_audio():
 def main():
     logger.info("Starting Speak Service")
 
-    # Schedule cleanup every minute
     schedule.every(1).minutes.do(cleanup_old_audio)
 
-    # Start consumer in thread
+    shutdown_event = threading.Event()
+
     consumer_thread = threading.Thread(target=consume_speak, daemon=True)
     consumer_thread.start()
 
-    # Run scheduler
-    while True:
+    while not shutdown_event.is_set():
         schedule.run_pending()
-        time.sleep(30)
+        shutdown_event.wait(timeout=1)
 
 
 def test_xtts_speakers():

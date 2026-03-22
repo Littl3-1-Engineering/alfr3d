@@ -30,12 +30,12 @@ This is a utility for Routines for Alfr3d:
 import os
 import sys
 import logging
-import json
+import orjson
 import pymysql as MySQLdb
 from datetime import datetime
-from kafka import KafkaProducer
-from kafka.errors import KafkaError
-from utils.db_utils import check_mute_optimized
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
+from common import get_producer, db_utils  # noqa: E402
 
 # set up logging
 logger = logging.getLogger("RoutinesLog")
@@ -50,17 +50,7 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE") or "mysql"
 MYSQL_DB = os.environ.get("MYSQL_NAME") or "alfr3d_db"
 MYSQL_USER = os.environ.get("MYSQL_USER") or "user"
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD") or "password"
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
-
-try:
-    producer = KafkaProducer(
-        bootstrap_servers=KAFKA_URL,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-    )
-except KafkaError:
-    logger.warning("Failed to create Kafka producer, actions will not be sent")
-    producer = None
 
 
 def execute_actions(actions_json):
@@ -69,12 +59,14 @@ def execute_actions(actions_json):
         return 0
 
     try:
-        actions = json.loads(actions_json) if isinstance(actions_json, str) else actions_json
-    except (json.JSONDecodeError, TypeError):
+        actions = orjson.loads(actions_json) if isinstance(actions_json, str) else actions_json
+    except (orjson.JSONDecodeError, TypeError):
         logger.error("Invalid actions JSON")
         return 0
 
-    if not producer:
+    try:
+        producer = get_producer()
+    except Exception:
         logger.error("Kafka producer not available")
         return 0
 
@@ -268,7 +260,7 @@ def check_mute() -> bool:
             - only when Athos is at home
             - only when 'owner' is at home
     """
-    return check_mute_optimized(ENV_NAME)
+    return db_utils.check_mute_optimized(ENV_NAME)
 
 
 def sunrise_routine():
