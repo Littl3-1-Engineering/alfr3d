@@ -1,5 +1,6 @@
 import os
 import logging
+import random
 from datetime import datetime
 
 import pymysql
@@ -29,6 +30,10 @@ def get_environment_id():
         cursor.execute("SELECT id FROM environment WHERE name = %s LIMIT 1", (env_name,))
         result = cursor.fetchone()
         return result[0] if result else 1
+    except pymysql.Error as e:
+        logger.error(f"Database error getting environment ID: {e}")
+        db.rollback()
+        return 1
     finally:
         db.close()
 
@@ -59,6 +64,10 @@ def get_personality_by_environment(env_id=None):
                 "forbidden_words": result["forbidden_words"] or "",
                 "verbal_tics": result["verbal_tics"] or "",
             }
+        return get_default_personality()
+    except pymysql.Error as e:
+        logger.error(f"Database error getting personality: {e}")
+        db.rollback()
         return get_default_personality()
     finally:
         db.close()
@@ -138,6 +147,10 @@ def apply_preset(preset_name, env_id=None):
             }
             return save_personality(personality, env_id)
         return False
+    except pymysql.Error as e:
+        logger.error(f"Database error applying preset: {e}")
+        db.rollback()
+        return False
     finally:
         db.close()
 
@@ -162,6 +175,10 @@ def get_all_presets():
             }
             for r in results
         ]
+    except pymysql.Error as e:
+        logger.error(f"Database error getting presets: {e}")
+        db.rollback()
+        return []
     finally:
         db.close()
 
@@ -184,6 +201,10 @@ def get_context_by_environment(env_id=None):
                 "last_error_count": result["last_error_count"],
                 "llm_calls_today": result["llm_calls_today"],
             }
+        return get_default_context()
+    except pymysql.Error as e:
+        logger.error(f"Database error getting context: {e}")
+        db.rollback()
         return get_default_context()
     finally:
         db.close()
@@ -214,8 +235,8 @@ def update_context(env_id=None, **kwargs):
             )
         db.commit()
         return True
-    except Exception as e:
-        logger.error(f"Error updating context: {e}")
+    except pymysql.Error as e:
+        logger.error(f"Database error updating context: {e}")
         db.rollback()
         return False
     finally:
@@ -235,6 +256,9 @@ def increment_repeat_count(env_id=None):
             (env_id,),
         )
         db.commit()
+    except pymysql.Error as e:
+        logger.error(f"Database error incrementing repeat count: {e}")
+        db.rollback()
     finally:
         db.close()
 
@@ -398,8 +422,13 @@ def get_quips_for_environment(env_id=None):
     db = get_db_connection()
     cursor = db.cursor(pymysql.cursors.DictCursor)
     try:
-        cursor.execute("SELECT type, quips FROM quips ORDER BY RAND()")
+        cursor.execute("SELECT type, quips FROM quips")
         results = cursor.fetchall()
+        random.shuffle(results)
         return [{"type": r["type"], "quips": r["quips"]} for r in results]
+    except pymysql.Error as e:
+        logger.error(f"Database error getting quips: {e}")
+        db.rollback()
+        return []
     finally:
         db.close()

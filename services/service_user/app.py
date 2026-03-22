@@ -5,15 +5,19 @@ import os
 import sys
 import time
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 
-# Third-party imports
-import json
-import pymysql  # Changed from MySQLdb to pymysql
-from kafka import KafkaConsumer, KafkaProducer
+shutdown_event = threading.Event()
 
-# Local imports
-from db_utils import check_mute_optimized
+# Third-party imports
+import orjson  # noqa: E402
+import pymysql  # Changed from MySQLdb to pymysql  # noqa: E402
+from kafka import KafkaConsumer  # noqa: E402
+from kafka.errors import KafkaError  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, get_kafka_url, db_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -32,14 +36,14 @@ MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
 producer = None
 while producer is None:
     try:
-        print("Connecting to Kafka at: " + KAFKA_URL)
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
+        kafka_url = get_kafka_url()
+        print("Connecting to Kafka at: " + kafka_url)
+        producer = get_producer()
         logger.info("Connected to Kafka")
     except Exception:
         logger.error("Failed to connect to Kafka, retrying in 5 seconds")
@@ -54,7 +58,7 @@ def check_mute() -> bool:
              - only when Athos is at home
              - only when 'owner' is at home
     """
-    return check_mute_optimized(ALFR3D_ENV_NAME)
+    return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
 
 
 def send_event(event_type, message):
@@ -67,11 +71,13 @@ def send_event(event_type, message):
             "time": datetime.now(timezone.utc).isoformat() + "Z",
         }
         try:
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
             producer.flush()
             logger.info(f"Sent event: {event}")
+        except KafkaError as e:
+            logger.error(f"Kafka error sending event: {e}")
         except Exception as e:
-            logger.error(f"Failed to send event: {str(e)}")
+            logger.error(f"Failed to send event: {e}")
 
 
 class User:
@@ -136,7 +142,6 @@ class User:
             return False
 
         db.close()
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
         if not check_mute():
             producer.send("speak", b"A new user has been added to the database")
         else:
@@ -147,7 +152,7 @@ class User:
             "message": f"New user {self.name} created",
             "time": datetime.now(timezone.utc).isoformat(),
         }
-        producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        producer.send("event-stream", orjson.dumps(event))
         return True
 
     def get(self):
@@ -353,7 +358,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "message": f"User {user[1]} came online",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
     else:
         logger.info("User is offline")
         if user[5] == stat["online"]:
@@ -373,7 +378,7 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "message": f"User {user[1]} went offline",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
 
     try:
         db.commit()
@@ -490,34 +495,43 @@ def refresh_all():
 
 if __name__ == "__main__":
     # get all instructions from Kafka
-    # topic: user
     logger.info("Starting Alfr3d's user service")
     consumer = None
-    while consumer is None:
+    retry_count = 0
+    while consumer is None and not shutdown_event.is_set():
         try:
             consumer = KafkaConsumer(
-                "user", bootstrap_servers=KAFKA_URL, auto_offset_reset="earliest"
+                "user", bootstrap_servers=get_kafka_url(), auto_offset_reset="earliest"
             )
             logger.info("Connected to Kafka user topic")
         except Exception:
-            logger.error("Failed to connect to Kafka user topic, retrying in 5 seconds")
-        time.sleep(5)
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(f"Failed to connect to Kafka user topic, retrying in {wait_time} seconds")
+            shutdown_event.wait(wait_time)
 
-    while True:
-        for message in consumer:
-            if message.value.decode("ascii") == "alfr3d-user.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit(1)
-            if message.value.decode("ascii") == "refresh-all":
-                refresh_all()
-            if message.key:
-                if message.key.decode("ascii") == "create":
-                    usr = User()
-                    usr.name = message.value.decode("ascii")
-                    usr.create()
-                if message.key.decode("ascii") == "delete":
-                    usr = User()
-                    usr.name = message.value.decode("ascii")
-                    usr.delete()
+    if shutdown_event.is_set():
+        logger.info("Shutdown requested during connection attempt")
+        sys.exit(0)
 
-            time.sleep(10)
+    while not shutdown_event.is_set():
+        messages = consumer.poll(timeout_ms=1000)
+        for topic_partition, msgs in messages.items():
+            for message in msgs:
+                msg_value = message.value.decode("ascii")
+                if msg_value == "alfr3d-user.exit":
+                    logger.info("Received exit request. Stopping service.")
+                    shutdown_event.set()
+                    break
+                if msg_value == "refresh-all":
+                    refresh_all()
+                if message.key:
+                    key = message.key.decode("ascii")
+                    if key == "create":
+                        usr = User()
+                        usr.name = msg_value
+                        usr.create()
+                    if key == "delete":
+                        usr = User()
+                        usr.name = msg_value
+                        usr.delete()

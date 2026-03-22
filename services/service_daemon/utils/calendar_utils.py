@@ -40,6 +40,7 @@ CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 def get_credentials():
     """Get valid credentials for Calendar API."""
     creds = None
+    db = None
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
@@ -48,7 +49,6 @@ def get_credentials():
             "FROM integrations_tokens WHERE integration_type = 'google'"
         )
         row = cursor.fetchone()
-        db.close()
         if row:
             access_token, refresh_token, expires_at = row
             creds = Credentials(
@@ -61,10 +61,16 @@ def get_credentials():
             )
             if expires_at and datetime.now() > expires_at:
                 creds.refresh(Request())
-                # Update DB with new token
                 update_tokens("google", creds)
+    except pymysql.Error as e:
+        logger.error(f"Database error getting Calendar credentials: {e}")
+        if db:
+            db.rollback()
     except Exception as e:
         logger.error(f"Error getting Calendar credentials: {e}")
+    finally:
+        if db:
+            db.close()
     return creds
 
 

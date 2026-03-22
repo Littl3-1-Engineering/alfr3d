@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 .opencode/
+.osgrep/
 alfr3d.code-workspace
 nginx.conf
 mysql_data/

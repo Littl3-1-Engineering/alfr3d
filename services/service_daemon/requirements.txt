@@ -2,9 +2,11 @@ kafka-python-ng==2.2.3
 schedule
 python-dotenv
 pymysql
+DBUtils==3.1.0
 cryptography
 googlemaps
 google-api-python-client
 google-auth-oauthlib
 urllib3>=2.6.3 # not directly required, pinned by Snyk to avoid a vulnerability
 pyasn1>=0.6.2 # not directly required, pinned by Snyk to avoid a vulnerability
+orjson

@@ -1,20 +1,21 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Utility functions for fetching and processing weather data from OpenWeatherMap API."""
-import json  # used to handle jsons returned from www
+import orjson  # used to handle jsons returned from www
 import os  # used to allow execution of system level commands
 import math  # used to round numbers
 import logging  # needed for useful logs
 import socket
 import pymysql  # Changed from MySQLdb
 import sys
-from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from time import strftime, localtime  # needed to obtain time
 from datetime import datetime, timedelta
 from urllib.request import urlopen  # used to make calls to www
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
-from db_utils import check_mute_optimized
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, db_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -34,10 +35,7 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "user")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
-KAFKA_URL = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
-
-producer = None
 
 
 def check_mute() -> bool:
@@ -48,7 +46,7 @@ def check_mute() -> bool:
              - only when Athos is at home
              - only when 'owner' is at home
     """
-    return check_mute_optimized(ALFR3D_ENV_NAME)
+    return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
 
 
 def send_event(event_type, message):
@@ -62,24 +60,13 @@ def send_event(event_type, message):
             "time": datetime.now().isoformat() + "Z",
         }
         try:
-            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.send("event-stream", orjson.dumps(event))
             p.flush()
             logger.info(f"Sent event: {event}")
-        except Exception as e:
-            logger.error(f"Failed to send event: {str(e)}")
-
-
-def get_producer():
-    global producer
-    if producer is None:
-        try:
-            print("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-            logger.info("Connected to Kafka")
         except KafkaError as e:
-            logger.error("Failed to connect to Kafka: " + str(e))
-            return None
-    return producer
+            logger.error(f"Kafka error sending event: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send event: {e}")
 
 
 def parse_weather(cursor, lat, lon):
@@ -105,18 +92,17 @@ def parse_weather(cursor, lat, lon):
         + apikey
     )
     try:
-        weatherData = json.loads(urlopen(url).read().decode("utf-8"))
+        weatherData = orjson.loads(urlopen(url).read())
 
-    except Exception as e:
-        logger.error("Failed to get weather data\n")
+    except OSError as e:
+        logger.error(f"Network error getting weather data: {e}")
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
         if "appid" in query_params:
             del query_params["appid"]
         sanitized_query = urlencode(query_params, doseq=True)
         sanitized_url = urlunparse(parsed_url._replace(query=sanitized_query))
-        logger.error("URL: " + sanitized_url)
-        logger.error("Traceback " + str(e))
+        logger.info(f"URL: {sanitized_url}")
         return None
 
     logger.info("got weather data")

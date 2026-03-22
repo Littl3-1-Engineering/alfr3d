@@ -3,28 +3,39 @@ import logging
 import requests
 import pymysql
 
+from .db_pool import get_connection
+
 logger = logging.getLogger("STLog")
 
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
+MYSQL_HOST = os.environ.get("MYSQL_HOST", "mysql")
 MYSQL_USER = os.environ.get("MYSQL_USER", "root")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "rootpassword")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 
-if MYSQL_DATABASE == "mysql":
-    MYSQL_DATABASE = "localhost"
+if MYSQL_HOST == "mysql":
+    MYSQL_HOST = "mysql"
 
 ST_API_BASE = "https://api.smartthings.com/v1"
 
 
 def get_st_config():
-    db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-    cursor = db.cursor()
-    config = {}
-    cursor.execute("SELECT name, value FROM config WHERE name = 'st_pat'")
-    for row in cursor.fetchall():
-        config[row[0]] = row[1]
-    db.close()
-    return config
+    db = None
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        config = {}
+        cursor.execute("SELECT name, value FROM config WHERE name = 'st_pat'")
+        for row in cursor.fetchall():
+            config[row[0]] = row[1]
+        return config
+    except pymysql.Error as e:
+        logger.error(f"Database error fetching ST config: {e}")
+        if db:
+            db.rollback()
+        return {}
+    finally:
+        if db:
+            db.close()
 
 
 def is_st_configured():
@@ -47,7 +58,10 @@ def test_st_connection():
             return True, "Connected"
         else:
             return False, f"HTTP {response.status_code}"
+    except requests.RequestException as e:
+        return False, f"Request failed: {e}"
     except Exception as e:
+        logger.error(f"Unexpected error testing ST connection: {e}")
         return False, str(e)
 
 
@@ -132,7 +146,7 @@ def sync_st_devices():
         logger.warning("No ST devices found")
         return False
 
-    db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+    db = get_connection()
     cursor = db.cursor()
 
     cursor.execute("SELECT id FROM environment ORDER BY id LIMIT 1")
@@ -168,7 +182,7 @@ def sync_st_devices():
 
 
 def save_st_config(st_pat):
-    db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+    db = get_connection()
     cursor = db.cursor()
     cursor.execute("UPDATE config SET value = %s WHERE name = 'st_pat'", (st_pat,))
     db.commit()

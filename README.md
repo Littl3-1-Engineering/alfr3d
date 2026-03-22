@@ -2,6 +2,8 @@
 
 A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, and Python services. Includes a modern React web frontend with real-time dashboard monitoring and comprehensive user/device management.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/armageddion/alfr3d)
+
 ## Screenshot
 
 ![ALFR3D Dashboard](Nexus.png)
@@ -202,6 +204,53 @@ For Python services:
 ```bash
 black services/service_api/app.py services/service_daemon/alfr3ddaemon.py services/service_daemon/daemon.py services/service_daemon/utils/ services/service_user/app.py services/service_device/app.py services/service_environment/environment.py services/service_environment/weather_util.py
 ```
+
+## Pre-Commit Hooks
+
+This project uses pre-commit hooks to ensure code quality before commits. The hooks are configured in `.pre-commit-config.yaml`.
+
+### Setup
+
+Install pre-commit if you haven't already:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+### Running Hooks
+
+Run all hooks on staged files:
+
+```bash
+pre-commit run
+```
+
+Run all hooks on all files:
+
+```bash
+pre-commit run --all-files
+```
+
+### Configured Hooks
+
+| Hook | Purpose |
+|------|---------|
+| trailing-whitespace | Removes trailing whitespace |
+| end-of-file-fixer | Ensures files end with newline |
+| check-yaml | Validates YAML syntax |
+| check-added-large-files | Prevents large file commits |
+| black | Python code formatting (line-length=100) |
+| flake8 | Python linting (max-line-length=100, ignores E203,W503,F401) |
+| detect-secrets | Scans for committed secrets |
+
+### E402 Workaround
+
+Some imports must come after `sys.path.insert()` for Docker container path resolution. These use `# noqa: E402` comments to suppress false positives.
+
+### Undefined json Fix
+
+The codebase uses `orjson` instead of the standard `json` module. Ensure any JSON operations use `orjson.dumps()`/`orjson.loads()` and `orjson.JSONDecodeError`.
 
 ## Dashboard Features
 

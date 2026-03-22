@@ -8,18 +8,20 @@ import subprocess
 import threading
 from typing import Dict, Any, List
 from datetime import datetime
-import json
+import orjson
 
 # Third party imports
 import pymysql
 import requests
-from kafka import KafkaConsumer, KafkaProducer
+from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, send_file
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
-from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_connection, get_producer as _get_producer, get_cache  # noqa: E402
+from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -41,23 +43,9 @@ MYSQL_DB = os.environ["MYSQL_NAME"]
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
-# Kafka producer for integrations
-producer = None
-
 
 def get_producer():
-    global producer
-    if producer is None:
-        try:
-            logger.info("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_URL,
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            )
-            logger.info("Connected to Kafka")
-        except KafkaError as e:
-            logger.error("Failed to connect to Kafka: " + str(e))
-    return producer
+    return _get_producer(use_json_serializer=True)
 
 
 # Store recent events
@@ -80,7 +68,7 @@ def consume_events() -> None:
                     for message in messages:
                         logger.info("Polling for event message")
                         try:
-                            data = json.loads(message.value.decode("utf-8"))
+                            data = orjson.loads(message.value)
                             if isinstance(data, list):
                                 recent_events.extend(data)
                             else:
@@ -99,7 +87,7 @@ def consume_events() -> None:
                                     requests.post(url, json=event, headers=headers)
                                 except Exception as e:
                                     logger.error(f"Failed to send event to nfty.sh: {e}")
-                        except json.JSONDecodeError as e:
+                        except orjson.JSONDecodeError as e:
                             logger.error(f"Error processing event message: {str(e)}")
     except KafkaError as e:
         logger.error(f"Error connecting to Kafka for events: {str(e)}")
@@ -122,7 +110,7 @@ def consume_sa() -> None:
                     for message in messages:
                         logger.info("Polling for SA message")
                         try:
-                            data = json.loads(message.value.decode("utf-8"))
+                            data = orjson.loads(message.value)
                             recent_sa.clear()
                             if isinstance(data, list):
                                 recent_sa.extend(data)
@@ -131,7 +119,7 @@ def consume_sa() -> None:
                             logger.info(f"Received SA: {data}")
                             # Emit SA to connected WebSocket clients
                             socketio.emit("situational_awareness", recent_sa)
-                        except json.JSONDecodeError as e:
+                        except orjson.JSONDecodeError as e:
                             logger.error(f"Error processing SA message: {str(e)}")
     except KafkaError as e:
         logger.error(f"Error connecting to Kafka for SA: {str(e)}")
@@ -191,9 +179,7 @@ def get_users():
     online = request.args.get("online", "false").lower() == "true"
     try:
         logger.info(f"Connecting to MySQL at {MYSQL_DATABASE} as {MYSQL_USER}")
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         if online:
             cursor.execute(
@@ -308,9 +294,7 @@ def create_user():
     if not data or "name" not in data or "type" not in data:
         return jsonify({"error": "Missing name or type"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         # Get state id for offline
         cursor.execute("SELECT id FROM states WHERE state = 'offline'")
@@ -372,9 +356,7 @@ def update_user(user_id: int):
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -416,9 +398,7 @@ def delete_user(user_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM user WHERE id = %s", (user_id,))
         db.commit()
@@ -447,8 +427,8 @@ def parse_docker_json(output: str) -> List[Dict[str, Any]]:
         if line.strip():
             try:
 
-                containers.append(json.loads(line))
-            except json.JSONDecodeError as e:
+                containers.append(orjson.loads(line))
+            except orjson.JSONDecodeError as e:
                 logger.warning(f"Error parsing JSON: {e}")
     return containers
 
@@ -668,9 +648,7 @@ def get_devices():
         JSON: List of device dictionaries with id, name, ip, mac, state, type, user, last_online.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -712,6 +690,90 @@ def get_devices():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/device-types")
+def get_device_types():
+    """
+    Retrieve list of device types (cached for 5 minutes).
+
+    Returns:
+        JSON: List of device type dicts with id and type.
+    """
+    cache = get_cache()
+    cache_key = "api_device_types"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, type FROM device_types")
+        types = [{"id": row[0], "type": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, types, ttl=300)
+        return jsonify(types)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching device types: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/user-types")
+def get_user_types():
+    """
+    Retrieve list of user types (cached for 5 minutes).
+
+    Returns:
+        JSON: List of user type dicts with id and type.
+    """
+    cache = get_cache()
+    cache_key = "api_user_types"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, type FROM user_types")
+        types = [{"id": row[0], "type": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, types, ttl=300)
+        return jsonify(types)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching user types: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/states")
+def get_states():
+    """
+    Retrieve list of states (cached for 5 minutes).
+
+    Returns:
+        JSON: List of state dicts with id and state.
+    """
+    cache = get_cache()
+    cache_key = "api_states"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, state FROM states")
+        states = [{"id": row[0], "state": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, states, ttl=300)
+        return jsonify(states)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching states: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/devices", methods=["POST"])
 def create_device():
     """
@@ -731,9 +793,7 @@ def create_device():
     if not data or "name" not in data or "type" not in data:
         return jsonify({"error": "Missing name or type"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         # Get state id for offline
         cursor.execute("SELECT id FROM states WHERE state = 'offline'")
@@ -804,9 +864,7 @@ def update_device(device_id):
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -866,9 +924,7 @@ def delete_device(device_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM device WHERE id = %s", (device_id,))
         db.commit()
@@ -891,9 +947,7 @@ def get_user_devices(user_id):
         JSON: List of device dictionaries for the user.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -938,9 +992,7 @@ def get_device_history(device_id):
         JSON: List of historical device states.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -985,9 +1037,7 @@ def get_quips():
         JSON: List of quip dictionaries with id, type, quips.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("SELECT id, type, quips FROM quips")
         quips = [{"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()]
@@ -1014,9 +1064,7 @@ def create_quip():
     if not data or "type" not in data or "quips" not in data:
         return jsonify({"error": "Missing type or quips"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "INSERT INTO quips (type, quips) VALUES (%s, %s)",
@@ -1053,9 +1101,7 @@ def update_quip(quip_id):
     if not data or "type" not in data or "quips" not in data:
         return jsonify({"error": "Missing type or quips"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "UPDATE quips SET type = %s, quips = %s WHERE id = %s",
@@ -1081,9 +1127,7 @@ def delete_quip(quip_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM quips WHERE id = %s", (quip_id,))
         db.commit()
@@ -1104,9 +1148,7 @@ def get_weather():
         sunrise, sunset, humidity.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1146,9 +1188,7 @@ def get_environment():
         JSON: Environment data including id, name, location, weather details, overrides.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1216,9 +1256,7 @@ def update_environment():
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -1270,9 +1308,7 @@ def get_calendar_events():
         JSON: List of calendar events for today.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         today = datetime.now().date()
         cursor.execute(
@@ -1309,9 +1345,7 @@ def reset_environment():
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1337,12 +1371,16 @@ def trigger_calendar_sync():
     """
     try:
         message = {"type": "calendar", "action": "sync"}
+        producer = get_producer()
         producer.send("integrations", message)
         producer.flush()
         logger.info("Calendar sync triggered")
         return jsonify({"message": "Calendar sync triggered"}), 200
+    except KafkaError as e:
+        logger.error(f"Kafka error triggering calendar sync: {e}")
+        return jsonify({"error": f"Kafka error: {e}"}), 500
     except Exception as e:
-        logger.error(f"Error triggering calendar sync: {str(e)}")
+        logger.error(f"Error triggering calendar sync: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1356,12 +1394,16 @@ def trigger_gmail_sync():
     """
     try:
         message = {"type": "gmail", "action": "sync"}
+        producer = get_producer()
         producer.send("integrations", message)
         producer.flush()
         logger.info("Gmail sync triggered")
         return jsonify({"message": "Gmail sync triggered"}), 200
+    except KafkaError as e:
+        logger.error(f"Kafka error triggering gmail sync: {e}")
+        return jsonify({"error": f"Kafka error: {e}"}), 500
     except Exception as e:
-        logger.error(f"Error triggering gmail sync: {str(e)}")
+        logger.error(f"Error triggering gmail sync: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1374,9 +1416,7 @@ def get_integrations_status():
         JSON: Status for google integration (true if tokens exist).
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT integration_type FROM integrations_tokens WHERE integration_type = 'google'"
@@ -1429,7 +1469,7 @@ def get_audio(filename):
 @app.route("/api/iot/ha/status")
 def get_ha_status():
     try:
-        import ha_utils
+        from common import ha_utils
 
         connected, message = ha_utils.test_ha_connection()
         return jsonify({"connected": connected, "message": message})
@@ -1441,7 +1481,7 @@ def get_ha_status():
 @app.route("/api/iot/ha/devices")
 def get_ha_devices():
     try:
-        import ha_utils
+        from common import ha_utils
 
         devices = ha_utils.get_ha_devices()
         return jsonify(devices)
@@ -1469,7 +1509,7 @@ def control_ha_device(entity_id):
     service = service_map.get(command, command)
 
     try:
-        import ha_utils
+        from common import ha_utils
 
         success, message = ha_utils.ha_control_device(entity_id, service, params)
         if success:
@@ -1494,7 +1534,7 @@ def save_ha_config():
         return jsonify({"error": "HA URL and token are required"}), 400
 
     try:
-        import ha_utils
+        from common import ha_utils
 
         ha_utils.save_ha_config(ha_url, ha_token)
         return jsonify({"message": "Configuration saved"})
@@ -1522,7 +1562,7 @@ def trigger_ha_sync():
 @app.route("/api/iot/st/status")
 def get_st_status():
     try:
-        import st_utils
+        from common import st_utils
 
         connected, message = st_utils.test_st_connection()
         return jsonify({"connected": connected, "message": message})
@@ -1534,7 +1574,7 @@ def get_st_status():
 @app.route("/api/iot/st/devices")
 def get_st_devices():
     try:
-        import st_utils
+        from common import st_utils
 
         devices = st_utils.get_st_devices()
         return jsonify(devices)
@@ -1554,7 +1594,7 @@ def control_st_device(device_id):
     args = data.get("args", [])
 
     try:
-        import st_utils
+        from common import st_utils
 
         success, message = st_utils.st_control_device(device_id, capability, command, args)
         if success:
@@ -1578,7 +1618,7 @@ def save_st_config():
         return jsonify({"error": "PAT is required"}), 400
 
     try:
-        import st_utils
+        from common import st_utils
 
         st_utils.save_st_config(st_pat)
         return jsonify({"message": "Configuration saved"})
@@ -1606,7 +1646,7 @@ def trigger_st_sync():
 @app.route("/api/iot/status")
 def get_iot_status():
     try:
-        import ha_utils
+        from common import ha_utils
 
         ha_connected, ha_message = ha_utils.test_ha_connection()
 
@@ -1624,9 +1664,7 @@ def get_iot_status():
 @app.route("/api/iot/devices")
 def get_iot_devices():
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
 
         cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
@@ -1656,9 +1694,9 @@ def get_iot_devices():
                     "st_device_id": row[4],
                     "device_type": row[5],
                     "room": row[6],
-                    "capabilities": json.loads(row[7]) if row[7] else [],
+                    "capabilities": orjson.loads(row[7]) if row[7] else [],
                     "online": bool(row[8]),
-                    "last_state": json.loads(row[9]) if row[9] else {},
+                    "last_state": orjson.loads(row[9]) if row[9] else {},
                     "mac_address": row[10],
                     "local_device": (
                         {
@@ -1689,9 +1727,7 @@ def control_iot_device(device_id):
     params = data.get("params", {})
 
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT source, ha_entity_id FROM smarthome_devices WHERE id = %s", (device_id,)
@@ -1705,7 +1741,7 @@ def control_iot_device(device_id):
         source, ha_entity_id = row[0], row[1]
 
         if source == "homeassistant" and ha_entity_id:
-            import ha_utils
+            from common import ha_utils
 
             service_map = {
                 "turn_on": "turn_on",
@@ -1748,9 +1784,7 @@ def set_iot_provider():
         return jsonify({"error": "Invalid provider"}), 400
 
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (provider,))
         db.commit()
@@ -1771,9 +1805,7 @@ def set_iot_provider():
 def get_routines():
     """Get all routines for the current environment."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
         cursor.execute(
@@ -1786,7 +1818,7 @@ def get_routines():
 
         for routine in routines:
             if routine.get("actions"):
-                routine["actions"] = json.loads(routine["actions"])
+                routine["actions"] = orjson.loads(routine["actions"])
             if routine.get("time"):
                 routine["time"] = str(routine["time"])
             if routine.get("last_run"):
@@ -1807,9 +1839,7 @@ def create_routine():
         return jsonify({"error": "Missing required field: name"}), 400
 
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
 
         cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
@@ -1819,7 +1849,7 @@ def create_routine():
             return jsonify({"error": "Environment not found"}), 400
         env_id = env_row[0]
 
-        actions_json = json.dumps(data.get("actions", []))
+        actions_json = orjson.dumps(data.get("actions", [])).decode("utf-8")
         recurrence = data.get("recurrence", "daily")
         routine_time = normalize_time(data.get("time", "08:00:00"))
 
@@ -1847,9 +1877,7 @@ def update_routine(routine_id):
         return jsonify({"error": "No data provided"}), 400
 
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
 
         updates = []
@@ -1868,7 +1896,7 @@ def update_routine(routine_id):
             values.append(data["recurrence"])
         if "actions" in data:
             updates.append("actions = %s")
-            values.append(json.dumps(data["actions"]))
+            values.append(orjson.dumps(data["actions"]).decode("utf-8"))
 
         if not updates:
             db.close()
@@ -1891,9 +1919,7 @@ def update_routine(routine_id):
 def delete_routine(routine_id):
     """Delete a routine."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM routines WHERE id = %s", (routine_id,))
         db.commit()
@@ -1910,9 +1936,7 @@ def delete_routine(routine_id):
 def run_routine(routine_id):
     """Manually trigger a routine to run now."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
         cursor.execute(
@@ -1927,7 +1951,7 @@ def run_routine(routine_id):
             return jsonify({"error": "Routine not found"}), 404
 
         if routine.get("actions"):
-            actions = json.loads(routine["actions"])
+            actions = orjson.loads(routine["actions"])
         else:
             actions = []
 
@@ -1980,9 +2004,7 @@ def run_routine(routine_id):
 def get_environment_id():
     """Get environment ID for current environment."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
         row = cursor.fetchone()
@@ -1997,9 +2019,7 @@ def get_personality():
     """Get current personality settings."""
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute(
             "SELECT * FROM personality WHERE type = 'current' AND "
@@ -2037,9 +2057,7 @@ def update_personality():
         return jsonify({"error": "No data provided"}), 400
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "UPDATE personality SET "
@@ -2070,9 +2088,7 @@ def update_personality():
 def get_personality_presets():
     """Get all personality presets."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
         rows = cursor.fetchall()
@@ -2105,9 +2121,7 @@ def apply_personality_preset():
         return jsonify({"error": "Missing preset name"}), 400
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute(
             "SELECT * FROM personality WHERE type = 'preset' AND name = %s",
@@ -2148,9 +2162,7 @@ def get_personality_context():
     """Get current personality context (mood state)."""
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute(
             "SELECT * FROM context WHERE environment_id = %s LIMIT 1",
@@ -2183,9 +2195,7 @@ def update_personality_context():
         return jsonify({"error": "No data provided"}), 400
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         values = []
@@ -2212,9 +2222,7 @@ def update_personality_context():
 def get_llm_config():
     """Get LLM configuration."""
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
@@ -2240,9 +2248,7 @@ def update_llm_config():
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         if "api_key" in data:
             cursor.execute(

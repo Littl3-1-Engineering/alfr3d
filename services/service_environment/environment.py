@@ -5,21 +5,25 @@ weather updates."""
 import os
 import re
 import sys
-import time
 import socket
-import json
+import orjson
 import logging
+import threading
 import datetime
 from datetime import timezone
 from urllib.request import urlopen
 
-# Third-party libraries
-import pymysql  # Changed from MySQLdb
-from kafka import KafkaConsumer, KafkaProducer
+shutdown_event = threading.Event()
 
-# Local imports
-from db_utils import check_mute_optimized
-import weather_util
+# Third-party libraries
+import pymysql  # Changed from MySQLdb  # noqa: E402
+from kafka import KafkaConsumer  # noqa: E402
+from kafka.errors import KafkaError  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, get_kafka_url, db_utils  # noqa: E402
+
+import weather_util  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -39,24 +43,7 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "user")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
-KAFKA_URL = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
-
-# Kafka producer for integrations
-producer = None
-
-
-def get_producer():
-    global producer
-    if producer is None:
-        try:
-            logger.info("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-            logger.info("Connected to Kafka")
-        except Exception:
-            logger.error("Failed to connect to Kafka")
-            return None
-    return producer
 
 
 def check_mute() -> bool:
@@ -67,7 +54,7 @@ def check_mute() -> bool:
              - only when Athos is at home
              - only when 'owner' is at home
     """
-    return check_mute_optimized(ALFR3D_ENV_NAME)
+    return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
 
 
 def send_event(event_type, message):
@@ -81,11 +68,13 @@ def send_event(event_type, message):
             "time": datetime.datetime.now(timezone.utc).isoformat() + "Z",
         }
         try:
-            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.send("event-stream", orjson.dumps(event))
             p.flush()
             logger.info(f"Sent event: {event}")
+        except KafkaError as e:
+            logger.error(f"Kafka error sending event: {e}")
         except Exception as e:
-            logger.error(f"Failed to send event: {str(e)}")
+            logger.error(f"Failed to send event: {e}")
 
 
 def get_ip():
@@ -94,16 +83,16 @@ def get_ip():
     try:
         myipv4 = urlopen("http://ifconfig.me/ip").read().decode("ascii")
         logger.info("My IP: " + myipv4)
-    except Exception as e:
-        logger.error("Error getting my IPV4")
+    except OSError as e:
+        logger.error(f"Error getting my IPV4: {e}")
         myipv4 = None
-        logger.error("Traceback " + str(e))
         logger.info("Trying to get our IPV6")
         try:
             myipv6 = urlopen("http://ipv6bot.whatismyipaddress.com").read().decode("ascii")
-        except Exception as e:
-            logger.error("Error getting my IPV6")
-            logger.error("Traceback " + str(e))
+        except OSError as e:
+            logger.error(f"Error getting my IPV6: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error getting IP: {e}")
     return myipv4, myipv6
 
 
@@ -121,7 +110,7 @@ def geocode_ip(myipv4, myipv6, method, cursor):
         try:
             if myipv4:
                 url = "http://api.db-ip.com/addrinfo?addr=" + myipv4 + "&api_key=" + apikey
-                info = json.loads(urlopen(url).read().decode("utf-8"))
+                info = orjson.loads(urlopen(url).read())
                 if info.get("city"):
                     return {
                         "country": info["country"],
@@ -133,7 +122,7 @@ def geocode_ip(myipv4, myipv6, method, cursor):
                     }
             if myipv6:
                 url = "http://api.db-ip.com/addrinfo?addr=" + myipv6 + "&api_key=" + apikey
-                info = json.loads(urlopen(url).read().decode("utf-8"))
+                info = orjson.loads(urlopen(url).read())
                 if info.get("country"):
                     return {
                         "country": info["country"],
@@ -160,7 +149,7 @@ def geocode_ip(myipv4, myipv6, method, cursor):
         if myipv4:
             url = "http://api.ipstack.com/" + myipv4 + "?access_key=" + apikey
             try:
-                info = json.loads(urlopen(url).read().decode("utf-8"))
+                info = orjson.loads(urlopen(url).read())
                 if info.get("city"):
                     return {
                         "country": info["country_name"],
@@ -358,27 +347,36 @@ def check_weather():
 
 # Main
 if __name__ == "__main__":
-    # get all instructions from Kafka
-    # topic: environment
+    logger.info("Starting Alfr3d's environment service")
     consumer = None
-    while consumer is None:
+    retry_count = 0
+    while consumer is None and not shutdown_event.is_set():
         try:
-            consumer = KafkaConsumer("environment", bootstrap_servers=KAFKA_URL)
+            consumer = KafkaConsumer("environment", bootstrap_servers=get_kafka_url())
             logger.info("Connected to Kafka environment topic")
         except Exception:
-            logger.error("Failed to connect to Kafka environment topic, retrying in 5 seconds")
-            time.sleep(5)
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(
+                f"Failed to connect to Kafka environment topic, " f"retrying in {wait_time} seconds"
+            )
+            shutdown_event.wait(wait_time)
 
-    while True:
-        for message in consumer:
-            msg = message.value.decode("ascii")
-            print(f"Received Kafka message: {msg}")
-            if msg == "alfr3d-env.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit()
-            if msg == "check location":
-                check_location()
-            if msg == "check weather":
-                check_weather()
+    if shutdown_event.is_set():
+        logger.info("Shutdown requested during connection attempt")
+        sys.exit(0)
 
-            time.sleep(10)
+    while not shutdown_event.is_set():
+        messages = consumer.poll(timeout_ms=1000)
+        for topic_partition, msgs in messages.items():
+            for message in msgs:
+                msg = message.value.decode("ascii")
+                print(f"Received Kafka message: {msg}")
+                if msg == "alfr3d-env.exit":
+                    logger.info("Received exit request. Stopping service.")
+                    shutdown_event.set()
+                    break
+                if msg == "check location":
+                    check_location()
+                if msg == "check weather":
+                    check_weather()
