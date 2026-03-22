@@ -14,22 +14,16 @@ const Domain = () => {
   const tabParam = searchParams.get('tab');
   const userIdParam = searchParams.get('userId');
 
-  console.log('Domain: URL params - tab:', tabParam, 'userId:', userIdParam);
-
   const [activeView, setActiveView] = useState(tabParam === 'personnel' ? 'personnel' : 'blueprint');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [initialUserId, setInitialUserId] = useState(userIdParam);
 
   useEffect(() => {
-    // Store the userId before clearing URL parameters
     if (userIdParam && !initialUserId) {
-      console.log('Domain: Storing initialUserId:', userIdParam);
       setInitialUserId(userIdParam);
     }
 
-    // Clear URL parameters after processing
     if (tabParam || userIdParam) {
-      console.log('Domain: Clearing URL parameters');
       navigate('/domain', { replace: true });
     }
   }, [tabParam, userIdParam, navigate, initialUserId]);

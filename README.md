@@ -2,6 +2,8 @@
 
 A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, and Python services. Includes a modern React web frontend with real-time dashboard monitoring and comprehensive user/device management.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/armageddion/alfr3d)
+
 ## Screenshot
 
 ![ALFR3D Dashboard](Nexus.png)
@@ -17,6 +19,8 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
 - **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
+- **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, and blueprint display with MAC-based device linking.
+- **Routine Automation**: Time-based automation with recurrence options (daily, weekly, weekdays), action builder supporting speak, device, email, and scene actions.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
 - **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
 - **Performance**: Optimized DB calls with batch updates, real-time metrics collection, and efficient data fetching.
@@ -37,6 +41,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Service API**: REST API gateway providing endpoints for users and container metrics, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard, user/device management, and control panel.
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
+- **IoT Integration**: Unified IoT layer supporting Home Assistant and SmartThings with automatic device syncing and blueprint visualization.
 
 ## Quick Start
 
@@ -111,7 +116,65 @@ The `setup/` directory contains scripts for database initialization, maintenance
 ### Database Setup
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
 - **`migration_001_calendar_cleanup.sql`**: Database migration for calendar cleanup functionality
+- **`migration_002_iot.sql`**: Database migration for IoT integration (smarthome_devices table, MAC address linking)
+- **`migration_003_routines.sql`**: Database migration for routine management (recurrence, actions JSON, last_run tracking)
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
+
+### IoT Integration
+
+ALFR3D supports integration with Home Assistant and SmartThings for unified smart home control:
+
+#### Features
+- **Unified Device Management**: View and control HA and ST devices from a single interface
+- **Automatic Sync**: Devices sync automatically every 15 minutes via the daemon service
+- **Blueprint Visualization**: IoT devices appear on the floorplan alongside local network devices
+- **MAC Address Linking**: IoT devices with known MAC addresses link to local network devices for position tracking
+- **Warning Indicators**: Unlinked devices show warning indicators with MAC address information
+
+#### Configuration
+1. Configure Home Assistant via the Integrations page:
+   - HA URL (e.g., `http://192.168.1.x:8123`)
+   - Long-Lived Access Token
+
+2. Configure SmartThings via the Integrations page:
+   - Personal Access Token (PAT)
+
+3. Set default provider in IoT settings
+
+#### Database Schema
+- **`smarthome_devices`**: Stores synced IoT devices with source (homeassistant/smartthings), entity IDs, MAC addresses, and linked local device references
+- **`device_command_history`**: Tracks device control commands for audit logs
+
+#### Sync Mechanism
+- Daemon sends Kafka messages (`iot_ha_sync`, `iot_st_sync`) every 15 minutes
+- Device service fetches devices from HA/ST APIs and updates the database
+- MAC addresses extracted from HA entity connections for device linking
+- Frontend fetches merged device data with local device position info
+
+### Routine Automation
+
+ALFR3D supports time-based automation with the following features:
+
+#### Features
+- **Recurrence Options**: Run routines once, daily, on weekdays, or weekly
+- **Action Types**: Speak (TTS), device control, email, and scene activation
+- **Manual Execution**: Run routines on-demand from the Matrix page
+- **Action Builder**: Visual interface for creating multi-step routines
+
+#### Supported Actions
+- **Speak**: Text-to-speech messages via the speak service
+- **Device**: Control IoT devices (on/off)
+- **Email**: Send email notifications
+- **Scene**: Activate device scenes
+
+#### Configuration
+1. Navigate to Matrix page in the frontend
+2. Click "New Routine" to create a routine
+3. Set time, recurrence, and add actions
+4. Save and enable the routine
+
+#### Database Schema
+- **`routines`**: Stores routine definitions with name, time, recurrence (once/daily/weekdays/weekly), actions (JSON), and last_run timestamp
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
@@ -142,6 +205,53 @@ For Python services:
 black services/service_api/app.py services/service_daemon/alfr3ddaemon.py services/service_daemon/daemon.py services/service_daemon/utils/ services/service_user/app.py services/service_device/app.py services/service_environment/environment.py services/service_environment/weather_util.py
 ```
 
+## Pre-Commit Hooks
+
+This project uses pre-commit hooks to ensure code quality before commits. The hooks are configured in `.pre-commit-config.yaml`.
+
+### Setup
+
+Install pre-commit if you haven't already:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+### Running Hooks
+
+Run all hooks on staged files:
+
+```bash
+pre-commit run
+```
+
+Run all hooks on all files:
+
+```bash
+pre-commit run --all-files
+```
+
+### Configured Hooks
+
+| Hook | Purpose |
+|------|---------|
+| trailing-whitespace | Removes trailing whitespace |
+| end-of-file-fixer | Ensures files end with newline |
+| check-yaml | Validates YAML syntax |
+| check-added-large-files | Prevents large file commits |
+| black | Python code formatting (line-length=100) |
+| flake8 | Python linting (max-line-length=100, ignores E203,W503,F401) |
+| detect-secrets | Scans for committed secrets |
+
+### E402 Workaround
+
+Some imports must come after `sys.path.insert()` for Docker container path resolution. These use `# noqa: E402` comments to suppress false positives.
+
+### Undefined json Fix
+
+The codebase uses `orjson` instead of the standard `json` module. Ensure any JSON operations use `orjson.dumps()`/`orjson.loads()` and `orjson.JSONDecodeError`.
+
 ## Dashboard Features
 
 The ALFR3D dashboard provides real-time monitoring and control:
@@ -156,7 +266,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - **User Management**: Registration, editing, deletion with role-based access
 - **Device Control**: Network scanning, device state monitoring
 - **Environment Settings**: Location and weather data configuration
-- **Routine Automation**: Scheduled task management
+- **Routine Automation**: Time-based task management with speak, device, email, and scene actions
 
 ### Visual Design
 - **Dark Theme**: Professional UI with consistent styling
@@ -212,6 +322,28 @@ The ALFR3D dashboard provides real-time monitoring and control:
 - `GET /api/project-tree`: Retrieve project directory tree structure for visualization
 - `GET /api/integrations/status`: Check integration sync status
 - `POST /api/integrations/sync/<type>`: Trigger integration sync (e.g., gmail, calendar)
+- **IoT (Home Assistant/SmartThings)**:
+  - `GET /api/iot/status`: Get connection status for HA and ST
+  - `GET /api/iot/providers`: List available IoT providers
+  - `PUT /api/iot/provider`: Set default IoT provider
+  - `GET /api/iot/ha/status`: Home Assistant connection status
+  - `GET /api/iot/ha/devices`: Get HA devices
+  - `POST /api/iot/ha/devices/<entity_id>/control`: Control HA device
+  - `PUT /api/iot/ha/config`: Configure HA (URL, token)
+  - `POST /api/iot/ha/sync`: Trigger HA device sync
+  - `GET /api/iot/st/status`: SmartThings connection status
+  - `GET /api/iot/st/devices`: Get SmartThings devices
+  - `POST /api/iot/st/devices/<device_id>/control`: Control ST device
+  - `PUT /api/iot/st/config`: Configure ST (PAT)
+  - `POST /api/iot/st/sync`: Trigger ST device sync
+  - `GET /api/iot/devices`: Get all IoT devices (merged with local devices)
+  - `POST /api/iot/devices/<device_id>/control`: Control IoT device
+- **Routines**:
+  - `GET /api/routines`: List all routines for current environment
+  - `POST /api/routines`: Create a new routine
+  - `PUT /api/routines/<id>`: Update an existing routine
+  - `DELETE /api/routines/<id>`: Delete a routine
+  - `POST /api/routines/<id>/run`: Manually execute a routine
 - **WebSocket**:
   - `WS /ws/socket.io/`: Real-time events and situational awareness via SocketIO (port 5002)
 - **Service Frontend**:

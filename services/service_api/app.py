@@ -8,18 +8,20 @@ import subprocess
 import threading
 from typing import Dict, Any, List
 from datetime import datetime
-import json
+import orjson
 
 # Third party imports
 import pymysql
 import requests
-from kafka import KafkaConsumer, KafkaProducer
+from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from flask import Flask, request, jsonify, send_file
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
-from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_connection, get_producer as _get_producer, get_cache  # noqa: E402
+from tree_of_alfr3d import PROJECT_TREE_BLUEPRINT, start_file_watcher  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -41,23 +43,9 @@ MYSQL_DB = os.environ["MYSQL_NAME"]
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
-# Kafka producer for integrations
-producer = None
-
 
 def get_producer():
-    global producer
-    if producer is None:
-        try:
-            logger.info("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_URL,
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            )
-            logger.info("Connected to Kafka")
-        except KafkaError as e:
-            logger.error("Failed to connect to Kafka: " + str(e))
-    return producer
+    return _get_producer(use_json_serializer=True)
 
 
 # Store recent events
@@ -80,7 +68,7 @@ def consume_events() -> None:
                     for message in messages:
                         logger.info("Polling for event message")
                         try:
-                            data = json.loads(message.value.decode("utf-8"))
+                            data = orjson.loads(message.value)
                             if isinstance(data, list):
                                 recent_events.extend(data)
                             else:
@@ -99,7 +87,7 @@ def consume_events() -> None:
                                     requests.post(url, json=event, headers=headers)
                                 except Exception as e:
                                     logger.error(f"Failed to send event to nfty.sh: {e}")
-                        except json.JSONDecodeError as e:
+                        except orjson.JSONDecodeError as e:
                             logger.error(f"Error processing event message: {str(e)}")
     except KafkaError as e:
         logger.error(f"Error connecting to Kafka for events: {str(e)}")
@@ -122,7 +110,7 @@ def consume_sa() -> None:
                     for message in messages:
                         logger.info("Polling for SA message")
                         try:
-                            data = json.loads(message.value.decode("utf-8"))
+                            data = orjson.loads(message.value)
                             recent_sa.clear()
                             if isinstance(data, list):
                                 recent_sa.extend(data)
@@ -131,7 +119,7 @@ def consume_sa() -> None:
                             logger.info(f"Received SA: {data}")
                             # Emit SA to connected WebSocket clients
                             socketio.emit("situational_awareness", recent_sa)
-                        except json.JSONDecodeError as e:
+                        except orjson.JSONDecodeError as e:
                             logger.error(f"Error processing SA message: {str(e)}")
     except KafkaError as e:
         logger.error(f"Error connecting to Kafka for SA: {str(e)}")
@@ -163,6 +151,19 @@ CORS(app)
 app.register_blueprint(PROJECT_TREE_BLUEPRINT)
 
 
+def normalize_time(time_str):
+    """Convert HH:MM to HH:MM:SS format for database."""
+    if not time_str:
+        return time_str
+    if len(time_str) == 8:
+        return time_str
+    if len(time_str) == 5 and ":" in time_str:
+        parts = time_str.split(":")
+        hour = parts[0].zfill(2)
+        return f"{hour}:{parts[1]}:00"
+    return time_str
+
+
 @app.route("/api/users")
 def get_users():
     """
@@ -178,9 +179,7 @@ def get_users():
     online = request.args.get("online", "false").lower() == "true"
     try:
         logger.info(f"Connecting to MySQL at {MYSQL_DATABASE} as {MYSQL_USER}")
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         if online:
             cursor.execute(
@@ -295,9 +294,7 @@ def create_user():
     if not data or "name" not in data or "type" not in data:
         return jsonify({"error": "Missing name or type"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         # Get state id for offline
         cursor.execute("SELECT id FROM states WHERE state = 'offline'")
@@ -359,9 +356,7 @@ def update_user(user_id: int):
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -403,9 +398,7 @@ def delete_user(user_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM user WHERE id = %s", (user_id,))
         db.commit()
@@ -434,8 +427,8 @@ def parse_docker_json(output: str) -> List[Dict[str, Any]]:
         if line.strip():
             try:
 
-                containers.append(json.loads(line))
-            except json.JSONDecodeError as e:
+                containers.append(orjson.loads(line))
+            except orjson.JSONDecodeError as e:
                 logger.warning(f"Error parsing JSON: {e}")
     return containers
 
@@ -655,9 +648,7 @@ def get_devices():
         JSON: List of device dictionaries with id, name, ip, mac, state, type, user, last_online.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -699,6 +690,90 @@ def get_devices():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/device-types")
+def get_device_types():
+    """
+    Retrieve list of device types (cached for 5 minutes).
+
+    Returns:
+        JSON: List of device type dicts with id and type.
+    """
+    cache = get_cache()
+    cache_key = "api_device_types"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, type FROM device_types")
+        types = [{"id": row[0], "type": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, types, ttl=300)
+        return jsonify(types)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching device types: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/user-types")
+def get_user_types():
+    """
+    Retrieve list of user types (cached for 5 minutes).
+
+    Returns:
+        JSON: List of user type dicts with id and type.
+    """
+    cache = get_cache()
+    cache_key = "api_user_types"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, type FROM user_types")
+        types = [{"id": row[0], "type": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, types, ttl=300)
+        return jsonify(types)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching user types: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/states")
+def get_states():
+    """
+    Retrieve list of states (cached for 5 minutes).
+
+    Returns:
+        JSON: List of state dicts with id and state.
+    """
+    cache = get_cache()
+    cache_key = "api_states"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, state FROM states")
+        states = [{"id": row[0], "state": row[1]} for row in cursor.fetchall()]
+        db.close()
+        cache.set(cache_key, states, ttl=300)
+        return jsonify(states)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching states: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/devices", methods=["POST"])
 def create_device():
     """
@@ -718,9 +793,7 @@ def create_device():
     if not data or "name" not in data or "type" not in data:
         return jsonify({"error": "Missing name or type"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         # Get state id for offline
         cursor.execute("SELECT id FROM states WHERE state = 'offline'")
@@ -791,9 +864,7 @@ def update_device(device_id):
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -853,9 +924,7 @@ def delete_device(device_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM device WHERE id = %s", (device_id,))
         db.commit()
@@ -878,9 +947,7 @@ def get_user_devices(user_id):
         JSON: List of device dictionaries for the user.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -925,9 +992,7 @@ def get_device_history(device_id):
         JSON: List of historical device states.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             """
@@ -972,9 +1037,7 @@ def get_quips():
         JSON: List of quip dictionaries with id, type, quips.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("SELECT id, type, quips FROM quips")
         quips = [{"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()]
@@ -1001,9 +1064,7 @@ def create_quip():
     if not data or "type" not in data or "quips" not in data:
         return jsonify({"error": "Missing type or quips"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "INSERT INTO quips (type, quips) VALUES (%s, %s)",
@@ -1040,9 +1101,7 @@ def update_quip(quip_id):
     if not data or "type" not in data or "quips" not in data:
         return jsonify({"error": "Missing type or quips"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "UPDATE quips SET type = %s, quips = %s WHERE id = %s",
@@ -1068,9 +1127,7 @@ def delete_quip(quip_id):
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute("DELETE FROM quips WHERE id = %s", (quip_id,))
         db.commit()
@@ -1091,9 +1148,7 @@ def get_weather():
         sunrise, sunset, humidity.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1133,9 +1188,7 @@ def get_environment():
         JSON: Environment data including id, name, location, weather details, overrides.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1203,9 +1256,7 @@ def update_environment():
     if not data:
         return jsonify({"error": "No data provided"}), 400
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         updates = []
         params = []
@@ -1257,9 +1308,7 @@ def get_calendar_events():
         JSON: List of calendar events for today.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         today = datetime.now().date()
         cursor.execute(
@@ -1296,9 +1345,7 @@ def reset_environment():
         JSON: Success message.
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
@@ -1324,12 +1371,16 @@ def trigger_calendar_sync():
     """
     try:
         message = {"type": "calendar", "action": "sync"}
+        producer = get_producer()
         producer.send("integrations", message)
         producer.flush()
         logger.info("Calendar sync triggered")
         return jsonify({"message": "Calendar sync triggered"}), 200
+    except KafkaError as e:
+        logger.error(f"Kafka error triggering calendar sync: {e}")
+        return jsonify({"error": f"Kafka error: {e}"}), 500
     except Exception as e:
-        logger.error(f"Error triggering calendar sync: {str(e)}")
+        logger.error(f"Error triggering calendar sync: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1343,12 +1394,16 @@ def trigger_gmail_sync():
     """
     try:
         message = {"type": "gmail", "action": "sync"}
+        producer = get_producer()
         producer.send("integrations", message)
         producer.flush()
         logger.info("Gmail sync triggered")
         return jsonify({"message": "Gmail sync triggered"}), 200
+    except KafkaError as e:
+        logger.error(f"Kafka error triggering gmail sync: {e}")
+        return jsonify({"error": f"Kafka error: {e}"}), 500
     except Exception as e:
-        logger.error(f"Error triggering gmail sync: {str(e)}")
+        logger.error(f"Error triggering gmail sync: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1361,9 +1416,7 @@ def get_integrations_status():
         JSON: Status for google integration (true if tokens exist).
     """
     try:
-        db = pymysql.connect(
-            host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-        )
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
             "SELECT integration_type FROM integrations_tokens WHERE integration_type = 'google'"
@@ -1411,6 +1464,808 @@ def get_audio(filename):
         mimetype = "audio/mpeg"
 
     return send_file(audio_path, mimetype=mimetype)
+
+
+@app.route("/api/iot/ha/status")
+def get_ha_status():
+    try:
+        from common import ha_utils
+
+        connected, message = ha_utils.test_ha_connection()
+        return jsonify({"connected": connected, "message": message})
+    except Exception as e:
+        logger.error(f"Error checking HA status: {str(e)}")
+        return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route("/api/iot/ha/devices")
+def get_ha_devices():
+    try:
+        from common import ha_utils
+
+        devices = ha_utils.get_ha_devices()
+        return jsonify(devices)
+    except Exception as e:
+        logger.error(f"Error fetching HA devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/devices/<entity_id>/control", methods=["POST"])
+def control_ha_device(entity_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    params = data.get("params", {})
+
+    service_map = {
+        "turn_on": "turn_on",
+        "turn_off": "turn_off",
+        "toggle": "toggle",
+        "set_brightness": "turn_on",
+    }
+
+    service = service_map.get(command, command)
+
+    try:
+        from common import ha_utils
+
+        success, message = ha_utils.ha_control_device(entity_id, service, params)
+        if success:
+            return jsonify({"message": message, "entity_id": entity_id, "command": command})
+        else:
+            return jsonify({"error": message}), 500
+    except Exception as e:
+        logger.error(f"Error controlling HA device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/config", methods=["PUT"])
+def save_ha_config():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    ha_url = data.get("ha_url", "")
+    ha_token = data.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return jsonify({"error": "HA URL and token are required"}), 400
+
+    try:
+        from common import ha_utils
+
+        ha_utils.save_ha_config(ha_url, ha_token)
+        return jsonify({"message": "Configuration saved"})
+    except Exception as e:
+        logger.error(f"Error saving HA config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/ha/sync", methods=["POST"])
+def trigger_ha_sync():
+    try:
+        producer = get_producer()
+        if producer:
+            producer.send("device", {"action": "iot_ha_sync"})
+            producer.flush()
+            logger.info("HA sync triggered")
+            return jsonify({"message": "Sync triggered"}), 200
+        else:
+            return jsonify({"error": "Failed to connect to Kafka"}), 500
+    except Exception as e:
+        logger.error(f"Error triggering HA sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/status")
+def get_st_status():
+    try:
+        from common import st_utils
+
+        connected, message = st_utils.test_st_connection()
+        return jsonify({"connected": connected, "message": message})
+    except Exception as e:
+        logger.error(f"Error checking ST status: {str(e)}")
+        return jsonify({"connected": False, "error": str(e)})
+
+
+@app.route("/api/iot/st/devices")
+def get_st_devices():
+    try:
+        from common import st_utils
+
+        devices = st_utils.get_st_devices()
+        return jsonify(devices)
+    except Exception as e:
+        logger.error(f"Error fetching ST devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/devices/<device_id>/control", methods=["POST"])
+def control_st_device(device_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    capability = data.get("capability", "switch")
+    args = data.get("args", [])
+
+    try:
+        from common import st_utils
+
+        success, message = st_utils.st_control_device(device_id, capability, command, args)
+        if success:
+            return jsonify({"message": message, "device_id": device_id, "command": command})
+        else:
+            return jsonify({"error": message}), 500
+    except Exception as e:
+        logger.error(f"Error controlling ST device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/config", methods=["PUT"])
+def save_st_config():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing data"}), 400
+
+    st_pat = data.get("st_pat", "")
+
+    if not st_pat:
+        return jsonify({"error": "PAT is required"}), 400
+
+    try:
+        from common import st_utils
+
+        st_utils.save_st_config(st_pat)
+        return jsonify({"message": "Configuration saved"})
+    except Exception as e:
+        logger.error(f"Error saving ST config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/st/sync", methods=["POST"])
+def trigger_st_sync():
+    try:
+        producer = get_producer()
+        if producer:
+            producer.send("device", {"action": "iot_st_sync"})
+            producer.flush()
+            logger.info("ST sync triggered")
+            return jsonify({"message": "Sync triggered"}), 200
+        else:
+            return jsonify({"error": "Failed to connect to Kafka"}), 500
+    except Exception as e:
+        logger.error(f"Error triggering ST sync: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/status")
+def get_iot_status():
+    try:
+        from common import ha_utils
+
+        ha_connected, ha_message = ha_utils.test_ha_connection()
+
+        return jsonify(
+            {
+                "ha": {"connected": ha_connected, "message": ha_message},
+                "st": {"connected": False, "message": "Not configured"},
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error checking IoT status: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/devices")
+def get_iot_devices():
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+
+        cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
+        row = cursor.fetchone()
+        provider = row[0] if row else "homeassistant"
+
+        cursor.execute(
+            """
+            SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
+                   sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
+                   sd.mac_address, d.id as local_device_id, d.IP, d.position_x, d.position_y
+            FROM smarthome_devices sd
+            LEFT JOIN device d ON UPPER(d.MAC) = UPPER(sd.mac_address)
+            WHERE sd.source = %s
+        """,
+            (provider,),
+        )
+
+        devices = []
+        for row in cursor.fetchall():
+            devices.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "source": row[2],
+                    "ha_entity_id": row[3],
+                    "st_device_id": row[4],
+                    "device_type": row[5],
+                    "room": row[6],
+                    "capabilities": orjson.loads(row[7]) if row[7] else [],
+                    "online": bool(row[8]),
+                    "last_state": orjson.loads(row[9]) if row[9] else {},
+                    "mac_address": row[10],
+                    "local_device": (
+                        {
+                            "id": row[11],
+                            "IP": row[12],
+                            "position_x": row[13],
+                            "position_y": row[14],
+                        }
+                        if row[11]
+                        else None
+                    ),
+                }
+            )
+        db.close()
+        return jsonify(devices)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching IoT devices: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/devices/<device_id>/control", methods=["POST"])
+def control_iot_device(device_id):
+    data = request.get_json()
+    if not data or "command" not in data:
+        return jsonify({"error": "Missing command"}), 400
+
+    command = data.get("command")
+    params = data.get("params", {})
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT source, ha_entity_id FROM smarthome_devices WHERE id = %s", (device_id,)
+        )
+        row = cursor.fetchone()
+        db.close()
+
+        if not row:
+            return jsonify({"error": "Device not found"}), 404
+
+        source, ha_entity_id = row[0], row[1]
+
+        if source == "homeassistant" and ha_entity_id:
+            from common import ha_utils
+
+            service_map = {
+                "turn_on": "turn_on",
+                "turn_off": "turn_off",
+                "toggle": "toggle",
+                "set_brightness": "turn_on",
+            }
+            service = service_map.get(command, command)
+            success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
+            if success:
+                return jsonify({"message": message, "device_id": device_id, "command": command})
+            else:
+                return jsonify({"error": message}), 500
+        else:
+            return jsonify({"error": "Unsupported source or device"}), 400
+
+    except Exception as e:
+        logger.error(f"Error controlling IoT device: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/iot/providers")
+def get_iot_providers():
+    return jsonify(
+        [
+            {"id": "homeassistant", "name": "Home Assistant", "status": "configured"},
+            {"id": "smartthings", "name": "SmartThings", "status": "not_configured"},
+        ]
+    )
+
+
+@app.route("/api/iot/provider", methods=["PUT"])
+def set_iot_provider():
+    data = request.get_json()
+    if not data or "provider" not in data:
+        return jsonify({"error": "Missing provider"}), 400
+
+    provider = data.get("provider")
+    if provider not in ["homeassistant", "smartthings"]:
+        return jsonify({"error": "Invalid provider"}), 400
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (provider,))
+        db.commit()
+        db.close()
+        return jsonify({"message": f"Provider set to {provider}"})
+    except Exception as e:
+        logger.error(f"Error setting IoT provider: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Placeholder for future endpoints
+
+
+# ============== ROUTINES ==============
+
+
+@app.route("/api/routines", methods=["GET"])
+def get_routines():
+    """Get all routines for the current environment."""
+    try:
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        cursor.execute(
+            "SELECT id, name, time, enabled, triggered, recurrence, actions, last_run "
+            "FROM routines WHERE environment_id = (SELECT id FROM environment WHERE name = %s) "
+            "ORDER BY time",
+            (ALFR3D_ENV_NAME,),
+        )
+        routines = cursor.fetchall()
+
+        for routine in routines:
+            if routine.get("actions"):
+                routine["actions"] = orjson.loads(routine["actions"])
+            if routine.get("time"):
+                routine["time"] = str(routine["time"])
+            if routine.get("last_run"):
+                routine["last_run"] = str(routine["last_run"])
+
+        db.close()
+        return jsonify(routines), 200
+    except pymysql.Error as e:
+        logger.error(f"Error fetching routines: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines", methods=["POST"])
+def create_routine():
+    """Create a new routine."""
+    data = request.get_json()
+    if not data or not data.get("name"):
+        return jsonify({"error": "Missing required field: name"}), 400
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+
+        cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        env_row = cursor.fetchone()
+        if not env_row:
+            db.close()
+            return jsonify({"error": "Environment not found"}), 400
+        env_id = env_row[0]
+
+        actions_json = orjson.dumps(data.get("actions", [])).decode("utf-8")
+        recurrence = data.get("recurrence", "daily")
+        routine_time = normalize_time(data.get("time", "08:00:00"))
+
+        cursor.execute(
+            "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (data["name"], routine_time, data.get("enabled", 1), recurrence, actions_json, env_id),
+        )
+        db.commit()
+        routine_id = cursor.lastrowid
+        db.close()
+
+        logger.info(f"Created routine: {data['name']} (ID: {routine_id})")
+        return jsonify({"id": routine_id, "message": "Routine created"}), 201
+    except pymysql.Error as e:
+        logger.error(f"Error creating routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>", methods=["PUT"])
+def update_routine(routine_id):
+    """Update an existing routine."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+
+        updates = []
+        values = []
+        if "name" in data:
+            updates.append("name = %s")
+            values.append(data["name"])
+        if "time" in data:
+            updates.append("time = %s")
+            values.append(normalize_time(data["time"]))
+        if "enabled" in data:
+            updates.append("enabled = %s")
+            values.append(data["enabled"])
+        if "recurrence" in data:
+            updates.append("recurrence = %s")
+            values.append(data["recurrence"])
+        if "actions" in data:
+            updates.append("actions = %s")
+            values.append(orjson.dumps(data["actions"]).decode("utf-8"))
+
+        if not updates:
+            db.close()
+            return jsonify({"error": "No valid fields to update"}), 400
+
+        values.append(routine_id)
+        query = f"UPDATE routines SET {', '.join(updates)} WHERE id = %s"
+        cursor.execute(query, values)
+        db.commit()
+        db.close()
+
+        logger.info(f"Updated routine ID: {routine_id}")
+        return jsonify({"message": "Routine updated"}), 200
+    except pymysql.Error as e:
+        logger.error(f"Error updating routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>", methods=["DELETE"])
+def delete_routine(routine_id):
+    """Delete a routine."""
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("DELETE FROM routines WHERE id = %s", (routine_id,))
+        db.commit()
+        db.close()
+
+        logger.info(f"Deleted routine ID: {routine_id}")
+        return jsonify({"message": "Routine deleted"}), 200
+    except pymysql.Error as e:
+        logger.error(f"Error deleting routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/routines/<int:routine_id>/run", methods=["POST"])
+def run_routine(routine_id):
+    """Manually trigger a routine to run now."""
+    try:
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        cursor.execute(
+            "SELECT r.*, e.name as env_name FROM routines r "
+            "JOIN environment e ON r.environment_id = e.id WHERE r.id = %s",
+            (routine_id,),
+        )
+        routine = cursor.fetchone()
+
+        if not routine:
+            db.close()
+            return jsonify({"error": "Routine not found"}), 404
+
+        if routine.get("actions"):
+            actions = orjson.loads(routine["actions"])
+        else:
+            actions = []
+
+        cursor.execute("UPDATE routines SET last_run = NOW() WHERE id = %s", (routine_id,))
+        db.commit()
+        db.close()
+
+        kafka_producer = get_producer()
+        if not kafka_producer:
+            return jsonify({"error": "Kafka not available"}), 500
+
+        for action in actions:
+            action_type = action.get("type")
+            action_params = action.get("params", {})
+
+            if action_type == "speak":
+                message = {"text": action_params.get("text", ""), "engine": "Coqui"}
+                kafka_producer.send("speak", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent speak action")
+
+            elif action_type == "device":
+                device_id = action_params.get("device_id")
+                device_action = action_params.get("action", "on")
+                message = {"device_id": device_id, "action": device_action}
+                kafka_producer.send("device", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent device action")
+
+            elif action_type == "email":
+                message = {
+                    "type": "email",
+                    "to": action_params.get("to", ""),
+                    "subject": action_params.get("subject", ""),
+                    "body": action_params.get("body", ""),
+                }
+                kafka_producer.send("user", message)
+                kafka_producer.flush()
+                logger.info(f"Routine {routine_id}: Sent email action")
+
+        return jsonify({"message": "Routine executed", "actions_run": len(actions)}), 200
+    except Exception as e:
+        logger.error(f"Error running routine: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============== PERSONALITY ==============
+
+
+def get_environment_id():
+    """Get environment ID for current environment."""
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        row = cursor.fetchone()
+        db.close()
+        return row[0] if row else 1
+    except Exception:
+        return 1
+
+
+@app.route("/api/personality", methods=["GET"])
+def get_personality():
+    """Get current personality settings."""
+    try:
+        env_id = get_environment_id()
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM personality WHERE type = 'current' AND "
+            "(environment_id = %s OR environment_id IS NULL) "
+            "ORDER BY environment_id DESC LIMIT 1",
+            (env_id,),
+        )
+        row = cursor.fetchone()
+        db.close()
+        if row:
+            return jsonify(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "sarcasm": float(row["sarcasm"]),
+                    "formality": float(row["formality"]),
+                    "warmth": float(row["warmth"]),
+                    "patience": float(row["patience"]),
+                    "linguistic_style": row["linguistic_style"] or "",
+                    "forbidden_words": row["forbidden_words"] or "",
+                    "verbal_tics": row["verbal_tics"] or "",
+                }
+            )
+        return jsonify({"error": "Personality not found"}), 404
+    except pymysql.Error as e:
+        logger.error(f"Error fetching personality: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality", methods=["PUT"])
+def update_personality():
+    """Update current personality settings."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        env_id = get_environment_id()
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE personality SET "
+            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+            "name = %s WHERE type = 'current' AND environment_id = %s",
+            (
+                data.get("sarcasm", 0.5),
+                data.get("formality", 0.5),
+                data.get("warmth", 0.5),
+                data.get("patience", 1.0),
+                data.get("linguistic_style", ""),
+                data.get("forbidden_words", ""),
+                data.get("verbal_tics", ""),
+                data.get("name", "Custom"),
+                env_id,
+            ),
+        )
+        db.commit()
+        db.close()
+        return jsonify({"message": "Personality updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating personality: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/presets", methods=["GET"])
+def get_personality_presets():
+    """Get all personality presets."""
+    try:
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
+        rows = cursor.fetchall()
+        db.close()
+        presets = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "sarcasm": float(row["sarcasm"]),
+                "formality": float(row["formality"]),
+                "warmth": float(row["warmth"]),
+                "patience": float(row["patience"]),
+                "linguistic_style": row["linguistic_style"] or "",
+                "forbidden_words": row["forbidden_words"] or "",
+                "verbal_tics": row["verbal_tics"] or "",
+            }
+            for row in rows
+        ]
+        return jsonify(presets)
+    except pymysql.Error as e:
+        logger.error(f"Error fetching presets: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/apply-preset", methods=["POST"])
+def apply_personality_preset():
+    """Apply a personality preset."""
+    data = request.get_json()
+    if not data or "preset" not in data:
+        return jsonify({"error": "Missing preset name"}), 400
+    try:
+        env_id = get_environment_id()
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM personality WHERE type = 'preset' AND name = %s",
+            (data["preset"],),
+        )
+        preset = cursor.fetchone()
+        if not preset:
+            db.close()
+            return jsonify({"error": "Preset not found"}), 404
+
+        cursor.execute(
+            "UPDATE personality SET "
+            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+            "name = %s WHERE type = 'current' AND environment_id = %s",
+            (
+                preset["sarcasm"],
+                preset["formality"],
+                preset["warmth"],
+                preset["patience"],
+                preset["linguistic_style"],
+                preset["forbidden_words"],
+                preset["verbal_tics"],
+                preset["name"],
+                env_id,
+            ),
+        )
+        db.commit()
+        db.close()
+        return jsonify({"message": f"Applied preset: {data['preset']}"})
+    except pymysql.Error as e:
+        logger.error(f"Error applying preset: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/context", methods=["GET"])
+def get_personality_context():
+    """Get current personality context (mood state)."""
+    try:
+        env_id = get_environment_id()
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            "SELECT * FROM context WHERE environment_id = %s LIMIT 1",
+            (env_id,),
+        )
+        row = cursor.fetchone()
+        db.close()
+        if row:
+            return jsonify(
+                {
+                    "repeat_count": row["repeat_count"],
+                    "hour": row["hour"],
+                    "weather": row["weather"] or "clear",
+                    "mood": row["mood"],
+                    "last_error_count": row["last_error_count"],
+                    "llm_calls_today": row["llm_calls_today"],
+                }
+            )
+        return jsonify({"error": "Context not found"}), 404
+    except pymysql.Error as e:
+        logger.error(f"Error fetching context: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/context", methods=["PUT"])
+def update_personality_context():
+    """Update personality context."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        env_id = get_environment_id()
+        db = get_connection()
+        cursor = db.cursor()
+        updates = []
+        values = []
+        allowed_fields = ["repeat_count", "hour", "weather", "mood", "last_error_count"]
+        for field in allowed_fields:
+            if field in data:
+                updates.append(f"{field} = %s")
+                values.append(data[field])
+        if updates:
+            values.append(env_id)
+            cursor.execute(
+                f"UPDATE context SET {', '.join(updates)} WHERE environment_id = %s",
+                values,
+            )
+            db.commit()
+        db.close()
+        return jsonify({"message": "Context updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating context: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/llm-config", methods=["GET"])
+def get_llm_config():
+    """Get LLM configuration."""
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
+        )
+        rows = cursor.fetchall()
+        db.close()
+        config = {row[0]: row[1] for row in rows}
+        return jsonify(
+            {
+                "api_key": config.get("llm_api_key", ""),
+                "usage_limit": int(config.get("llm_usage_limit", 10)),
+            }
+        )
+    except pymysql.Error as e:
+        logger.error(f"Error fetching LLM config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/personality/llm-config", methods=["PUT"])
+def update_llm_config():
+    """Update LLM configuration."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        if "api_key" in data:
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
+                (data["api_key"],),
+            )
+        if "usage_limit" in data:
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
+                (str(data["usage_limit"]),),
+            )
+        db.commit()
+        db.close()
+        return jsonify({"message": "LLM config updated"})
+    except pymysql.Error as e:
+        logger.error(f"Error updating LLM config: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y \
     docker.io \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY service_api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
-COPY tree_of_alfr3d.py .
+COPY service_api/app.py .
+COPY service_api/tree_of_alfr3d.py .
+COPY common/ ./common/
 
 EXPOSE 5001
 

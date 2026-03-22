@@ -35,7 +35,7 @@ import os  # used to allow execution of system level commands
 import sys
 from random import randint  # used for random number generator
 from datetime import datetime, timedelta, timezone
-import json
+import orjson
 import threading
 
 # Third party imports
@@ -44,10 +44,10 @@ import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
 from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 from kafka.errors import KafkaError
-from kafka import KafkaProducer, KafkaConsumer  # user to write messages to Kafka
+from kafka import KafkaConsumer  # user to write messages to Kafka
 
-# import my own utilities
-sys.path.append(os.path.join(os.path.join(os.getcwd(), os.path.dirname(__file__)), "../"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -68,8 +68,6 @@ OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")  # For destination w
 GAS_PRICE = float(os.environ.get("GAS_PRICE", "3.5"))  # Default gas price
 MPG = float(os.environ.get("MPG", "25"))  # Default MPG
 
-producer = None
-
 # time of sunset/sunrise - defaults
 # SUNSET_TIME = datetime.datetime.now().replace(hour=19, minute=0)
 # SUNRISE_TIME = datetime.datetime.now().replace(hour=6, minute=30)
@@ -89,17 +87,26 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def get_producer():
-    global producer
-    if producer is None:
-        try:
-            print("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-            logger.info("Connected to Kafka")
-        except KafkaError as e:
-            logger.error("Failed to connect to Kafka: " + str(e))
+def get_random_quip(quip_type: str) -> str:
+    """Get a random quip of given type using ID-based selection (avoids ORDER BY RAND())."""
+    import random
+
+    db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT MAX(id) FROM quips WHERE type = %s", (quip_type,))
+        max_id_result = cursor.fetchone()
+        if not max_id_result or not max_id_result[0]:
             return None
-    return producer
+        max_id = max_id_result[0]
+        random_id = random.randint(1, max_id)
+        cursor.execute(
+            "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1", (random_id, quip_type)
+        )
+        result = cursor.fetchone()
+        return result[0] if result else None
+    finally:
+        db.close()
 
 
 def consume_integrations() -> None:
@@ -117,12 +124,12 @@ def consume_integrations() -> None:
                     for message in messages:
                         logger.info("Polling for integration message")
                         try:
-                            data = json.loads(message.value.decode("utf-8"))
+                            data = orjson.loads(message.value)
                             if data.get("type") == "calendar" and data.get("action") == "sync":
                                 calendar_utils.sync_calendar()
                             elif data.get("type") == "gmail" and data.get("action") == "sync":
                                 gmail_utils.sync_gmail()
-                        except json.JSONDecodeError as e:
+                        except orjson.JSONDecodeError as e:
                             logger.error(f"Error processing integration message: {str(e)}")
     except KafkaError as e:
         logger.error(f"Error connecting to Kafka for integrations: {str(e)}")
@@ -153,18 +160,11 @@ class MyDaemon:
         if time.time() - QUIP_START_TIME > QUIP_WAIT_TIME * 60:
             logger.info("It is time to be a smartass")
 
-            # grab a quip from db
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            cursor = db.cursor()
-            cursor.execute("SELECT quips FROM quips WHERE type = 'smart' ORDER BY RAND() LIMIT 1")
-            quip = cursor.fetchone()
-            db.close()
+            quip = get_random_quip("smart")
 
             p = get_producer()
-            if p:
-                p.send("speak", quip[0].encode("utf-8"))
+            if p and quip:
+                p.send("speak", quip.encode("utf-8"))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)
@@ -314,6 +314,7 @@ class MyDaemon:
 
     def check_gatherings(self):
         """Check for gatherings (>3 guests/residents online)."""
+        db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
@@ -357,7 +358,6 @@ class MyDaemon:
                 desc, subj = desc_row if desc_row else (None, None)
                 weather_info = {"description": desc, "subjective_feel": subj}
 
-                # Use recommender to produce an actionable music suggestion
                 reco = spotify_utils.recommend(
                     total_people=total_count,
                     guest_count=guest_count,
@@ -378,18 +378,22 @@ class MyDaemon:
                         ),
                         "time": datetime.now(timezone.utc).isoformat(),
                     }
-                    p.send("event-stream", json.dumps(event).encode("utf-8"))
+                    p.send("event-stream", orjson.dumps(event))
 
-                # Keep existing spotify_utils hook for playlist lookup; pass playlist hint/mood
                 playlist = spotify_utils.get_playlist_suggestion(
                     reco.get("playlist_hint", reco.get("mood", ""))
                 )
                 content = f"Play {playlist} ({reco['genre']}, energy={reco['energy']})"
                 return {"mode": "music", "content": content, "priority": 3}
-            db.close()
+            return None
         except pymysql.Error as e:
             logger.error("Gathering check error: " + str(e))
-        return None
+            if db:
+                db.rollback()
+            return None
+        finally:
+            if db:
+                db.close()
 
     def check_weather(self):
         """Default: concise weather summary."""
@@ -423,7 +427,7 @@ class MyDaemon:
         logger.info("Time for localnet scan")
         p = get_producer()
         if p:
-            p.send("device", b"scan net")
+            p.send("device", orjson.dumps({"action": "scan_net"}))
 
     def check_routines(self):
         logger.info("Routine check")
@@ -451,7 +455,7 @@ class MyDaemon:
         """Publish array of SA cards to Kafka topic."""
         p = get_producer()
         if p:
-            p.send("situational-awareness", json.dumps(data).encode("utf-8"))
+            p.send("situational-awareness", orjson.dumps(data))
             logger.info("Published situational awareness: " + str(data))
 
 
@@ -473,6 +477,18 @@ def check_weather_routine():
     p = get_producer()
     if p:
         p.send("environment", b"check weather")
+
+
+def sync_iot_devices():
+    """
+    Description:
+            Send IoT sync messages to the device topic every 15 minutes.
+    """
+    logger.info("Scheduled IoT device sync")
+    p = get_producer()
+    if p:
+        p.send("device", orjson.dumps({"action": "iot_ha_sync"}))
+        p.send("device", orjson.dumps({"action": "iot_st_sync"}))
 
 
 def init_daemon():
@@ -515,7 +531,7 @@ def init_daemon():
                 "message": "Set up scheduled routines",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.send("event-stream", orjson.dumps(event))
         # utilities.createRoutines()
         reset_routines()
 
@@ -523,6 +539,7 @@ def init_daemon():
         # until i deploy a more configurable alarm clock
         schedule.every().day.at("00:05").do(reset_routines)
         schedule.every(4).hours.do(check_weather_routine)
+        schedule.every(15).minutes.do(sync_iot_devices)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
@@ -543,7 +560,7 @@ def init_daemon():
                 "message": f"System check finished with {faults} faults",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.send("event-stream", orjson.dumps(event))
 
         # producer.send("speak", b"Total number of faults is "+str(faults))
 
@@ -558,7 +575,7 @@ def init_daemon():
                 "message": "System check finished",
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            p.send("event-stream", json.dumps(event).encode("utf-8"))
+            p.send("event-stream", orjson.dumps(event))
 
     return
 
