@@ -2,7 +2,6 @@
 
 import sys
 import os
-import json
 from unittest.mock import patch, MagicMock
 
 # Add the service directory to path
@@ -140,5 +139,5 @@ def test_environment_service_frontend_integration(mock_connect, frontend_client)
     response = frontend_client.get("/api/users")
     assert response.status_code == 200
 
-    data = json.loads(response.data)
+    data = response.json()
     assert isinstance(data, list)

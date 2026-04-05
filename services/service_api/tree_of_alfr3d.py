@@ -1,11 +1,10 @@
-"""Project tree visualization blueprint for ALFR3D."""
+"""Project tree visualization router for ALFR3D using FastAPI."""
 
 import os
 import fnmatch
-import threading
-from flask import Blueprint, jsonify, current_app
-
-_shutdown_event = threading.Event()
+import asyncio
+from typing import Optional, Any
+from fastapi import APIRouter
 
 EXCLUDED_PATTERNS = [
     "__pycache__",
@@ -28,10 +27,18 @@ EXCLUDED_PATTERNS = [
 SCAN_ROOT = "/project"
 
 _cached_tree = None
-_last_mtime = None
+_last_mtime: Optional[float] = None
+_manager = None
+
+project_tree_router = APIRouter(prefix="/api", tags=["project-tree"])
 
 
-def should_exclude(name, path):
+def set_manager(manager: Any):
+    global _manager
+    _manager = manager
+
+
+def should_exclude(name: str, path: str) -> bool:
     for pattern in EXCLUDED_PATTERNS:
         if fnmatch.fnmatch(name, pattern):
             return True
@@ -40,7 +47,7 @@ def should_exclude(name, path):
     return False
 
 
-def scan_directory(path, root_name=None):
+def scan_directory(path: str, root_name: Optional[str] = None) -> dict:
     if root_name is None:
         root_name = os.path.basename(path)
 
@@ -74,7 +81,7 @@ def scan_directory(path, root_name=None):
     return node
 
 
-def get_project_tree():
+def get_project_tree() -> dict:
     global _cached_tree, _last_mtime
 
     if _cached_tree is None:
@@ -95,29 +102,29 @@ def get_project_tree():
     return _cached_tree
 
 
-PROJECT_TREE_BLUEPRINT = Blueprint("project_tree", __name__)
-
-
-@PROJECT_TREE_BLUEPRINT.route("/api/project-tree")
-def get_project_tree_endpoint():
+@project_tree_router.get("/project-tree")
+async def get_project_tree_endpoint():
+    """Get the current project tree structure."""
     tree = get_project_tree()
-    return jsonify(tree)
+    return tree
 
 
-def start_file_watcher(socketio, interval=10):
+async def start_file_watcher_task(interval: int = 10):
+    """Background task to watch for file changes and broadcast updates."""
     global _last_mtime
-    _last_mtime = os.path.getmtime(SCAN_ROOT)
+    try:
+        _last_mtime = os.path.getmtime(SCAN_ROOT)
+    except OSError:
+        return
 
-    while not _shutdown_event.is_set():
-        _shutdown_event.wait(timeout=interval)
-        if _shutdown_event.is_set():
-            break
+    while True:
+        await asyncio.sleep(interval)
         try:
             current_mtime = os.path.getmtime(SCAN_ROOT)
             if current_mtime > _last_mtime:
                 _last_mtime = current_mtime
                 tree = get_project_tree()
-                socketio.emit("project_tree", tree)
-                current_app.logger.info("Project tree updated and broadcasted")
-        except OSError as e:
-            current_app.logger.warning(f"Error checking file changes: {e}")
+                if _manager:
+                    await _manager.broadcast("project_tree", tree)
+        except OSError:
+            pass
