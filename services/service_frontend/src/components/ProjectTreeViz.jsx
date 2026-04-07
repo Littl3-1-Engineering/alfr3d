@@ -31,8 +31,8 @@ const ProjectTreeViz = () => {
     if (!treeData || !svgRef.current || !containerRef.current) return;
 
     const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = container.clientWidth || 400;
+    const height = container.clientHeight || 300;
 
     d3.select(svgRef.current).selectAll('*').remove();
 
@@ -137,9 +137,11 @@ const ProjectTreeViz = () => {
       .attr('fill', d => d.data.children && d.data.children.length > 0 ? '#888888' : '#555555')
       .attr('font-size', '9px')
       .attr('font-family', 'Orbitron, monospace')
-      .style('pointer-events', 'none');
+      .style('pointer-events', 'none')
+      .style('opacity', 0);
 
     node.on('mouseenter', (event, d) => {
+      d3.select(event.currentTarget).select('text').style('opacity', 1);
       const rect = container.getBoundingClientRect();
       setTooltip({
         show: true,
@@ -149,7 +151,8 @@ const ProjectTreeViz = () => {
       });
     });
 
-    node.on('mouseleave', () => {
+    node.on('mouseleave', (event, d) => {
+      d3.select(event.currentTarget).select('text').style('opacity', 0);
       setTooltip({ show: false, x: 0, y: 0, content: '' });
     });
 
@@ -210,9 +213,11 @@ const ProjectTreeViz = () => {
         .attr('fill', d => d.data.children && d.data.children.length > 0 ? '#888888' : '#555555')
         .attr('font-size', '9px')
         .attr('font-family', 'Orbitron, monospace')
-        .style('pointer-events', 'none');
+        .style('pointer-events', 'none')
+        .style('opacity', 0);
 
       nodeEnter.on('mouseenter', (event, d) => {
+        d3.select(event.currentTarget).select('text').style('opacity', 1);
         const rect = container.getBoundingClientRect();
         setTooltip({
           show: true,
@@ -222,7 +227,8 @@ const ProjectTreeViz = () => {
         });
       });
 
-      nodeEnter.on('mouseleave', () => {
+      nodeEnter.on('mouseleave', (event, d) => {
+        d3.select(event.currentTarget).select('text').style('opacity', 0);
         setTooltip({ show: false, x: 0, y: 0, content: '' });
       });
 

@@ -351,6 +351,30 @@ The ALFR3D dashboard provides real-time monitoring and control:
   - `GET /dashboard`: Real-time monitoring dashboard
   - `GET /control`: Management interface
 
+## Docker Deployment
+
+### Build and Start Services
+
+1. **Build all service images**:
+   ```bash
+   ./setup/build_images.sh
+   ```
+
+2. **Start all services**:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Access the application**:
+   - Direct: `http://localhost:8000`
+   - Via nginx: `http://localhost`
+
+### Stop Services
+
+```bash
+docker-compose down
+```
+
 ## Kubernetes Deployment
 
 The project includes complete Kubernetes manifests for production deployment with Minikube support.
@@ -372,12 +396,18 @@ The project includes complete Kubernetes manifests for production deployment wit
    ```bash
    # Build all service images
    eval $(minikube docker-env)
-    docker build -t alfr3d/service-frontend:latest services/service_frontend
-    docker build -t alfr3d/service-api:latest services/service_api
-    docker build -t alfr3d/service-daemon:latest services/service_daemon
-    docker build -t alfr3d/service-device:latest services/service_device
-    docker build -t alfr3d/service-environment:latest services/service_environment
-    docker build -t alfr3d/service-user:latest services/service_user
+   docker build -t alfr3d/service-frontend:latest -f services/service_frontend/Dockerfile services/service_frontend
+   docker build -t alfr3d/service-api:latest -f services/service_api/Dockerfile services
+   docker build -t alfr3d/service-daemon:latest -f services/service_daemon/Dockerfile services
+   docker build -t alfr3d/service-device:latest -f services/service_device/Dockerfile services
+   docker build -t alfr3d/service-environment:latest -f services/service_environment/Dockerfile services
+   docker build -t alfr3d/service-user:latest -f services/service_user/Dockerfile services
+   docker build -t alfr3d/service-speak:latest -f services/service_speak/Dockerfile services
+   ```
+
+   Or use the provided script:
+   ```bash
+   ./setup/build_images.sh
    ```
 
 3. **Deploy to Kubernetes**:
