@@ -22,6 +22,9 @@ EXCLUDED_PATTERNS = [
     "node_modules",
     "dist",
     "backup",
+    ".opencode",
+    ".osgrep",
+    ".ruff_cache",
 ]
 
 SCAN_ROOT = "/project"
@@ -39,6 +42,8 @@ def set_manager(manager: Any):
 
 
 def should_exclude(name: str, path: str) -> bool:
+    if name.startswith("."):
+        return True
     for pattern in EXCLUDED_PATTERNS:
         if fnmatch.fnmatch(name, pattern):
             return True

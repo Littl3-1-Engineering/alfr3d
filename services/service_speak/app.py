@@ -3,6 +3,7 @@
 Speak Service for ALFR3D - Text-to-Speech using Google Cloud TTS
 Consumes messages from 'speak' Kafka topic, generates audio, and notifies frontend
 """
+
 # Standard libraries
 import os
 import sys
@@ -28,6 +29,7 @@ from personality import (  # noqa: E402
     build_llm_system_prompt,
     get_quips_for_environment,
     select_quip_by_traits,
+    track_speak_text,
 )
 from llm_client import call_claude_haiku, get_claude_config, check_usage_limit  # noqa: E402
 
@@ -227,7 +229,10 @@ def send_personality_state(personality, llm_used=False):
         }
         try:
             p.send("personality", state)
-            p.send("event-stream", {"id": state["id"], "type": "personality_state", **state})
+            p.send(
+                "event-stream",
+                {"id": state["id"], "type": "personality_state", **state},
+            )
             p.flush()
             logger.info(f"Sent personality state: {state['mood']}")
         except Exception as e:
@@ -274,14 +279,20 @@ def generate_tts(
                         # Use specified voice file for cloning
                         logger.info(f"Using voice cloning with speaker_wav: {speaker_wav}")
                         tts_instance.tts_to_file(
-                            text=text, file_path=filepath, speaker_wav=speaker_wav, language="en"
+                            text=text,
+                            file_path=filepath,
+                            speaker_wav=speaker_wav,
+                            language="en",
                         )
                     else:
                         # Use specified speaker or default to Claribel Dervla
                         speaker_to_use = speaker if speaker else "Claribel Dervla"
                         logger.info(f"Using speaker: {speaker_to_use}")
                         tts_instance.tts_to_file(
-                            text=text, file_path=filepath, speaker=speaker_to_use, language="en"
+                            text=text,
+                            file_path=filepath,
+                            speaker=speaker_to_use,
+                            language="en",
                         )
                 elif "vits" in model and speaker:
                     # VITS models support speaker_idx for multi-speaker models
@@ -352,6 +363,8 @@ def process_speak_message(message):
         if check_mute():
             logger.info("Alfr3d is muted, discarding speak request")
             return
+
+        track_speak_text(text)
 
         llm_used = False
         if not skip_personality:
@@ -448,10 +461,53 @@ def cleanup_old_audio():
         logger.error(f"Audio cleanup failed: {str(e)}")
 
 
+def reset_inactive_repeat_count():
+    """Reset repeat_count for contexts with stale last_spoke_time (>5 minutes)"""
+    from personality import get_environment_id
+
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE context SET repeat_count = 0 "
+            "WHERE environment_id = %s AND last_spoke_time < DATE_SUB(NOW(), INTERVAL 5 MINUTE)",
+            (env_id,),
+        )
+        db.commit()
+        if cursor.rowcount > 0:
+            logger.info("Reset repeat_count for inactive context")
+        db.close()
+    except Exception as e:
+        logger.error(f"Reset inactive repeat count failed: {str(e)}")
+
+
+def reset_daily_llm_calls():
+    """Reset LLM calls counter at midnight"""
+    from personality import get_environment_id
+
+    try:
+        env_id = get_environment_id()
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE context SET llm_calls_today = 0 WHERE environment_id = %s",
+            (env_id,),
+        )
+        db.commit()
+        if cursor.rowcount > 0:
+            logger.info("Reset daily LLM call counter")
+        db.close()
+    except Exception as e:
+        logger.error(f"Reset daily LLM calls failed: {str(e)}")
+
+
 def main():
     logger.info("Starting Speak Service")
 
     schedule.every(1).minutes.do(cleanup_old_audio)
+    schedule.every(1).minutes.do(reset_inactive_repeat_count)
+    schedule.every(1).day.do(reset_daily_llm_calls)
 
     shutdown_event = threading.Event()
 
