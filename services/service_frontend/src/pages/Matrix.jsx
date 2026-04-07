@@ -1,16 +1,22 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
-import { Mail, Calendar } from 'lucide-react';
-import Routines from '../components/Routines';
-import Personality from '../components/Personality';
-import Integrations from '../components/Integrations';
-import System from '../components/System';
+import { useState, lazy, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 import TacticalPanel from '../components/TacticalPanel';
-import { API_BASE_URL } from '../config';
+
+const Routines = lazy(() => import('../components/Routines'));
+const Personality = lazy(() => import('../components/Personality'));
+const Integrations = lazy(() => import('../components/Integrations'));
+const System = lazy(() => import('../components/System'));
+
+const LoadingFallback = () => (
+  <div className="flex items-center justify-center h-64">
+    <Loader2 className="w-8 h-8 text-fui-accent animate-spin" />
+    <span className="ml-3 text-text-tertiary">Loading...</span>
+  </div>
+);
 
 const Matrix = () => {
   const [activeTab, setActiveTab] = useState('routines');
-  const [integrationStatus, setIntegrationStatus] = useState({ gmail: false, calendar: false });
 
   const tabs = [
     { id: 'routines', label: 'Routines', component: Routines },
@@ -20,21 +26,6 @@ const Matrix = () => {
   ];
 
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component;
-
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/integrations/status`);
-        if (response.ok) {
-          const status = await response.json();
-          setIntegrationStatus(status);
-        }
-      } catch (error) {
-        console.error('Error fetching integration status:', error);
-      }
-    };
-    fetchStatus();
-  }, []);
 
   return (
     <motion.div
@@ -56,33 +47,6 @@ const Matrix = () => {
         >
           ALFR3D Matrix
         </motion.h1>
-
-        {/* Integration Status */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4, duration: 0.5 }}
-          className="flex justify-center space-x-6 mb-8"
-        >
-          <div className="flex items-center space-x-2 bg-fui-panel border border-fui-border rounded-none px-4 py-2">
-            <Mail className="w-5 h-5 text-fui-accent" />
-            <span className="text-sm font-mono text-fui-text">[ GMAIL ]</span>
-            {integrationStatus.gmail ? (
-              <span className="text-fui-accent font-mono text-xs">[ ONLINE ]</span>
-            ) : (
-              <span className="text-error font-mono text-xs">[ OFFLINE ]</span>
-            )}
-          </div>
-          <div className="flex items-center space-x-2 bg-fui-panel border border-fui-border rounded-none px-4 py-2">
-            <Calendar className="w-5 h-5 text-fui-accent" />
-            <span className="text-sm font-mono text-fui-text">[ CALENDAR ]</span>
-            {integrationStatus.calendar ? (
-              <span className="text-fui-accent font-mono text-xs">[ ONLINE ]</span>
-            ) : (
-              <span className="text-error font-mono text-xs">[ OFFLINE ]</span>
-            )}
-          </div>
-        </motion.div>
 
         <div className="flex">
           {/* Vertical Tabs */}
@@ -118,7 +82,9 @@ const Matrix = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                {ActiveComponent && <ActiveComponent />}
+                <Suspense fallback={<LoadingFallback />}>
+                  {ActiveComponent && <ActiveComponent />}
+                </Suspense>
               </motion.div>
             </TacticalPanel>
           </div>

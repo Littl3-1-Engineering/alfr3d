@@ -1,10 +1,20 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useEffect } from 'react'; // <--- 1. IMPORT useEffect
-import Nexus from './pages/Nexus';
-import Domain from './pages/Domain';
-import Matrix from './pages/Matrix';
+import { useEffect, lazy, Suspense } from 'react';
 import AudioPlayer from './components/AudioPlayer';
+
+const Nexus = lazy(() => import('./pages/Nexus'));
+const Domain = lazy(() => import('./pages/Domain'));
+const Matrix = lazy(() => import('./pages/Matrix'));
+
+const PageLoader = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="text-center">
+      <div className="w-12 h-12 border-4 border-fui-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+      <p className="text-fui-text font-mono text-sm">[ LOADING... ]</p>
+    </div>
+  </div>
+);
 
 function App() {
 
@@ -37,13 +47,15 @@ function App() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 1 }}
-          className="relative z-10 pt-16" // Add padding-top to account for fixed navbar
+          className="relative z-10 pt-16"
         >
-          <Routes>
-            <Route path="/" element={<Nexus />} />
-            <Route path="/domain" element={<Domain />} />
-            <Route path="/matrix" element={<Matrix />} />
-          </Routes>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Nexus />} />
+              <Route path="/domain" element={<Domain />} />
+              <Route path="/matrix" element={<Matrix />} />
+            </Routes>
+          </Suspense>
         </motion.div>
       </div>
     </Router>
