@@ -1,5 +1,11 @@
 # Personality Matrix Implementation Plan
 
+## Status: ✅ COMPLETE
+
+All phases implemented including context tracking for repeat detection.
+
+---
+
 ## Overview
 
 The personality matrix adds dynamic, configurable personalities to ALFR3D with:
@@ -232,6 +238,51 @@ User request: {user_text}
 4. **Service speak**: Modify app.py flow
 5. **Frontend**: Add Matrix → Personality panel
 6. **Test**: End-to-end personality changes
+
+---
+
+## Context Tracking Implementation
+
+### Database Updates
+- Migration: `migration_005_personality_context.sql`
+- Added columns:
+  - `last_text` VARCHAR(512) - Stores last spoken text
+  - `last_spoke_time` TIMESTAMP - When last speak occurred
+- Added index on `last_spoke_time` for efficient staleness checks
+
+### New Functions in personality.py
+
+#### `track_speak_text(text, env_id=None)`
+- Compares incoming text with `last_text` (normalized, first 100 chars)
+- If same: increments `repeat_count`
+- If different: resets `repeat_count` to 0
+- Updates `last_text` and `last_spoke_time` after each speak
+
+### Scheduled Jobs in app.py
+
+#### `reset_inactive_repeat_count()`
+- Runs every minute
+- Resets `repeat_count` to 0 if no speak for >5 minutes
+
+#### `reset_daily_llm_calls()`
+- Runs daily at midnight
+- Resets `llm_calls_today` to 0
+
+### Flow Diagram
+```
+1. Speak message received
+2. track_speak_text(text) called
+3. Compare with last_text (normalized)
+   - Same text → repeat_count += 1
+   - Different → repeat_count = 0
+4. get_blended_personality() loads context
+5. calculate_mood_offset() applies:
+   - repeat_count > 2 → sarcasm +0.4, patience -0.5
+6. determine_mood() sets mood:
+   - repeat_count > 3 → "exasperated"
+7. LLM or quip selection uses blended personality
+8. send_personality_state() broadcasts mood to frontend
+```
 
 ---
 

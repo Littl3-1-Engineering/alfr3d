@@ -200,6 +200,8 @@ def get_context_by_environment(env_id=None):
                 "mood": result["mood"],
                 "last_error_count": result["last_error_count"],
                 "llm_calls_today": result["llm_calls_today"],
+                "last_text": result["last_text"] or "",
+                "last_spoke_time": result["last_spoke_time"],
             }
         return get_default_context()
     except pymysql.Error as e:
@@ -218,7 +220,58 @@ def get_default_context():
         "mood": "neutral",
         "last_error_count": 0,
         "llm_calls_today": 0,
+        "last_text": "",
+        "last_spoke_time": None,
     }
+
+
+def track_speak_text(text, env_id=None):
+    """Track last spoken text and handle repeat detection"""
+    if env_id is None:
+        env_id = get_environment_id()
+
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        cursor.execute(
+            "SELECT last_text, last_spoke_time FROM context WHERE environment_id = %s LIMIT 1",
+            (env_id,),
+        )
+        result = cursor.fetchone()
+
+        repeat_increment = 0
+        if result and result[0]:
+            last_text = result[0]
+
+            normalized_new = text.strip().lower()[:100]
+            normalized_last = last_text.strip().lower()[:100]
+
+            if normalized_new == normalized_last:
+                repeat_increment = 1
+            else:
+                repeat_increment = -1
+
+        if repeat_increment != 0:
+            set_clause = "repeat_count = GREATEST(0, repeat_count + %s), "
+        else:
+            set_clause = ""
+
+        cursor.execute(
+            f"UPDATE context SET {set_clause}"
+            f"last_text = %s, last_spoke_time = NOW() WHERE environment_id = %s",
+            (
+                (repeat_increment, text[:512], env_id)
+                if repeat_increment != 0
+                else (text[:512], env_id)
+            ),
+        )
+        db.commit()
+
+    except pymysql.Error as e:
+        logger.error(f"Database error tracking speak text: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 def update_context(env_id=None, **kwargs):
@@ -363,11 +416,11 @@ def build_llm_system_prompt(personality):
 
 Current Personality State:
 - Style: {linguistic_style}
-- Sarcasm: {blended.get('sarcasm', 0.5):.1f}/1.0
-- Formality: {blended.get('formality', 0.5):.1f}/1.0
-- Warmth: {blended.get('warmth', 0.5):.1f}/1.0
-- Patience: {blended.get('patience', 1.0):.1f}/1.0
-- Mood: {personality.get('mood', 'neutral')}
+- Sarcasm: {blended.get("sarcasm", 0.5):.1f}/1.0
+- Formality: {blended.get("formality", 0.5):.1f}/1.0
+- Warmth: {blended.get("warmth", 0.5):.1f}/1.0
+- Patience: {blended.get("patience", 1.0):.1f}/1.0
+- Mood: {personality.get("mood", "neutral")}
 
 Voice Constraints:
 {tics_instruction}
