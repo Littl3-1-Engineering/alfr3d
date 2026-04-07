@@ -7,7 +7,6 @@ import pymysql
 from confluent_kafka import Consumer
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 
@@ -97,17 +96,18 @@ def mysql_config(mysql_service, docker_ip):
 
 @pytest.fixture(scope="session")
 def frontend_app():
-    """Flask app fixture for frontend tests."""
+    """FastAPI app fixture for frontend tests."""
     from services.service_frontend.app import app
 
-    app.config["TESTING"] = True
     return app
 
 
 @pytest.fixture(scope="session")
 def frontend_client(frontend_app):
-    """Flask test client for frontend tests."""
-    return frontend_app.test_client()
+    """FastAPI TestClient for frontend tests."""
+    from fastapi.testclient import TestClient
+
+    return TestClient(frontend_app)
 
 
 @pytest.fixture(scope="session")
@@ -116,10 +116,8 @@ def apply_database_schema(mysql_config):
     conn = pymysql.connect(**mysql_config)
     cursor = conn.cursor()
 
-    # Read and execute schema SQL
     with open("setup/createTables.sql", "r") as f:
         sql = f.read()
-    # Split by semicolon and execute each statement
     statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
     for stmt in statements:
         if stmt:

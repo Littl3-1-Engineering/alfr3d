@@ -17,3 +17,4 @@ backup/
 alfr3d.wiki/
 k8s/configmap.yaml
 secrets/*
+.osgrep

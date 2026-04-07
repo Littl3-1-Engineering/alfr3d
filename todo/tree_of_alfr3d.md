@@ -62,10 +62,12 @@ Animated D3.js force-directed tree visualization of the ALFR3D project structure
 ### High Priority
 - [x] **Increase panel size significantly** - Current 300px height is too small; expand to fill more of the screen
 - [x] **Style panel consistently** - Match TacticalPanelVariant styling (corner markers, header bar, borders, colors, background)
+- [x] **Exclude hidden files/folders** - Ignore `.git`, `.opencode`, `.osgrep`, `.pytest_cache`, `.ruff_cache`, `.venv`, and any `.` prefix files
 
 ### Medium Priority
-- [ ] Add search/filter functionality to find files quickly
+- [x] Add search/filter functionality to find files quickly
 - [x] Add zoom controls (zoom in/out/reset buttons)
+- [x] Hide filenames by default, show on hover
 - [ ] Optimize for large directories (virtualization or level limits)
 
 ---
