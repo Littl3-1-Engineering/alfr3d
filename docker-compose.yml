@@ -48,7 +48,7 @@ services:
     build:
       context: ./services
       dockerfile: ./service_user/Dockerfile
-    # Depends on Kafka for messaging and MySQL for user data
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -63,18 +63,16 @@ services:
     build:
       context: ./services
       dockerfile: ./service_api/Dockerfile
-    # Depends on MySQL for database operations and Kafka for messaging
+    user: "1000:1000"
     depends_on:
       mysql:
         condition: service_started
       kafka:
         condition: service_healthy
-    # Mounts Docker socket to allow container management and shared audio volume
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - audio_data:/tmp/audio
       - .:/project:ro
-    # Privileged mode grants elevated permissions for Docker operations
     privileged: true
     env_file: .env
     environment:
@@ -89,14 +87,8 @@ services:
     build:
       context: ./services
       dockerfile: ./service_device/Dockerfile
-    # Depends on Kafka for event streaming and MySQL for data storage
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mysql:
-        condition: service_started
-    # Host network mode enables ARP scanning and direct host access
-    network_mode: host # To allow arp-scan on host network
+    # Host network mode and root required for ARP scanning
+    network_mode: host
     env_file: .env
     environment:
       - MYSQL_DATABASE=localhost
@@ -107,7 +99,7 @@ services:
     build:
       context: ./services
       dockerfile: ./service_environment/Dockerfile
-    # Depends on Kafka for event  blishing and MySQL for data persistence
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -122,7 +114,7 @@ services:
     build:
       context: ./services
       dockerfile: ./service_speak/Dockerfile
-    # Depends on Kafka for message consumption
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -137,13 +129,12 @@ services:
     build:
       context: ./services
       dockerfile: ./service_daemon/Dockerfile
-    # Depends on Kafka for inter-service communication and MySQL for state storage
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
-    # Host network mode for internet access (required for OAuth token refresh)
     network_mode: host
     env_file: .env
     environment:
@@ -156,6 +147,7 @@ services:
       context: ./services/service_frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    user: "1001:1001"
     env_file: .env
     expose:
       - "8000"
