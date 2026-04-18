@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim
+FROM python:3.11.9-slim
 
 # Install arp-scan and iproute2
 RUN apt-get update && apt-get install -y arp-scan iproute2 && rm -rf /var/lib/apt/lists/*
