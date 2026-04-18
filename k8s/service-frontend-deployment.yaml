@@ -14,7 +14,7 @@ spec:
     spec:
        containers:
        - name: service-frontend
-         image: alfr3d/service-frontend:latest
+         image: alfr3d/service-frontend:v0.1.5
          imagePullPolicy: Never
          envFrom:
          - configMapRef:
