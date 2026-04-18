@@ -1,40 +1,39 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
-import { Mail, Calendar } from 'lucide-react';
-import Routines from '../components/Routines';
-import Personality from '../components/Personality';
-import Integrations from '../components/Integrations';
-import System from '../components/System';
+import { useState, lazy, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 import TacticalPanel from '../components/TacticalPanel';
-import { API_BASE_URL } from '../config';
+import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
+import TacticalPanelVariant2 from '../components/TacticalPanelVariant2';
+import TacticalPanelVariant3 from '../components/TacticalPanelVariant3';
+import TacticalPanelVariant4 from '../components/TacticalPanelVariant4';
+import TacticalPanelVariant5 from '../components/TacticalPanelVariant5';
+import TacticalPanelVariant6 from '../components/TacticalPanelVariant6';
+import TacticalPanelVariant7 from '../components/TacticalPanelVariant7';
+
+const Routines = lazy(() => import('../components/Routines'));
+const Personality = lazy(() => import('../components/Personality'));
+const Integrations = lazy(() => import('../components/Integrations'));
+const System = lazy(() => import('../components/System'));
+
+const LoadingFallback = () => (
+  <div className="flex items-center justify-center h-64">
+    <Loader2 className="w-8 h-8 text-fui-accent animate-spin" />
+    <span className="ml-3 text-text-tertiary">Loading...</span>
+  </div>
+);
 
 const Matrix = () => {
   const [activeTab, setActiveTab] = useState('routines');
-  const [integrationStatus, setIntegrationStatus] = useState({ gmail: false, calendar: false });
 
   const tabs = [
     { id: 'routines', label: 'Routines', component: Routines },
     { id: 'personality', label: 'Personality', component: Personality },
     { id: 'integrations', label: 'Integrations', component: Integrations },
+    { id: 'customizations', label: 'Customizations', component: null },
     { id: 'system', label: 'System', component: System },
   ];
 
   const ActiveComponent = tabs.find(tab => tab.id === activeTab)?.component;
-
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/integrations/status`);
-        if (response.ok) {
-          const status = await response.json();
-          setIntegrationStatus(status);
-        }
-      } catch (error) {
-        console.error('Error fetching integration status:', error);
-      }
-    };
-    fetchStatus();
-  }, []);
 
   return (
     <motion.div
@@ -57,37 +56,10 @@ const Matrix = () => {
           ALFR3D Matrix
         </motion.h1>
 
-        {/* Integration Status */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4, duration: 0.5 }}
-          className="flex justify-center space-x-6 mb-8"
-        >
-          <div className="flex items-center space-x-2 bg-fui-panel border border-fui-border rounded-none px-4 py-2">
-            <Mail className="w-5 h-5 text-fui-accent" />
-            <span className="text-sm font-mono text-fui-text">[ GMAIL ]</span>
-            {integrationStatus.gmail ? (
-              <span className="text-fui-accent font-mono text-xs">[ ONLINE ]</span>
-            ) : (
-              <span className="text-error font-mono text-xs">[ OFFLINE ]</span>
-            )}
-          </div>
-          <div className="flex items-center space-x-2 bg-fui-panel border border-fui-border rounded-none px-4 py-2">
-            <Calendar className="w-5 h-5 text-fui-accent" />
-            <span className="text-sm font-mono text-fui-text">[ CALENDAR ]</span>
-            {integrationStatus.calendar ? (
-              <span className="text-fui-accent font-mono text-xs">[ ONLINE ]</span>
-            ) : (
-              <span className="text-error font-mono text-xs">[ OFFLINE ]</span>
-            )}
-          </div>
-        </motion.div>
-
         <div className="flex">
           {/* Vertical Tabs */}
           <div className="w-64 mr-8">
-            <TacticalPanel title="Systems" className="p-0">
+            <TacticalPanelVariant3 title="Systems" className="p-0">
               <div className="p-4">
                 {tabs.map((tab, index) => (
                   <motion.button
@@ -106,21 +78,90 @@ const Matrix = () => {
                   </motion.button>
                 ))}
               </div>
-            </TacticalPanel>
+            </TacticalPanelVariant3>
           </div>
 
           {/* Content */}
           <div className="flex-1">
-            <TacticalPanel title={tabs.find(tab => tab.id === activeTab)?.label || 'System'} className="min-h-[600px]">
+            <TacticalPanelVariant1 title={tabs.find(tab => tab.id === activeTab)?.label || 'System'} className="min-h-[600px]">
               <motion.div
                 key={activeTab}
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                {ActiveComponent && <ActiveComponent />}
+                <Suspense fallback={<LoadingFallback />}>
+                  {activeTab === 'customizations' ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <TacticalPanelVariant1 title="Panel Variant 1">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
+                          <p className="mb-2">Style: L-shaped corner markers</p>
+                          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+                        </div>
+                      </TacticalPanelVariant1>
+                      <TacticalPanelVariant2 title="Panel Variant 2">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Amber accent (#f59e0b)</p>
+                          <p className="mb-2">Style: Striped header pattern</p>
+                          <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                        </div>
+                      </TacticalPanelVariant2>
+                      <TacticalPanelVariant3 title="Panel Variant 3">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Yellow accent (#eab308)</p>
+                          <p className="mb-2">Style: Layered corners, gradient header</p>
+                          <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
+                        </div>
+                      </TacticalPanelVariant3>
+                      <TacticalPanelVariant4 title="Panel Variant 4">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Mono / JetBrains</p>
+                          <p className="mb-2">Colors: Amber terminal (#f59e0b)</p>
+                          <p className="mb-2">Style: Scanlines, blinking cursor, ASCII corners</p>
+                          <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.</p>
+                        </div>
+                      </TacticalPanelVariant4>
+                      <TacticalPanelVariant5 title="Panel Variant 5">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Amber (#f59e0b) + gray</p>
+                          <p className="mb-2">Style: Industrial riveted frame, segmented lights</p>
+                          <p>Totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae.</p>
+                        </div>
+                      </TacticalPanelVariant5>
+                      <TacticalPanelVariant6 title="Panel Variant 6">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Silver minimalist (#c0c0c0)</p>
+                          <p className="mb-2">Style: Thin corner lines, centered text</p>
+                          <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
+                        </div>
+                      </TacticalPanelVariant6>
+                      <TacticalPanelVariant7 title="Panel Variant 7">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Amber (#f59e0b)</p>
+                          <p className="mb-2">Style: Diagonal brackets, glitch lines</p>
+                          <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur.</p>
+                        </div>
+                      </TacticalPanelVariant7>
+                      <TacticalPanel title="Base Panel">
+                        <div className="text-fui-text">
+                          <p className="mb-2">Font: Tech / Rajdhani</p>
+                          <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
+                          <p className="mb-2">Style: Standard corners</p>
+                          <p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+                        </div>
+                      </TacticalPanel>
+                    </div>
+                  ) : ActiveComponent && <ActiveComponent />}
+                </Suspense>
               </motion.div>
-            </TacticalPanel>
+            </TacticalPanelVariant1>
           </div>
         </div>
       </div>

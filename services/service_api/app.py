@@ -14,6 +14,7 @@ import pymysql
 import requests
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
@@ -43,6 +44,23 @@ ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
 def get_producer():
     return _get_producer(use_json_serializer=True)
+
+
+_cache = get_cache()
+_cache_ttl = 300
+
+
+def _get_cached_or_fetch(key, fetch_fn, ttl=_cache_ttl):
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+    result = fetch_fn()
+    _cache.set(key, result, ttl)
+    return result
+
+
+def _invalidate_cache(key):
+    _cache.invalidate(key)
 
 
 class ConnectionManager:
@@ -335,6 +353,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 app.include_router(project_tree_router)
 
 
@@ -397,6 +417,7 @@ async def get_users(online: bool = Query(False)):
             )
         db.close()
         logger.info(f"Returning {len(users)} users")
+        await manager.broadcast("users", users)
         return users
     except pymysql.Error as e:
         logger.error(f"Error fetching users: {str(e)}")
@@ -684,6 +705,7 @@ async def get_containers():
             )
 
         logger.info(f"Returning {len(containers)} containers")
+        await manager.broadcast("containers", containers)
         return containers
     except subprocess.CalledProcessError as e:
         logger.error(f"Error fetching containers: {str(e)}")
@@ -738,9 +760,71 @@ async def get_devices():
                 }
             )
         db.close()
+        await manager.broadcast("devices", devices)
         return devices
     except pymysql.Error as e:
         logger.error(f"Error fetching devices: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/users-with-devices")
+async def get_users_with_devices():
+    try:
+        db = get_connection()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        cursor.execute(
+            """
+            SELECT u.id, u.username as name, u.email, u.about_me, s.state, ut.type,
+                   u.last_online, u.created_at
+            FROM user u
+            JOIN states s ON u.state = s.id
+            JOIN user_types ut ON u.type = ut.id
+            JOIN environment e ON u.environment_id = e.id
+            WHERE e.name = %s AND u.username NOT IN ('unknown', 'alfr3d')
+            ORDER BY u.last_online DESC
+            """,
+            (ALFR3D_ENV_NAME,),
+        )
+        users = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT d.id, d.name, d.IP, d.MAC, ds.state AS device_state,
+                   dt.type, d.user_id, d.last_online
+            FROM device d
+            JOIN states ds ON d.state = ds.id
+            JOIN device_types dt ON d.device_type = dt.id
+            JOIN environment e ON d.environment_id = e.id
+            WHERE e.name = %s
+            ORDER BY d.last_online DESC
+            """,
+            (ALFR3D_ENV_NAME,),
+        )
+        devices = cursor.fetchall()
+        db.close()
+
+        devices_by_user = {}
+        for d in devices:
+            uid = d.pop("user_id")
+            if uid not in devices_by_user:
+                devices_by_user[uid] = []
+            devices_by_user[uid].append(d)
+
+        for user in users:
+            user["devices"] = devices_by_user.get(user["id"], [])
+            for device in user.get("devices", []):
+                device["state"] = device.pop("device_state")
+                if device.get("last_online"):
+                    device["last_online"] = device["last_online"].isoformat()
+            if user.get("last_online"):
+                user["last_online"] = user["last_online"].isoformat()
+            if user.get("created_at"):
+                user["created_at"] = user["created_at"].isoformat()
+
+        return users
+    except Exception as e:
+        logger.error(f"Error fetching users with devices: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -989,15 +1073,19 @@ async def get_device_history(device_id: int):
 @app.get("/api/quips")
 async def get_quips():
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute("SELECT id, type, quips FROM quips")
-        quips = [{"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()]
-        db.close()
-        return quips
-    except pymysql.Error as e:
+        return _get_cached_or_fetch("quips:all", lambda: _fetch_quips())
+    except Exception as e:
         logger.error(f"Error fetching quips: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _fetch_quips():
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute("SELECT id, type, quips FROM quips")
+    quips = [{"id": row[0], "type": row[1], "quips": row[2]} for row in cursor.fetchall()]
+    db.close()
+    return quips
 
 
 @app.post("/api/quips", status_code=201)
@@ -1009,6 +1097,7 @@ async def create_quip(data: QuipCreate):
         db.commit()
         new_id = cursor.lastrowid
         db.close()
+        _invalidate_cache("quips:all")
         return {"id": new_id, "type": data.type, "quips": data.quips}
     except pymysql.Error as e:
         logger.error(f"Error creating quip: {str(e)}")
@@ -1026,8 +1115,9 @@ async def update_quip(quip_id: int, data: QuipUpdate):
         )
         db.commit()
         db.close()
+        _invalidate_cache("quips:all")
         return {"id": quip_id, "type": data.type, "quips": data.quips}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error updating quip: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1040,8 +1130,9 @@ async def delete_quip(quip_id: int):
         cursor.execute("DELETE FROM quips WHERE id = %s", (quip_id,))
         db.commit()
         db.close()
+        _invalidate_cache("quips:all")
         return {"message": "Quip deleted"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error deleting quip: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1060,7 +1151,7 @@ async def get_weather():
         row = cursor.fetchone()
         db.close()
         if row:
-            return {
+            weather_data = {
                 "city": row[4],
                 "state": row[5],
                 "country": row[6],
@@ -1072,6 +1163,8 @@ async def get_weather():
                 "pressure": row[13],
                 "humidity": row[14],
             }
+            await manager.broadcast("weather", weather_data)
+            return weather_data
         else:
             raise HTTPException(status_code=404, detail="Environment not found")
     except pymysql.Error as e:
@@ -1094,7 +1187,7 @@ async def get_environment():
         db.close()
         logger.debug(f"weather row = {row}")
         if row:
-            return {
+            env_data = {
                 "id": row[0],
                 "name": row[1],
                 "latitude": row[2],
@@ -1115,6 +1208,8 @@ async def get_environment():
                 "subjective_feel": row[17],
                 "timezone": row[18],
             }
+            await manager.broadcast("environment", env_data)
+            return env_data
         else:
             raise HTTPException(status_code=404, detail="Environment not found")
     except pymysql.Error as e:
@@ -1267,7 +1362,7 @@ async def get_integrations_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/audio/{filename}")
+@app.api_route("/api/audio/{filename}", methods=["GET", "HEAD"])
 async def get_audio(filename: str):
     logger.info(f"Audio request received for filename: {filename}")
 
@@ -1575,27 +1670,32 @@ async def set_iot_provider(data: IoTProvider):
 @app.get("/api/routines")
 async def get_routines():
     try:
-        db = get_connection()
-        cursor = db.cursor(pymysql.cursors.DictCursor)
-        cursor.execute(
-            "SELECT id, name, time, enabled, triggered, recurrence, actions, last_run "
-            "FROM routines WHERE environment_id = (SELECT id FROM environment WHERE name = %s) "
-            "ORDER BY time",
-            (ALFR3D_ENV_NAME,),
-        )
-        routines = cursor.fetchall()
-        for routine in routines:
-            if routine.get("actions"):
-                routine["actions"] = orjson.loads(routine["actions"])
-            if routine.get("time"):
-                routine["time"] = str(routine["time"])
-            if routine.get("last_run"):
-                routine["last_run"] = str(routine["last_run"])
-        db.close()
-        return routines
-    except pymysql.Error as e:
+        cache_key = f"routines:{ALFR3D_ENV_NAME}"
+        return _get_cached_or_fetch(cache_key, lambda: _fetch_routines())
+    except Exception as e:
         logger.error(f"Error fetching routines: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _fetch_routines():
+    db = get_connection()
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    cursor.execute(
+        "SELECT id, name, time, enabled, triggered, recurrence, actions, last_run "
+        "FROM routines WHERE environment_id = (SELECT id FROM environment WHERE name = %s) "
+        "ORDER BY time",
+        (ALFR3D_ENV_NAME,),
+    )
+    routines = cursor.fetchall()
+    for routine in routines:
+        if routine.get("actions"):
+            routine["actions"] = orjson.loads(routine["actions"])
+        if routine.get("time"):
+            routine["time"] = str(routine["time"])
+        if routine.get("last_run"):
+            routine["last_run"] = str(routine["last_run"])
+    db.close()
+    return routines
 
 
 @app.post("/api/routines", status_code=201)
@@ -1622,9 +1722,10 @@ async def create_routine(data: RoutineCreate):
         db.commit()
         routine_id = cursor.lastrowid
         db.close()
+        _invalidate_cache(f"routines:{ALFR3D_ENV_NAME}")
         logger.info(f"Created routine: {data.name} (ID: {routine_id})")
         return {"id": routine_id, "message": "Routine created"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error creating routine: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1661,9 +1762,10 @@ async def update_routine(routine_id: int, data: RoutineUpdate):
         cursor.execute(query, values)
         db.commit()
         db.close()
+        _invalidate_cache(f"routines:{ALFR3D_ENV_NAME}")
         logger.info(f"Updated routine ID: {routine_id}")
         return {"message": "Routine updated"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error updating routine: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1676,9 +1778,10 @@ async def delete_routine(routine_id: int):
         cursor.execute("DELETE FROM routines WHERE id = %s", (routine_id,))
         db.commit()
         db.close()
+        _invalidate_cache(f"routines:{ALFR3D_ENV_NAME}")
         logger.info(f"Deleted routine ID: {routine_id}")
         return {"message": "Routine deleted"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error deleting routine: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1757,33 +1860,42 @@ def get_environment_id():
 @app.get("/api/personality")
 async def get_personality():
     try:
-        env_id = get_environment_id()
-        db = get_connection()
-        cursor = db.cursor(pymysql.cursors.DictCursor)
-        cursor.execute(
-            "SELECT * FROM personality WHERE type = 'current' AND "
-            "(environment_id = %s OR environment_id IS NULL) "
-            "ORDER BY environment_id DESC LIMIT 1",
-            (env_id,),
-        )
-        row = cursor.fetchone()
-        db.close()
-        if row:
-            return {
-                "id": row["id"],
-                "name": row["name"],
-                "sarcasm": float(row["sarcasm"]),
-                "formality": float(row["formality"]),
-                "warmth": float(row["warmth"]),
-                "patience": float(row["patience"]),
-                "linguistic_style": row["linguistic_style"] or "",
-                "forbidden_words": row["forbidden_words"] or "",
-                "verbal_tics": row["verbal_tics"] or "",
-            }
-        raise HTTPException(status_code=404, detail="Personality not found")
+        return _get_cached_or_fetch("personality:current", _fetch_personality)
     except pymysql.Error as e:
         logger.error(f"Error fetching personality: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching personality: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _fetch_personality():
+    env_id = get_environment_id()
+    db = get_connection()
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    cursor.execute(
+        "SELECT * FROM personality WHERE type = 'current' AND "
+        "(environment_id = %s OR environment_id IS NULL) "
+        "ORDER BY environment_id DESC LIMIT 1",
+        (env_id,),
+    )
+    row = cursor.fetchone()
+    db.close()
+    if row:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "sarcasm": float(row["sarcasm"]),
+            "formality": float(row["formality"]),
+            "warmth": float(row["warmth"]),
+            "patience": float(row["patience"]),
+            "linguistic_style": row["linguistic_style"] or "",
+            "forbidden_words": row["forbidden_words"] or "",
+            "verbal_tics": row["verbal_tics"] or "",
+        }
+    raise HTTPException(status_code=404, detail="Personality not found")
 
 
 @app.put("/api/personality")
@@ -1811,8 +1923,9 @@ async def update_personality(data: PersonalityUpdate):
         )
         db.commit()
         db.close()
+        _invalidate_cache("personality:current")
         return {"message": "Personality updated"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error updating personality: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1820,29 +1933,32 @@ async def update_personality(data: PersonalityUpdate):
 @app.get("/api/personality/presets")
 async def get_personality_presets():
     try:
-        db = get_connection()
-        cursor = db.cursor(pymysql.cursors.DictCursor)
-        cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
-        rows = cursor.fetchall()
-        db.close()
-        presets = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "sarcasm": float(row["sarcasm"]),
-                "formality": float(row["formality"]),
-                "warmth": float(row["warmth"]),
-                "patience": float(row["patience"]),
-                "linguistic_style": row["linguistic_style"] or "",
-                "forbidden_words": row["forbidden_words"] or "",
-                "verbal_tics": row["verbal_tics"] or "",
-            }
-            for row in rows
-        ]
-        return presets
-    except pymysql.Error as e:
+        return _get_cached_or_fetch("personality:presets", _fetch_personality_presets)
+    except Exception as e:
         logger.error(f"Error fetching presets: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _fetch_personality_presets():
+    db = get_connection()
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
+    rows = cursor.fetchall()
+    db.close()
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "sarcasm": float(row["sarcasm"]),
+            "formality": float(row["formality"]),
+            "warmth": float(row["warmth"]),
+            "patience": float(row["patience"]),
+            "linguistic_style": row["linguistic_style"] or "",
+            "forbidden_words": row["forbidden_words"] or "",
+            "verbal_tics": row["verbal_tics"] or "",
+        }
+        for row in rows
+    ]
 
 
 @app.post("/api/personality/apply-preset")
@@ -1879,8 +1995,9 @@ async def apply_personality_preset(data: PresetApply):
         )
         db.commit()
         db.close()
+        _invalidate_cache("personality:current")
         return {"message": f"Applied preset: {data.preset}"}
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error applying preset: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 

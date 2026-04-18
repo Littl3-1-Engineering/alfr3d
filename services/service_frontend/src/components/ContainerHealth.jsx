@@ -1,30 +1,43 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
-const ContainerHealth = () => {
+const ContainerHealth = ({ initialContainers = null, pollInterval = 10000 }) => {
   const [selectedContainer, setSelectedContainer] = useState(null);
-  const [containers, setContainers] = useState([]);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [containers, setContainers] = useState(initialContainers || []);
+  const [hasLoaded, setHasLoaded] = useState(!!initialContainers);
   const [error, setError] = useState(false);
 
+  const fetchContainers = async () => {
+    try {
+      setError(false);
+      const response = await fetch(API_BASE_URL + '/api/containers');
+      const data = await response.json();
+      setContainers(data);
+    } catch (error) {
+      console.error('Error fetching containers for ContainerHealth:', error);
+      setError(true);
+    }
+  };
+
   useEffect(() => {
-    const fetchContainers = async () => {
-      try {
-        setError(false);
-        const response = await fetch(API_BASE_URL + '/api/containers');
-        const data = await response.json();
-        setContainers(data);
-      } catch (error) {
-        console.error('Error fetching containers for ContainerHealth:', error);
-        setError(true);
-      } finally {
-        setHasLoaded(true);
-      }
+    if (!initialContainers || containers.length === 0) {
+      fetchContainers().finally(() => setHasLoaded(true));
+    }
+    const interval = setInterval(fetchContainers, pollInterval);
+
+    const handleContainersUpdate = (data) => {
+      setContainers(data);
+      setHasLoaded(true);
     };
-    fetchContainers();
-    const interval = setInterval(fetchContainers, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
+
+    socket.on('containers', handleContainersUpdate);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('containers', handleContainersUpdate);
+    };
   }, []);
 
   return (

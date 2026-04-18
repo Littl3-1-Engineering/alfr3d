@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import { getTimeRatio, getSunAngle } from '../utils/timeUtils';
 import { useTheme } from '../utils/useTheme';
+import socket from '../utils/socket';
 
 // --- A simplified Satellite component ---
 const Satellite = ({ radius, angle, size, color, glowColor, children }) => {
@@ -315,13 +316,13 @@ SVGReticle.propTypes = {
   variant: PropTypes.oneOf(['crosshair', 'radar', 'crosshair1', 'crosshair2', 'crosshair3', 'grid']),
 };
 
-const Core = () => {
+const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null, pollInterval = 10000 }) => {
   const [animationData, setAnimationData] = useState(null);
   const [isIntroFinished, setIsIntroFinished] = useState(false);
   const [rotationAngle, setRotationAngle] = useState(0);
-  const [containers, setContainers] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [devices, setDevices] = useState([]);
+  const [containers, setContainers] = useState(initialContainers || []);
+  const [users, setUsers] = useState(initialUsers || []);
+  const [devices, setDevices] = useState(initialDevices || []);
   const [sunAngle, setSunAngle] = useState(0);
   const [reticle1Animate, setReticle1Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
   const [reticle2Animate, setReticle2Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
@@ -336,6 +337,97 @@ const Core = () => {
   }, []);
 
 
+  const fetchContainers = async () => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/containers');
+      if (response.ok) {
+        const data = await response.json();
+        setContainers(data);
+      } else {
+        console.error('Error fetching containers:', response.status);
+        setContainers([{ name: 'test-container', errors: 0 }]);
+      }
+    } catch (error) {
+      console.error('Error fetching containers:', error);
+      setContainers([{ name: 'test-container', errors: 0 }]);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/users?online=true');
+      if (response.ok) {
+        const data = await response.json();
+        setUsers(data);
+      } else {
+        console.error('Error fetching users:', response.status);
+        setUsers([{ name: 'test-user', type: 'user' }]);
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      setUsers([{ name: 'test-user', type: 'user' }]);
+    }
+  };
+
+  const fetchDevices = async () => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/devices');
+      if (response.ok) {
+        const data = await response.json();
+        setDevices(data);
+      } else {
+        console.error('Error fetching devices:', response.status);
+        setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
+      }
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialContainers || containers.length === 0) {
+      fetchContainers();
+    }
+    const interval = setInterval(fetchContainers, pollInterval);
+
+    socket.on('containers', setContainers);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('containers', setContainers);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!initialUsers || users.length === 0) {
+      fetchUsers();
+    }
+    const interval = setInterval(fetchUsers, 5000);
+
+    socket.on('users', setUsers);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('users', setUsers);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!initialDevices || devices.length === 0) {
+      fetchDevices();
+    }
+    const interval = setInterval(fetchDevices, pollInterval);
+
+    socket.on('devices', setDevices);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('devices', setDevices);
+    };
+  }, []);
+
+
 
   useEffect(() => {
     const fetchContainers = async () => {
@@ -346,18 +438,22 @@ const Core = () => {
           setContainers(data);
         } else {
           console.error('Error fetching containers:', response.status);
-          // Fallback dummy data for testing
           setContainers([{ name: 'test-container', errors: 0 }]);
         }
       } catch (error) {
         console.error('Error fetching containers:', error);
-        // Fallback dummy data for testing
         setContainers([{ name: 'test-container', errors: 0 }]);
       }
     };
     fetchContainers();
-    const interval = setInterval(fetchContainers, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchContainers, 10000);
+
+    socket.on('containers', setContainers);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('containers', setContainers);
+    };
   }, []);
 
   useEffect(() => {
@@ -369,18 +465,22 @@ const Core = () => {
           setUsers(data);
         } else {
           console.error('Error fetching users:', response.status);
-          // Fallback dummy data for testing
           setUsers([{ name: 'test-user', type: 'user' }]);
         }
       } catch (error) {
         console.error('Error fetching users:', error);
-        // Fallback dummy data for testing
         setUsers([{ name: 'test-user', type: 'user' }]);
       }
     };
     fetchUsers();
-    const interval = setInterval(fetchUsers, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchUsers, 5000);
+
+    socket.on('users', setUsers);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('users', setUsers);
+    };
   }, []);
 
   useEffect(() => {
@@ -392,18 +492,22 @@ const Core = () => {
           setDevices(data);
         } else {
           console.error('Error fetching devices:', response.status);
-          // Fallback dummy data for testing
           setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
         }
       } catch (error) {
         console.error('Error fetching devices:', error);
-        // Fallback dummy data for testing
         setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
       }
     };
     fetchDevices();
-    const interval = setInterval(fetchDevices, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchDevices, 10000);
+
+    socket.on('devices', setDevices);
+
+    return () => {
+      clearInterval(interval);
+      socket.off('devices', setDevices);
+    };
   }, []);
 
   // Animation logic: Tactical "thinking" rotation after intro finishes
