@@ -132,9 +132,9 @@ const Nexus = () => {
             onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
             tabIndex={0}
           >
-           <TacticalPanelVariant1 title="TIME & DATE">
-             <TimeDatePanel />
-           </TacticalPanelVariant1>
+<TacticalPanelVariant1 title="TIME & DATE">
+              <TimeDatePanel timezone={location?.timezone} />
+            </TacticalPanelVariant1>
          </CollapsibleSidePanel>
 
           <CollapsibleSidePanel
@@ -159,7 +159,7 @@ const Nexus = () => {
             tabIndex={2}
           >
 <TacticalPanelVariant3 title="C4lendar">
-              <CalendarPanel initialEvents={calendarEvents} />
+              <CalendarPanel initialEvents={calendarEvents?.events} initialTimezone={calendarEvents?.timezone} />
             </TacticalPanelVariant3>
          </CollapsibleSidePanel>
 

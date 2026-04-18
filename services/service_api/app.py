@@ -1145,7 +1145,7 @@ async def get_weather():
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
             "description, sunrise, sunset, pressure, humidity, manual_override, "
-            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1162,6 +1162,7 @@ async def get_weather():
                 "sunset": row[12].isoformat() if row[12] else None,
                 "pressure": row[13],
                 "humidity": row[14],
+                "timezone": row[18],
             }
             await manager.broadcast("weather", weather_data)
             return weather_data
@@ -1285,8 +1286,11 @@ async def get_calendar_events():
             }
             for row in cursor.fetchall()
         ]
+        cursor.execute("SELECT timezone FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        tz_row = cursor.fetchone()
+        timezone = tz_row[0] if tz_row else None
         db.close()
-        return events
+        return {"events": events, "timezone": timezone}
     except pymysql.Error as e:
         logger.error(f"Error fetching calendar events: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

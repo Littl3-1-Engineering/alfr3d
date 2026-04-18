@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
+import { formatTimeWithTimezone } from '../utils/timeUtils';
 
-const CalendarPanel = ({ initialEvents = null, pollInterval = 300000 }) => {
+const CalendarPanel = ({ initialEvents = null, initialTimezone = null, pollInterval = 300000 }) => {
   const [events, setEvents] = useState(initialEvents || []);
   const [isLoading, setIsLoading] = useState(!initialEvents);
   const [error, setError] = useState(false);
@@ -67,13 +68,7 @@ const CalendarPanel = ({ initialEvents = null, pollInterval = 300000 }) => {
   };
 
   const formatTime = (isoString) => {
-    if (!isoString) return '';
-    const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return formatTimeWithTimezone(isoString, initialTimezone) || '';
   };
 
   const today = new Date();

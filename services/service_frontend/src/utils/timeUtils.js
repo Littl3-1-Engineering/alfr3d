@@ -28,11 +28,51 @@
      }
    };
 
-  export const formatCreatedDate = (dateString) => {
-    if (!dateString) return 'UNKNOWN';
-    const date = new Date(dateString);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `D${day}M${month} Y${year}`;
-  };
+export const formatCreatedDate = (dateString) => {
+     if (!dateString) return 'UNKNOWN';
+     const date = new Date(dateString);
+     const day = String(date.getDate()).padStart(2, '0');
+     const month = String(date.getMonth() + 1).padStart(2, '0');
+     const year = date.getFullYear();
+     return `D${day}M${month} Y${year}`;
+   };
+
+  export const formatTimeWithTimezone = (isoString, timezoneOffsetSeconds) => {
+     if (!isoString) return 'N/A';
+     if (timezoneOffsetSeconds === undefined || timezoneOffsetSeconds === null) {
+       return formatLocalTime(isoString);
+     }
+     try {
+       const date = new Date(isoString);
+       const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+       const targetTime = new Date(utcTime + (timezoneOffsetSeconds * 1000));
+       return targetTime.toLocaleTimeString('en-US', {
+         hour12: false,
+         hour: '2-digit',
+         minute: '2-digit'
+       });
+     } catch (e) {
+       return isoString;
+     }
+   };
+
+  export const getCurrentTimeWithTimezone = (timezoneOffsetSeconds) => {
+     if (timezoneOffsetSeconds === undefined || timezoneOffsetSeconds === null) {
+       return new Date();
+     }
+     const now = new Date();
+     const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
+     return new Date(utcTime + (timezoneOffsetSeconds * 1000));
+   };
+
+  export const formatDateWithTimezone = (timezoneOffsetSeconds) => {
+     const date = timezoneOffsetSeconds !== undefined && timezoneOffsetSeconds !== null
+       ? getCurrentTimeWithTimezone(timezoneOffsetSeconds)
+       : new Date();
+     return date.toLocaleDateString('en-US', {
+       weekday: 'long',
+       year: 'numeric',
+       month: 'long',
+       day: 'numeric'
+     });
+   };
