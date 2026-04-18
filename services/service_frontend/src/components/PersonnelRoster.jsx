@@ -1,5 +1,4 @@
-import { motion } from 'framer-motion';
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { User, Monitor, Plus } from 'lucide-react';
@@ -7,12 +6,8 @@ import { API_BASE_URL } from '../config';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
 
-const UserCard = memo(({ user, onClick }) => (
-  <motion.div
-    key={user.id}
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ delay: 0 }}
+const UserCard = ({ user, onClick }) => (
+  <div
     className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
     onClick={() => onClick(user)}
   >
@@ -24,24 +19,19 @@ const UserCard = memo(({ user, onClick }) => (
       <p className="text-sm text-primary uppercase">{user.type}</p>
       <p className="text-xs text-text-tertiary">{user.email}</p>
       <p className="text-xs text-text-tertiary">{user.about_me}</p>
-      <p className="text-xs text-text-tertiary">State: {user.state}</p>
+      <p className="text-xs text-text-tertiary">Last Online: {user.last_online || 'Never'}</p>
+      <p className="text-xs text-text-tertiary">State: <span className={user.state === 'online' ? 'text-success' : ''}>{user.state}</span></p>
     </div>
-  </motion.div>
-));
-
-UserCard.displayName = 'UserCard';
+  </div>
+);
 
 UserCard.propTypes = {
   user: PropTypes.object.isRequired,
   onClick: PropTypes.func.isRequired,
 };
 
-const DeviceCard = memo(({ device, onClick }) => (
-  <motion.div
-    key={device.id}
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ delay: 0 }}
+const DeviceCard = ({ device, onClick }) => (
+  <div
     className="glass rounded-2xl p-6 border border-primary/30 bg-card/20 cursor-pointer hover:bg-card-hover/30 transition-colors"
     onClick={() => onClick(device)}
   >
@@ -53,13 +43,12 @@ const DeviceCard = memo(({ device, onClick }) => (
       <p className="text-sm text-primary uppercase">{device.type}</p>
       <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
       <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
+      <p className="text-xs text-text-tertiary">Last Online: {device.last_online || 'Never'}</p>
       <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
-      <p className="text-xs text-text-tertiary">State: {device.state}</p>
+      <p className="text-xs text-text-tertiary">State: <span className={device.state === 'online' ? 'text-success' : ''}>{device.state}</span></p>
     </div>
-  </motion.div>
-));
-
-DeviceCard.displayName = 'DeviceCard';
+  </div>
+);
 
 DeviceCard.propTypes = {
   device: PropTypes.object.isRequired,
@@ -81,218 +70,191 @@ const PersonnelRoster = ({ initialUserId }) => {
   const [userDevices, setUserDevices] = useState([]);
   const [deviceHistory, setDeviceHistory] = useState([]);
 
-  const fetchUsers = useCallback(async () => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/users');
-      const data = await response.json();
-      setUsers(data);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    }
-  }, []);
-
-  const fetchDevices = useCallback(async () => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/devices');
-      const data = await response.json();
-      setDevices(data);
-    } catch (error) {
-      console.error('Error fetching devices:', error);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchUsers();
-    fetchDevices();
-  }, [fetchUsers, fetchDevices]);
+    fetch(API_BASE_URL + '/api/users-with-devices')
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setDevices(allDevices);
+      })
+      .catch(err => console.error('Error fetching users with devices:', err));
+  }, []);
 
   useEffect(() => {
     if (initialUserId && users.length > 0) {
       const user = users.find(u => u.id.toString() === initialUserId.toString());
       if (user) {
-        handleUserClick(user);
+        setModalUser(user);
+        setUserDevices(user.devices || []);
+        setShowUserModal(true);
       } else {
-        console.error(`User with ID ${initialUserId} not found`);
-        sendEventToStream({
-          type: 'error',
-          message: `User with ID ${initialUserId} not found`
-        });
+        console.error('User not found');
         navigate('/');
       }
     }
-  }, [initialUserId, users, navigate, handleUserClick, sendEventToStream]);
+  }, [initialUserId, users, navigate]);
 
-  const handleModalSaveUser = useCallback(async (updatedUser) => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedUser),
-      });
-      if (response.ok) {
-        await fetchUsers();
-        setModalUser(updatedUser);
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Error updating user from modal:', error);
-      return false;
-    }
-  }, [fetchUsers]);
-
-  const handleDeleteUser = useCallback(async (id) => {
-    if (window.confirm('Are you sure you want to delete this user?')) {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/users/' + id, {
-          method: 'DELETE',
-        });
-        if (response.ok) {
-          await fetchUsers();
-          closeUserModal();
-        }
-      } catch (error) {
-        console.error('Error deleting user:', error);
-      }
-    }
-  }, [fetchUsers, closeUserModal]);
-
-  const handleAddUser = useCallback(async () => {
-    if (!newUser.name || !newUser.type) return;
-    try {
-      const response = await fetch(API_BASE_URL + '/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser),
-      });
-      if (response.ok) {
-        await fetchUsers();
-        setNewUser({ name: '', type: 'guest', email: '', about_me: '' });
-        setShowAddUser(false);
-      }
-    } catch (error) {
-      console.error('Error adding user:', error);
-    }
-  }, [newUser, fetchUsers]);
-
-  const handleModalSaveDevice = useCallback(async (updatedDevice) => {
-    try {
-      const response = await fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedDevice),
-      });
-      if (response.ok) {
-        await fetchDevices();
-        setModalDevice(updatedDevice);
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Error updating device from modal:', error);
-      return false;
-    }
-  }, [fetchDevices]);
-
-  const handleDeleteDevice = useCallback(async (id) => {
-    if (window.confirm('Are you sure you want to delete this device?')) {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/devices/' + id, {
-          method: 'DELETE',
-        });
-        if (response.ok) {
-          await fetchDevices();
-          closeDeviceModal();
-        }
-      } catch (error) {
-        console.error('Error deleting device:', error);
-      }
-    }
-  }, [fetchDevices, closeDeviceModal]);
-
-  const handleAddDevice = useCallback(async () => {
-    if (!newDevice.name || !newDevice.type) return;
-    try {
-      const response = await fetch(API_BASE_URL + '/api/devices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newDevice),
-      });
-      if (response.ok) {
-        await fetchDevices();
-        setNewDevice({ name: '', type: 'guest', ip: '', mac: '', user: '' });
-        setShowAddDevice(false);
-      }
-    } catch (error) {
-      console.error('Error adding device:', error);
-    }
-  }, [newDevice, fetchDevices]);
-
-  const handleUserClick = useCallback(async (user) => {
+  const handleUserClick = (user) => {
     setModalUser(user);
-    setUserDevices([]);
+    setUserDevices(user.devices || []);
     setShowUserModal(true);
-    try {
-      const response = await fetch(API_BASE_URL + '/api/users/' + user.id + '/devices');
-      const devices = await response.json();
-      setUserDevices(devices);
-    } catch (error) {
-      console.error('Error fetching user devices:', error);
-    }
-  }, []);
+  };
 
-  const handleDeviceHistoryClick = useCallback(async (device) => {
+  const handleDeviceHistoryClick = (device) => {
     setModalDevice(device);
     setDeviceHistory([]);
     setShowDeviceModal(true);
-    try {
-      const response = await fetch(API_BASE_URL + '/api/devices/' + device.id + '/history');
-      const history = await response.json();
-      setDeviceHistory(history);
-    } catch (error) {
-      console.error('Error fetching device history:', error);
-    }
-  }, []);
+    fetch(API_BASE_URL + '/api/devices/' + device.id + '/history')
+      .then(res => res.json())
+      .then(history => setDeviceHistory(history))
+      .catch(err => console.error('Error fetching device history:', err));
+  };
 
-  const closeUserModal = useCallback(() => {
+  const closeUserModal = () => {
     setShowUserModal(false);
     setModalUser(null);
     setUserDevices([]);
-  }, []);
+  };
 
-  const closeDeviceModal = useCallback(() => {
+  const closeDeviceModal = () => {
     setShowDeviceModal(false);
     setModalDevice(null);
     setDeviceHistory([]);
-  }, []);
+  };
 
-  const sendEventToStream = useCallback(async (eventData) => {
-    try {
-      await fetch(`${API_BASE_URL}/api/events`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(eventData)
-      });
-    } catch (error) {
-      console.error('Failed to send event to stream:', error);
+  const handleAddUser = () => {
+    if (!newUser.name || !newUser.type) return;
+    fetch(API_BASE_URL + '/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newUser),
+    })
+      .then(res => {
+        if (res.ok) {
+          return fetch(API_BASE_URL + '/api/users-with-devices');
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setDevices(allDevices);
+        setNewUser({ name: '', type: 'guest', email: '', about_me: '' });
+        setShowAddUser(false);
+      })
+      .catch(err => console.error('Error adding user:', err));
+  };
+
+  const handleAddDevice = () => {
+    if (!newDevice.name || !newDevice.type) return;
+    fetch(API_BASE_URL + '/api/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newDevice),
+    })
+      .then(res => {
+        if (res.ok) {
+          return fetch(API_BASE_URL + '/api/users-with-devices');
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setDevices(allDevices);
+        setNewDevice({ name: '', type: 'guest', ip: '', mac: '', user: '' });
+        setShowAddDevice(false);
+      })
+      .catch(err => console.error('Error adding device:', err));
+  };
+
+  const handleModalSaveUser = (updatedUser) => {
+    fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedUser),
+    })
+      .then(res => {
+        if (res.ok) {
+          return fetch(API_BASE_URL + '/api/users-with-devices');
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setDevices(allDevices);
+        setModalUser(updatedUser);
+      })
+      .catch(err => console.error('Error updating user:', err));
+  };
+
+  const handleDeleteUser = (id) => {
+    if (window.confirm('Are you sure you want to delete this user?')) {
+      fetch(API_BASE_URL + '/api/users/' + id, { method: 'DELETE' })
+        .then(res => {
+          if (res.ok) {
+            return fetch(API_BASE_URL + '/api/users-with-devices');
+          }
+        })
+        .then(res => res.json())
+        .then(data => {
+          setUsers(data);
+          const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+          setDevices(allDevices);
+          closeUserModal();
+        })
+        .catch(err => console.error('Error deleting user:', err));
     }
-  }, []);
+  };
 
-  const setNewUserHandler = useCallback((updater) => {
-    setNewUser(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+  const handleModalSaveDevice = (updatedDevice) => {
+    fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedDevice),
+    })
+      .then(res => {
+        if (res.ok) {
+          return fetch(API_BASE_URL + '/api/users-with-devices');
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setDevices(allDevices);
+        setModalDevice(updatedDevice);
+      })
+      .catch(err => console.error('Error updating device:', err));
+  };
 
-  const setNewDeviceHandler = useCallback((updater) => {
-    setNewDevice(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+  const handleDeleteDevice = (id) => {
+    if (window.confirm('Are you sure you want to delete this device?')) {
+      fetch(API_BASE_URL + '/api/devices/' + id, { method: 'DELETE' })
+        .then(res => {
+          if (res.ok) {
+            return fetch(API_BASE_URL + '/api/users-with-devices');
+          }
+        })
+        .then(res => res.json())
+        .then(data => {
+          setUsers(data);
+          const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+          setDevices(allDevices);
+          closeDeviceModal();
+        })
+        .catch(err => console.error('Error deleting device:', err));
+    }
+  };
 
-PersonnelRoster.propTypes = {
-  initialUserId: PropTypes.string
-};
+  PersonnelRoster.propTypes = {
+    initialUserId: PropTypes.string
+  };
 
   return (
     <div className="space-y-8">
-      {/* Users Section */}
       <div>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold text-primary">Users</h2>
@@ -310,22 +272,18 @@ PersonnelRoster.propTypes = {
           ))}
         </div>
         {showAddUser && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20"
-          >
+          <div className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20">
             <h3 className="text-lg font-semibold text-primary mb-4">Add New User</h3>
             <div className="space-y-3">
               <input
                 value={newUser.name}
-                onChange={(e) => setNewUserHandler(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => setNewUser(prev => ({ ...prev, name: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newUser.type}
-                onChange={(e) => setNewUserHandler(prev => ({ ...prev, type: e.target.value }))}
+                onChange={(e) => setNewUser(prev => ({ ...prev, type: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="technoking">Technoking</option>
@@ -334,13 +292,13 @@ PersonnelRoster.propTypes = {
               </select>
               <input
                 value={newUser.email}
-                onChange={(e) => setNewUserHandler(prev => ({ ...prev, email: e.target.value }))}
+                onChange={(e) => setNewUser(prev => ({ ...prev, email: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Email"
               />
               <textarea
                 value={newUser.about_me}
-                onChange={(e) => setNewUserHandler(prev => ({ ...prev, about_me: e.target.value }))}
+                onChange={(e) => setNewUser(prev => ({ ...prev, about_me: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 rows={2}
                 placeholder="About Me"
@@ -360,11 +318,10 @@ PersonnelRoster.propTypes = {
                 </button>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
       </div>
 
-      {/* Devices Section */}
       <div>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold text-primary">Devices</h2>
@@ -382,22 +339,18 @@ PersonnelRoster.propTypes = {
           ))}
         </div>
         {showAddDevice && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20"
-          >
+          <div className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20">
             <h3 className="text-lg font-semibold text-primary mb-4">Add New Device</h3>
             <div className="space-y-3">
               <input
                 value={newDevice.name}
-                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => setNewDevice(prev => ({ ...prev, name: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="Name"
               />
               <select
                 value={newDevice.type}
-                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, type: e.target.value }))}
+                onChange={(e) => setNewDevice(prev => ({ ...prev, type: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="alfr3d">Alfr3d</option>
@@ -408,19 +361,19 @@ PersonnelRoster.propTypes = {
               </select>
               <input
                 value={newDevice.ip}
-                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, ip: e.target.value }))}
+                onChange={(e) => setNewDevice(prev => ({ ...prev, ip: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="IP"
               />
               <input
                 value={newDevice.mac}
-                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, mac: e.target.value }))}
+                onChange={(e) => setNewDevice(prev => ({ ...prev, mac: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
                 placeholder="MAC"
               />
               <select
                 value={newDevice.user}
-                onChange={(e) => setNewDeviceHandler(prev => ({ ...prev, user: e.target.value }))}
+                onChange={(e) => setNewDevice(prev => ({ ...prev, user: e.target.value }))}
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="">No User</option>
@@ -443,30 +396,29 @@ PersonnelRoster.propTypes = {
                 </button>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
-
-        {/* Modals */}
-        <UserModal
-          isOpen={showUserModal}
-          onClose={closeUserModal}
-          user={modalUser}
-          devices={userDevices}
-          onDeviceClick={handleDeviceHistoryClick}
-          onSave={handleModalSaveUser}
-          onDelete={handleDeleteUser}
-        />
-
-        <DeviceHistoryModal
-          isOpen={showDeviceModal}
-          onClose={closeDeviceModal}
-          device={modalDevice}
-          history={deviceHistory}
-          users={users}
-          onSave={handleModalSaveDevice}
-          onDelete={handleDeleteDevice}
-        />
       </div>
+
+      <UserModal
+        isOpen={showUserModal}
+        onClose={closeUserModal}
+        user={modalUser}
+        devices={userDevices}
+        onDeviceClick={handleDeviceHistoryClick}
+        onSave={handleModalSaveUser}
+        onDelete={handleDeleteUser}
+      />
+
+      <DeviceHistoryModal
+        isOpen={showDeviceModal}
+        onClose={closeDeviceModal}
+        device={modalDevice}
+        history={deviceHistory}
+        users={users}
+        onSave={handleModalSaveDevice}
+        onDelete={handleDeleteDevice}
+      />
     </div>
   );
 };

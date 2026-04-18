@@ -12,6 +12,11 @@ class SocketClient {
 
   connect() {
     const wsUrl = WS_BASE_URL.replace(/^http/, 'ws') + '/ws';
+    console.log('Connecting to WebSocket:', wsUrl);
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected');
+      return;
+    }
     this.socket = new WebSocket(wsUrl);
 
     this.socket.onopen = () => {

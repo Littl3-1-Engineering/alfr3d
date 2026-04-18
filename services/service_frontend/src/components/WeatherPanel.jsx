@@ -1,34 +1,45 @@
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
-const WeatherPanel = () => {
-  const [weatherData, setWeatherData] = useState({});
-  const [isLoading, setIsLoading] = useState(true);
+const WeatherPanel = ({ initialWeather = null, pollInterval = 600000 }) => {
+  const [weatherData, setWeatherData] = useState(initialWeather || {});
+  const [isLoading, setIsLoading] = useState(!initialWeather);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
-    const fetchWeather = async () => {
-      try {
-        setIsLoading(true);
-        setError(false);
-        const response = await fetch(`${API_BASE_URL}/api/weather`);
-        if (response.ok) {
-          const data = await response.json();
-          setWeatherData(data);
-        } else {
-          setError(true);
-        }
-      } catch (error) {
-        console.error('Failed to fetch weather:', error);
+  const fetchWeather = async () => {
+    try {
+      setError(false);
+      const response = await fetch(`${API_BASE_URL}/api/weather`);
+      if (response.ok) {
+        const data = await response.json();
+        setWeatherData(data);
+      } else {
         setError(true);
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Failed to fetch weather:', error);
+      setError(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialWeather || Object.keys(weatherData).length === 0) {
+      fetchWeather().finally(() => setIsLoading(false));
+    }
+    const weatherTimer = setInterval(fetchWeather, pollInterval);
+
+    const handleWeatherUpdate = (data) => {
+      setWeatherData(data);
+      setIsLoading(false);
     };
 
-    fetchWeather();
-    const weatherTimer = setInterval(fetchWeather, 600000); // Update every 10 minutes
-    return () => clearInterval(weatherTimer);
+    socket.on('weather', handleWeatherUpdate);
+
+    return () => {
+      clearInterval(weatherTimer);
+      socket.off('weather', handleWeatherUpdate);
+    };
   }, []);
 
   const formatTime = (isoString) => {

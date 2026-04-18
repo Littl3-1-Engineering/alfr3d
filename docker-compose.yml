@@ -1,4 +1,5 @@
 # Docker Compose configuration for ALFR3D services
+# Enable BuildKit for faster builds: export DOCKER_BUILDKIT=1
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -81,9 +82,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     expose:
       - "5001"
-      - "5002"
     ports:
-      - "5002:5002"
+      - "5001:5001"
 
   service-device:
     build:
