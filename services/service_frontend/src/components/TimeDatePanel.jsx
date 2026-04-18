@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
+import { getCurrentTimeWithTimezone, formatDateWithTimezone } from '../utils/timeUtils';
 
-const TimeDatePanel = () => {
-  const [currentTime, setCurrentTime] = useState(new Date());
+const TimeDatePanel = ({ timezone = null }) => {
+  const [currentTime, setCurrentTime] = useState(() => getCurrentTimeWithTimezone(timezone));
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentTime(new Date());
+      setCurrentTime(getCurrentTimeWithTimezone(timezone));
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [timezone]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-US', {
@@ -20,15 +22,6 @@ const TimeDatePanel = () => {
     });
   };
 
-  const formatDate = (date) => {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
   return (
     <div className="p-4 relative">
       <div className="text-center">
@@ -36,11 +29,15 @@ const TimeDatePanel = () => {
           {formatTime(currentTime)}
         </div>
         <div className="text-sm font-mono text-fui-text uppercase">
-          {formatDate(currentTime)}
+          {formatDateWithTimezone(timezone)}
         </div>
       </div>
     </div>
   );
+};
+
+TimeDatePanel.propTypes = {
+  timezone: PropTypes.number,
 };
 
 export default TimeDatePanel;
