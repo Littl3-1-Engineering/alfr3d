@@ -4,11 +4,13 @@ import { MapContainer, TileLayer, Marker, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
-const LocationPanel = ({ setTitle }) => {
-  const [envData, setEnvData] = useState({});
-  const [isLoading, setIsLoading] = useState(true);
+const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 }) => {
+  const [envData, setEnvData] = useState(initialLocation || {});
+  const [isLoading, setIsLoading] = useState(!initialLocation);
   const [error, setError] = useState(false);
+  const coordKey = envData.latitude && envData.longitude ? `${envData.latitude}-${envData.longitude}` : 'no-location';
 
   // Custom crosshair icon
   const crosshairIcon = new L.DivIcon({
@@ -45,29 +47,39 @@ const LocationPanel = ({ setTitle }) => {
     iconAnchor: [10, 10]
   });
 
-  useEffect(() => {
-    const fetchEnv = async () => {
-      try {
-        setIsLoading(true);
-        setError(false);
-        const response = await fetch(`${API_BASE_URL}/api/environment`);
-        if (response.ok) {
-          const data = await response.json();
-          setEnvData(data);
-        } else {
-          setError(true);
-        }
-      } catch (error) {
-        console.error('Failed to fetch environment:', error);
+  const fetchEnv = async () => {
+    try {
+      setError(false);
+      const response = await fetch(`${API_BASE_URL}/api/environment`);
+      if (response.ok) {
+        const data = await response.json();
+        setEnvData(data);
+      } else {
         setError(true);
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Failed to fetch environment:', error);
+      setError(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialLocation || !envData.city) {
+      fetchEnv().finally(() => setIsLoading(false));
+    }
+    const envTimer = setInterval(fetchEnv, pollInterval);
+
+    const handleEnvUpdate = (data) => {
+      setEnvData(data);
+      setIsLoading(false);
     };
 
-    fetchEnv();
-    const envTimer = setInterval(fetchEnv, 60000);
-    return () => clearInterval(envTimer);
+    socket.on('environment', handleEnvUpdate);
+
+    return () => {
+      clearInterval(envTimer);
+      socket.off('environment', handleEnvUpdate);
+    };
   }, []);
 
   useEffect(() => {
@@ -111,6 +123,7 @@ const LocationPanel = ({ setTitle }) => {
           </div>
         ) : hasValidCoords ? (
           <MapContainer
+            key={coordKey}
             center={[envData.latitude, envData.longitude]}
             zoom={15}
             maxZoom={16}

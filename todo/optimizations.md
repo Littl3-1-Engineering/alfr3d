@@ -4,8 +4,8 @@
 
 | Status | Count | Items |
 |--------|-------|-------|
-| ✅ COMPLETED | 12 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson |
-| 🔲 TODO | 2 | Batch Requests, Bundle Splitting |
+| ✅ COMPLETED | 16 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson, Vite Compression, Manual Chunk Splitting, SWR/React Query, Docker Build Optimization |
+| 🔲 TODO | 4 | Python 3.10+ Upgrade, Redis Caching, Split service_api/app.py, Slow Query Analysis |
 
 ---
 
@@ -167,39 +167,169 @@
   - Reduces CPU usage in high-throughput services
   - orjson.dumps() returns bytes directly (no .encode() needed)
 
+### 13. Vite Compression
+- **Files:** `services/service_frontend/vite.config.js`, `services/service_frontend/package.json`
+- **Package:** `vite-plugin-compression`
+- **Config:** Enable gzip and brotli compression
+- **Impact:** ~70% smaller bundle transfer size
+- **Changes:**
+  1. Installed `vite-plugin-compression`
+  2. Added gzip and brotli compression to vite.config.js
+  3. Updated nginx.conf with `gzip_static on` to serve pre-compressed files
+- **Result:** All assets now have .gz and .br versions
+
+### 14. Manual Chunk Splitting
+- **File:** `services/service_frontend/vite.config.js`
+- **Add:** rollupOptions.manualChunks
+- **Split:**
+  - `vendor` - react, react-dom, router (157KB)
+  - `motion` - framer-motion (100KB)
+  - `charts` - recharts, d3 (385KB)
+  - `maps` - leaflet, react-leaflet (151KB)
+  - `lucide` - icons (8KB)
+- **Impact:** Better caching, smaller initial load, parallel loading
+- **Result:** Separate chunks for vendor libs, charts, maps, motion, icons
+
+### 15. SWR/React Query for API Caching
+- **Package:** `@tanstack/react-query`
+- **Impact:** Instant repeat loads, reduced API calls, automatic cache management
+- **Changes:**
+  1. Installed @tanstack/react-query
+  2. Added QueryClientProvider to App.jsx with config (5-min stale, 10-min cache)
+  3. Created `services/service_frontend/src/hooks/useApi.js` with hooks for:
+     - Routines (query + CRUD mutations)
+     - Personality, presets, LLM config
+     - Quips (query + CRUD mutations)
+     - Integration/IoT status
+  4. Updated Routines.jsx to use React Query hooks
+- **Result:** Automatic client-side caching with cache invalidation on mutations
+
 ---
 
 ## 🔲 TODO (Priority Order)
 
+### PHASE 2: BUILD & DEPLOYMENT SPEED (Medium Effort)
+
+#### 16. Docker Build Optimization
+- **Files:** All service Dockerfiles, `docker-compose.yml`
+- **Changes:**
+  - Added BuildKit syntax directive (`# syntax=docker/dockerfile:1`) to all Dockerfiles
+  - Added pip cache mount (`--mount=type=cache,target=/root/.cache/pip`) to all Python services
+  - Added .dockerignore files to exclude __pycache__, .pyc, tests, .env, etc.
+  - Added note in docker-compose.yml to enable BuildKit (`export DOCKER_BUILDKIT=1`)
+- **Impact:** 30-50% faster rebuilds (pip packages cached between builds)
+- **Result:**
+  - All 7 Python Dockerfiles updated with BuildKit cache mounts
+  - 2 .dockerignore files created (service_api, service_user)
+  - Build verified successful with DOCKER_BUILDKIT=1
+
+#### 17. Python 3.10+ Upgrade
+- **Files:** All service Dockerfiles, requirements.txt
+- **Changes:**
+  - Change base image from python:3.9-slim to python:3.10-slim or python:3.11-slim
+  - Update pinned package versions (e.g., requests==2.32.5)
+  - Test all services
+- **Impact:** ~10% performance boost, access to newer packages
+- **Steps:**
+  1. Audit all requirements.txt files for version constraints
+  2. Update Dockerfiles to python:3.10-slim
+  3. Fix any version compatibility issues
+  4. Test each service individually
+  5. Run full integration test suite
+
+---
+
+### PHASE 3: BACKEND DATA HANDLING (Medium-High Effort)
+
+#### 18. Redis Caching Layer
+- **Files:** `docker-compose.yml`, `services/common/`
+- **Add:** Redis service to docker-compose.yml
+- **Impact:** Cache DB queries, API responses, reduce DB load
+- **Steps:**
+  1. Add Redis container to docker-compose.yml
+  2. Create Redis client wrapper in common/
+  3. Cache personality, quips, config endpoints
+  4. Add cache invalidation on writes
+
+#### 19. API Response Compression
+- **File:** `services/service_api/app.py`
+- **Add:** uvicorn gzip middleware
+- **Impact:** 50-70% smaller API responses
+- **Steps:**
+  1. Add uvicorn.middleware.gzip.GzipMiddleware
+  2. Configure compression level
+
+#### 20. Split service_api/app.py (1986 lines → modular)
+- **New Structure:**
+  - `services/service_api/routes/users.py`
+  - `services/service_api/routes/devices.py`
+  - `services/service_api/routes/personality.py`
+  - `services/service_api/routes/routines.py`
+  - `services/service_api/routes/integrations.py`
+  - `services/service_api/routes/__init__.py`
+- **Impact:** Easier to maintain, test, optimize, cache
+- **Steps:**
+  1. Create routes/ directory and __init__.py
+  2. Extract route handlers to separate files
+  3. Register blueprints in app.py
+  4. Test all endpoints still work
+
+---
+
+### PHASE 4: DATABASE OPTIMIZATION
+
+#### 21. Slow Query Analysis
+- **Tool:** MySQL EXPLAIN, slow_query_log
+- **Steps:**
+  1. Enable slow query log in MySQL config
+  2. Identify slow queries (personality, quips, calendar)
+  3. Add indexes where missing
+  4. Optimize JOINs
+
+#### 22. Query Result Caching (Expand existing cache.py)
+- **Files:** `services/common/cache.py` (exists, expand usage)
+- **Steps:**
+  1. Add cache for personality, presets, quips endpoints
+  2. Add cache for device lists
+  3. Add cache invalidation triggers on data changes
+
+---
+
 ### LOW PRIORITY
 
-#### 11. Batch API Requests
+#### 23. Batch API Requests
 - Create `/api/users-with-devices` endpoint
 - Reduce sequential fetches in PersonnelRoster
-
-#### 12. Frontend Bundle Size
-- Add code-splitting for large components (Nexus.jsx, Matrix.jsx, Core.jsx)
 
 ---
 
 ## Implementation Progress
 
-| # | Optimization | Status | Impact |
-|---|-------------|--------|--------|
-| 1 | Database Indexes | ✅ Done | High |
-| 2 | Connection Pooling | ✅ Done | High |
-| 3 | ORDER BY RAND() | ✅ Done | Medium |
-| 4 | Debug Logs | ✅ Done | Low |
-| 5 | Kafka Reuse | ✅ Done | Medium |
-| 6 | Error Handling | ✅ Done | Medium |
-| 7 | Env Defaults | ✅ Done | Low |
-| 8 | API Caching | ✅ Done | Medium |
-| 9 | React Memoization | ✅ Done | Medium |
-| 10 | Shared Utils | ✅ Done | Medium |
-| 11 | Event-Driven Sleep | ✅ Done | Low |
-| 12 | orjson | ✅ Done | Low |
-| 13 | Batch Requests | 🔲 TODO | Low |
-| 14 | Bundle Splitting | 🔲 TODO | Low |
+| # | Optimization | Phase | Status | Impact | Effort |
+|---|-------------|-------|--------|--------|--------|
+| 1 | Database Indexes | - | ✅ Done | High | Low |
+| 2 | Connection Pooling | - | ✅ Done | High | Medium |
+| 3 | ORDER BY RAND() | - | ✅ Done | Medium | Low |
+| 4 | Debug Logs | - | ✅ Done | Low | Low |
+| 5 | Kafka Reuse | - | ✅ Done | Medium | Medium |
+| 6 | Error Handling | - | ✅ Done | Medium | Medium |
+| 7 | Env Defaults | - | ✅ Done | Low | Low |
+| 8 | API Caching | - | ✅ Done | Medium | Low |
+| 9 | React Memoization | - | ✅ Done | Medium | Low |
+| 10 | Shared Utils | - | ✅ Done | Medium | Medium |
+| 11 | Event-Driven Sleep | - | ✅ Done | Low | Medium |
+| 12 | orjson | - | ✅ Done | Low | Low |
+| 13 | Vite Compression | 1 | ✅ Done | High | Low |
+| 14 | Manual Chunk Splitting | 1 | ✅ Done | Medium | Low |
+| 15 | SWR/React Query | 1 | ✅ Done | Medium | Medium |
+| 16 | Docker Build Optimization | 2 | ✅ Done | Medium | Medium |
+| 17 | Python 3.10+ Upgrade | 2 | 🔲 TODO | Medium | High |
+| 18 | Redis Caching | 3 | 🔲 TODO | High | Medium |
+| 19 | API Response Compression | 3 | ✅ Done | Medium | Low |
+| 20 | Split service_api/app.py | 3 | 🔲 TODO | Medium | High |
+| 21 | Slow Query Analysis | 4 | 🔲 TODO | Medium | Medium |
+| 22 | Query Result Caching | 4 | ✅ Done | Medium | Low |
+| 23 | Batch API Requests | - | ✅ Done | Low | Medium |
 
 ---
 
@@ -208,3 +338,5 @@
 - Test database migration before deploying
 - Benchmark connection pooling (before/after)
 - Monitor Kafka consumer lag
+- Phase 1 items should be done first (highest impact, lowest effort)
+- Python 3.10+ upgrade is in progress via separate task

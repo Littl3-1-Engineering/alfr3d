@@ -11,7 +11,7 @@ def get_kafka_url():
     return os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 
-def get_producer(use_json_serializer=False):
+def get_producer(use_json_serializer=True):
     from kafka import KafkaProducer
     from kafka.errors import KafkaError
 
@@ -22,9 +22,15 @@ def get_producer(use_json_serializer=False):
         try:
             logger.info(f"Connecting to Kafka at: {kafka_url}")
             if use_json_serializer:
+
+                def serialize_value(v):
+                    if isinstance(v, bytes):
+                        return v
+                    return orjson.dumps(v)
+
                 producer = KafkaProducer(
                     bootstrap_servers=[kafka_url],
-                    value_serializer=lambda v: orjson.dumps(v),
+                    value_serializer=serialize_value,
                 )
             else:
                 producer = KafkaProducer(bootstrap_servers=[kafka_url])

@@ -51,23 +51,50 @@ const AudioPlayer = () => {
     setIsPlaying(true);
 
     if (audioRef.current) {
-      audioRef.current.src = nextAudio.audio_url;
-      audioRef.current.load();
+      const audio = audioRef.current;
 
-      audioRef.current.play().catch(error => {
+      // Wait for audio to be ready before playing to prevent interrupted error
+      const audioReady = new Promise((resolve, reject) => {
+        const onCanPlay = () => {
+          audio.removeEventListener('canplay', onCanPlay);
+          audio.removeEventListener('error', onError);
+          resolve(true);
+        };
+        const onError = () => {
+          audio.removeEventListener('canplay', onCanPlay);
+          audio.removeEventListener('error', onError);
+          reject(new Error('Audio failed to load'));
+        };
+        audio.addEventListener('canplay', onCanPlay);
+        audio.addEventListener('error', onError);
+
+        // Timeout fallback - if canplay doesn't fire within 10s, try to play anyway
+        setTimeout(() => {
+          audio.removeEventListener('canplay', onCanPlay);
+          audio.removeEventListener('error', onError);
+          resolve(false);
+        }, 10000);
+      });
+
+      audio.src = API_BASE_URL + nextAudio.audio_url;
+      audio.load();
+
+      try {
+        await audioReady;
+        await audio.play();
+      } catch (error) {
         console.error('Audio playback failed:', error);
         console.error('Audio element error details:', {
-          src: audioRef.current.src,
+          src: audio.src,
           error: error.message,
-          networkState: audioRef.current.networkState,
-          readyState: audioRef.current.readyState,
-          duration: audioRef.current.duration
+          networkState: audio.networkState,
+          readyState: audio.readyState,
+          duration: audio.duration
         });
-        // Mark as played and remove from queue
         setPlayedAudioUrls(current => new Set([...current, nextAudio.audio_url]));
         setAudioQueue(prev => prev.slice(1));
         setIsPlaying(false);
-      });
+      }
     }
   }, [audioQueue]);
 
