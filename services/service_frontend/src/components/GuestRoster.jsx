@@ -5,45 +5,68 @@ import { User } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
+import socket from '../utils/socket';
 
-const GuestRoster = () => {
+const GuestRoster = ({ initialGuests = null, pollInterval = 5000 }) => {
   const navigate = useNavigate();
   const [guests, setGuests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
   const hasLoadedInitially = useRef(false);
 
-  useEffect(() => {
-    const fetchGuests = async () => {
-      try {
-        setIsLoading(!hasLoadedInitially.current);
-        setError(false);
-        const response = await fetch(`${API_BASE_URL}/api/users?online=true`);
-        if (response.ok) {
-          const data = await response.json();
-          const onlineGuestUsers = data.filter(user => user.type === 'guest');
-          setGuests(onlineGuestUsers);
-          if (!hasLoadedInitially.current) {
-            hasLoadedInitially.current = true;
-          }
-        } else {
-          if (!hasLoadedInitially.current) {
-            setError(true);
-          }
+  const filterGuests = (users) => {
+    return users.filter(user => user.type === 'guest');
+  };
+
+  const fetchGuests = async () => {
+    try {
+      setIsLoading(!hasLoadedInitially.current);
+      setError(false);
+      const response = await fetch(`${API_BASE_URL}/api/users?online=true`);
+      if (response.ok) {
+        const data = await response.json();
+        const onlineGuestUsers = filterGuests(data);
+        setGuests(onlineGuestUsers);
+        if (!hasLoadedInitially.current) {
+          hasLoadedInitially.current = true;
         }
-      } catch (error) {
-        console.error('Failed to fetch online guests:', error);
+      } else {
         if (!hasLoadedInitially.current) {
           setError(true);
         }
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Failed to fetch online guests:', error);
+      if (!hasLoadedInitially.current) {
+        setError(true);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (initialGuests && initialGuests.length > 0) {
+      setGuests(filterGuests(initialGuests));
+      hasLoadedInitially.current = true;
+      setIsLoading(false);
+    } else {
+      fetchGuests();
+    }
+    const guestTimer = setInterval(fetchGuests, pollInterval);
+
+    const handleUsersUpdate = (users) => {
+      const onlineGuestUsers = filterGuests(users);
+      setGuests(onlineGuestUsers);
+      hasLoadedInitially.current = true;
     };
 
-    fetchGuests();
-    const guestTimer = setInterval(fetchGuests, 5000); // Update every 5 seconds like OnlineUsers
-    return () => clearInterval(guestTimer);
+    socket.on('users', handleUsersUpdate);
+
+    return () => {
+      clearInterval(guestTimer);
+      socket.off('users', handleUsersUpdate);
+    };
   }, []);
 
   const formatDate = (dateString) => {

@@ -1,14 +1,17 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Plus, Play, Trash2, Save, Clock, RefreshCw, Zap, Mail, Lightbulb } from 'lucide-react';
 import { useTheme } from '../utils/useTheme';
-import { API_BASE_URL } from '../config';
+import { useRoutines, useCreateRoutine, useUpdateRoutine, useDeleteRoutine } from '../hooks/useApi';
 
 const Routines = () => {
   useTheme();
-  const [routines, setRoutines] = useState([]);
+  const { data: routines = [], isLoading, error } = useRoutines();
+  const createRoutine = useCreateRoutine();
+  const updateRoutine = useUpdateRoutine();
+  const deleteRoutine = useDeleteRoutine();
+
   const [selectedRoutine, setSelectedRoutine] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
     name: '',
     time: '08:00',
@@ -19,38 +22,14 @@ const Routines = () => {
   const [showForm, setShowForm] = useState(false);
   const isSunriseSunset = selectedRoutine?.name === 'Sunrise' || selectedRoutine?.name === 'Sunset';
 
-  const loadRoutines = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/routines`);
-      const data = await response.json();
-      setRoutines(data || []);
-    } catch (error) {
-      console.error('Failed to load routines:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadRoutines();
-  }, []);
-
   const handleSave = async () => {
     try {
-      const url = selectedRoutine
-        ? `${API_BASE_URL}/api/routines/${selectedRoutine.id}`
-        : `${API_BASE_URL}/api/routines`;
-      const method = selectedRoutine ? 'PUT' : 'POST';
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-      if (response.ok) {
-        await loadRoutines();
-        resetForm();
+      if (selectedRoutine) {
+        await updateRoutine.mutateAsync({ id: selectedRoutine.id, ...formData });
+      } else {
+        await createRoutine.mutateAsync(formData);
       }
+      resetForm();
     } catch (error) {
       console.error('Failed to save routine:', error);
     }
@@ -58,12 +37,9 @@ const Routines = () => {
 
   const handleDelete = async (id) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/routines/${id}`, { method: 'DELETE' });
-      if (response.ok) {
-        await loadRoutines();
-        if (selectedRoutine?.id === id) {
-          resetForm();
-        }
+      await deleteRoutine.mutateAsync(id);
+      if (selectedRoutine?.id === id) {
+        resetForm();
       }
     } catch (error) {
       console.error('Failed to delete routine:', error);
@@ -72,7 +48,7 @@ const Routines = () => {
 
   const handleRun = async (id) => {
     try {
-      await fetch(`${API_BASE_URL}/api/routines/${id}/run`, { method: 'POST' });
+      await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/routines/${id}/run`, { method: 'POST' });
     } catch (error) {
       console.error('Failed to run routine:', error);
     }
@@ -165,8 +141,10 @@ const Routines = () => {
       <div className="flex gap-6">
         {/* Routine List */}
         <div className="w-72 space-y-3">
-          {loading ? (
+          {isLoading ? (
             <div className="text-text-tertiary">Loading...</div>
+          ) : error ? (
+            <div className="text-error">Failed to load routines</div>
           ) : routines.length === 0 ? (
             <div className="text-text-tertiary">No routines yet</div>
           ) : (

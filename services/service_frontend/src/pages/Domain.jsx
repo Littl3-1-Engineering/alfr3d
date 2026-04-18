@@ -1,16 +1,17 @@
 import { motion } from 'framer-motion';
 import { useState, lazy, Suspense, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import PersonnelRoster from '../components/PersonnelRoster';
 import EnvironmentSettings from '../components/EnvironmentSettings';
 import ControlBlade from '../components/ControlBlade';
-import TacticalPanel from '../components/TacticalPanel';
+import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
+import TacticalPanelVariant2 from '../components/TacticalPanelVariant2';
+import TacticalPanelVariant3 from '../components/TacticalPanelVariant3';
 
 const Blueprint = lazy(() => import('../components/Blueprint'));
 
 const Domain = () => {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const tabParam = searchParams.get('tab');
   const userIdParam = searchParams.get('userId');
 
@@ -22,18 +23,7 @@ const Domain = () => {
     if (userIdParam && !initialUserId) {
       setInitialUserId(userIdParam);
     }
-
-    if (tabParam || userIdParam) {
-      navigate('/domain', { replace: true });
-    }
-  }, [tabParam, userIdParam, navigate, initialUserId]);
-
-  useEffect(() => {
-    // Clear URL parameters after processing
-    if (tabParam || userIdParam) {
-      navigate('/domain', { replace: true });
-    }
-  }, [tabParam, userIdParam, navigate]);
+  }, [tabParam, userIdParam, initialUserId]);
 
   return (
     <motion.div
@@ -95,21 +85,21 @@ const Domain = () => {
         <div className="relative">
           {activeView === 'blueprint' && (
             <Suspense fallback={<div className="text-center py-8 text-fui-text font-mono">[ LOADING BLUEPRINT... ]</div>}>
-              <TacticalPanel title="System Blueprint" showGrid={true}>
+              <TacticalPanelVariant1 title="System Blueprint" showGrid={true}>
                 <Blueprint onDeviceSelect={setSelectedDevice} />
-              </TacticalPanel>
+              </TacticalPanelVariant1>
             </Suspense>
           )}
            {activeView === 'personnel' && (
-             <TacticalPanel title="Personnel Roster">
-               <PersonnelRoster initialUserId={initialUserId} />
-             </TacticalPanel>
-           )}
-          {activeView === 'environment' && (
-            <TacticalPanel title="Environment Settings">
-              <EnvironmentSettings />
-            </TacticalPanel>
-          )}
+              <TacticalPanelVariant2 title="Personnel Roster">
+                <PersonnelRoster initialUserId={initialUserId} />
+              </TacticalPanelVariant2>
+            )}
+           {activeView === 'environment' && (
+              <TacticalPanelVariant3 title="Environment Settings">
+                <EnvironmentSettings />
+              </TacticalPanelVariant3>
+            )}
 
           <ControlBlade device={selectedDevice} onClose={() => setSelectedDevice(null)} />
         </div>

@@ -1,3 +1,7 @@
+#!/bin/bash
+# Enable BuildKit for faster builds with pip cache mounts
+export DOCKER_BUILDKIT=1
+
 docker build -t alfr3d/service-frontend:latest -f services/service_frontend/Dockerfile services/service_frontend
 docker build -t alfr3d/service-api:latest -f services/service_api/Dockerfile services
 docker build -t alfr3d/service-daemon:latest -f services/service_daemon/Dockerfile services

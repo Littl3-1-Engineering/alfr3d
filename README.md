@@ -15,6 +15,13 @@ A containerized microservices project for home automation, featuring Kafka messa
 ## Features
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
+- **Optimized Performance**:
+  - Vite with gzip/brotli compression for ~70% smaller bundles
+  - Manual chunk splitting for parallel loading and better caching
+  - React Query for client-side API caching (5-min stale time)
+  - orjson for 3-10x faster JSON serialization
+  - DBUtils connection pooling for database efficiency
+  - Event-driven Kafka consumers for lower CPU usage
 - **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines. WebSocket-powered instant updates.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
@@ -47,7 +54,11 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 ### Local Development with Docker Compose
 
-1. **Prerequisites**: Ensure Docker and Docker Compose are installed.
+1. **Prerequisites**: Ensure Docker and Docker Compose are installed. For faster builds, enable BuildKit:
+   ```bash
+   export DOCKER_BUILDKIT=1
+   ```
+
 2. **Environment Setup**: Copy `.env.example` to `.env` and update environment variables (DB credentials, Kafka URLs).
 3. **Database Setup**: Run the database initialization:
    ```bash
@@ -59,9 +70,9 @@ A containerized microservices project for home automation, featuring Kafka messa
    docker-compose up --build
    ```
 5. **Access the Application**:
-    - Dashboard: `http://localhost:8000`
-    - Real-time metrics update every 5 seconds
-    - Control panel for user/device management
+     - Dashboard: `http://localhost:8000`
+     - Real-time metrics update every 5 seconds
+     - Control panel for user/device management
 
 Note: Service Device runs as a standalone container for network scanning and should be deployed separately on the host machine.
 

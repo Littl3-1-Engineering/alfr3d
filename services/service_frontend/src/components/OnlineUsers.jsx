@@ -5,8 +5,9 @@ import { User } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
+import socket from '../utils/socket';
 
-const OnlineUsers = () => {
+const OnlineUsers = ({ initialResidents = null, pollInterval = 5000 }) => {
   const navigate = useNavigate();
   const [residents, setResidents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -14,37 +15,59 @@ const OnlineUsers = () => {
 
   const hasLoadedInitially = useRef(false);
 
-  useEffect(() => {
-    const fetchResidents = async () => {
-      try {
-        setIsLoading(!hasLoadedInitially.current);
-        setError(false);
-        const response = await fetch(`${API_BASE_URL}/api/users?online=true`);
-        if (response.ok) {
-          const data = await response.json();
-          const onlineResidents = data.filter(user => ['technoking', 'owner', 'resident'].includes(user.type));
-          setResidents(onlineResidents);
-          if (!hasLoadedInitially.current) {
-            hasLoadedInitially.current = true;
-          }
-        } else {
-          if (!hasLoadedInitially.current) {
-            setError(true);
-          }
+  const filterResidents = (users) => {
+    return users.filter(user => ['technoking', 'owner', 'resident'].includes(user.type));
+  };
+
+  const fetchResidents = async () => {
+    try {
+      setIsLoading(!hasLoadedInitially.current);
+      setError(false);
+      const response = await fetch(`${API_BASE_URL}/api/users?online=true`);
+      if (response.ok) {
+        const data = await response.json();
+        const onlineResidents = filterResidents(data);
+        setResidents(onlineResidents);
+        if (!hasLoadedInitially.current) {
+          hasLoadedInitially.current = true;
         }
-      } catch (error) {
-        console.error('Failed to fetch online residents:', error);
+      } else {
         if (!hasLoadedInitially.current) {
           setError(true);
         }
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Failed to fetch online residents:', error);
+      if (!hasLoadedInitially.current) {
+        setError(true);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (initialResidents && initialResidents.length > 0) {
+      setResidents(filterResidents(initialResidents));
+      hasLoadedInitially.current = true;
+      setIsLoading(false);
+    } else {
+      fetchResidents();
+    }
+    const residentTimer = setInterval(fetchResidents, pollInterval);
+
+    const handleUsersUpdate = (users) => {
+      const onlineResidents = filterResidents(users);
+      setResidents(onlineResidents);
+      hasLoadedInitially.current = true;
     };
 
-    fetchResidents();
-    const residentTimer = setInterval(fetchResidents, 5000); // Update every 5 seconds
-    return () => clearInterval(residentTimer);
+    socket.on('users', handleUsersUpdate);
+
+    return () => {
+      clearInterval(residentTimer);
+      socket.off('users', handleUsersUpdate);
+    };
   }, []);
 
   const formatDate = (dateString) => {

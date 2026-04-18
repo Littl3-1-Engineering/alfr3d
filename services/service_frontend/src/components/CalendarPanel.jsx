@@ -1,35 +1,46 @@
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
-const CalendarPanel = () => {
-  const [events, setEvents] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+const CalendarPanel = ({ initialEvents = null, pollInterval = 300000 }) => {
+  const [events, setEvents] = useState(initialEvents || []);
+  const [isLoading, setIsLoading] = useState(!initialEvents);
   const [error, setError] = useState(false);
   const [currentDate] = useState(new Date());
 
-  useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        setIsLoading(true);
-        setError(false);
-        const response = await fetch(`${API_BASE_URL}/api/calendar/events`);
-        if (response.ok) {
-          const data = await response.json();
-          setEvents(data);
-        } else {
-          setError(true);
-        }
-      } catch (error) {
-        console.error('Failed to fetch calendar events:', error);
+  const fetchEvents = async () => {
+    try {
+      setError(false);
+      const response = await fetch(`${API_BASE_URL}/api/calendar/events`);
+      if (response.ok) {
+        const data = await response.json();
+        setEvents(data);
+      } else {
         setError(true);
-      } finally {
-        setIsLoading(false);
       }
+    } catch (error) {
+      console.error('Failed to fetch calendar events:', error);
+      setError(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialEvents) {
+      fetchEvents().finally(() => setIsLoading(false));
+    }
+    const eventTimer = setInterval(fetchEvents, pollInterval);
+
+    const handleEventsUpdate = (data) => {
+      setEvents(data);
+      setIsLoading(false);
     };
 
-    fetchEvents();
-    const eventTimer = setInterval(fetchEvents, 300000); // Update every 5 minutes
-    return () => clearInterval(eventTimer);
+    socket.on('events', handleEventsUpdate);
+
+    return () => {
+      clearInterval(eventTimer);
+      socket.off('events', handleEventsUpdate);
+    };
   }, []);
 
   const getDaysInMonth = (date) => {
