@@ -1,7 +1,10 @@
-FROM node:20-alpine
+FROM node:20.17.0-alpine
 
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
+RUN mkdir -p /home/alfr3d && \
+    adduser -D -u 1001 -h /home/alfr3d -s /bin/sh alfr3d || true
 
 WORKDIR /app
 
@@ -12,9 +15,10 @@ COPY . .
 
 RUN npm run build
 
-# Install a static file server
 RUN npm install -g serve
 
 EXPOSE 8000
+
+USER 1001
 
 CMD ["serve", "-s", "dist", "-l", "8000"]

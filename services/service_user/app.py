@@ -1,5 +1,6 @@
 # Modified for containerization: logging to stdout instead of file
 """Main application for the ALFR3D user service, handling user management and state tracking."""
+
 # Standard library imports
 import os
 import sys
@@ -292,12 +293,10 @@ def refresh_user_devices(user, cursor, db, env_id):
     try:
         logger.info("Fetching user devices")
         cursor.execute(
-            "SELECT d.last_online FROM device d \
-                        inner join device_types dt on d.device_type = dt.id \
-                        WHERE user_id = "
-            + str(user[0])
-            + ' \
-                        AND (type = "guest" or type = "resident");'
+            "SELECT d.last_online FROM device d "
+            "INNER JOIN device_types dt ON d.device_type = dt.id "
+            "WHERE user_id = %s AND (type = 'guest' OR type = 'resident')",
+            (user[0],),
         )
         devices = cursor.fetchall()
         for device in devices:
