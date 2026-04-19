@@ -41,8 +41,8 @@ const DeviceCard = ({ device, onClick }) => (
     <div>
       <h3 className="text-lg font-semibold text-text-primary">{device.name}</h3>
       <p className="text-sm text-primary uppercase">{device.type}</p>
-      <p className="text-xs text-text-tertiary">IP: {device.ip}</p>
-      <p className="text-xs text-text-tertiary">MAC: {device.mac}</p>
+      <p className="text-xs text-text-tertiary">IP: {device.IP}</p>
+      <p className="text-xs text-text-tertiary">MAC: {device.MAC}</p>
       <p className="text-xs text-text-tertiary">Last Online: {device.last_online || 'Never'}</p>
       <p className="text-xs text-text-tertiary">User: {device.user || 'None'}</p>
       <p className="text-xs text-text-tertiary">State: <span className={device.state === 'online' ? 'text-success' : ''}>{device.state}</span></p>
@@ -60,9 +60,7 @@ const PersonnelRoster = ({ initialUserId }) => {
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '' });
-  const [newDevice, setNewDevice] = useState({ name: '', type: 'guest', ip: '', mac: '', user: '' });
   const [showAddUser, setShowAddUser] = useState(false);
-  const [showAddDevice, setShowAddDevice] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [modalUser, setModalUser] = useState(null);
@@ -74,8 +72,8 @@ const PersonnelRoster = ({ initialUserId }) => {
     fetch(API_BASE_URL + '/api/users-with-devices')
       .then(res => res.json())
       .then(data => {
-        setUsers(data);
-        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setUsers(data.users);
+        const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
         setDevices(allDevices);
       })
       .catch(err => console.error('Error fetching users with devices:', err));
@@ -137,36 +135,13 @@ const PersonnelRoster = ({ initialUserId }) => {
       })
       .then(res => res.json())
       .then(data => {
-        setUsers(data);
-        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setUsers(data.users);
+        const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
         setDevices(allDevices);
         setNewUser({ name: '', type: 'guest', email: '', about_me: '' });
         setShowAddUser(false);
       })
       .catch(err => console.error('Error adding user:', err));
-  };
-
-  const handleAddDevice = () => {
-    if (!newDevice.name || !newDevice.type) return;
-    fetch(API_BASE_URL + '/api/devices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newDevice),
-    })
-      .then(res => {
-        if (res.ok) {
-          return fetch(API_BASE_URL + '/api/users-with-devices');
-        }
-      })
-      .then(res => res.json())
-      .then(data => {
-        setUsers(data);
-        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
-        setDevices(allDevices);
-        setNewDevice({ name: '', type: 'guest', ip: '', mac: '', user: '' });
-        setShowAddDevice(false);
-      })
-      .catch(err => console.error('Error adding device:', err));
   };
 
   const handleModalSaveUser = (updatedUser) => {
@@ -182,9 +157,10 @@ const PersonnelRoster = ({ initialUserId }) => {
       })
       .then(res => res.json())
       .then(data => {
-        setUsers(data);
-        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setUsers(data.users);
+        const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
         setDevices(allDevices);
+
         setModalUser(updatedUser);
       })
       .catch(err => console.error('Error updating user:', err));
@@ -200,9 +176,10 @@ const PersonnelRoster = ({ initialUserId }) => {
         })
         .then(res => res.json())
         .then(data => {
-          setUsers(data);
-          const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+          setUsers(data.users);
+          const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
           setDevices(allDevices);
+
           closeUserModal();
         })
         .catch(err => console.error('Error deleting user:', err));
@@ -222,10 +199,11 @@ const PersonnelRoster = ({ initialUserId }) => {
       })
       .then(res => res.json())
       .then(data => {
-        setUsers(data);
-        const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+        setUsers(data.users);
+        const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
         setDevices(allDevices);
-        setModalDevice(updatedDevice);
+
+        closeDeviceModal();
       })
       .catch(err => console.error('Error updating device:', err));
   };
@@ -240,9 +218,10 @@ const PersonnelRoster = ({ initialUserId }) => {
         })
         .then(res => res.json())
         .then(data => {
-          setUsers(data);
-          const allDevices = data.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
+          setUsers(data.users);
+          const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
           setDevices(allDevices);
+
           closeDeviceModal();
         })
         .catch(err => console.error('Error deleting device:', err));
@@ -323,81 +302,12 @@ const PersonnelRoster = ({ initialUserId }) => {
       </div>
 
       <div>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-primary">Devices</h2>
-          <button
-            onClick={() => setShowAddDevice(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Device</span>
-          </button>
-        </div>
+        <h2 className="text-2xl font-bold text-primary mb-4">Devices</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {devices.map((device) => (
             <DeviceCard key={device.id} device={device} onClick={handleDeviceHistoryClick} />
           ))}
         </div>
-        {showAddDevice && (
-          <div className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20">
-            <h3 className="text-lg font-semibold text-primary mb-4">Add New Device</h3>
-            <div className="space-y-3">
-              <input
-                value={newDevice.name}
-                onChange={(e) => setNewDevice(prev => ({ ...prev, name: e.target.value }))}
-                className="w-full p-2 bg-card rounded text-text-primary"
-                placeholder="Name"
-              />
-              <select
-                value={newDevice.type}
-                onChange={(e) => setNewDevice(prev => ({ ...prev, type: e.target.value }))}
-                className="w-full p-2 bg-card rounded text-text-primary"
-              >
-                <option value="alfr3d">Alfr3d</option>
-                <option value="HW">HW</option>
-                <option value="guest">Guest</option>
-                <option value="light">Light</option>
-                <option value="resident">Resident</option>
-              </select>
-              <input
-                value={newDevice.ip}
-                onChange={(e) => setNewDevice(prev => ({ ...prev, ip: e.target.value }))}
-                className="w-full p-2 bg-card rounded text-text-primary"
-                placeholder="IP"
-              />
-              <input
-                value={newDevice.mac}
-                onChange={(e) => setNewDevice(prev => ({ ...prev, mac: e.target.value }))}
-                className="w-full p-2 bg-card rounded text-text-primary"
-                placeholder="MAC"
-              />
-              <select
-                value={newDevice.user}
-                onChange={(e) => setNewDevice(prev => ({ ...prev, user: e.target.value }))}
-                className="w-full p-2 bg-card rounded text-text-primary"
-              >
-                <option value="">No User</option>
-                {users.map(user => (
-                  <option key={user.id} value={user.name}>{user.name}</option>
-                ))}
-              </select>
-              <div className="flex space-x-2">
-                <button
-                  onClick={handleAddDevice}
-                  className="px-4 py-2 bg-success/20 border border-success rounded text-success hover:bg-success/30"
-                >
-                  Add
-                </button>
-                <button
-                  onClick={() => setShowAddDevice(false)}
-                  className="px-4 py-2 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <UserModal
@@ -411,6 +321,7 @@ const PersonnelRoster = ({ initialUserId }) => {
       />
 
       <DeviceHistoryModal
+        key={modalDevice?.id}
         isOpen={showDeviceModal}
         onClose={closeDeviceModal}
         device={modalDevice}

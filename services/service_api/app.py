@@ -811,6 +811,18 @@ async def get_users_with_devices():
                 devices_by_user[uid] = []
             devices_by_user[uid].append(d)
 
+        user_ids = {u["id"] for u in users}
+        unassigned_devices = devices_by_user.get(None, []) + [
+            d
+            for uid, devs in devices_by_user.items()
+            if uid is not None and uid not in user_ids
+            for d in devs
+        ]
+        for device in unassigned_devices:
+            device["state"] = device.pop("device_state")
+            if device.get("last_online"):
+                device["last_online"] = device["last_online"].isoformat()
+
         for user in users:
             user["devices"] = devices_by_user.get(user["id"], [])
             for device in user.get("devices", []):
@@ -822,7 +834,7 @@ async def get_users_with_devices():
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
 
-        return users
+        return {"users": users, "unassigned_devices": unassigned_devices}
     except Exception as e:
         logger.error(f"Error fetching users with devices: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
