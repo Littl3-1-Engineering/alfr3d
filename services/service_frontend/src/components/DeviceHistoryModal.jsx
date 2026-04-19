@@ -189,8 +189,8 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave, o
                 <div className="text-sm text-text-secondary">
                   <span className="text-primary font-medium">IP:</span>
                   <input
-                    value={editedDevice?.ip || ''}
-                    onChange={(e) => handleInputChange('ip', e.target.value)}
+                    value={editedDevice?.IP || ''}
+                    onChange={(e) => handleInputChange('IP', e.target.value)}
                     className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
                     placeholder="IP Address"
                   />
@@ -198,8 +198,8 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave, o
                 <div className="text-sm text-text-secondary">
                   <span className="text-primary font-medium">MAC:</span>
                   <input
-                    value={editedDevice?.mac || ''}
-                    onChange={(e) => handleInputChange('mac', e.target.value)}
+                    value={editedDevice?.MAC || ''}
+                    onChange={(e) => handleInputChange('MAC', e.target.value)}
                     className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
                     placeholder="MAC Address"
                   />
@@ -233,10 +233,10 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave, o
             <>
               <div className="space-y-2">
                 <div className="text-sm text-text-secondary">
-                  <span className="text-primary font-medium">IP:</span> {device?.ip}
+                  <span className="text-primary font-medium">IP:</span> {device?.IP}
                 </div>
                 <div className="text-sm text-text-secondary">
-                  <span className="text-primary font-medium">MAC:</span> {device?.mac}
+                  <span className="text-primary font-medium">MAC:</span> {device?.MAC}
                 </div>
                 <div className="text-sm text-text-secondary">
                   <span className="text-primary font-medium">State:</span> {device?.state}
