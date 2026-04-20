@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, lazy, Suspense, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import PersonnelRoster from '../components/PersonnelRoster';
+import DeviceRegistry from '../components/DeviceRegistry';
 import EnvironmentSettings from '../components/EnvironmentSettings';
 import ControlBlade from '../components/ControlBlade';
 import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
@@ -15,7 +16,7 @@ const Domain = () => {
   const tabParam = searchParams.get('tab');
   const userIdParam = searchParams.get('userId');
 
-  const [activeView, setActiveView] = useState(tabParam === 'personnel' ? 'personnel' : 'blueprint');
+  const [activeView, setActiveView] = useState(tabParam === 'personnel' ? 'personnel' : tabParam === 'devices' ? 'devices' : 'blueprint');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [initialUserId, setInitialUserId] = useState(userIdParam);
 
@@ -69,6 +70,16 @@ const Domain = () => {
             >
               [ PERSONNEL ]
             </button>
+<button
+              onClick={() => setActiveView('devices')}
+              className={`px-6 py-2 rounded-none transition-all duration-300 font-mono text-sm ${
+                activeView === 'devices'
+                  ? 'bg-fui-accent text-fui-bg font-bold'
+                  : 'text-fui-text hover:text-fui-accent hover:bg-fui-dim'
+              }`}
+            >
+              [ DEVICES ]
+            </button>
             <button
               onClick={() => setActiveView('environment')}
               className={`px-6 py-2 rounded-none transition-all duration-300 font-mono text-sm ${
@@ -91,15 +102,20 @@ const Domain = () => {
             </Suspense>
           )}
            {activeView === 'personnel' && (
-              <TacticalPanelVariant2 title="Personnel Roster">
-                <PersonnelRoster initialUserId={initialUserId} />
-              </TacticalPanelVariant2>
-            )}
+             <TacticalPanelVariant2 title="Personnel Roster">
+               <PersonnelRoster initialUserId={initialUserId} />
+             </TacticalPanelVariant2>
+           )}
+           {activeView === 'devices' && (
+             <TacticalPanelVariant2 title="Device Registry">
+               <DeviceRegistry />
+             </TacticalPanelVariant2>
+           )}
            {activeView === 'environment' && (
-              <TacticalPanelVariant3 title="Environment Settings">
-                <EnvironmentSettings />
-              </TacticalPanelVariant3>
-            )}
+             <TacticalPanelVariant3 title="Environment Settings">
+               <EnvironmentSettings />
+             </TacticalPanelVariant3>
+           )}
 
           <ControlBlade device={selectedDevice} onClose={() => setSelectedDevice(null)} />
         </div>

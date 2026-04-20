@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lightbulb, Thermometer, Wifi, ZoomIn, ZoomOut, ChevronDown, ChevronUp, X, AlertTriangle } from 'lucide-react';
+import { Lightbulb, Thermometer, Wifi, ZoomIn, ZoomOut, ChevronDown, ChevronUp, X, AlertTriangle, Droplets, Activity, Gauge, Camera } from 'lucide-react';
 import PropTypes from 'prop-types';
 import BlueprintSVG from './cassiopeia_blueprint.svg?react';
 import ControlBlade from './ControlBlade';
@@ -8,20 +8,22 @@ import { API_BASE_URL } from '../config';
 
 const DeviceIcon = memo(({ device, showWarning, onRemove }) => {
   const Icon = useMemo(() => {
-    if (device.type === 'iot') {
-      switch (device.deviceType) {
-        case 'light': return Lightbulb;
-        case 'climate':
-        case 'thermostat': return Thermometer;
-        default: return Wifi;
-      }
-    }
-    switch (device.deviceType) {
-      case 'light': return Lightbulb;
-      case 'thermostat': return Thermometer;
-      default: return Wifi;
-    }
-  }, [device.type, device.deviceType]);
+    const deviceType = device.type === 'iot' && device.local_device?.device_type
+      ? device.local_device.device_type
+      : device.deviceType;
+
+    const type = deviceType?.toLowerCase();
+
+    if (type === 'light' || deviceType === 4) return Lightbulb;
+    if (type === 'climate' || type === 'thermostat') return Thermometer;
+    if (type === 'sensor') return Droplets;
+    if (type === 'binary_sensor') return Activity;
+    if (type === 'camera') return Camera;
+    if (type === 'cover') return Gauge;
+    if (type === 'switch' || type === 'fan' || type === 'lock' || type === 'media_player') return Wifi;
+
+    return Wifi;
+  }, [device.type, device.deviceType, device.local_device]);
 
   return (
     <div className="relative">
