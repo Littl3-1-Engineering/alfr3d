@@ -169,6 +169,13 @@ body {
   min-height: 100vh;
 }
 
+/* Solid glass style for modals */
+.glass {
+  background: rgba(20, 22, 25, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(51, 54, 61, 0.8);
+}
+
 /* Advanced Glassmorphism with Corner Glow */
 .glass-panel {
   background: var(--theme-card);

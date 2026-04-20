@@ -325,6 +325,10 @@ class IoTProvider(BaseModel):
     provider: str
 
 
+class LinkDevice(BaseModel):
+    device_id: int | None = None
+
+
 class IOTDeviceControl(BaseModel):
     command: str
     params: Dict[str, Any] = {}
@@ -811,6 +815,18 @@ async def get_users_with_devices():
                 devices_by_user[uid] = []
             devices_by_user[uid].append(d)
 
+        user_ids = {u["id"] for u in users}
+        unassigned_devices = devices_by_user.get(None, []) + [
+            d
+            for uid, devs in devices_by_user.items()
+            if uid is not None and uid not in user_ids
+            for d in devs
+        ]
+        for device in unassigned_devices:
+            device["state"] = device.pop("device_state")
+            if device.get("last_online"):
+                device["last_online"] = device["last_online"].isoformat()
+
         for user in users:
             user["devices"] = devices_by_user.get(user["id"], [])
             for device in user.get("devices", []):
@@ -822,7 +838,7 @@ async def get_users_with_devices():
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
 
-        return users
+        return {"users": users, "unassigned_devices": unassigned_devices}
     except Exception as e:
         logger.error(f"Error fetching users with devices: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1145,7 +1161,7 @@ async def get_weather():
         cursor.execute(
             "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
             "description, sunrise, sunset, pressure, humidity, manual_override, "
-            "manual_location_override, subjective_feel FROM environment WHERE name = %s",
+            "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
             (ALFR3D_ENV_NAME,),
         )
         row = cursor.fetchone()
@@ -1162,6 +1178,7 @@ async def get_weather():
                 "sunset": row[12].isoformat() if row[12] else None,
                 "pressure": row[13],
                 "humidity": row[14],
+                "timezone": row[18],
             }
             await manager.broadcast("weather", weather_data)
             return weather_data
@@ -1285,8 +1302,11 @@ async def get_calendar_events():
             }
             for row in cursor.fetchall()
         ]
+        cursor.execute("SELECT timezone FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        tz_row = cursor.fetchone()
+        timezone = tz_row[0] if tz_row else None
         db.close()
-        return events
+        return {"events": events, "timezone": timezone}
     except pymysql.Error as e:
         logger.error(f"Error fetching calendar events: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1557,9 +1577,11 @@ async def get_iot_devices():
             """
             SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
                    sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
-                   sd.mac_address, d.id as local_device_id, d.IP, d.position_x, d.position_y
+                   sd.mac_address, sd.device_id as linked_device_id,
+                   d.IP, d.position_x, d.position_y, dt.type as linked_device_type
             FROM smarthome_devices sd
-            LEFT JOIN device d ON UPPER(d.MAC) = UPPER(sd.mac_address)
+            LEFT JOIN device d ON sd.device_id = d.id
+            LEFT JOIN device_types dt ON d.device_type = dt.id
             WHERE sd.source = %s
         """,
             (provider,),
@@ -1567,6 +1589,7 @@ async def get_iot_devices():
 
         devices = []
         for row in cursor.fetchall():
+            linked_device_id = row[11]
             devices.append(
                 {
                     "id": row[0],
@@ -1580,14 +1603,16 @@ async def get_iot_devices():
                     "online": bool(row[8]),
                     "last_state": orjson.loads(row[9]) if row[9] else {},
                     "mac_address": row[10],
+                    "linked": linked_device_id is not None,
                     "local_device": (
                         {
-                            "id": row[11],
+                            "id": linked_device_id,
                             "IP": row[12],
                             "position_x": row[13],
                             "position_y": row[14],
+                            "device_type": row[15],
                         }
-                        if row[11]
+                        if linked_device_id
                         else None
                     ),
                 }
@@ -1605,7 +1630,7 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
         db = get_connection()
         cursor = db.cursor()
         cursor.execute(
-            "SELECT source, ha_entity_id FROM smarthome_devices WHERE id = %s",
+            "SELECT source, ha_entity_id, device_type FROM smarthome_devices WHERE id = %s",
             (device_id,),
         )
         row = cursor.fetchone()
@@ -1614,31 +1639,109 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
 
-        source, ha_entity_id = row[0], row[1]
+        source, ha_entity_id, device_type = row[0], row[1], row[2]
+        command = data.command
 
         if source == "homeassistant" and ha_entity_id:
             from common import ha_utils
 
-            service_map = {
-                "turn_on": "turn_on",
-                "turn_off": "turn_off",
-                "toggle": "toggle",
-                "set_brightness": "turn_on",
-            }
-            service = service_map.get(data.command, data.command)
-            success, message = ha_utils.ha_control_device(ha_entity_id, service, data.params)
+            domain = ha_entity_id.split(".")[0] if "." in ha_entity_id else "switch"
+
+            if command == "turn_on":
+                service = (
+                    "turn_on"
+                    if domain in ["light", "switch", "fan"]
+                    else domain.split(".")[0] if "." in ha_entity_id else domain
+                )
+            elif command == "turn_off":
+                service = "turn_off"
+            elif command == "toggle":
+                service = "toggle"
+            elif command == "set_brightness":
+                service = "turn_on"
+            elif command == "set_temperature":
+                service = "set_temperature"
+            elif command == "set_mode":
+                service = "set_mode"
+            elif command == "lock":
+                service = "lock"
+            elif command == "unlock":
+                service = "unlock"
+            elif command == "set_speed":
+                service = "set_percentage"
+            elif command == "set_position":
+                service = "set_cover_position"
+            elif command == "media_play":
+                service = "media_play"
+            elif command == "media_pause":
+                service = "media_pause"
+            elif command == "volume_set":
+                service = "volume_set"
+            else:
+                service = command
+
+            params = data.params or {}
+            success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
                 return {
                     "message": message,
                     "device_id": device_id,
-                    "command": data.command,
+                    "command": command,
+                    "device_type": device_type,
                 }
             else:
                 raise HTTPException(status_code=500, detail=message)
         else:
             raise HTTPException(status_code=400, detail="Unsupported source or device")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error controlling IoT device: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/iot/devices/{device_id}/link")
+async def link_iot_device(device_id: int, data: LinkDevice):
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+
+        cursor.execute("SELECT id, name FROM smarthome_devices WHERE id = %s", (device_id,))
+        row = cursor.fetchone()
+        if not row:
+            db.close()
+            raise HTTPException(status_code=404, detail="IoT device not found")
+
+        if data.device_id is None:
+            cursor.execute(
+                "UPDATE smarthome_devices SET device_id = NULL WHERE id = %s",
+                (device_id,),
+            )
+            db.commit()
+            db.close()
+            return {"message": "Device unlinked", "device_id": device_id}
+
+        cursor.execute("SELECT id, name FROM device WHERE id = %s", (data.device_id,))
+        target_row = cursor.fetchone()
+        if not target_row:
+            db.close()
+            raise HTTPException(status_code=404, detail="Target device not found")
+
+        cursor.execute(
+            "UPDATE smarthome_devices SET device_id = %s WHERE id = %s",
+            (data.device_id, device_id),
+        )
+        db.commit()
+        db.close()
+        return {
+            "message": "Device linked",
+            "device_id": device_id,
+            "linked_to": data.device_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error linking IoT device: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

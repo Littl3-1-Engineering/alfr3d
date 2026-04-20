@@ -52,7 +52,9 @@ def test_st_connection():
 
     try:
         response = requests.get(
-            f"{ST_API_BASE}/devices", headers={"Authorization": f"Bearer {st_pat}"}, timeout=10
+            f"{ST_API_BASE}/devices",
+            headers={"Authorization": f"Bearer {st_pat}"},
+            timeout=10,
         )
         if response.status_code == 200:
             return True, "Connected"
@@ -74,7 +76,9 @@ def get_st_devices():
 
     try:
         response = requests.get(
-            f"{ST_API_BASE}/devices", headers={"Authorization": f"Bearer {st_pat}"}, timeout=30
+            f"{ST_API_BASE}/devices",
+            headers={"Authorization": f"Bearer {st_pat}"},
+            timeout=30,
         )
         if response.status_code == 200:
             data = response.json()
@@ -154,30 +158,74 @@ def sync_st_devices():
     env_id = env_row[0] if env_row else None
 
     synced = 0
+    linked = 0
+    created = 0
     for device in devices:
-        device_id = device.get("deviceId")
-        label = device.get("label", device.get("name", device_id))
+        st_device_id = device.get("deviceId")
+        label = device.get("label", device.get("name", st_device_id))
         device_type = device.get("deviceTypeName", device.get("typeName", "unknown"))
+
+        mac_address = None
+        device_id = None
+
+        if mac_address:
+            cursor.execute(
+                "SELECT id FROM device WHERE UPPER(MAC) = %s",
+                (mac_address.upper(),),
+            )
+            row = cursor.fetchone()
+            if row:
+                device_id = row[0]
+                linked += 1
+            else:
+                cursor.execute(
+                    """
+                    SELECT s.id as state_id, dt.id as type_id,
+                           u.id as user_id, e.id as env_id
+                    FROM states s, device_types dt, user u, environment e
+                    WHERE s.state = 'online' AND dt.type = 'guest'
+                    AND u.username = 'alfr3d' AND e.name = 'Home'
+                    """,
+                )
+                result = cursor.fetchone()
+                if result:
+                    devstate, devtype, usrid, envid = result
+                    cursor.execute(
+                        "INSERT INTO device(name, IP, MAC, last_online, state, "
+                        "device_type, user_id, environment_id) "
+                        "VALUES (%s, '0.0.0.0', %s, NOW(), %s, %s, %s, %s)",
+                        (
+                            label,
+                            mac_address,
+                            devstate,
+                            devtype,
+                            usrid,
+                            envid,
+                        ),
+                    )
+                    device_id = cursor.lastrowid
+                    created += 1
 
         cursor.execute(
             """
             INSERT INTO smarthome_devices
                 (name, source, st_device_id, device_type,
-                 online, environment_id)
-            VALUES (%s, 'smartthings', %s, %s, %s, %s)
+                 online, environment_id, device_id)
+            VALUES (%s, 'smartthings', %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 device_type = VALUES(device_type),
-                online = VALUES(online)
+                online = VALUES(online),
+                device_id = COALESCE(device_id, VALUES(device_id))
         """,
-            (label, device_id, device_type, True, env_id),
+            (label, st_device_id, device_type, True, env_id, device_id),
         )
         synced += 1
 
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} ST devices")
+    logger.info(f"Synced {synced} ST devices, linked {linked}, created {created} device records")
     return True
 
 

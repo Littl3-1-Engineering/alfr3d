@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
+import { formatTimeWithTimezone } from '../utils/timeUtils';
 
 const WeatherPanel = ({ initialWeather = null, pollInterval = 600000 }) => {
   const [weatherData, setWeatherData] = useState(initialWeather || {});
@@ -43,13 +44,7 @@ const WeatherPanel = ({ initialWeather = null, pollInterval = 600000 }) => {
   }, []);
 
   const formatTime = (isoString) => {
-    if (!isoString) return 'N/A';
-    const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return formatTimeWithTimezone(isoString, weatherData.timezone);
   };
 
   return (

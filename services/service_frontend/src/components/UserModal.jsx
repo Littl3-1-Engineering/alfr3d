@@ -195,8 +195,8 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
                 </div>
                 <h4 className="text-sm font-semibold text-text-primary mb-2">{device.name}</h4>
                 <div className="text-xs text-text-tertiary space-y-1">
-                  <div>IP: {device.ip}</div>
-                  <div>MAC: {device.mac}</div>
+                  <div>IP: {device.IP}</div>
+                  <div>MAC: {device.MAC}</div>
                   <div>State: {device.state}</div>
                   <div>Last Online: {device.last_online}</div>
                 </div>
