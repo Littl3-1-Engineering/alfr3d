@@ -52,7 +52,9 @@ def test_ha_connection():
 
     try:
         response = requests.get(
-            f"{ha_url}/api/", headers={"Authorization": f"Bearer {ha_token}"}, timeout=10
+            f"{ha_url}/api/",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=10,
         )
         if response.status_code == 200:
             return True, "Connected"
@@ -75,7 +77,9 @@ def get_ha_states():
 
     try:
         response = requests.get(
-            f"{ha_url}/api/states", headers={"Authorization": f"Bearer {ha_token}"}, timeout=30
+            f"{ha_url}/api/states",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=30,
         )
         if response.status_code == 200:
             return response.json()
@@ -96,7 +100,17 @@ def get_ha_devices():
         entity_id = state.get("entity_id", "")
         domain = entity_id.split(".")[0] if "." in entity_id else ""
 
-        if domain in ["light", "switch", "fan", "climate", "cover", "lock", "media_player"]:
+        if domain in [
+            "light",
+            "switch",
+            "fan",
+            "climate",
+            "cover",
+            "lock",
+            "media_player",
+            "sensor",
+            "binary_sensor",
+        ]:
             connections = state.get("attributes", {}).get("connections", [])
             mac_address = None
             for conn_type, conn_value in connections:
@@ -194,6 +208,8 @@ def sync_ha_devices():
     env_id = env_row[0] if env_row else None
 
     synced = 0
+    linked = 0
+    created = 0
     for device in devices:
         entity_id = device["entity_id"]
         name = device["name"]
@@ -201,18 +217,59 @@ def sync_ha_devices():
         state = device["state"]
         mac_address = device.get("mac_address")
 
+        device_id = None
+
+        if mac_address:
+            cursor.execute(
+                "SELECT id FROM device WHERE UPPER(MAC) = %s",
+                (mac_address.upper(),),
+            )
+            row = cursor.fetchone()
+            if row:
+                device_id = row[0]
+                linked += 1
+            else:
+                cursor.execute(
+                    """
+                    SELECT s.id as state_id, dt.id as type_id,
+                           u.id as user_id, e.id as env_id
+                    FROM states s, device_types dt, user u, environment e
+                    WHERE s.state = 'online' AND dt.type = 'guest'
+                    AND u.username = 'alfr3d' AND e.name = 'Home'
+                    """,
+                )
+                result = cursor.fetchone()
+                if result:
+                    devstate, devtype, usrid, envid = result
+                    cursor.execute(
+                        "INSERT INTO device(name, IP, MAC, last_online, state, "
+                        "device_type, user_id, environment_id) "
+                        "VALUES (%s, '0.0.0.0', %s, NOW(), %s, %s, %s, %s)",
+                        (
+                            name,
+                            mac_address,
+                            devstate,
+                            devtype,
+                            usrid,
+                            envid,
+                        ),
+                    )
+                    device_id = cursor.lastrowid
+                    created += 1
+
         cursor.execute(
             """
             INSERT INTO smarthome_devices
                 (name, source, ha_entity_id, mac_address, device_type, online,
-                 last_state, environment_id)
-            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s)
+                 last_state, environment_id, device_id)
+            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 mac_address = COALESCE(VALUES(mac_address), mac_address),
                 device_type = VALUES(device_type),
                 online = VALUES(online),
-                last_state = VALUES(last_state)
+                last_state = VALUES(last_state),
+                device_id = COALESCE(device_id, VALUES(device_id))
         """,
             (
                 name,
@@ -222,6 +279,7 @@ def sync_ha_devices():
                 state == "on",
                 orjson.dumps(device).decode("utf-8"),
                 env_id,
+                device_id,
             ),
         )
         synced += 1
@@ -229,7 +287,7 @@ def sync_ha_devices():
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} HA devices")
+    logger.info(f"Synced {synced} HA devices, linked {linked}, created {created} device records")
     return True
 
 

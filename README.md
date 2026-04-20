@@ -138,9 +138,12 @@ ALFR3D supports integration with Home Assistant and SmartThings for unified smar
 #### Features
 - **Unified Device Management**: View and control HA and ST devices from a single interface
 - **Automatic Sync**: Devices sync automatically every 15 minutes via the daemon service
-- **Blueprint Visualization**: IoT devices appear on the floorplan alongside local network devices
-- **MAC Address Linking**: IoT devices with known MAC addresses link to local network devices for position tracking
-- **Warning Indicators**: Unlinked devices show warning indicators with MAC address information
+- **Blueprint Visualization**: Linked IoT devices appear on the floorplan with proper device type icons
+- **Manual Device Linking**: Link IoT devices to alfr3d devices via Domain → Devices → SMARTHOME DEVICES section
+- **Device Type Controls**: ControlBlade provides type-specific controls (lights, thermostats, locks, fans, covers, media players)
+- **Sensor Display**: View sensor readings (temperature, humidity, battery) in ControlBlade
+- **Linked Status**: Linked devices show "LINKED" in blue, unlinked show warning icon
+- **FK Relationship**: smarthome_devices.device_id links to device table for type and position
 
 #### Configuration
 1. Configure Home Assistant via the Integrations page:
@@ -152,15 +155,38 @@ ALFR3D supports integration with Home Assistant and SmartThings for unified smar
 
 3. Set default provider in IoT settings
 
+#### Linking Devices
+1. Go to Domain → Devices tab
+2. Scroll to "SMARTHOME DEVICES" section
+3. Click the Link button (chain icon) on an unlinked device
+4. Select an ALFR3D device to link to
+5. The device will now appear on the Blueprint with proper icon and controls
+
+#### Available Device Controls
+- **Lights**: Power toggle, brightness slider
+- **Switches**: Power toggle
+- **Climate**: Temperature up/down, current/target display
+- **Locks**: Lock/unlock toggle
+- **Fans**: Power toggle, speed selector
+- **Cover**: Position slider, open/close buttons
+- **Media Players**: Play/pause, volume slider
+- **Sensors**: Display readings (temperature, humidity, battery, etc.)
+
 #### Database Schema
-- **`smarthome_devices`**: Stores synced IoT devices with source (homeassistant/smartthings), entity IDs, MAC addresses, and linked local device references
+- **`smarthome_devices`**: Stores synced IoT devices with source (homeassistant/smartthings), entity IDs, MAC addresses, and device_id FK to device table
+- **`device`**: Local device table stores linked devices with type from device_types
+- **`device_types`**: Expanded to include fan, climate, cover, lock, media_player, sensor, binary_sensor, camera
 - **`device_command_history`**: Tracks device control commands for audit logs
+
+#### API Endpoints (Additional)
+- `PUT /api/iot/devices/{id}/link`: Link/unlink IoT device to local device
 
 #### Sync Mechanism
 - Daemon sends Kafka messages (`iot_ha_sync`, `iot_st_sync`) every 15 minutes
 - Device service fetches devices from HA/ST APIs and updates the database
-- MAC addresses extracted from HA entity connections for device linking
-- Frontend fetches merged device data with local device position info
+- MAC addresses extracted from HA entity connections for device auto-linking
+- On sync: looks up MAC in device table, sets device_id FK, or creates new device record if not found
+- Frontend uses FK join for position data
 
 ### Routine Automation
 

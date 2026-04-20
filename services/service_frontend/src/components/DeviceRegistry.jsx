@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { Monitor } from 'lucide-react';
+import { Monitor, AlertTriangle, Link2, Unlink, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
 const USER_DEVICE_TYPES = ['HW', 'guest', 'resident'];
@@ -57,8 +57,8 @@ const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
               <option value="unknown">Unknown</option>
               <option value="alfr3d">ALFR3D</option>
               {users.map((user) => (
-                <option key={user.id} value={user.username}>
-                  {user.username}
+                <option key={user.id} value={user.name}>
+                  {user.name}
                 </option>
               ))}
             </select>
@@ -134,23 +134,28 @@ const DeviceRegistry = () => {
   const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
   const [deviceTypes, setDeviceTypes] = useState([]);
+  const [iotDevices, setIotDevices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [linkModalDevice, setLinkModalDevice] = useState(null);
 
   const fetchData = async () => {
     try {
-      const [devicesRes, usersRes, typesRes] = await Promise.all([
+      const [devicesRes, usersRes, typesRes, iotRes] = await Promise.all([
         fetch(API_BASE_URL + '/api/devices'),
         fetch(API_BASE_URL + '/api/users'),
         fetch(API_BASE_URL + '/api/device-types'),
+        fetch(API_BASE_URL + '/api/iot/devices'),
       ]);
 
       const devicesData = await devicesRes.json();
       const usersData = await usersRes.json();
       const typesData = await typesRes.json();
+      const iotData = await iotRes.json();
 
       setDevices(devicesData);
       setUsers(usersData);
       setDeviceTypes(typesData);
+      setIotDevices(iotData);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
@@ -192,6 +197,33 @@ const DeviceRegistry = () => {
       await fetchData();
     } catch (err) {
       console.error('Error updating device:', err);
+    }
+  };
+
+  const handleLinkDevice = async (iotDeviceId, targetDeviceId) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: targetDeviceId }),
+      });
+      setLinkModalDevice(null);
+      await fetchData();
+    } catch (err) {
+      console.error('Error linking device:', err);
+    }
+  };
+
+  const handleUnlinkDevice = async (iotDeviceId) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: null }),
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error unlinking device:', err);
     }
   };
 
@@ -267,6 +299,105 @@ const DeviceRegistry = () => {
           </div>
         )}
       </div>
+
+      <div className="border-t border-border pt-8">
+        <h2 className="text-xl font-bold text-fui-accent mb-4">SMARTHOME DEVICES</h2>
+        {iotDevices.length === 0 ? (
+          <p className="text-text-tertiary text-sm font-mono">
+            [ NO SMARTHOME DEVICES ]
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {iotDevices.map((device) => (
+              <div
+                key={device.id}
+                className="glass rounded-2xl p-4 border border-primary/30 bg-card/20"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    {device.linked ? (
+                      <span className="px-2 py-0.5 bg-success/20 text-success text-xs rounded">LINKED</span>
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                    )}
+                  </div>
+                  {device.linked ? (
+                    <button
+                      onClick={() => handleUnlinkDevice(device.id)}
+                      className="p-1.5 hover:bg-card-hover rounded text-text-tertiary hover:text-error"
+                      title="Unlink"
+                    >
+                      <Unlink className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setLinkModalDevice(device)}
+                      className="p-1.5 hover:bg-card-hover rounded text-text-tertiary hover:text-primary"
+                      title="Link to device"
+                    >
+                      <Link2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">{device.name}</h3>
+                  <p className="text-sm text-primary uppercase">{device.device_type}</p>
+                  <p className="text-xs text-text-tertiary">
+                    Source: {device.source === 'homeassistant' ? 'Home Assistant' : device.source}
+                  </p>
+                  <p className="text-xs text-text-tertiary">
+                    Status:{' '}
+                    <span className={device.online ? 'text-success' : 'text-error'}>
+                      {device.online ? 'Online' : 'Offline'}
+                    </span>
+                  </p>
+                  {device.local_device && (
+                    <p className="text-xs text-success mt-1">
+                      Linked to: {device.local_device.device_type}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {linkModalDevice && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="glass rounded-2xl p-6 w-96 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-primary">
+                Link {linkModalDevice.name}
+              </h3>
+              <button
+                onClick={() => setLinkModalDevice(null)}
+                className="p-1 hover:bg-card-hover rounded"
+              >
+                <X className="w-5 h-5 text-text-secondary" />
+              </button>
+            </div>
+            <p className="text-sm text-text-tertiary mb-4">
+              Select an ALFR3D device to link this IoT device to:
+            </p>
+            <div className="space-y-2">
+              {alfr3dDevices.map((device) => (
+                <button
+                  key={device.id}
+                  onClick={() => handleLinkDevice(linkModalDevice.id, device.id)}
+                  className="w-full p-3 bg-card hover:bg-card-hover rounded-lg text-left transition-colors"
+                >
+                  <div className="font-medium text-text-primary">{device.name}</div>
+                  <div className="text-sm text-text-tertiary">{device.type} | IP: {device.ip}</div>
+                </button>
+              ))}
+              {alfr3dDevices.length === 0 && (
+                <p className="text-text-tertiary text-sm">No ALFR3D devices available</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
