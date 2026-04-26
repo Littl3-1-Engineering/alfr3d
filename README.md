@@ -22,10 +22,10 @@ A containerized microservices project for home automation, featuring Kafka messa
   - orjson for 3-10x faster JSON serialization
   - DBUtils connection pooling for database efficiency
   - Event-driven Kafka consumers for lower CPU usage
-- **Real-Time Dashboard**: Live monitoring with CPU/memory metrics, health status, and animated connection lines. WebSocket-powered instant updates.
+- **Real-Time Dashboard**: Live monitoring with CPU/memory metrics via HTTP polling (10s), health status, and animated connection lines.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
-- **Real-Time WebSocket**: Frontend receives instant updates via SocketIO on port 5002 (`/ws/` endpoint), replacing polling.
+- **Real-Time WebSocket**: Events, situational awareness, and audio updates via WebSocket (`/ws/` endpoint); container metrics use HTTP polling (10s).
 - **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, and blueprint display with MAC-based device linking.
 - **Routine Automation**: Time-based automation with recurrence options (daily, weekly, weekdays), action builder supporting speak, device, email, and scene actions.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
@@ -60,36 +60,17 @@ A containerized microservices project for home automation, featuring Kafka messa
    ```
 
 2. **Environment Setup**: Copy `.env.example` to `.env` and update environment variables (DB credentials, Kafka URLs).
-3. **Database Setup**: Run the database initialization:
+3. **Start All Services**:
    ```bash
-   docker-compose up mysql -d
-   docker-compose exec mysql mysql -u root -p < setup/createTables.sql
+   ./setup/build_images.sh
+   docker-compose up -d mysql
+   docker-compose exec mysql mysql -u root -p${MYSQL_ROOT_PASSWORD} < setup/createTables.sql
+   docker-compose up -d
    ```
-4. **Start All Services**:
-   ```bash
-   docker-compose up --build
-   ```
-5. **Access the Application**:
-     - Dashboard: `http://localhost:8000`
-     - Real-time metrics update every 5 seconds
-     - Control panel for user/device management
+4. **Access the Application**:
+      - Dashboard: `http://localhost` (via nginx on port 80)
 
 Note: Service Device runs as a standalone container for network scanning and should be deployed separately on the host machine.
-
-### Ports
-
-- **Kafka**: 9092 (internal), 29092 (external)
-- **MySQL**: 3306
-- **Zookeeper**: 2181
-- **Service Frontend**: 8000
-- **Service API**: 5001 (REST), 5002 (WebSocket/SocketIO)
-- **Service Speak**: 8080
-- **Service Daemon**: 8080
-- **Service Device**: 8080
-- **Service Environment**: 8080
-- **Service User**: 8080
-
-## Testing
 
 ### Running All Tests
 
@@ -294,10 +275,10 @@ The codebase uses `orjson` instead of the standard `json` module. Ensure any JSO
 The ALFR3D dashboard provides real-time monitoring and control:
 
 ### Real-Time Metrics
-- **Live CPU/Memory**: Actual system resource usage for all services
+- **Live CPU/Memory**: Actual system resource usage for all services (HTTP polling every 10s)
 - **Health Indicators**: Visual status (🟢 Healthy, 🟡 Warning, 🔴 Unhealthy)
 - **Connection Lines**: Animated Kafka topic flows between services
-- **Instant Updates**: WebSocket-powered real-time data via SocketIO on port 5002
+- **Event Updates**: WebSocket-powered instant updates for events and situational awareness
 
 ### Management Interface
 - **User Management**: Registration, editing, deletion with role-based access
@@ -403,7 +384,6 @@ The ALFR3D dashboard provides real-time monitoring and control:
    ```
 
 3. **Access the application**:
-   - Direct: `http://localhost:8000`
    - Via nginx: `http://localhost`
 
 ### Stop Services
@@ -431,20 +411,16 @@ The project includes complete Kubernetes manifests for production deployment wit
 
 2. **Build and Load Images**:
    ```bash
-   # Build all service images
-   eval $(minikube docker-env)
-   docker build -t alfr3d/service-frontend:latest -f services/service_frontend/Dockerfile services/service_frontend
-   docker build -t alfr3d/service-api:latest -f services/service_api/Dockerfile services
-   docker build -t alfr3d/service-daemon:latest -f services/service_daemon/Dockerfile services
-   docker build -t alfr3d/service-device:latest -f services/service_device/Dockerfile services
-   docker build -t alfr3d/service-environment:latest -f services/service_environment/Dockerfile services
-   docker build -t alfr3d/service-user:latest -f services/service_user/Dockerfile services
-   docker build -t alfr3d/service-speak:latest -f services/service_speak/Dockerfile services
-   ```
-
-   Or use the provided script:
-   ```bash
+   # Build all service images using the provided script
    ./setup/build_images.sh
+   eval $(minikube docker-env)
+   docker tag alfr3d/service-frontend:v0.1.5 alfr3d/service-frontend:latest
+   docker tag alfr3d/service-api:v0.1.5 alfr3d/service-api:latest
+   docker tag alfr3d/service-daemon:v0.1.5 alfr3d/service-daemon:latest
+   docker tag alfr3d/service-device:v0.1.5 alfr3d/service-device:latest
+   docker tag alfr3d/service-environment:v0.1.5 alfr3d/service-environment:latest
+   docker tag alfr3d/service-user:v0.1.5 alfr3d/service-user:latest
+   docker tag alfr3d/service-speak:v0.1.5 alfr3d/service-speak:latest
    ```
 
 3. **Deploy to Kubernetes**:
