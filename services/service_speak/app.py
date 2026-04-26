@@ -391,14 +391,14 @@ def process_speak_message(message):
                         else:
                             quips = get_quips_for_environment()
                             if quips:
-                                selected_quip = select_quip_by_traits(blended, quips)
+                                selected_quip = select_quip_by_traits(quips, blended)
                                 if selected_quip:
                                     text = selected_quip
                                     logger.info(f"Selected quip: {text[:50]}...")
                 else:
                     quips = get_quips_for_environment()
                     if quips:
-                        selected_quip = select_quip_by_traits(blended, quips)
+                        selected_quip = select_quip_by_traits(quips, blended)
                         if selected_quip:
                             text = selected_quip
 
