@@ -37,42 +37,65 @@ export const formatCreatedDate = (dateString) => {
      return `D${day}M${month} Y${year}`;
    };
 
-  export const formatTimeWithTimezone = (isoString, timezoneOffsetSeconds) => {
-     if (!isoString) return 'N/A';
-     if (timezoneOffsetSeconds === undefined || timezoneOffsetSeconds === null) {
-       return formatLocalTime(isoString);
-     }
-     try {
-       const date = new Date(isoString);
-       const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
-       const targetTime = new Date(utcTime + (timezoneOffsetSeconds * 1000));
-       return targetTime.toLocaleTimeString('en-US', {
-         hour12: false,
-         hour: '2-digit',
-         minute: '2-digit'
-       });
-     } catch (e) {
-       return isoString;
-     }
-   };
+export const formatTimeWithTimezone = (isoString, timezone) => {
+    if (!isoString) return 'N/A';
+    if (timezone === undefined || timezone === null) {
+      return formatLocalTime(isoString);
+    }
+    try {
+      const date = new Date(isoString);
+      if (typeof timezone === 'string') {
+        return date.toLocaleTimeString('en-US', {
+          timeZone: timezone,
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      }
+      const utcTime = date.getTime() + (date.getTimezoneOffset() * 60000);
+      const targetTime = new Date(utcTime + (timezone * 1000));
+      return targetTime.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return isoString;
+    }
+  };
 
-  export const getCurrentTimeWithTimezone = (timezoneOffsetSeconds) => {
-     if (timezoneOffsetSeconds === undefined || timezoneOffsetSeconds === null) {
-       return new Date();
-     }
-     const now = new Date();
-     const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-     return new Date(utcTime + (timezoneOffsetSeconds * 1000));
-   };
+export const getCurrentTimeWithTimezone = (timezone) => {
+    if (timezone === undefined || timezone === null) {
+      return new Date();
+    }
+    const now = new Date();
+    if (typeof timezone === 'string') {
+      try {
+        return new Date(
+          now.toLocaleString('en-US', { timeZone: timezone })
+        );
+      } catch (e) {
+        return now;
+      }
+    }
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
+    return new Date(utcTime + (timezone * 1000));
+  };
 
-  export const formatDateWithTimezone = (timezoneOffsetSeconds) => {
-     const date = timezoneOffsetSeconds !== undefined && timezoneOffsetSeconds !== null
-       ? getCurrentTimeWithTimezone(timezoneOffsetSeconds)
-       : new Date();
-     return date.toLocaleDateString('en-US', {
-       weekday: 'long',
-       year: 'numeric',
-       month: 'long',
-       day: 'numeric'
-     });
-   };
+export const formatDateWithTimezone = (timezone) => {
+    if (timezone === undefined || timezone === null) {
+      return new Date().toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    }
+    const date = getCurrentTimeWithTimezone(timezone);
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
