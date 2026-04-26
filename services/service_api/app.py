@@ -2184,12 +2184,14 @@ async def update_llm_config(data: LLMConfigUpdate):
         cursor = db.cursor()
         if data.api_key is not None:
             cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
+                "INSERT INTO config (name, value) VALUES ('llm_api_key', %s) "
+                "ON DUPLICATE KEY UPDATE value = VALUES(value)",
                 (data.api_key,),
             )
         if data.usage_limit is not None:
             cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
+                "INSERT INTO config (name, value) VALUES ('llm_usage_limit', %s) "
+                "ON DUPLICATE KEY UPDATE value = VALUES(value)",
                 (str(data.usage_limit),),
             )
         db.commit()
