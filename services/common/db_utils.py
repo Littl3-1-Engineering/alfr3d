@@ -1,5 +1,7 @@
 import os
 import logging
+from datetime import datetime, timedelta
+
 import pymysql
 
 logger = logging.getLogger("DBUtils")
@@ -17,6 +19,30 @@ _cached_env_id = None
 
 def get_db_connection():
     return pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+
+
+def get_env_timezone(env_name):
+    """Get timezone offset in seconds from environment table."""
+    try:
+        db = get_db_connection()
+        cursor = db.cursor()
+        cursor.execute("SELECT timezone FROM environment WHERE name = %s", (env_name,))
+        result = cursor.fetchone()
+        db.close()
+        return result[0] if result and result[0] is not None else 0
+    except Exception as e:
+        logger.error(f"Error fetching timezone: {e}")
+        return 0
+
+
+def get_env_local_time(env_name):
+    """Get current time adjusted to environment timezone.
+
+    Assumes container runs in UTC and adds environment timezone offset.
+    """
+    timezone_seconds = get_env_timezone(env_name)
+    offset_hours = timezone_seconds / 3600
+    return datetime.utcnow() + timedelta(hours=offset_hours)
 
 
 def get_cached_env_id(cursor, env_name):
@@ -89,7 +115,7 @@ def check_mute_optimized(env_name) -> bool:
             return False
 
         morning_time, bed_time = routine_times
-        cur_time = __import__("datetime").datetime.now()
+        cur_time = get_env_local_time(env_name)
         mor_time = cur_time.replace(
             hour=int(morning_time.seconds / 3600),
             minute=int((morning_time.seconds // 60) % 60),
