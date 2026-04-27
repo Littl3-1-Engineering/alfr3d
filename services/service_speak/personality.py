@@ -1,14 +1,18 @@
 import os
+import sys
 import logging
 import random
-from datetime import datetime
 
 import pymysql
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import db_utils  # noqa: E402
 
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
 MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
+ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", "default")
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +207,7 @@ def get_context_by_environment(env_id=None):
         if result:
             context = {
                 "repeat_count": result["repeat_count"] or 0,
-                "hour": result["hour"] or datetime.now().hour,
+                "hour": result["hour"] or db_utils.get_env_local_time(ENV_NAME).hour,
                 "weather": result["weather"] or "clear",
                 "mood": result["mood"] or "neutral",
                 "last_error_count": result["last_error_count"] or 0,
@@ -229,7 +233,7 @@ def get_context_by_environment(env_id=None):
 def get_default_context():
     return {
         "repeat_count": 0,
-        "hour": datetime.now().hour,
+        "hour": db_utils.get_env_local_time(ENV_NAME).hour,
         "weather": "clear",
         "mood": "neutral",
         "last_error_count": 0,
