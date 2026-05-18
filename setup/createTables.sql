@@ -9,11 +9,11 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- ---
 -- Table 'user'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `user`;
-		
+
 CREATE TABLE `user` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each user
   `username` VARCHAR(128) NULL DEFAULT NULL, -- User's chosen username
@@ -22,6 +22,7 @@ CREATE TABLE `user` (
   `about_me` VARCHAR(256) NULL DEFAULT NULL, -- Short description or bio of the user
   `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
   `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp when user was created
   `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment the user belongs to (foreign key to environment.id)
   `type` INTEGER NULL DEFAULT NULL, -- User type (references user_types table: 1=technoking, 2=resident, 3=guest)
   PRIMARY KEY (`id`)
@@ -29,11 +30,11 @@ CREATE TABLE `user` (
 
 -- ---
 -- Table 'device'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `device`;
-		
+
 CREATE TABLE `device` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for each device
   `name` VARCHAR(128) NULL DEFAULT NULL, -- Human-readable name of the device
@@ -73,11 +74,11 @@ CREATE TABLE `device_history` (
 
 -- ---
 -- Table 'user_types'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `user_types`;
-		
+
 CREATE TABLE `user_types` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for user type
   `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the user type (e.g., technoking, resident, guest)
@@ -86,11 +87,11 @@ CREATE TABLE `user_types` (
 
 -- ---
 -- Table 'device_types'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `device_types`;
-		
+
 CREATE TABLE `device_types` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for device type
   `type` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the device type (e.g., alfr3d, HW, guest, light, resident)
@@ -99,11 +100,11 @@ CREATE TABLE `device_types` (
 
 -- ---
 -- Table 'states'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `states`;
-		
+
 CREATE TABLE `states` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for state
   `state` VARCHAR(8) NULL DEFAULT NULL, -- Name of the state (e.g., offline, online)
@@ -112,11 +113,11 @@ CREATE TABLE `states` (
 
 -- ---
 -- Table 'routines'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `routines`;
-		
+
 CREATE TABLE `routines` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for routine
   `name` VARCHAR(128) NULL DEFAULT NULL, -- Name of the routine
@@ -130,11 +131,11 @@ CREATE TABLE `routines` (
 
 -- ---
 -- Table 'environment'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `environment`;
-		
+
 CREATE TABLE `environment` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for environment
   `name` VARCHAR(64) NULL DEFAULT 'guest', -- Name of the environment
@@ -153,25 +154,26 @@ CREATE TABLE `environment` (
   `humidity` INTEGER NULL DEFAULT NULL, -- Humidity percentage
   `manual_override` TINYINT NULL DEFAULT 0, -- Manual override flag (1=yes, 0=no)
   `manual_location_override` TINYINT NULL DEFAULT 0, -- Manual location override flag (1=yes, 0=no)
+  `subjective_feel` VARCHAR(64) NULL DEFAULT NULL, -- Subjective feel description
   PRIMARY KEY (`id`)
 );
 
 -- ---
 -- Table 'config'
--- 
+--
 -- ---
 
 DROP TABLE IF EXISTS `config`;
-		
+
 CREATE TABLE `config` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
   `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting
-  `value` VARCHAR(45) NULL DEFAULT NULL -- Value of the configuration setting
+  `value` VARCHAR(512) NULL DEFAULT NULL -- Value of the configuration setting (512 for API keys)
 );
 
 -- ---
 -- Table 'quips'
--- 
+--
 -- ---
 
 CREATE TABLE `quips` (
@@ -179,6 +181,38 @@ CREATE TABLE `quips` (
   `type` VARCHAR(64) NULL DEFAULT NULL, -- Type of quip (e.g., smart, email, bedtime)
   `quips` VARCHAR(256) NULL DEFAULT NULL, -- The quip text
   PRIMARY KEY (`id`)
+);
+
+-- ---
+-- Table 'calendar_events'
+--
+-- ---
+
+CREATE TABLE `calendar_events` (
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for event
+  `title` VARCHAR(256) NULL DEFAULT NULL, -- Event title
+  `start_time` DATETIME NULL DEFAULT NULL, -- Event start time
+  `end_time` DATETIME NULL DEFAULT NULL, -- Event end time
+  `address` VARCHAR(256) NULL DEFAULT NULL, -- Event location address
+  `notes` TEXT NULL DEFAULT NULL, -- Additional notes
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- When the event was added to DB
+  PRIMARY KEY (`id`)
+);
+
+-- ---
+-- Table 'integrations_tokens'
+--
+-- ---
+
+CREATE TABLE `integrations_tokens` (
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for token
+  `integration_type` VARCHAR(64) NOT NULL, -- Type of integration (e.g., gmail, calendar)
+  `access_token` TEXT NULL DEFAULT NULL, -- OAuth access token
+  `refresh_token` TEXT NULL DEFAULT NULL, -- OAuth refresh token
+  `expires_at` DATETIME NULL DEFAULT NULL, -- Token expiration time
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- When the token was stored
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_integration` (`integration_type`) -- Ensure one token per integration type
 );
 
 
@@ -235,8 +269,24 @@ END;;
 
 DELIMITER ;
 
+-- Event to cleanup old device history daily
+DELIMITER ;
+CREATE EVENT `cleanup_device_history_event`
+ON SCHEDULE EVERY 1 DAY
+DO
+   DELETE FROM device_history WHERE timestamp < DATE_SUB(NOW(), INTERVAL 180 DAY);
+DELIMITER ;;
+
+CREATE EVENT `cleanup_calendar_events_event`
+ON SCHEDULE EVERY 1 DAY
+DO
+   DELETE FROM calendar_events WHERE end_time < DATE_SUB(NOW(), INTERVAL 24 HOUR);
+DELIMITER ;;
+
+DELIMITER ;
+
 -- ---
--- set dome initial values 
+-- set dome initial values
 -- ---
 INSERT INTO `states` (`id`, `state`) VALUES ('1', 'offline');
 INSERT INTO `states` (`id`, `state`) VALUES ('2', 'online');
@@ -244,6 +294,8 @@ INSERT INTO `states` (`id`, `state`) VALUES ('2', 'online');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('1', 'technoking');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('2', 'resident');
 INSERT INTO `user_types` (`id`, `type`) VALUES ('3', 'guest');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('4', 'owner');
+INSERT INTO `user_types` (`id`, `type`) VALUES ('5', 'alfr3d');
 
 INSERT INTO `device_types` (`id`, `type`) VALUES ('1', 'alfr3d');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('2', 'HW');
@@ -251,8 +303,8 @@ INSERT INTO `device_types` (`id`, `type`) VALUES ('3', 'guest');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('4', 'light');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('5', 'resident');
 
-INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', '\'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf\'', '', '1000-01-01 00:00:00', 1, 1, 1);
-INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `state`, `type`, `environment_id`) VALUES ('2', 'unknown', '', '', '', '1000-01-01 00:00:00', 1, 3, 1);
+INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', '\'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf\'', '', '1000-01-01 00:00:00', NOW(), 1, 1, 1);
+INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('2', 'unknown', '', '', '', '1000-01-01 00:00:00', NOW(), 1, 3, 1);
 INSERT INTO `environment` (`name`) VALUES ('test');
 
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"It is good to see you.");

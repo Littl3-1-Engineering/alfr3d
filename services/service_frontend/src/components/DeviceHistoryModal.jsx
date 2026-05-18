@@ -1,15 +1,39 @@
 import PropTypes from 'prop-types';
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Modal from 'react-modal';
-import { Monitor, X } from 'lucide-react';
+import { Monitor, X, Edit, Save, RotateCcw, Trash2 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 Modal.setAppElement('#root');
 
-Modal.setAppElement('#root');
+const DeviceHistoryModal = ({ isOpen, onClose, device, history, users, onSave, onDelete }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedDevice, setEditedDevice] = useState(null);
 
-const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
-  const [expandedDays, setExpandedDays] = useState(new Set());
+  const handleEdit = () => {
+    setIsEditing(true);
+    setEditedDevice({ ...device });
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditedDevice(null);
+  };
+
+  const handleSave = async () => {
+    if (onSave && editedDevice) {
+      const success = await onSave(editedDevice);
+      if (success) {
+        setIsEditing(false);
+        setEditedDevice(null);
+      }
+    }
+  };
+
+  const handleInputChange = (field, value) => {
+    setEditedDevice(prev => ({ ...prev, [field]: value }));
+  };
 
   // Process history data into daily groups, limited to 6 months
   const dailyActivity = useMemo(() => {
@@ -43,15 +67,7 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
     return Object.values(dailyGroups).sort((a, b) => a.date.localeCompare(b.date));
   }, [history]);
 
-  const toggleDayExpansion = (date) => {
-    const newExpanded = new Set(expandedDays);
-    if (newExpanded.has(date)) {
-      newExpanded.delete(date);
-    } else {
-      newExpanded.add(date);
-    }
-    setExpandedDays(newExpanded);
-  };
+
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -72,11 +88,7 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
     }
   };
 
-  const getActivityLevel = (count) => {
-    if (count >= 10) return 'high';
-    if (count >= 5) return 'medium';
-    return 'low';
-  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -96,133 +108,177 @@ const DeviceHistoryModal = ({ isOpen, onClose, device, history }) => {
           <div className="flex items-center space-x-3">
             <Monitor className="w-8 h-8 text-primary" />
             <div>
-              <h2 className="text-2xl font-bold text-primary">{device?.name}</h2>
-              <p className="text-sm text-primary uppercase">{device?.type}</p>
+              {isEditing ? (
+                <div className="space-y-1">
+                  <input
+                    value={editedDevice?.name || ''}
+                    onChange={(e) => handleInputChange('name', e.target.value)}
+                    className="text-2xl font-bold text-primary bg-transparent border-b border-primary/50 focus:border-primary outline-none"
+                  />
+                  <select
+                    value={editedDevice?.type || 'guest'}
+                    onChange={(e) => handleInputChange('type', e.target.value)}
+                    className="text-sm text-primary uppercase bg-transparent border border-primary/50 rounded px-2 py-1 focus:border-primary outline-none"
+                  >
+                    <option value="alfr3d">Alfr3d</option>
+                    <option value="HW">HW</option>
+                    <option value="guest">Guest</option>
+                    <option value="light">Light</option>
+                    <option value="resident">Resident</option>
+                  </select>
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-primary">{device?.name}</h2>
+                  <p className="text-sm text-primary uppercase">{device?.type}</p>
+                </>
+              )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-text-tertiary hover:text-primary transition-colors text-2xl"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {!isEditing ? (
+              <>
+                <button
+                  onClick={handleEdit}
+                  className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                  title="Edit Device"
+                >
+                  <Edit className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => onDelete && onDelete(device?.id)}
+                  className="p-2 text-error hover:bg-error/20 rounded-lg transition-colors"
+                  title="Delete Device"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleSave}
+                  className="p-2 text-success hover:bg-success/20 rounded-lg transition-colors"
+                  title="Save Changes"
+                >
+                  <Save className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="p-2 text-warning hover:bg-warning/20 rounded-lg transition-colors"
+                  title="Cancel Edit"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 text-text-tertiary hover:text-primary transition-colors"
+              title="Close Modal"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         {/* Device Details */}
         <div className="mb-6 grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">IP:</span> {device?.ip}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">MAC:</span> {device?.mac}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">State:</span> {device?.state}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">User:</span> {device?.user || 'None'}
-            </div>
-            <div className="text-sm text-text-secondary">
-              <span className="text-primary font-medium">Last Online:</span> {device?.last_online}
-            </div>
-          </div>
+          {isEditing ? (
+            <>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">IP:</span>
+                  <input
+                    value={editedDevice?.IP || ''}
+                    onChange={(e) => handleInputChange('IP', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                    placeholder="IP Address"
+                  />
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">MAC:</span>
+                  <input
+                    value={editedDevice?.MAC || ''}
+                    onChange={(e) => handleInputChange('MAC', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                    placeholder="MAC Address"
+                  />
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">State:</span>
+                  <span className="ml-2">{device?.state}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">User:</span>
+                  <select
+                    value={editedDevice?.user || ''}
+                    onChange={(e) => handleInputChange('user', e.target.value)}
+                    className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                  >
+                    <option value="">No User</option>
+                    {users?.map(user => (
+                      <option key={user.id} value={user.name}>{user.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">Last Online:</span>
+                  <span className="ml-2">{device?.last_online}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">IP:</span> {device?.IP}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">MAC:</span> {device?.MAC}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">State:</span> {device?.state}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">User:</span> {device?.user || 'None'}
+                </div>
+                <div className="text-sm text-text-secondary">
+                  <span className="text-primary font-medium">Last Online:</span> {device?.last_online}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Timeline Section */}
+        {/* Activity Graph Section */}
         <div>
           <h3 className="text-xl font-bold text-primary mb-4">
-            Activity Timeline ({dailyActivity.length} days)
+            Activity Graph ({dailyActivity.length} days)
           </h3>
-          <div className="max-h-96 overflow-y-auto">
-            {dailyActivity.length > 0 ? (
-              <div className="timeline-container">
-                {dailyActivity.map((day, index) => (
-                  <motion.div
-                    key={day.date}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="timeline-item"
-                  >
-                    {/* Timeline connector */}
-                    <div className="timeline-connector">
-                      <div className="timeline-dot"></div>
-                      {index < dailyActivity.length - 1 && <div className="timeline-line"></div>}
-                    </div>
-
-                    {/* Timeline content */}
-                    <div className="timeline-content">
-                      <div
-                        className="timeline-header cursor-pointer"
-                        onClick={() => toggleDayExpansion(day.date)}
-                      >
-                        <div className="timeline-date">{formatDate(day.date)}</div>
-                        <div className="timeline-meta">
-                          <span className={`activity-badge activity-${getActivityLevel(day.count)}`}>
-                            {day.count} {day.count === 1 ? 'activity' : 'activities'}
-                          </span>
-                          <div className="state-indicators">
-                            {Array.from(day.states).map(state => (
-                              <span key={state} className={`state-badge state-${state?.toLowerCase()}`}>
-                                {state}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Expandable details */}
-                      {expandedDays.has(day.date) && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="timeline-details"
-                        >
-                          <div className="space-y-2">
-                            {day.entries.map((entry, entryIndex) => (
-                              <div key={entryIndex} className="history-entry">
-                                <div className="flex justify-between text-sm mb-1">
-                                  <span className="text-primary font-medium">
-                                    {new Date(entry.timestamp).toLocaleTimeString('en-US', {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
-                                  </span>
-                                  <span className="text-text-tertiary">{entry.state}</span>
-                                </div>
-                                <div className="text-xs text-text-secondary space-y-1">
-                                  {entry.name !== device?.name && (
-                                    <div>Name: <span className="text-text-inverse">{entry.name}</span></div>
-                                  )}
-                                  {entry.ip !== device?.ip && (
-                                    <div>IP: <span className="text-text-inverse">{entry.ip}</span></div>
-                                  )}
-                                  {entry.mac !== device?.mac && (
-                                    <div>MAC: <span className="text-text-inverse">{entry.mac}</span></div>
-                                  )}
-                                  {entry.user && (
-                                    <div>User: <span className="text-text-inverse">{entry.user}</span></div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center text-text-tertiary py-8">
-                No activity found for this device in the last 6 months
-              </div>
-            )}
-          </div>
+          {dailyActivity.length > 0 ? (
+            <div className="h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dailyActivity.map(day => ({ date: formatDate(day.date), count: day.count }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis dataKey="date" stroke="var(--color-text-secondary)" />
+                  <YAxis stroke="var(--color-text-secondary)" />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-primary)', borderRadius: '8px' }}
+                    labelStyle={{ color: 'var(--color-text-primary)' }}
+                  />
+                  <Line type="monotone" dataKey="count" stroke="var(--color-primary)" strokeWidth={2} dot={{ fill: 'var(--color-primary)' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center text-text-tertiary py-8">
+              No activity found for this device in the last 6 months
+            </div>
+          )}
         </div>
       </motion.div>
     </Modal>
@@ -234,6 +290,9 @@ DeviceHistoryModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   device: PropTypes.object,
   history: PropTypes.array,
+  users: PropTypes.array,
+  onSave: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 export default DeviceHistoryModal;

@@ -1,21 +1,32 @@
 # Modified for containerization: logging to stdout instead of file
 """Main application for the ALFR3D user service, handling user management and state tracking."""
+
+# Standard library imports
 import os
 import sys
 import time
 import logging
+import threading
+from datetime import datetime, timedelta, timezone
 
-import json
-import pymysql  # Changed from MySQLdb to pymysql
-from kafka import KafkaConsumer, KafkaProducer
-from datetime import datetime, timedelta
+shutdown_event = threading.Event()
+
+# Third-party imports
+import orjson  # noqa: E402
+import pymysql  # Changed from MySQLdb to pymysql  # noqa: E402
+from kafka import KafkaConsumer  # noqa: E402
+from kafka.errors import KafkaError  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, get_kafka_url, db_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("UsersLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -26,18 +37,48 @@ MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
 producer = None
 while producer is None:
     try:
-        print("Connecting to Kafka at: " + KAFKA_URL)
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
+        kafka_url = get_kafka_url()
+        print("Connecting to Kafka at: " + kafka_url)
+        producer = get_producer()
         logger.info("Connected to Kafka")
-    except Exception as e:
+    except Exception:
         logger.error("Failed to connect to Kafka, retrying in 5 seconds")
         time.sleep(5)
+
+
+def check_mute() -> bool:
+    """
+    Description:
+             checks what time it is and decides if Alfr3d should be quiet
+             - between wake-up time and bedtime
+             - only when Athos is at home
+             - only when 'owner' is at home
+    """
+    return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
+
+
+def send_event(event_type, message):
+    """Send event to event-stream topic"""
+    if producer:
+        event = {
+            "id": f"user_{event_type}_{datetime.now(timezone.utc).isoformat()}",
+            "type": event_type,
+            "message": message,
+            "time": datetime.now(timezone.utc).isoformat() + "Z",
+        }
+        try:
+            producer.send("event-stream", orjson.dumps(event))
+            producer.flush()
+            logger.info(f"Sent event: {event}")
+        except KafkaError as e:
+            logger.error(f"Kafka error sending event: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send event: {e}")
 
 
 class User:
@@ -67,39 +108,30 @@ class User:
             return False
 
         logger.info("Creating a new DB entry for user: " + self.name)
-        # if last online is not set, set it to jan 1, 1970
         if self.last_online is None:
             self.last_online = datetime(1970, 1, 1)
 
         try:
-            cursor.execute("SELECT * from states WHERE state = %s", ("offline",))
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Offline state not found")
-                db.rollback()
-                db.close()
-                return False
-            usrstate = data[0]
-            cursor.execute("SELECT * from user_types WHERE type = %s", ("guest",))
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Guest user type not found")
-                db.rollback()
-                db.close()
-                return False
-            usrtype = data[0]
             cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+                """
+                SELECT s.id as state_id, ut.id as type_id, e.id as env_id
+                FROM states s, user_types ut, environment e
+                WHERE s.state = 'offline' AND ut.type = 'guest' AND e.name = %s
+                """,
+                (ALFR3D_ENV_NAME,),
             )
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Environment not found")
+            result = cursor.fetchone()
+            if not result:
+                logger.error("Failed to get lookup IDs")
                 db.rollback()
                 db.close()
                 return False
-            envid = data[0]
+
+            usrstate, usrtype, envid = result
+
             cursor.execute(
-                "INSERT INTO user(username, last_online, state, type, environment_id) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO user(username, last_online, created_at, state, type, environment_id) "
+                "VALUES (%s, %s, NOW(), %s, %s, %s)",
                 (self.name, self.last_online, usrstate, usrtype, envid),
             )
             db.commit()
@@ -111,15 +143,17 @@ class User:
             return False
 
         db.close()
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-        producer.send("speak", b"A new user has been added to the database")
+        if not check_mute():
+            producer.send("speak", b"A new user has been added to the database")
+        else:
+            send_event("info", "Speak request muted: A new user has been added to the database")
         event = {
             "id": f"user_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
             "type": "success",
             "message": f"New user {self.name} created",
-            "time": datetime.now().strftime("%I:%M %p"),
+            "time": datetime.now(timezone.utc).isoformat(),
         }
-        producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        producer.send("event-stream", orjson.dumps(event))
         return True
 
     def get(self):
@@ -136,9 +170,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -165,9 +197,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -181,7 +211,7 @@ class User:
             )
             cursor.execute(
                 "UPDATE user SET last_online = %s WHERE username = %s",
-                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.name),
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), self.name),
             )
             cursor.execute("SELECT * from states WHERE state = %s", ("online",))
             data = cursor.fetchone()
@@ -190,10 +220,8 @@ class User:
                 db.rollback()
                 db.close()
                 return False
-            stateid = data[0]
-            cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
-            )
+
+            cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
             data = cursor.fetchone()
             if not data:
                 logger.error("Environment not found")
@@ -232,9 +260,7 @@ class User:
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find user with username: " + self.name + " in the database"
-            )
+            logger.warning("Failed to find user with username: " + self.name + " in the database")
             db.close()
             return False
 
@@ -267,24 +293,18 @@ def refresh_user_devices(user, cursor, db, env_id):
     try:
         logger.info("Fetching user devices")
         cursor.execute(
-            "SELECT d.last_online FROM device d \
-                        inner join device_types dt on d.device_type = dt.id \
-                        WHERE user_id = "
-            + str(user[0])
-            + ' \
-                        AND (type = "guest" or type = "resident");'
+            "SELECT d.last_online FROM device d "
+            "INNER JOIN device_types dt ON d.device_type = dt.id "
+            "WHERE user_id = %s AND (type = 'guest' OR type = 'resident')",
+            (user[0],),
         )
         devices = cursor.fetchall()
         for device in devices:
             if device[0] and (device[0] > last_online):
                 logger.info("Updating user " + user[1])
                 cursor.execute(
-                    "UPDATE user SET last_online = %s WHERE username = %s",
-                    (str(device[0]), user[1]),
-                )
-                cursor.execute(
-                    "UPDATE user SET environment_id = %s WHERE username = %s",
-                    (str(env_id), user[1]),
+                    "UPDATE user SET last_online = %s, environment_id = %s WHERE username = %s",
+                    (str(device[0]), str(env_id), user[1]),
                 )
                 db.commit()
                 last_online = device[0]
@@ -303,9 +323,9 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
     Sends Kafka events for state changes.
     """
     try:
-        time_now = datetime.now()
+        time_now = datetime.now(timezone.utc)
         if last_online:
-            delta = time_now - last_online
+            delta = time_now - last_online.replace(tzinfo=timezone.utc)
         else:
             delta = timedelta(minutes=60)
     except Exception:
@@ -316,7 +336,10 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
         logger.info("User is online")
         if user[5] == stat["offline"]:
             logger.info(user[1] + " just came online")
-            producer.send("speak", bytes(user[1] + " just came online", "utf-8"))
+            if not check_mute():
+                producer.send("speak", bytes(user[1] + " just came online", "utf-8"))
+            else:
+                send_event("info", f"Speak request muted: {user[1]} just came online")
             cursor.execute(
                 "UPDATE user SET state = %s WHERE username = %s",
                 (stat["online"], user[1]),
@@ -327,21 +350,14 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
             if not usr_type:
                 logger.error("User type not found")
                 return
-            data = {
-                "user": user[1],
-                "type": usr_type[1],
-                "last_online": str(user[6]),
-            }
-            producer.send(
-                "speak", value=json.dumps(data).encode("utf-8"), key=b"welcome"
-            )
+            speak_welcome(producer, user[1], usr_type[1], user[6])
             event = {
                 "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",
                 "message": f"User {user[1]} came online",
-                "time": datetime.now().strftime("%I:%M %p"),
+                "time": datetime.now(timezone.utc).isoformat(),
             }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
     else:
         logger.info("User is offline")
         if user[5] == stat["online"]:
@@ -359,9 +375,9 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "id": f"user_offline_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "warning",
                 "message": f"User {user[1]} went offline",
-                "time": datetime.now().strftime("%I:%M %p"),
+                "time": datetime.now(timezone.utc).isoformat(),
             }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
+            producer.send("event-stream", orjson.dumps(event))
 
     try:
         db.commit()
@@ -372,8 +388,59 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
         raise
 
 
+def speak_welcome(producer, user_name, user_type, last_online):
+    """
+    Speaks a welcome message to a user who just came online.
+    Greeting varies by user type and time since last seen.
+    """
+    try:
+        time_now = datetime.now(timezone.utc)
+        if last_online:
+            tz = last_online.tzinfo
+            last_online_aware = (
+                last_online.replace(tzinfo=timezone.utc) if tz is None else last_online
+            )
+            time_away = time_now - last_online_aware
+        else:
+            time_away = timedelta(days=365)
+    except Exception:
+        time_away = timedelta(days=1)
+
+    time_away_hours = time_away.total_seconds() / 3600
+
+    user_type_lower = user_type.lower() if user_type else "guest"
+
+    if user_type_lower == "owner":
+        base_greeting = f"Welcome home, {user_name}"
+    elif user_type_lower == "resident":
+        base_greeting = f"Hello {user_name}, welcome back"
+    elif user_type_lower == "guest":
+        base_greeting = f"Welcome {user_name}"
+    else:
+        base_greeting = f"Hello {user_name}"
+
+    if time_away_hours >= 168:
+        time_suffix = "Long time no see"
+    elif time_away_hours >= 24:
+        time_suffix = "It's been a while"
+    elif time_away_hours >= 1:
+        time_suffix = "Good to see you"
+    else:
+        time_suffix = None
+
+    if time_suffix:
+        full_greeting = f"{base_greeting}. {time_suffix}"
+    else:
+        full_greeting = base_greeting
+
+    if not check_mute():
+        producer.send("speak", full_greeting.encode("utf-8"))
+    else:
+        send_event("info", f"Speak request muted: {full_greeting}")
+
+
 # refreshes state and last_online for all users
-def refreshAll():
+def refresh_all():
     """
     Refreshes the state and last_online timestamp for all users based on device activity.
     For each user, updates last_online to the most recent device last_online if newer,
@@ -427,34 +494,43 @@ def refreshAll():
 
 if __name__ == "__main__":
     # get all instructions from Kafka
-    # topic: user
     logger.info("Starting Alfr3d's user service")
     consumer = None
-    while consumer is None:
+    retry_count = 0
+    while consumer is None and not shutdown_event.is_set():
         try:
             consumer = KafkaConsumer(
-                "user", bootstrap_servers=KAFKA_URL, auto_offset_reset="earliest"
+                "user", bootstrap_servers=get_kafka_url(), auto_offset_reset="earliest"
             )
             logger.info("Connected to Kafka user topic")
         except Exception:
-            logger.error("Failed to connect to Kafka user topic, retrying in 5 seconds")
-            time.sleep(5)
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(f"Failed to connect to Kafka user topic, retrying in {wait_time} seconds")
+            shutdown_event.wait(wait_time)
 
-    while True:
-        for message in consumer:
-            if message.value.decode("ascii") == "alfr3d-user.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit(1)
-            if message.value.decode("ascii") == "refresh-all":
-                refreshAll()
-            if message.key:
-                if message.key.decode("ascii") == "create":
-                    usr = User()
-                    usr.name = message.value.decode("ascii")
-                    usr.create()
-                if message.key.decode("ascii") == "delete":
-                    usr = User()
-                    usr.name = message.value.decode("ascii")
-                    usr.delete()
+    if shutdown_event.is_set():
+        logger.info("Shutdown requested during connection attempt")
+        sys.exit(0)
 
-            time.sleep(10)
+    while not shutdown_event.is_set():
+        messages = consumer.poll(timeout_ms=1000)
+        for topic_partition, msgs in messages.items():
+            for message in msgs:
+                msg_value = message.value.decode("ascii")
+                if msg_value == "alfr3d-user.exit":
+                    logger.info("Received exit request. Stopping service.")
+                    shutdown_event.set()
+                    break
+                if msg_value == "refresh-all":
+                    refresh_all()
+                if message.key:
+                    key = message.key.decode("ascii")
+                    if key == "create":
+                        usr = User()
+                        usr.name = msg_value
+                        usr.create()
+                    if key == "delete":
+                        usr = User()
+                        usr.name = msg_value
+                        usr.delete()

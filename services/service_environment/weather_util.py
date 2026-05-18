@@ -1,24 +1,29 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Utility functions for fetching and processing weather data from OpenWeatherMap API."""
-import json  # used to handle jsons returned from www
+import orjson  # used to handle jsons returned from www
 import os  # used to allow execution of system level commands
 import math  # used to round numbers
 import logging  # needed for useful logs
 import socket
 import pymysql  # Changed from MySQLdb
 import sys
-from kafka import KafkaProducer
+from kafka.errors import KafkaError
 from time import strftime, localtime  # needed to obtain time
 from datetime import datetime, timedelta
 from urllib.request import urlopen  # used to make calls to www
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, db_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("WeatherLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -30,23 +35,38 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "user")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
-KAFKA_URL = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
 
-producer = None
+
+def check_mute() -> bool:
+    """
+    Description:
+             checks what time it is and decides if Alfr3d should be quiet
+             - between wake-up time and bedtime
+             - only when Athos is at home
+             - only when 'owner' is at home
+    """
+    return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
 
 
-def get_producer():
-    global producer
-    if producer is None:
+def send_event(event_type, message):
+    """Send event to event-stream topic"""
+    p = get_producer()
+    if p:
+        event = {
+            "id": f"weather_{event_type}_{datetime.now().isoformat()}",
+            "type": event_type,
+            "message": message,
+            "time": datetime.now().isoformat() + "Z",
+        }
         try:
-            print("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-            logger.info("Connected to Kafka")
-        except Exception:
-            logger.error("Failed to connect to Kafka")
-            return None
-    return producer
+            p.send("event-stream", orjson.dumps(event))
+            p.flush()
+            logger.info(f"Sent event: {event}")
+        except KafkaError as e:
+            logger.error(f"Kafka error sending event: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send event: {e}")
 
 
 def parse_weather(cursor, lat, lon):
@@ -72,11 +92,17 @@ def parse_weather(cursor, lat, lon):
         + apikey
     )
     try:
-        weatherData = json.loads(urlopen(url).read().decode("utf-8"))
-    except Exception as e:
-        logger.error("Failed to get weather data\n")
-        logger.error("URL: " + url)
-        logger.error("Traceback " + str(e))
+        weatherData = orjson.loads(urlopen(url).read())
+
+    except OSError as e:
+        logger.error(f"Network error getting weather data: {e}")
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        if "appid" in query_params:
+            del query_params["appid"]
+        sanitized_query = urlencode(query_params, doseq=True)
+        sanitized_url = urlunparse(parsed_url._replace(query=sanitized_query))
+        logger.info(f"URL: {sanitized_url}")
         return None
 
     logger.info("got weather data")
@@ -89,33 +115,45 @@ def parse_weather(cursor, lat, lon):
     logger.info("Humidity                        " + str(weatherData["main"]["humidity"]))
     logger.info("Today's Low:                    " + str(weatherData["main"]["temp_min"]))
     logger.info("Today's High:                   " + str(weatherData["main"]["temp_max"]))
-    logger.info("Description:                    "+ str(weatherData["weather"][0]["description"]))
+    logger.info("Description:                    " + str(weatherData["weather"][0]["description"]))
     logger.info("Current Temperature:            " + str(weatherData["main"]["temp"]))
-    logger.info("Sunrise:                        "+ datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S"))
-    logger.info("Sunset:                         "+ datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info(
+        "Sunrise:                        "
+        + datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S")
+    )
+    logger.info(
+        "Sunset:                         "
+        + datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S")
+    )
     logger.info("Parsed weather data\n")
 
+    subjective_feel = determine_subjective_feel(weatherData)
+    weatherData["subjective_feel"] = subjective_feel
+
+    # Get timezone offset in seconds
+    weatherData["timezone"] = weatherData.get("timezone", 0)
+
     return weatherData
+
 
 def update_db_weather(db, cursor, weatherData):
     logger.info("Updating weather data in DB")
 
     try:
         cursor.execute(
-            "UPDATE environment SET description = %s, low = %s, high = %s, "
-            "sunrise = %s, sunset = %s, pressure = %s, humidity = %s WHERE name = %s",
+            "UPDATE environment SET description = %s, low = %s, high = %s, sunrise = %s, "
+            "sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s, timezone = %s "
+            "WHERE name = %s",
             (
                 str(weatherData["weather"][0]["description"]),
                 int(weatherData["main"]["temp_min"]),
                 int(weatherData["main"]["temp_max"]),
-                datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-                datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"),
                 int(weatherData["main"]["pressure"]),
                 int(weatherData["main"]["humidity"]),
+                weatherData["subjective_feel"],
+                weatherData["timezone"],
                 ALFR3D_ENV_NAME,
             ),
         )
@@ -135,9 +173,9 @@ def update_routines(db, cursor, weatherData):
     # actual event so that listeners have time to take action
     try:
         logger.info("Updating routines")
-        sunrise_trig = datetime.fromtimestamp(
-            weatherData["sys"]["sunrise"]
-        ) - timedelta(hours=0, minutes=30)
+        sunrise_trig = datetime.fromtimestamp(weatherData["sys"]["sunrise"]) - timedelta(
+            hours=0, minutes=30
+        )
         sunset_trig = datetime.fromtimestamp(weatherData["sys"]["sunset"]) - timedelta(
             hours=0, minutes=30
         )
@@ -148,6 +186,47 @@ def update_routines(db, cursor, weatherData):
             logger.error("Environment not found for " + ALFR3D_ENV_NAME)
             return False
         env_id = env_data[0]
+
+        # Check if Sunrise/Sunset routines exist
+        cursor.execute(
+            "SELECT name FROM routines WHERE name IN ('Sunrise', 'Sunset') AND environment_id = %s",
+            (env_id,),
+        )
+        existing_routines = {row[0] for row in cursor.fetchall()}
+
+        # Create Sunrise routine if it doesn't exist
+        if "Sunrise" not in existing_routines:
+            logger.info("Creating Sunrise routine")
+            cursor.execute(
+                "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    "Sunrise",
+                    sunrise_trig.strftime("%H:%M:%S"),
+                    1,
+                    "daily",
+                    "[]",
+                    env_id,
+                ),
+            )
+
+        # Create Sunset routine if it doesn't exist
+        if "Sunset" not in existing_routines:
+            logger.info("Creating Sunset routine")
+            cursor.execute(
+                "INSERT INTO routines (name, time, enabled, recurrence, actions, environment_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    "Sunset",
+                    sunset_trig.strftime("%H:%M:%S"),
+                    1,
+                    "daily",
+                    "[]",
+                    env_id,
+                ),
+            )
+
+        # Update times for both routines
         cursor.execute(
             "UPDATE routines SET time = CASE name WHEN 'Sunrise' THEN %s "
             "WHEN 'Sunset' THEN %s END, triggered = 0 WHERE name IN ('Sunrise', 'Sunset') "
@@ -159,43 +238,83 @@ def update_routines(db, cursor, weatherData):
             ),
         )
         db.commit()
+        logger.info("Sunrise/Sunset routines updated successfully")
         return True
-    except Exception:
-        logger.error("Failed to update Routines database with daytime info")
+    except Exception as e:
+        logger.error("Failed to update Routines database with daytime info: " + str(e))
         db.rollback()
         return False
 
 
-def speak_weather(weatherData):
-    # Subjective weather
-    badDay = []
-    badDay_data = []
-    badDay.append(False)
-    badDay.append(badDay_data)
+def determine_subjective_feel(weatherData):
+    temp = weatherData["main"]["temp"]
+    humidity = weatherData["main"]["humidity"]
+    wind_kmh = weatherData["wind"]["speed"] * 3.6
 
-    # if weather is bad...
-    if weatherData["weather"][0]["main"] in [
-        "Thunderstorm",
-        "Drizzle",
-        "Rain",
-        "Snow",
-        "Atmosphere",
-        "Exreeme",
-    ]:
-        badDay[0] = True
-        badDay[1].append(weatherData["weather"][0]["description"])
-    elif weatherData["main"]["humidity"] > 80:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["humidity"])
-    if weatherData["main"]["temp_max"] > 27:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["temp_max"])
-    elif weatherData["main"]["temp_min"] < -5:
-        badDay[0] = True
-        badDay[1].append(weatherData["main"]["temp_min"])
-    if weatherData["wind"]["speed"] > 10:
-        badDay[0] = True
-        badDay[1].append(weatherData["wind"]["speed"])
+    # Extremely cold
+    if temp < -20:
+        return "Extremely cold"
+    # Very cold
+    if -10 <= temp < 0:
+        return "Very cold"
+    # Cold
+    if 0 <= temp < 10 and wind_kmh < 30:
+        return "Cold"
+    # Cool
+    if 10 <= temp < 14 and wind_kmh < 20:
+        return "Cool"
+    # Perfect / Great day
+    if 20 <= temp <= 25 and 40 <= humidity <= 60 and wind_kmh < 15:
+        return "Perfect / Great day"
+    # Very pleasant
+    if ((17 <= temp <= 20) or (25 <= temp <= 28)) and 30 <= humidity <= 70 and wind_kmh < 20:
+        return "Very pleasant"
+    # Pleasant / Nice
+    if ((14 <= temp <= 17) or (28 <= temp <= 30)) and 30 <= humidity <= 70 and wind_kmh < 25:
+        return "Pleasant / Nice"
+    # Warm
+    if 28 <= temp <= 32 and humidity < 70:
+        return "Warm"
+    # Hot
+    if 32 <= temp <= 36 and wind_kmh < 20:
+        return "Hot"
+    # Very hot
+    if 36 <= temp <= 40:
+        return "Very hot"
+    # Extremely hot
+    if temp > 40:
+        return "Extremely hot"
+    # Oppressively humid
+    if temp >= 28 and humidity >= 70:
+        return "Oppressively humid"
+    # Very humid / Muggy
+    if temp >= 24 and humidity >= 75 and wind_kmh < 15:
+        return "Very humid / Muggy"
+    # Windy (unpleasant)
+    if wind_kmh > 40:
+        return "Windy (unpleasant)"
+    # Bad weather
+    weather_main = weatherData["weather"][0]["main"]
+    if weather_main in ["Thunderstorm", "Drizzle", "Rain", "Snow", "Atmosphere"]:
+        return "Bad weather: " + weather_main.lower()
+    # Default
+    return "Neutral"
+
+
+def speak_weather(db, cursor, weatherData):
+    subjective_weather = weatherData["subjective_feel"]
+    bad_categories = [
+        "Extremely cold",
+        "Very cold",
+        "Cold",
+        "Extremely hot",
+        "Very hot",
+        "Hot",
+        "Oppressively humid",
+        "Very humid / Muggy",
+        "Windy (unpleasant)",
+    ]
+    badDay = [subjective_weather in bad_categories, []]
 
     logger.info("Speaking weather data:\n")
     # Speak the weather data
@@ -213,37 +332,25 @@ def speak_weather(weatherData):
         logger.error("No Kafka producer available, cannot speak weather")
         return False
     if badDay[0]:
-        producer.send("speak", b"I am afraid I don't have good news.")
-        greeting += "indicate "
-
-        for i in range(len(badDay[1])):
-            if badDay[1][i] == weatherData["weather"][0]["description"]:
-                greeting += badDay[1][i]
-            elif badDay[1][i] == weatherData["main"]["humidity"]:
-                greeting += "humidity of a steam bath"
-            elif badDay[1][i] == weatherData["main"]["temp_max"]:
-                greeting += "it is too hot for my gentle circuits"
-            elif badDay[1][i] == weatherData["main"]["temp_min"]:
-                greeting += "it is catalysmically cold"
-            elif badDay[1][i] == weatherData["wind"]["speed"]:
-                greeting += "the wind will seriously ruin your hair"
-
-            if len(badDay[1]) >= 2 and i < (len(badDay[1]) - 1):
-                add = [
-                    " , also, ",
-                    " , and if that isn't enough, ",
-                    " , and to make matters worse, ",
-                ]
-                greeting += add[randint(0, len(add) - 1)]
-            elif len(badDay[1]) > 2 and i == (len(badDay[1]) - 1):
-                greeting += " , and on top of everything, "
-            else:
-                logger.info(greeting + "\n")
-        producer.send("speak", greeting.encode("utf-8"))
+        if not check_mute():
+            producer.send("speak", b"I am afraid I don't have good news.")
+        else:
+            send_event("info", "Speak request muted: I am afraid I don't have good news.")
+        greeting += "indicate " + subjective_weather
+        if not check_mute():
+            producer.send("speak", greeting.encode("utf-8"))
+        else:
+            send_event("info", f"Speak request muted: {greeting}")
     else:
-        producer.send("speak", b"Weather today is just gorgeous!")
+        if not check_mute():
+            producer.send("speak", b"Weather today is just gorgeous!")
+        else:
+            send_event("info", "Speak request muted: Weather today is just gorgeous!")
         greeting += "indicate " + weatherData["weather"][0]["description"]
-        producer.send("speak", greeting.encode("utf-8"))
+        if not check_mute():
+            producer.send("speak", greeting.encode("utf-8"))
+        else:
+            send_event("info", f"Speak request muted: {greeting}")
         logger.info(greeting + "\n")
 
     producer.send(
@@ -270,7 +377,7 @@ def speak_weather(weatherData):
     return True
 
 
-def getWeather(lat, lon):
+def get_weather(lat, lon):
     """
     Fetches current weather data for the given latitude and longitude from the OpenWeatherMap API,
     updates the environment and routines tables in the database with the retrieved data, and
@@ -316,15 +423,14 @@ def getWeather(lat, lon):
         db.close()
         return False
 
-    db.close()
-
-    if not speak_weather(weatherData):
+    if not speak_weather(db, cursor, weatherData):
+        db.close()
         return False
-
+    db.close()
     return True
 
 
-def KtoC(tempK):
+def kto_c(tempK):
     """
     converts temperature in kelvin to celsius
     """
@@ -333,4 +439,4 @@ def KtoC(tempK):
 
 # purely for testing purposes
 if __name__ == "__main__":
-    getWeather(0.0, 0.0)
+    get_weather(0.0, 0.0)

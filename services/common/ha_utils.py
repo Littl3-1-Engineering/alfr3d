@@ -1,0 +1,304 @@
+import os
+import orjson
+import logging
+import requests
+import pymysql
+
+from .db_pool import get_connection
+
+logger = logging.getLogger("HALog")
+
+MYSQL_HOST = os.environ.get("MYSQL_HOST", "mysql")
+MYSQL_USER = os.environ.get("MYSQL_USER", "root")
+MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "rootpassword")
+MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
+
+if MYSQL_HOST == "mysql":
+    MYSQL_HOST = "mysql"
+
+
+def get_ha_config():
+    db = None
+    try:
+        db = get_connection()
+        cursor = db.cursor()
+        config = {}
+        cursor.execute("SELECT name, value FROM config WHERE name IN ('ha_url', 'ha_token')")
+        for row in cursor.fetchall():
+            config[row[0]] = row[1]
+        return config
+    except pymysql.Error as e:
+        logger.error(f"Database error fetching HA config: {e}")
+        if db:
+            db.rollback()
+        return {}
+    finally:
+        if db:
+            db.close()
+
+
+def is_ha_configured():
+    config = get_ha_config()
+    return bool(config.get("ha_url") and config.get("ha_token"))
+
+
+def test_ha_connection():
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return False, "HA URL or token not configured"
+
+    try:
+        response = requests.get(
+            f"{ha_url}/api/",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return True, "Connected"
+        else:
+            return False, f"HTTP {response.status_code}"
+    except requests.RequestException as e:
+        return False, f"Request failed: {e}"
+    except Exception as e:
+        logger.error(f"Unexpected error testing HA connection: {e}")
+        return False, str(e)
+
+
+def get_ha_states():
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return []
+
+    try:
+        response = requests.get(
+            f"{ha_url}/api/states",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except requests.RequestException as e:
+        logger.error(f"Request error fetching HA states: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching HA states: {e}")
+        return []
+
+
+def get_ha_devices():
+    states = get_ha_states()
+    devices = []
+
+    for state in states:
+        entity_id = state.get("entity_id", "")
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+
+        if domain in [
+            "light",
+            "switch",
+            "fan",
+            "climate",
+            "cover",
+            "lock",
+            "media_player",
+            "sensor",
+            "binary_sensor",
+        ]:
+            connections = state.get("attributes", {}).get("connections", [])
+            mac_address = None
+            for conn_type, conn_value in connections:
+                if conn_type == "mac":
+                    mac_address = conn_value.upper()
+                    break
+
+            device = {
+                "entity_id": entity_id,
+                "name": state.get("attributes", {}).get("friendly_name", entity_id),
+                "state": state.get("state"),
+                "domain": domain,
+                "last_changed": state.get("last_changed"),
+                "attributes": state.get("attributes", {}),
+                "mac_address": mac_address,
+            }
+
+            if "brightness" in state.get("attributes", {}):
+                device["brightness"] = state["attributes"]["brightness"]
+
+            devices.append(device)
+
+    return devices
+
+
+def get_ha_device_state(entity_id):
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return None
+
+    try:
+        response = requests.get(
+            f"{ha_url}/api/states/{entity_id}",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching HA device state: {e}")
+        return None
+
+
+def ha_control_device(entity_id, service, data=None):
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+
+    if not ha_url or not ha_token:
+        return False, "HA not configured"
+
+    domain = entity_id.split(".")[0] if "." in entity_id else None
+    if not domain:
+        return False, "Invalid entity_id"
+
+    try:
+        service_data = {"entity_id": entity_id}
+        if data:
+            service_data.update(data)
+
+        response = requests.post(
+            f"{ha_url}/api/services/{domain}/{service}",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            json=service_data,
+            timeout=10,
+        )
+        if response.status_code in [200, 201]:
+            return True, "Command sent"
+        else:
+            return False, f"HTTP {response.status_code}: {response.text}"
+    except Exception as e:
+        logger.error(f"Error controlling HA device: {e}")
+        return False, str(e)
+
+
+def sync_ha_devices():
+    if not is_ha_configured():
+        logger.warning("HA not configured, skipping sync")
+        return False
+
+    devices = get_ha_devices()
+    if not devices:
+        logger.warning("No HA devices found")
+        return False
+
+    db = get_connection()
+    cursor = db.cursor()
+
+    cursor.execute("SELECT id FROM environment ORDER BY id LIMIT 1")
+    env_row = cursor.fetchone()
+    env_id = env_row[0] if env_row else None
+
+    synced = 0
+    linked = 0
+    created = 0
+    for device in devices:
+        entity_id = device["entity_id"]
+        name = device["name"]
+        device_type = device["domain"]
+        state = device["state"]
+        mac_address = device.get("mac_address")
+
+        device_id = None
+
+        if mac_address:
+            cursor.execute(
+                "SELECT id FROM device WHERE UPPER(MAC) = %s",
+                (mac_address.upper(),),
+            )
+            row = cursor.fetchone()
+            if row:
+                device_id = row[0]
+                linked += 1
+            else:
+                cursor.execute(
+                    """
+                    SELECT s.id as state_id, dt.id as type_id,
+                           u.id as user_id, e.id as env_id
+                    FROM states s, device_types dt, user u, environment e
+                    WHERE s.state = 'online' AND dt.type = 'guest'
+                    AND u.username = 'alfr3d' AND e.name = 'Home'
+                    """,
+                )
+                result = cursor.fetchone()
+                if result:
+                    devstate, devtype, usrid, envid = result
+                    cursor.execute(
+                        "INSERT INTO device(name, IP, MAC, last_online, state, "
+                        "device_type, user_id, environment_id) "
+                        "VALUES (%s, '0.0.0.0', %s, NOW(), %s, %s, %s, %s)",
+                        (
+                            name,
+                            mac_address,
+                            devstate,
+                            devtype,
+                            usrid,
+                            envid,
+                        ),
+                    )
+                    device_id = cursor.lastrowid
+                    created += 1
+
+        cursor.execute(
+            """
+            INSERT INTO smarthome_devices
+                (name, source, ha_entity_id, mac_address, device_type, online,
+                 last_state, environment_id, device_id)
+            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                mac_address = COALESCE(VALUES(mac_address), mac_address),
+                device_type = VALUES(device_type),
+                online = VALUES(online),
+                last_state = VALUES(last_state),
+                device_id = COALESCE(device_id, VALUES(device_id))
+        """,
+            (
+                name,
+                entity_id,
+                mac_address,
+                device_type,
+                state == "on",
+                orjson.dumps(device).decode("utf-8"),
+                env_id,
+                device_id,
+            ),
+        )
+        synced += 1
+
+    db.commit()
+    db.close()
+
+    logger.info(f"Synced {synced} HA devices, linked {linked}, created {created} device records")
+    return True
+
+
+def save_ha_config(ha_url, ha_token):
+    db = get_connection()
+    cursor = db.cursor()
+
+    cursor.execute("UPDATE config SET value = %s WHERE name = 'ha_url'", (ha_url,))
+    cursor.execute("UPDATE config SET value = %s WHERE name = 'ha_token'", (ha_token,))
+
+    db.commit()
+    db.close()
+
+    return True

@@ -1,23 +1,26 @@
 """Tests for Kafka messaging in ALFR3D services."""
-import pytest
+
 from confluent_kafka import Producer, Consumer
 import time
 import json
+
 
 def test_kafka_produce_consume(kafka_bootstrap_servers):
     """Test producing and consuming messages from Kafka topics."""
     topics = ["speak", "environment", "device", "user", "google"]
     test_message = b"test message"
 
-    producer = Producer({'bootstrap.servers': kafka_bootstrap_servers})
+    producer = Producer({"bootstrap.servers": kafka_bootstrap_servers})
 
     # For each topic, subscribe first, then produce, then consume
     for i, topic in enumerate(topics):
-        consumer = Consumer({
-            'bootstrap.servers': kafka_bootstrap_servers,
-            'group.id': f'test-group-{topic}-{i}',
-            'auto.offset.reset': 'latest'
-        })
+        consumer = Consumer(
+            {
+                "bootstrap.servers": kafka_bootstrap_servers,
+                "group.id": f"test-group-{topic}-{i}",
+                "auto.offset.reset": "latest",
+            }
+        )
         consumer.subscribe([topic])
         time.sleep(0.1)  # Small delay
 
@@ -45,24 +48,26 @@ def test_kafka_produce_consume(kafka_bootstrap_servers):
 def test_kafka_frontend_integration(frontend_client, kafka_bootstrap_servers):
     """Test Kafka integration with frontend dashboard."""
     # Test that frontend can retrieve Kafka data
-    response = frontend_client.get('/dashboard/data')
+    response = frontend_client.get("/dashboard/data")
     assert response.status_code == 200
 
     data = json.loads(response.data)
-    assert 'kafka' in data
+    assert "kafka" in data
 
     # Test command sending via Kafka
-    response = frontend_client.post('/command', data={'command': 'check_location'})
+    response = frontend_client.post("/command", data={"command": "check_location"})
     assert response.status_code == 200
-    assert b'Command sent' in response.data
+    assert b"Command sent" in response.data
 
     # Verify the message was sent to the correct topic
-    consumer = Consumer({
-        'bootstrap.servers': kafka_bootstrap_servers,
-        'group.id': 'test-frontend-kafka',
-        'auto.offset.reset': 'latest'
-    })
-    consumer.subscribe(['environment'])
+    consumer = Consumer(
+        {
+            "bootstrap.servers": kafka_bootstrap_servers,
+            "group.id": "test-frontend-kafka",
+            "auto.offset.reset": "latest",
+        }
+    )
+    consumer.subscribe(["environment"])
 
     messages = []
     start_time = time.time()
