@@ -1,4 +1,5 @@
 # Docker Compose configuration for ALFR3D services
+# Enable BuildKit for faster builds: export DOCKER_BUILDKIT=1
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -21,12 +22,12 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=INTERNAL:${KAFKA_ADVERTISED_LISTENERS_1},EXTERNAL:${KAFKA_ADVERTISED_LISTENERS_2}
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
-      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1
+      - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1,personality:1:1
     ports:
       - "9092:9092"
     # Healthcheck ensures Kafka is ready to accept connections
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,7 +36,7 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_DATABASE: ${MYSQL_NAME}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PSWD}
     ports:
@@ -44,8 +45,10 @@ services:
       - mysql_data:/var/lib/mysql
 
   service-user:
-    build: ./services/service_user
-    # Depends on Kafka for messaging and MySQL for user data
+    build:
+      context: ./services
+      dockerfile: ./service_user/Dockerfile
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
@@ -53,74 +56,122 @@ services:
         condition: service_started
     env_file: .env
     environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-api:
-    build: ./services/service_api
-    # Depends on MySQL for database operations and Kafka for messaging
+    build:
+      context: ./services
+      dockerfile: ./service_api/Dockerfile
+    user: "1000:1000"
     depends_on:
       mysql:
         condition: service_started
       kafka:
         condition: service_healthy
-    ports:
-      - "5001:5001"
-    # Mounts Docker socket to allow container management
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    # Privileged mode grants elevated permissions for Docker operations
+      - audio_data:/tmp/audio
+      - .:/project:ro
     privileged: true
     env_file: .env
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+    expose:
+      - "5001"
+    ports:
+      - "5001:5001"
 
   service-device:
-    build: ./services/service_device
-    # Depends on Kafka for event streaming and MySQL for data storage
+    build:
+      context: ./services
+      dockerfile: ./service_device/Dockerfile
+    # Host network mode and root required for ARP scanning
+    network_mode: host
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_2}
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-environment:
+    build:
+      context: ./services
+      dockerfile: ./service_environment/Dockerfile
+    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy
       mysql:
         condition: service_started
-    # Host network mode enables ARP scanning and direct host access
-    network_mode: host  # To allow arp-scan on host network
+    env_file: .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+
+  service-speak:
+    build:
+      context: ./services
+      dockerfile: ./service_speak/Dockerfile
+    user: "1000:1000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - audio_data:/tmp/audio
+
+  service-daemon:
+    build:
+      context: ./services
+      dockerfile: ./service_daemon/Dockerfile
+    user: "1000:1000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    network_mode: host
     env_file: .env
     environment:
       - MYSQL_DATABASE=localhost
       - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-
-  service-environment:
-    build: ./services/service_environment
-    # Depends on Kafka for event publishing and MySQL for data persistence
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mysql:
-        condition: service_started
-    env_file: .env
-    environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
-
-  service-daemon:
-    build: ./services/service_daemon
-    # Depends on Kafka for inter-service communication and MySQL for state storage
-    depends_on:
-      kafka:
-        condition: service_healthy
-      mysql:
-        condition: service_started
-    env_file: .env
-    environment:
-       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
+      - LOG_LEVEL=${LOG_LEVEL}
 
   service-frontend:
     build:
       context: ./services/service_frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    user: "1001:1001"
+    env_file: .env
+    expose:
+      - "8000"
     ports:
       - "8000:8000"
-    env_file: .env
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      service-frontend:
+        condition: service_started
+      service-api:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # Separate MySQL instance for testing to avoid interfering with production data
   test-mysql:
@@ -131,10 +182,11 @@ services:
     ports:
       - "3307:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       timeout: 20s
       retries: 10
 
-# Named volume for persistent MySQL data storage
+# Named volumes for persistent data storage
 volumes:
   mysql_data:
+  audio_data:

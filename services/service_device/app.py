@@ -1,22 +1,32 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Main application for the ALFR3D device service, managing device tracking and network scanning."""
+# Standard libraries
 import os
 import sys
 import time
 import logging
-import json
+import orjson
 import socket
-import pymysql  # Changed from MySQLdb
-from kafka import KafkaConsumer, KafkaProducer
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+import threading
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+shutdown_event = threading.Event()
+
+# Third-party libraries
+import pymysql  # Changed from MySQLdb  # noqa: E402
+from kafka import KafkaConsumer  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer, get_kafka_url, ha_utils, st_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
 
 # set up logging
 logger = logging.getLogger("DevicesLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 # Changed to stream handler for container logging
 handler = logging.StreamHandler(sys.stdout)
@@ -27,13 +37,12 @@ MYSQL_DATABASE = os.environ["MYSQL_DATABASE"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
-KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 
 producer = None
 while producer is None:
     try:
-        producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
+        producer = get_producer()
         logger.info("Connected to Kafka")
     except Exception:
         logger.error("Failed to connect to Kafka, retrying in 5 seconds")
@@ -85,44 +94,26 @@ class Device:
         )
         cursor = db.cursor()
         try:
-            cursor.execute("SELECT * from states WHERE state = %s", (self.state,))
-            devstate_data = cursor.fetchone()
-            if not devstate_data:
-                logger.error("State not found")
-                db.rollback()
-                db.close()
-                return False
-            devstate = devstate_data[0]
             cursor.execute(
-                "SELECT * from device_types WHERE type = %s", (self.deviceType,)
+                """
+                SELECT s.id as state_id, dt.id as type_id, u.id as user_id, e.id as env_id
+                FROM states s, device_types dt, user u, environment e
+                WHERE s.state = %s AND dt.type = %s AND u.username = %s AND e.name = %s
+                """,
+                (self.state, self.deviceType, self.user, self.environment),
             )
-            devtype_data = cursor.fetchone()
-            if not devtype_data:
-                logger.error("Device type not found")
+            result = cursor.fetchone()
+            if not result:
+                logger.error("Failed to get lookup IDs")
                 db.rollback()
                 db.close()
                 return False
-            devtype = devtype_data[0]
-            cursor.execute("SELECT * from user WHERE username = %s", (self.user,))
-            usrid_data = cursor.fetchone()
-            if not usrid_data:
-                logger.error("User not found")
-                db.rollback()
-                db.close()
-                return False
-            usrid = usrid_data[0]
+
+            devstate, devtype, usrid, envid = result
+
             cursor.execute(
-                "SELECT * from environment WHERE name = %s", (self.environment,)
-            )
-            envid_data = cursor.fetchone()
-            if not envid_data:
-                logger.error("Environment not found")
-                db.rollback()
-                db.close()
-                return False
-            envid = envid_data[0]
-            cursor.execute(
-                "INSERT INTO device(name, IP, MAC, last_online, state, device_type, user_id, environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO device(name, IP, MAC, last_online, state, device_type, user_id, "
+                "environment_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     self.name,
                     self.IP,
@@ -135,21 +126,21 @@ class Device:
                 ),
             )
             db.commit()
-        except Exception as e:
-            logger.error("Failed to create a new entry in the database")
-            logger.error("Traceback: " + str(e))
+        except pymysql.Error as e:
+            logger.error(f"Database error creating device entry: {e}")
             db.rollback()
             db.close()
             return False
 
         db.close()
-        event = {
-            "id": f"device_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "type": "success",
-            "message": f"New device {self.name} added to database",
-            "time": datetime.now().strftime("%I:%M %p"),
-        }
-        producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        if producer:
+            event = {
+                "id": f"device_created_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "success",
+                "message": f"New device {self.name} added to database",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            producer.send("event-stream", orjson.dumps(event))
         logger.info("Device created successfully")
         return True
 
@@ -166,13 +157,20 @@ class Device:
             database=MYSQL_DB,
         )
         cursor = db.cursor()
-        cursor.execute("SELECT * from device WHERE MAC = %s", (mac,))
+        cursor.execute(
+            """
+            SELECT d.id, d.name, d.IP, d.MAC, d.state, d.last_online,
+                   d.device_type, d.user_id, d.environment_id, u.username
+            FROM device d
+            LEFT JOIN user u ON d.user_id = u.id
+            WHERE d.MAC = %s
+            """,
+            (mac,),
+        )
         data = cursor.fetchone()
 
         if not data:
-            logger.warning(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -186,10 +184,7 @@ class Device:
         self.state = data[4]
         self.last_online = data[5]
         self.deviceType = data[6]
-        # Get username from user_id
-        cursor.execute("SELECT username FROM user WHERE id = %s", (data[7],))
-        user_data = cursor.fetchone()
-        self.user = user_data[0] if user_data else "unknown"
+        self.user = data[9] if data[9] else "unknown"
         self.environment = data[8]
 
         db.close()
@@ -213,9 +208,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -223,28 +216,29 @@ class Device:
         logger.debug(data)
 
         try:
-            cursor.execute("SELECT * from states WHERE state = %s", ("online",))
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Online state not found")
-                db.close()
-                return False
-            stateid = data[0]
             cursor.execute(
-                "SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+                """
+                SELECT s.id as state_id, e.id as env_id
+                FROM states s, environment e
+                WHERE s.state = 'online' AND e.name = %s
+                """,
+                (ALFR3D_ENV_NAME,),
             )
-            data = cursor.fetchone()
-            if not data:
-                logger.error("Environment not found")
+            result = cursor.fetchone()
+            if not result:
+                logger.error("Failed to get lookup IDs")
                 db.close()
                 return False
-            envid = data[0]
+
+            stateid, envid = result
+
             cursor.execute(
-                "UPDATE device SET name = %s, IP = %s, last_online = %s, state = %s, environment_id = %s WHERE MAC = %s",
+                "UPDATE device SET name = %s, IP = %s, last_online = %s, state = %s, "
+                "environment_id = %s WHERE MAC = %s",
                 (
                     self.name,
                     self.IP,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                     stateid,
                     envid,
                     self.MAC,
@@ -253,16 +247,15 @@ class Device:
 
             db.commit()
 
-            event = {
-                "id": f"device_online_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                "type": "info",
-                "message": f"Device {self.name} came online",
-                "time": datetime.now().strftime("%I:%M %p"),
-            }
-            producer.send("event-stream", json.dumps(event).encode("utf-8"))
-        except Exception as e:
-            logger.error("Failed to update the database")
-            logger.error("Traceback: " + str(e))
+            # event = {
+            #     "id": f"device_online_{self.name}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            #     "type": "info",
+            #     "message": f"Device {self.name} came online",
+            #     "time": datetime.now().strftime("%I:%M %p"),
+            # }
+            # producer.send("event-stream", json.dumps(event).encode("utf-8"))
+        except pymysql.Error as e:
+            logger.error(f"Database error updating device: {e}")
             db.rollback()
             db.close()
             return False
@@ -289,9 +282,7 @@ class Device:
         data = cursor.fetchone()
 
         if not data:
-            logger.warn(
-                "Failed to find a device with MAC: " + self.MAC + " in the database"
-            )
+            logger.warning("Failed to find a device with MAC: " + self.MAC + " in the database")
             db.close()
             return False
 
@@ -301,9 +292,8 @@ class Device:
         try:
             cursor.execute("DELETE from device WHERE MAC = %s", (self.MAC,))
             db.commit()
-        except Exception as e:
-            logger.error("Failed to update the database")
-            logger.error("Traceback: " + str(e))
+        except pymysql.Error as e:
+            logger.error(f"Database error deleting device: {e}")
             db.rollback()
             db.close()
             return False
@@ -362,50 +352,34 @@ def check_offline_devices():
     )
     cursor = db.cursor()
 
-    # Get state mappings
-    stat = {}
-    cursor.execute("SELECT * FROM states;")
-    states = cursor.fetchall()
-    for state in states:
-        stat[state[1]] = state[0]
+    time_now = datetime.now(timezone.utc)
+    cutoff_time = (time_now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Get all devices
-    cursor.execute("SELECT * FROM device;")
-    devices = cursor.fetchall()
-
-    time_now = datetime.now()
-    for device in devices:
-        last_online_str = device[5]
-        try:
-            last_online = last_online_str
-            delta = time_now - last_online
-            if delta > timedelta(minutes=30) and device[4] == stat["online"]:
-                logger.info(
-                    "Setting device " + device[3] + " to offline due to inactivity"
-                )
-                cursor.execute(
-                    "UPDATE device SET state = %s WHERE MAC = %s",
-                    (stat["offline"], device[3]),
-                )
-                db.commit()
-
-                event = {
-                    "id": f"device_offline_{device[3]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    "type": "warning",
-                    "message": f"Device {device[3]} went offline due to inactivity",
-                    "time": datetime.now().strftime("%I:%M %p"),
-                }
-                producer.send("event-stream", json.dumps(event).encode("utf-8"))
-        except Exception:
-            logger.error("Error checking device offline status")
+    try:
+        cursor.execute(
+            """
+            UPDATE device d
+            JOIN states s_online ON d.state = s_online.id
+            JOIN states s_offline ON s_offline.state = 'offline'
+            SET d.state = s_offline.id
+            WHERE s_online.state = 'online'
+            AND (d.last_online < %s OR d.last_online IS NULL)
+            """,
+            (cutoff_time,),
+        )
+        db.commit()
+        logger.info(f"Marked {cursor.rowcount} devices as offline")
+    except Exception as e:
+        logger.error(f"Error updating offline devices: {e}")
+        db.rollback()
 
     db.close()
 
 
-def checkLAN():
+def check_lan():
     """
-    Scans the local network for online devices using ARP, updates the database with device information,
-    and marks devices as offline if they haven't been seen for more than 30 minutes.
+    Scans the local network for online devices using ARP, updates the database with device
+    information, and marks devices as offline if they haven't been seen for more than 30 minutes.
 
     ARP Scan Logic:
     - Executes 'arp-scan --localnet' to perform an ARP scan on the local network.
@@ -419,8 +393,10 @@ def checkLAN():
 
     DB Updates:
     - For each discovered MAC, checks if the device exists in the database.
-    - If the device exists, updates its IP address and last_online timestamp, setting state to 'online'.
-    - If the device does not exist, creates a new device entry with the MAC, IP, and resolved hostname (if available).
+    - If the device exists, updates its IP address and last_online timestamp, setting state to
+      'online'.
+    - If the device does not exist, creates a new device entry with the MAC, IP, and
+      resolved hostname (if available).
     - Sends Kafka events for device creation or coming online.
 
     Offline Checks:
@@ -481,30 +457,49 @@ def checkLAN():
     logger.info("Cleaning up temporary files")
     os.system("rm -rf " + netclientsfile)
 
-    producer.send("user", b"refresh-all")
+    if producer:
+        producer.send("user", b"refresh-all")
 
 
 if __name__ == "__main__":
-    # get all instructions from Kafka
-    # topic: device
     logger.info("Starting Alfr3d's device service")
     consumer = None
-    while consumer is None:
+    retry_count = 0
+    while consumer is None and not shutdown_event.is_set():
         try:
-            consumer = KafkaConsumer("device", bootstrap_servers=KAFKA_URL)
+            consumer = KafkaConsumer("device", bootstrap_servers=get_kafka_url())
             logger.info("Connected to Kafka device topic")
         except Exception:
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
             logger.error(
-                "Failed to connect to Kafka device topic, retrying in 5 seconds"
+                f"Failed to connect to Kafka device topic, " f"retrying in {wait_time} seconds"
             )
-            time.sleep(5)
+            shutdown_event.wait(wait_time)
 
-    while True:
-        for message in consumer:
-            if message.value.decode("ascii") == "alfr3d-device.exit":
-                logger.info("Received exit request. Stopping service.")
-                sys.exit(1)
-            if message.value.decode("ascii") == "scan net":
-                checkLAN()
+    if shutdown_event.is_set():
+        logger.info("Shutdown requested during connection attempt")
+        sys.exit(0)
 
-            time.sleep(10)
+    while not shutdown_event.is_set():
+        messages = consumer.poll(timeout_ms=1000)
+        for topic_partition, msgs in messages.items():
+            for message in msgs:
+                try:
+                    data = orjson.loads(message.value)
+                    action = data.get("action")
+
+                    if action == "exit":
+                        logger.info("Received exit request. Stopping service.")
+                        shutdown_event.set()
+                        break
+                    elif action == "scan_net":
+                        check_lan()
+                    elif action == "iot_ha_sync":
+                        ha_utils.sync_ha_devices()
+                    elif action == "iot_st_sync":
+                        st_utils.sync_st_devices()
+                except orjson.JSONDecodeError:
+                    logger.warning("Received non-JSON message, ignoring")
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")

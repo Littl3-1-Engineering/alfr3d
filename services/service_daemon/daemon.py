@@ -6,12 +6,12 @@ import time
 import atexit
 import logging
 from signal import SIGTERM
-from typing import Optional
 
 
 # set up logging
 logger = logging.getLogger("DaemonLifecycle")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
@@ -26,7 +26,11 @@ class Daemon:
     """
 
     def __init__(
-        self, pidfile: str, stdin: str = "/dev/stdin", stdout: str = "/dev/stdout", stderr: str = "/dev/stderr"
+        self,
+        pidfile: str,
+        stdin: str = "/dev/stdin",
+        stdout: str = "/dev/stdout",
+        stderr: str = "/dev/stderr",
     ) -> None:
         self.stdin = stdin
         self.stdout = stdout
@@ -155,6 +159,6 @@ class Daemon:
 
     def run(self) -> None:
         """
-        You should override this method when you subclass Daemon. It will be called after the process has been
-        daemonized by start() or restart().
+        You should override this method when you subclass Daemon. It will be called after
+        the process has been daemonized by start() or restart().
         """

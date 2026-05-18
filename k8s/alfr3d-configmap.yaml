@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alfr3d-k8s-env
+data:
+  LOG_LEVEL: "INFO"
+  MYSQL_ROOT_PASSWORD: "CHANGE_ME" # pragma: allowlist secret
+  MYSQL_DATABASE: "mysql"
+  MYSQL_USER: "user"
+  MYSQL_PSWD: "CHANGE_ME"
+  MYSQL_NAME: "alfr3d_db"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  ZOOKEEPER_CLIENT_PORT: "2181"
+  ZOOKEEPER_TICK_TIME: "2000"
+  KAFKA_BROKER_ID: "1"
+  KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+  KAFKA_LISTENERS_1: "//0.0.0.0:29092"
+  KAFKA_LISTENERS_2: "//0.0.0.0:9092"
+  KAFKA_ADVERTISED_LISTENERS_1: "//kafka:29092"
+  KAFKA_ADVERTISED_LISTENERS_2: "//localhost:9092"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+  KAFKA_BOOTSTRAP_SERVERS_1: "kafka:29092"
+  KAFKA_BOOTSTRAP_SERVERS_2: "localhost:9092"
+  SECRET_KEY: "CHANGE_ME" # pragma: allowlist secret
+  VITE_API_BASE_URL: ""
+  ALFR3D_ENV_NAME: "Alfr3d-Cassiopeia"
+  CLIENT_ID: "CHANGE_ME"
+  CLIENT_SECRET: "CHANGE_ME" # pragma: allowlist secret
+  AUDIO_STORAGE_PATH: "/tmp/audio"
+  AUDIO_RETENTION_MINUTES: "30"

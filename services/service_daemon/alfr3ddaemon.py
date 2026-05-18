@@ -28,29 +28,29 @@ This is the main Alfr3d daemon running most standard services
 # 	  software/component specified under (i).
 #
 
-# Imports
+# Standard library imports
 import logging
 import time
 import os  # used to allow execution of system level commands
 import sys
-import schedule  # 3rd party lib used for alarm clock managment.
 from random import randint  # used for random number generator
-from kafka import KafkaProducer  # user to write messages to Kafka
-from datetime import datetime
-import json
-import pymysql
+from datetime import datetime, timedelta, timezone
+import orjson
+import threading
 
+# Third party imports
+import pymysql
+import schedule  # 3rd party lib used for alarm clock managment.
+from utils import util_routines
+from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 from kafka.errors import KafkaError
+from kafka import KafkaConsumer  # user to write messages to Kafka
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_producer  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
-
-# import my own utilities
-sys.path.append(
-    os.path.join(os.path.join(os.getcwd(), os.path.dirname(__file__)), "../")
-)
-from utils import util_routines
-from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
 
 
 # set up daemon things
@@ -64,13 +64,9 @@ MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-OPENWEATHER_API_KEY = os.environ.get(
-    "OPENWEATHER_API_KEY"
-)  # For destination weather if needed
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")  # For destination weather if needed
 GAS_PRICE = float(os.environ.get("GAS_PRICE", "3.5"))  # Default gas price
 MPG = float(os.environ.get("MPG", "25"))  # Default MPG
-
-producer = None
 
 # time of sunset/sunrise - defaults
 # SUNSET_TIME = datetime.datetime.now().replace(hour=19, minute=0)
@@ -83,29 +79,66 @@ QUIP_WAIT_TIME = randint(5, 10)
 
 # set up logging
 logger = logging.getLogger("DaemonLog")
-logger.setLevel(logging.INFO)
+log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level))
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def get_producer():
-    global producer
-    if producer is None:
-        try:
-            print("Connecting to Kafka at: " + KAFKA_URL)
-            producer = KafkaProducer(bootstrap_servers=[KAFKA_URL])
-            logger.info("Connected to Kafka")
-        except KafkaError as e:
-            logger.error("Failed to connect to Kafka: " + str(e))
+def get_random_quip(quip_type: str) -> str:
+    """Get a random quip of given type using ID-based selection (avoids ORDER BY RAND())."""
+    import random
+
+    db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+    cursor = db.cursor()
+    try:
+        cursor.execute("SELECT MAX(id) FROM quips WHERE type = %s", (quip_type,))
+        max_id_result = cursor.fetchone()
+        if not max_id_result or not max_id_result[0]:
             return None
-    return producer
+        max_id = max_id_result[0]
+        random_id = random.randint(1, max_id)
+        cursor.execute(
+            "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1", (random_id, quip_type)
+        )
+        result = cursor.fetchone()
+        return result[0] if result else None
+    finally:
+        db.close()
+
+
+def consume_integrations() -> None:
+    """Consume integration messages from Kafka integrations topic."""
+    try:
+        logger.info(f"Integration consumer bootstrap servers: {KAFKA_URL}")
+        consumer = KafkaConsumer(
+            "integrations", bootstrap_servers=KAFKA_URL, auto_offset_reset="latest"
+        )
+        logger.info("Connected to Kafka integrations topic")
+        while True:
+            msg = consumer.poll(timeout_ms=1000)
+            if msg:
+                for tp, messages in msg.items():
+                    for message in messages:
+                        logger.info("Polling for integration message")
+                        try:
+                            data = orjson.loads(message.value)
+                            if data.get("type") == "calendar" and data.get("action") == "sync":
+                                calendar_utils.sync_calendar()
+                            elif data.get("type") == "gmail" and data.get("action") == "sync":
+                                gmail_utils.sync_gmail()
+                        except orjson.JSONDecodeError as e:
+                            logger.error(f"Error processing integration message: {str(e)}")
+    except KafkaError as e:
+        logger.error(f"Error connecting to Kafka for integrations: {str(e)}")
 
 
 class MyDaemon:
     def run(self):
         while True:
+            schedule.run_pending()  # Execute any pending scheduled tasks
             self.scan_devices()
             self.check_routines()
             if not self.check_mute_status():
@@ -116,18 +149,7 @@ class MyDaemon:
                 logger.error("Situational awareness check failed: " + str(e))
             time.sleep(60)
 
-    def checkGmail(self) -> None:
-        """
-        Description:
-                 Checks the unread count in gMail
-        """
-        logger.info("Checking email")
-
-        p = get_producer()
-        if p:
-            p.send("google", b"check gmail")
-
-    def beSmart(self) -> None:
+    def be_smart(self) -> None:
         """
         Description:
                  speak a quip
@@ -138,36 +160,36 @@ class MyDaemon:
         if time.time() - QUIP_START_TIME > QUIP_WAIT_TIME * 60:
             logger.info("It is time to be a smartass")
 
+            quip = get_random_quip("smart")
+
             p = get_producer()
-            if p:
-                p.send("speak", b"alfr3d-speak.random")
+            if p and quip:
+                p.send("speak", quip.encode("utf-8"))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)
             print("Time until next quip: ", QUIP_WAIT_TIME)  # DEBUG
 
             logger.info("QUIP_START_TIME and QUIP_WAIT_TIME have been reset")
-            logger.info(
-                "Next quip will be shouted in " + str(QUIP_WAIT_TIME) + " minutes."
-            )
+            logger.info("Next quip will be shouted in " + str(QUIP_WAIT_TIME) + " minutes.")
 
-    def playTune(self):
+    def play_tune(self):
         """
         Description:
                 pick a random song from current weather category and play it
         """
         logger.info("playing a tune")
 
-    def nightlight(self):
+    def night_light(self):
         """
         Description:
                 is anyone at home?
                 is it after dark?
                 turn the lights on or off as needed.
         """
-        logger.info("nightlight auto-check")
+        logger.info("night_light auto-check")
 
-    def checkMute(self):
+    def check_mute(self):
         """
         Description:
                 checks what time it is and decides if Alfr3d should be quiet
@@ -176,7 +198,7 @@ class MyDaemon:
                 - only when 'owner' is at home
         """
         logger.info("Checking if Alfr3d should be muted")
-        result = util_routines.checkMute()
+        result = util_routines.check_mute()
 
         return result
 
@@ -188,7 +210,21 @@ class MyDaemon:
 
     def decide_displays(self):
         """Collect up to 4 SA items: emails, events, gatherings; default to time + weather."""
+        """
+        Priority mapping in the daemon:
+            1 — time (check_time)
+            2 — event (check_events)
+            3 — music/gathering suggestion (check_gatherings)
+            4 — email (check_emails)
+            5 — weather (check_weather)
+        """
         displays = []
+        time_card = self.check_time()
+        weather_card = self.check_weather()
+        if time_card:
+            displays.append(time_card)
+        if weather_card:
+            displays.append(weather_card)
         logger.info("Collecting displays: checking emails")
         emails = self.check_emails()
         if emails:
@@ -203,24 +239,31 @@ class MyDaemon:
             displays.append(gatherings)
         if not displays:
             logger.info("No priority displays, defaulting to time and weather")
-            time_card = self.check_time()
-            weather_card = self.check_weather()
-            if time_card:
-                displays.append(time_card)
-            if weather_card:
-                displays.append(weather_card)
+
+        logger.debug("Displays before sorting: " + str(displays))
+        # sort by priority
+        displays.sort(key=lambda x: x["priority"])
+
+        logger.debug("Final displays selected: " + str(displays))
         # Limit to 4
         return displays[:4]
 
     def check_emails(self):
         """Check for unread emails using Gmail utils."""
-        return gmail_utils.check_unread_emails()
+        emails = gmail_utils.check_unread_emails()
+        if emails:
+            email = emails[0]  # Take first
+            content_lines = f"From: {email['sender']}, Subject: {email['subject']}"
+            content = f"Unread Email - {content_lines} | Total Unread: {len(emails)}"
+            return {"mode": "email", "content": content, "priority": 4}
 
     def check_events(self):
         """Check for upcoming events with addresses."""
         events = calendar_utils.get_upcoming_events()
         if events:
             event = events[0]  # Take first
+            if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=3):
+                return None  # Only care about events within next hour
             title = event["title"]
             start_time = event["start_time"]
             address = event["address"]
@@ -238,9 +281,7 @@ class MyDaemon:
                 db.close()
                 if loc_row:
                     lat, lng = loc_row
-                    travel_info = maps_utils.get_travel_info(
-                        lat, lng, address, start_time
-                    )
+                    travel_info = maps_utils.get_travel_info(lat, lng, address, start_time)
                     if travel_info:
                         departure = travel_info["departure"]
                         fuel_cost = travel_info["fuel_cost"]
@@ -253,30 +294,55 @@ class MyDaemon:
                             else "shorts" if temp > 25 else "normal"
                         )
                         umbrella = "Bring umbrella" if rain_prob > 30 else ""
-                        content = (f"Leave at {departure.strftime('%I:%M %p')} for {title}. "
-                                   f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}")
+                        content = (
+                            f"Leave at {departure.strftime('%I:%M %p')} for {title}. "
+                            f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}"
+                        )
                         return {"mode": "event", "content": content, "priority": 2}
+                else:
+                    logger.warning("No location data found in environment table")
+                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+                    return {"mode": "event", "content": content, "priority": 2}
             except Exception as e:
                 logger.error("Event location error: " + str(e))
+                # Fallback content
+                # If event is within next hour, just show time
+                if start_time - datetime.now(timezone.utc) <= timedelta(hours=3):
+                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+                    return {"mode": "event", "content": content, "priority": 2}
         return None
 
     def check_gatherings(self):
         """Check for gatherings (>3 guests/residents online)."""
+        db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
             cursor.execute(
-                # "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest', 'resident'))"
-                "SELECT COUNT(*) FROM user WHERE state = (SELECT id FROM states WHERE state = 'online') AND type IN (SELECT id FROM user_types WHERE type IN ('guest'))"
+                """
+                SELECT
+                    SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
+                    COUNT(*) as total_count
+                FROM user u
+                JOIN states s ON u.state = s.id
+                JOIN user_types ut ON u.type = ut.id
+                WHERE s.state = 'online' AND u.username != 'unknown'
+                """
             )
-            result = cursor.fetchone()
-            if result:
-                count = result[0]
-            else:
-                count = 0
-            if count > 0:
+            row = cursor.fetchone()
+            guest_count = row[0] if row and row[0] else 0
+            total_count = row[1] if row and row[1] else 0
+
+            if guest_count > 0:
+                logger.info(
+                    "Gathering detected with total people: "
+                    + str(total_count)
+                    + " (guests: "
+                    + str(guest_count)
+                    + ")"
+                )
                 hour = datetime.now().hour
                 if 6 <= hour < 18:
                     time_of_day = "day"
@@ -285,19 +351,49 @@ class MyDaemon:
                 else:
                     time_of_day = "night"
                 cursor.execute(
-                    "SELECT description FROM environment WHERE name = %s", (ENV_NAME,)
+                    "SELECT description, subjective_feel FROM environment WHERE name = %s",
+                    (ENV_NAME,),
                 )
                 desc_row = cursor.fetchone()
-                mood = (
-                    (desc_row[0] if desc_row else "unknown") + " kind of " + time_of_day
+                desc, subj = desc_row if desc_row else (None, None)
+                weather_info = {"description": desc, "subjective_feel": subj}
+
+                reco = spotify_utils.recommend(
+                    total_people=total_count,
+                    guest_count=guest_count,
+                    time_of_day=time_of_day,
+                    weather=weather_info,
                 )
-                playlist = spotify_utils.get_playlist_suggestion(time_of_day, mood)
-                content = f"Play {playlist}"
+                logger.info(f"Recommendation: {reco}")
+
+                p = get_producer()
+                if p:
+                    event = {
+                        "id": f"gathering_detected_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                        "type": "info",
+                        "message": (
+                            f"Gathering detected with {total_count} people "
+                            f"({guest_count} guests). Suggesting {reco['mood']} music "
+                            f"({reco['genre']})."
+                        ),
+                        "time": datetime.now(timezone.utc).isoformat(),
+                    }
+                    p.send("event-stream", orjson.dumps(event))
+
+                playlist = spotify_utils.get_playlist_suggestion(
+                    reco.get("playlist_hint", reco.get("mood", ""))
+                )
+                content = f"Play {playlist} ({reco['genre']}, energy={reco['energy']})"
                 return {"mode": "music", "content": content, "priority": 3}
-            db.close()
+            return None
         except pymysql.Error as e:
             logger.error("Gathering check error: " + str(e))
-        return None
+            if db:
+                db.rollback()
+            return None
+        finally:
+            if db:
+                db.close()
 
     def check_weather(self):
         """Default: concise weather summary."""
@@ -307,49 +403,50 @@ class MyDaemon:
             )
             cursor = db.cursor()
             cursor.execute(
-                "SELECT city, description, low, high FROM environment WHERE name = %s",
+                "SELECT city, description, low, high, subjective_feel "
+                "FROM environment WHERE name = %s",
                 (ENV_NAME,),
             )
             row = cursor.fetchone()
             db.close()
             if row:
-                city, desc, low, high = row
-                content = f"{city}: {desc}, {low}°C to {high}°C"
-                return {"mode": "weather", "content": content, "priority": 4}
+                city, desc, low, high, feel = row
+                content = f"{city}: {feel}, {desc}, {low}°C to {high}°C"
+                return {"mode": "weather", "content": content, "priority": 5}
         except pymysql.Error as e:
             logger.error("Weather check error: " + str(e))
         return None
 
     def check_time(self):
         """Get current time card."""
-        now = datetime.now()
-        content = now.strftime("%I:%M %p")
+        now = datetime.now(timezone.utc)
+        content = now.isoformat()
         return {"mode": "time", "content": content, "priority": 1}
 
     def scan_devices(self):
         logger.info("Time for localnet scan")
         p = get_producer()
         if p:
-            p.send("device", b"scan net")
+            p.send("device", orjson.dumps({"action": "scan_net"}))
 
     def check_routines(self):
         logger.info("Routine check")
-        util_routines.checkRoutines()
+        util_routines.check_routines()
 
     def check_mute_status(self):
         logger.info("Checking if mute")
-        return self.checkMute()
+        return self.check_mute()
 
     def perform_waking_hours_tasks(self):
         try:
             logger.info("Is it time for a smartass quip?")
-            self.beSmart()
+            self.be_smart()
         except KafkaError as e:
             logger.error("Failed to complete the quip block")
             logger.error("Traceback: " + str(e))
         try:
             logger.info("Time to check Gmail")
-            self.checkGmail()
+            self.check_emails
         except KafkaError as e:
             logger.error("Failed to check Gmail")
             logger.error("Traceback: " + str(e))
@@ -358,50 +455,40 @@ class MyDaemon:
         """Publish array of SA cards to Kafka topic."""
         p = get_producer()
         if p:
-            p.send("situational-awareness", json.dumps(data).encode("utf-8"))
+            p.send("situational-awareness", orjson.dumps(data))
             logger.info("Published situational awareness: " + str(data))
 
 
-def sunriseRoutine():
-    """
-    Description:
-            sunset routine - perform this routine 30 minutes before sunrise
-            giving the users time to go see sunrise
-    """
-    logger.info("Pre-sunrise routine")
-
-
-def morningRoutine():
-    """
-    Description:
-            perform morning routine - ring alarm, speak weather, check email, etc..
-    """
-    logger.info("Time for morning routine")
-
-
-def sunsetRoutine():
-    """
-    Description:
-            routine to perform at sunset - turn on ambient lights
-    """
-    logger.info("Time for sunset routine")
-
-
-def bedtimeRoutine():
-    """
-    Description:
-            routine to perform at bedtime - turn on ambient lights
-    """
-    logger.info("Bedtime")
-
-
-def resetRoutines():
+def reset_routines():
     """
     Description:
             refresh some things at midnight
     """
     logger.info("Time to reset routines")
-    util_routines.resetRoutines()
+    util_routines.reset_routines()
+
+
+def check_weather_routine():
+    """
+    Description:
+            Send a weather check message to the environment topic every 4 hours.
+    """
+    logger.info("Scheduled weather check")
+    p = get_producer()
+    if p:
+        p.send("environment", b"check weather")
+
+
+def sync_iot_devices():
+    """
+    Description:
+            Send IoT sync messages to the device topic every 15 minutes.
+    """
+    logger.info("Scheduled IoT device sync")
+    p = get_producer()
+    if p:
+        p.send("device", orjson.dumps({"action": "iot_ha_sync"}))
+        p.send("device", orjson.dumps({"action": "iot_st_sync"}))
 
 
 def init_daemon():
@@ -416,11 +503,21 @@ def init_daemon():
 
     faults = 0
 
+    logger.info("syncing calendar events")
+    p.send("speak", b"Synchronising calendar events")
+    calendar_utils.sync_calendar()
+
+    logger.info("syncing gmail emails")
+    p.send("speak", b"Synchronising gmail emails")
+    gmail_utils.sync_gmail()
+
     # initial geo check
     logger.info("Running a geoscan")
+    p.send("speak", b"Running a geoscan")
     p = get_producer()
     if p:
         p.send("environment", b"check location")
+        p.send("environment", b"check weather")
 
     # set up some routine schedules
     try:
@@ -428,13 +525,22 @@ def init_daemon():
         p = get_producer()
         if p:
             p.send("speak", b"Setting up scheduled routines")
+            event = {
+                "id": f"schedule_setup_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "info",
+                "message": "Set up scheduled routines",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", orjson.dumps(event))
         # utilities.createRoutines()
-        resetRoutines()
+        reset_routines()
 
         # "8.30" in the following function is just a placeholder
         # until i deploy a more configurable alarm clock
-        schedule.every().day.at("00:05").do(resetRoutines)
-        # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtimeRoutine)
+        schedule.every().day.at("00:05").do(reset_routines)
+        schedule.every(4).hours.do(check_weather_routine)
+        schedule.every(15).minutes.do(sync_iot_devices)
+        # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
         logger.error("Traceback: " + str(e))
@@ -447,9 +553,14 @@ def init_daemon():
         logger.warning("Some startup faults were detected")
         p = get_producer()
         if p:
-            p.send(
-                "speak", b"Some faults were detected but system started successfully"
-            )
+            p.send("speak", b"Some faults were detected but system started successfully")
+            event = {
+                "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "warning",
+                "message": f"System check finished with {faults} faults",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", orjson.dumps(event))
 
         # producer.send("speak", b"Total number of faults is "+str(faults))
 
@@ -458,6 +569,13 @@ def init_daemon():
         p = get_producer()
         if p:
             p.send("speak", b"All systems are up and operational")
+            event = {
+                "id": f"setup_complete_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "type": "success",
+                "message": "System check finished",
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+            p.send("event-stream", orjson.dumps(event))
 
     return
 
@@ -468,6 +586,7 @@ if __name__ == "__main__":
         if "start" == sys.argv[1]:
             logger.info("Alfr3d Daemon initializing")
             init_daemon()
+            threading.Thread(target=consume_integrations, daemon=True).start()
             logger.info("Alfr3d Daemon starting...")
             daemon.run()
         elif "test" == sys.argv[1]:

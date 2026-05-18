@@ -1,66 +1,193 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { API_BASE_URL } from '../config';
 import Core from '../components/Core';
 import SituationalAwareness from '../components/SituationalAwareness';
 import OnlineUsers from '../components/OnlineUsers';
+import GuestRoster from '../components/GuestRoster';
 import ContainerHealth from '../components/ContainerHealth';
 import EventStream from '../components/EventStream';
+ import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
+ import TacticalPanelVariant2 from '../components/TacticalPanelVariant2';
+ import TacticalPanelVariant3 from '../components/TacticalPanelVariant3';
+ import LocationPanel from '../components/LocationPanel';
+import TimeDatePanel from '../components/TimeDatePanel';
+import WeatherPanel from '../components/WeatherPanel';
+import CalendarPanel from '../components/CalendarPanel';
+import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
+import ProjectTreeViz from '../components/ProjectTreeViz';
 
 const Nexus = () => {
   const [systemHealth] = useState('cyan');
+  const [locationTitle, setLocationTitle] = useState('');
+  const [openPanels, setOpenPanels] = useState({
+    timeDate: false,
+    weather: false,
+    calendar: false,
+    containerHealth: false,
+    projectTree: false
+  });
+
+  const fetchJson = (url) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
+
+  const { data: weather, error: weatherError } = useQuery({ queryKey: ['weather'], queryFn: () => fetchJson(`${API_BASE_URL}/api/weather`), staleTime: 5 * 60 * 1000 });
+  const { data: calendarEvents, error: calendarError } = useQuery({ queryKey: ['calendar-events'], queryFn: () => fetchJson(`${API_BASE_URL}/api/calendar/events`), staleTime: 5 * 60 * 1000 });
+  const { data: containers, error: containersError } = useQuery({ queryKey: ['containers'], queryFn: () => fetchJson(`${API_BASE_URL}/api/containers`), staleTime: 5 * 60 * 1000 });
+  const { data: devices, error: devicesError } = useQuery({ queryKey: ['devices'], queryFn: () => fetchJson(`${API_BASE_URL}/api/devices`), staleTime: 5 * 60 * 1000 });
+  const { data: onlineUsers, error: usersError } = useQuery({ queryKey: ['online-users'], queryFn: () => fetchJson(`${API_BASE_URL}/api/users?online=true`), staleTime: 5 * 60 * 1000 });
+  const { data: location, error: locationError } = useQuery({ queryKey: ['location'], queryFn: () => fetchJson(`${API_BASE_URL}/api/environment`), staleTime: 5 * 60 * 1000 });
+
+  const anyError = weatherError || calendarError || containersError || devicesError || usersError || locationError;
+  const isLoading = !anyError && (weather === undefined || calendarEvents === undefined || containers === undefined || devices === undefined || onlineUsers === undefined || location === undefined);
+
+  const filterGuests = (users) => {
+    if (!users) return [];
+    return users.filter(user => user.type === 'guest');
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen p-8 bg-fui-bg flex items-center justify-center">
+        <p className="text-fui-accent font-mono uppercase text-xl">INITIALIZING NEXUS...</p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.8 }}
-      className="min-h-screen p-8"
+      className="min-h-screen p-8 bg-fui-bg relative"
+      style={{
+        backgroundImage: "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+        backgroundSize: '20px 20px'
+      }}
     >
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full px-8">
         <motion.h1
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2, duration: 0.5 }}
-          className="text-4xl font-bold text-primary mb-8 text-center drop-shadow-lg"
+          className="text-4xl font-tech font-bold text-fui-accent mb-8 text-center uppercase tracking-widest"
         >
           ALFR3D Nexus
         </motion.h1>
-        
-        <div className="flex flex-row gap-8 flex-wrap justify-center items-center">
-          {/* Left Panels */}
-          <motion.div
-            initial={{ opacity: 0, x: -50 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.4, duration: 0.6 }}
-            className="flex flex-col gap-6 w-full lg:w-80"
+
+            <div className="flex justify-center">
+                <div className="grid gap-8 grid-cols-1 md:grid-cols-[300px_450px_300px]">
+              {/* Column 2: Residents Roster + Event Stream */}
+               <motion.div
+                 initial={{ opacity: 0, y: -20 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 transition={{ delay: 0.5, duration: 0.6 }}
+                 className="flex flex-col gap-4 order-3 md:order-none"
+               >
+<TacticalPanelVariant3 title="R3sidents">
+                    <OnlineUsers initialResidents={onlineUsers} />
+                  </TacticalPanelVariant3>
+                  <TacticalPanelVariant2 title="3vent:5tream">
+                    <EventStream />
+                  </TacticalPanelVariant2>
+              </motion.div>
+
+           {/* Column 3: Core + Situational Awareness */}
+             <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.6, duration: 0.8 }}
+                className="flex flex-col gap-8 px-6 items-center order-1 md:order-none"
+              >
+              <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} />
+<TacticalPanelVariant1 title="Situat1onal Awar3ness">
+                  <SituationalAwareness timezone={location?.timezone} />
+                </TacticalPanelVariant1>
+            </motion.div>
+
+            {/* Column 4: Guest Roster + Location Panel */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.7, duration: 0.6 }}
+                className="flex flex-col gap-6 order-2 md:order-none"
+              >
+<TacticalPanelVariant1 title="Gue5t R0ster">
+                   <GuestRoster initialGuests={filterGuests(onlineUsers)} />
+                 </TacticalPanelVariant1>
+                  <TacticalPanelVariant3 title={locationTitle}>
+                    <LocationPanel setTitle={setLocationTitle} initialLocation={location} />
+                  </TacticalPanelVariant3>
+             </motion.div>
+
+                </div>
+            </div>
+
+         {/* Collapsible Side Panels */}
+          <CollapsibleSidePanel
+            position="left"
+            title="TIME & DAT3"
+            isOpen={openPanels.timeDate}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, timeDate: !prev.timeDate }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
+            tabIndex={0}
           >
-            <SituationalAwareness />
-            <OnlineUsers />
-          </motion.div>
+<TacticalPanelVariant1 title="TIME & DATE">
+              <TimeDatePanel timezone={location?.timezone} />
+            </TacticalPanelVariant1>
+         </CollapsibleSidePanel>
 
-          {/* Center Core */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.6, duration: 0.8 }}
-            className="flex-1 flex flex-col justify-center items-center gap-8"
+          <CollapsibleSidePanel
+            position="left"
+            title="W3ATH3R"
+            isOpen={openPanels.weather}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, weather: !prev.weather }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
+            tabIndex={1}
           >
-            <Core health={systemHealth} />
-            <EventStream />
-          </motion.div>
+<TacticalPanelVariant2 title="WEATHER">
+              <WeatherPanel initialWeather={weather} />
+            </TacticalPanelVariant2>
+         </CollapsibleSidePanel>
 
-          {/* Right Panels */}
-          <motion.div
-            initial={{ opacity: 0, x: 50 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.8, duration: 0.6 }}
-            className="flex flex-col gap-6 w-full lg:w-80"
+          <CollapsibleSidePanel
+            position="left"
+            title="C4L3ND4R"
+            isOpen={openPanels.calendar}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, calendar: !prev.calendar }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
+            tabIndex={2}
           >
-            <ContainerHealth />
-          </motion.div>
-        </div>
+<TacticalPanelVariant3 title="C4lendar">
+              <CalendarPanel initialEvents={calendarEvents?.events} initialTimezone={calendarEvents?.timezone} />
+            </TacticalPanelVariant3>
+         </CollapsibleSidePanel>
 
+<CollapsibleSidePanel
+            position="right"
+            title="C0NT41N3R H3ALTH"
+            isOpen={openPanels.containerHealth}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
+            tabIndex={0}
+          >
+            <TacticalPanelVariant2 title="Container Health">
+              <ContainerHealth initialContainers={containers} />
+            </TacticalPanelVariant2>
+          </CollapsibleSidePanel>
 
+          <CollapsibleSidePanel
+            position="right"
+            title="PR0J3CT TR33"
+            isOpen={openPanels.projectTree}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, projectTree: !prev.projectTree }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, projectTree: false }))}
+            tabIndex={1}
+          >
+            <TacticalPanelVariant1 title="Pr0j3ct Tr33">
+              <ProjectTreeViz />
+            </TacticalPanelVariant1>
+          </CollapsibleSidePanel>
       </div>
     </motion.div>
   );
