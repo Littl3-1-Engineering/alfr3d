@@ -1,10 +1,12 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { formatTimeWithTimezone } from '../utils/timeUtils';
 import socket from '../utils/socket';
 
-const SituationalAwareness = () => {
+const SituationalAwareness = ({ timezone = null }) => {
   const [saData, setSaData] = useState([]);
 
   useEffect(() => {
@@ -56,7 +58,7 @@ const SituationalAwareness = () => {
             <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">{getIcon(card.mode)}</div>
             <div>
               <p className="text-sm text-fui-text/60 font-mono uppercase">[{card.mode || 'STATUS'}]</p>
-              <p className="text-lg font-mono text-fui-text">{card.mode === 'time' ? new Date(card.content).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : (card.content || 'NO DATA')}</p>
+              <p className="text-lg font-mono text-fui-text">{card.mode === 'time' ? formatTimeWithTimezone(card.content, timezone) : (card.content || 'NO DATA')}</p>
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
           </motion.div>
@@ -76,6 +78,10 @@ const SituationalAwareness = () => {
       )}
     </div>
   );
+};
+
+SituationalAwareness.propTypes = {
+  timezone: PropTypes.string,
 };
 
 export default SituationalAwareness;

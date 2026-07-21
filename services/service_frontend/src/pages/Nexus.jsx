@@ -100,9 +100,9 @@ const Nexus = () => {
                 className="flex flex-col gap-8 px-6 items-center order-1 md:order-none"
               >
               <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} />
-               <TacticalPanelVariant1 title="Situat1onal Awar3ness">
-                 <SituationalAwareness />
-               </TacticalPanelVariant1>
+<TacticalPanelVariant1 title="Situat1onal Awar3ness">
+                  <SituationalAwareness timezone={location?.timezone} />
+                </TacticalPanelVariant1>
             </motion.div>
 
             {/* Column 4: Guest Roster + Location Panel */}
