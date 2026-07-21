@@ -10,5 +10,5 @@ orjson
 pydantic>=2.0.0
 websockets
 anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability
-starlette>=0.49.1 # not directly required, pinned by Snyk to avoid a vulnerability
+starlette==1.0.1
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
