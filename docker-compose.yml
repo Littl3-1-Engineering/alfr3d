@@ -63,7 +63,6 @@ services:
     build:
       context: ./services
       dockerfile: ./service_api/Dockerfile
-    user: "1000:1000"
     depends_on:
       mysql:
         condition: service_started
@@ -114,7 +113,6 @@ services:
     build:
       context: ./services
       dockerfile: ./service_speak/Dockerfile
-    user: "1000:1000"
     depends_on:
       kafka:
         condition: service_healthy

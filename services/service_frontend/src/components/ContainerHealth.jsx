@@ -22,9 +22,15 @@ const ContainerHealth = ({ initialContainers = null, pollInterval = 10000 }) => 
   };
 
   useEffect(() => {
-    if (!initialContainers || containers.length === 0) {
+    if (initialContainers && initialContainers.length > 0) {
+      setContainers(initialContainers);
+      setHasLoaded(true);
+    } else {
       fetchContainers().finally(() => setHasLoaded(true));
     }
+  }, [initialContainers]);
+
+  useEffect(() => {
     const interval = setInterval(fetchContainers, pollInterval);
 
     const handleContainersUpdate = (data) => {
