@@ -628,7 +628,7 @@ async def get_containers():
         env = os.environ.copy()
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
         containers = []
-        output = run_docker_command(["docker", "ps", "-a", "--format", "json"], env)
+        output = run_docker_command(["docker", "ps", "-a", "--format", "{{json .}}"], env)
         container_list = parse_docker_json(output)
 
         for container in container_list:

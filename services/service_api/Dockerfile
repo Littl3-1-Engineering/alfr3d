@@ -11,7 +11,9 @@ COPY service_api/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r requirements.txt
 
-RUN groupadd -r -g 1000 alfr3d && useradd -r -u 1000 -g alfr3d alfr3d
+RUN groupdel docker; groupadd -g 993 docker; \
+    groupadd -r -g 1000 alfr3d && useradd -r -u 1000 -g alfr3d alfr3d \
+    && usermod -aG docker alfr3d
 
 COPY service_api/app.py .
 COPY service_api/tree_of_alfr3d.py .
