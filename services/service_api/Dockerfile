@@ -16,7 +16,10 @@ RUN groupdel docker; groupadd -g 993 docker; \
     && usermod -aG docker alfr3d
 
 COPY service_api/app.py .
+COPY service_api/models.py .
+COPY service_api/dependencies.py .
 COPY service_api/tree_of_alfr3d.py .
+COPY service_api/routes/ ./routes/
 COPY common/ ./common/
 
 RUN chown -R alfr3d:alfr3d /app

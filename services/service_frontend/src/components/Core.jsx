@@ -389,12 +389,10 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
     if (!initialContainers || containers.length === 0) {
       fetchContainers();
     }
-    const interval = setInterval(fetchContainers, pollInterval);
 
     socket.on('containers', setContainers);
 
     return () => {
-      clearInterval(interval);
       socket.off('containers', setContainers);
     };
   }, []);
@@ -418,89 +416,6 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       fetchDevices();
     }
     const interval = setInterval(fetchDevices, pollInterval);
-
-    socket.on('devices', setDevices);
-
-    return () => {
-      clearInterval(interval);
-      socket.off('devices', setDevices);
-    };
-  }, []);
-
-
-
-  useEffect(() => {
-    const fetchContainers = async () => {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/containers');
-        if (response.ok) {
-          const data = await response.json();
-          setContainers(data);
-        } else {
-          console.error('Error fetching containers:', response.status);
-          setContainers([{ name: 'test-container', errors: 0 }]);
-        }
-      } catch (error) {
-        console.error('Error fetching containers:', error);
-        setContainers([{ name: 'test-container', errors: 0 }]);
-      }
-    };
-    fetchContainers();
-    const interval = setInterval(fetchContainers, 10000);
-
-    socket.on('containers', setContainers);
-
-    return () => {
-      clearInterval(interval);
-      socket.off('containers', setContainers);
-    };
-  }, []);
-
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/users?online=true');
-        if (response.ok) {
-          const data = await response.json();
-          setUsers(data);
-        } else {
-          console.error('Error fetching users:', response.status);
-          setUsers([{ name: 'test-user', type: 'user' }]);
-        }
-      } catch (error) {
-        console.error('Error fetching users:', error);
-        setUsers([{ name: 'test-user', type: 'user' }]);
-      }
-    };
-    fetchUsers();
-    const interval = setInterval(fetchUsers, 5000);
-
-    socket.on('users', setUsers);
-
-    return () => {
-      clearInterval(interval);
-      socket.off('users', setUsers);
-    };
-  }, []);
-
-  useEffect(() => {
-    const fetchDevices = async () => {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/devices');
-        if (response.ok) {
-          const data = await response.json();
-          setDevices(data);
-        } else {
-          console.error('Error fetching devices:', response.status);
-          setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
-        }
-      } catch (error) {
-        console.error('Error fetching devices:', error);
-        setDevices([{ id: 1, name: 'test-device', type: 'light', user: 'alfr3d', state: 'online' }]);
-      }
-    };
-    fetchDevices();
-    const interval = setInterval(fetchDevices, 10000);
 
     socket.on('devices', setDevices);
 
