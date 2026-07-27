@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import socket from '../utils/socket';
 
@@ -9,6 +9,7 @@ const ProjectTreeViz = () => {
   const [tooltip, setTooltip] = useState({ show: false, x: 0, y: 0, content: '' });
   const simulationRef = useRef(null);
   const zoomRef = useRef(null);
+  const rootRef = useRef(null);
 
   useEffect(() => {
     fetch('/api/project-tree')
@@ -59,14 +60,19 @@ const ProjectTreeViz = () => {
       .scale(0.5)
       .translate(-width / 2, -height / 2));
 
-    function convertToHierarchy(data) {
+    function convertToHierarchy(data, depth = 0) {
       if (!data.children) {
         return { ...data };
       }
-      return {
+      const node = {
         ...data,
-        children: data.children.map(convertToHierarchy)
+        children: data.children.map(child => convertToHierarchy(child, depth + 1))
       };
+      if (depth >= 2 && node.children && node.children.length > 0) {
+        node._collapsed_children = node.children;
+        node.children = null;
+      }
+      return node;
     }
 
     const root = d3.hierarchy(convertToHierarchy(treeData));
@@ -74,7 +80,7 @@ const ProjectTreeViz = () => {
     const nodes = root.descendants();
 
     const simulation = d3.forceSimulation(nodes)
-      .alphaDecay(0)
+      .alphaDecay(0.02)
       .force('link', d3.forceLink(links)
         .id(d => d.data.name)
         .distance(40))
@@ -87,6 +93,7 @@ const ProjectTreeViz = () => {
       ).strength(0.5));
 
     simulationRef.current = simulation;
+    rootRef.current = root;
 
     const link = g.append('g')
       .attr('class', 'links')
@@ -158,8 +165,11 @@ const ProjectTreeViz = () => {
 
     node.on('click', (event, d) => {
       if (d.data.children && d.data.children.length > 0) {
-        d._children = d.data.children;
+        d.data._collapsed_children = d.data.children;
         d.data.children = null;
+      } else if (d.data._collapsed_children) {
+        d.data.children = d.data._collapsed_children;
+        d.data._collapsed_children = null;
       } else if (d._children) {
         d.data.children = d._children;
         d._children = null;
@@ -173,7 +183,7 @@ const ProjectTreeViz = () => {
 
       const newNode = g.select('.nodes')
         .selectAll('g')
-        .data(newNodes, d => d.data.name + Math.random());
+        .data(newNodes, d => d.data.path || d.data.name);
 
       newNode.exit().remove();
 
@@ -311,6 +321,36 @@ const ProjectTreeViz = () => {
     }
   };
 
+  const handleExpandAll = useCallback(() => {
+    if (!rootRef.current) return;
+    function expandNode(d) {
+      if (d.data._collapsed_children) {
+        d.data.children = d.data._collapsed_children;
+        d.data._collapsed_children = null;
+      }
+      if (d.children) {
+        d.children.forEach(expandNode);
+      }
+    }
+    expandNode(rootRef.current);
+    setTreeData({ ...treeData });
+  }, [treeData]);
+
+  const handleCollapseAll = useCallback(() => {
+    if (!rootRef.current) return;
+    function collapseNode(d) {
+      if (d.depth >= 1 && d.data.children && d.data.children.length > 0) {
+        d.data._collapsed_children = d.data.children;
+        d.data.children = null;
+      }
+      if (d.children) {
+        d.children.forEach(collapseNode);
+      }
+    }
+    rootRef.current.children?.forEach(collapseNode);
+    setTreeData({ ...treeData });
+  }, [treeData]);
+
   return (
     <div
       ref={containerRef}
@@ -344,18 +384,32 @@ const ProjectTreeViz = () => {
 
       <div className="absolute bottom-2 right-2 flex gap-1">
         <button
+          onClick={handleExpandAll}
+          className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
+          title="Expand All"
+        >
+          +
+        </button>
+        <button
+          onClick={handleCollapseAll}
+          className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
+          title="Collapse All"
+        >
+          -
+        </button>
+        <button
           onClick={handleZoomIn}
           className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
           title="Zoom In"
         >
-          +
+          ⊕
         </button>
         <button
           onClick={handleZoomOut}
           className="w-7 h-7 flex items-center justify-center bg-[#1a1a1a] text-[#00FFFF] rounded border border-[#00FFFF] hover:bg-[#2a2a2a] transition-colors text-xs font-mono"
           title="Zoom Out"
         >
-          -
+          ⊖
         </button>
         <button
           onClick={handleFitToView}
