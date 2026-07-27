@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 import pymysql
 
-from dependencies import get_connection, manager, ALFR3D_ENV_NAME
+from dependencies import get_connection, _get_cached_or_fetch, _invalidate_cache, manager, ALFR3D_ENV_NAME
 from models import EnvironmentUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -15,34 +15,12 @@ router = APIRouter(prefix="/api", tags=["environment"])
 @router.get("/weather")
 async def get_weather():
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
-            "description, sunrise, sunset, pressure, humidity, manual_override, "
-            "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
-            (ALFR3D_ENV_NAME,),
-        )
-        row = cursor.fetchone()
-        db.close()
-        if row:
-            weather_data = {
-                "city": row[4],
-                "state": row[5],
-                "country": row[6],
-                "low": row[8],
-                "high": row[9],
-                "description": row[10],
-                "sunrise": row[11].isoformat() if row[11] else None,
-                "sunset": row[12].isoformat() if row[12] else None,
-                "pressure": row[13],
-                "humidity": row[14],
-                "timezone": row[18],
-            }
+        from dependencies import _fetch_weather
+        weather_data = _get_cached_or_fetch("api:weather", _fetch_weather, ttl=300)
+        if weather_data:
             await manager.broadcast("weather", weather_data)
             return weather_data
-        else:
-            raise HTTPException(status_code=404, detail="Environment not found")
+        raise HTTPException(status_code=404, detail="Environment not found")
     except pymysql.Error as e:
         logger.error(f"Error fetching weather: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -51,42 +29,12 @@ async def get_weather():
 @router.get("/environment")
 async def get_environment():
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
-            "description, sunrise, sunset, pressure, humidity, manual_override, "
-            "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
-            (ALFR3D_ENV_NAME,),
-        )
-        row = cursor.fetchone()
-        db.close()
-        if row:
-            env_data = {
-                "id": row[0],
-                "name": row[1],
-                "latitude": row[2],
-                "longitude": row[3],
-                "city": row[4],
-                "state": row[5],
-                "country": row[6],
-                "ip": row[7],
-                "temp_min": row[8],
-                "temp_max": row[9],
-                "description": row[10],
-                "sunrise": row[11].isoformat() if row[11] else None,
-                "sunset": row[12].isoformat() if row[12] else None,
-                "pressure": row[13],
-                "humidity": row[14],
-                "manual_override": row[15],
-                "manual_location_override": row[16],
-                "subjective_feel": row[17],
-                "timezone": row[18],
-            }
+        from dependencies import _fetch_environment
+        env_data = _get_cached_or_fetch("api:environment", _fetch_environment, ttl=300)
+        if env_data:
             await manager.broadcast("environment", env_data)
             return env_data
-        else:
-            raise HTTPException(status_code=404, detail="Environment not found")
+        raise HTTPException(status_code=404, detail="Environment not found")
     except pymysql.Error as e:
         logger.error(f"Error fetching environment: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -130,6 +78,8 @@ async def update_environment(data: EnvironmentUpdate):
             cursor.execute(sql, params)
             db.commit()
         db.close()
+        _invalidate_cache("api:weather")
+        _invalidate_cache("api:environment")
         return {
             "message": "Environment updated",
             "manual_location_override": manual_location_override,
@@ -183,6 +133,8 @@ async def reset_environment():
         )
         _ = cursor.fetchone()
         db.close()
+        _invalidate_cache("api:weather")
+        _invalidate_cache("api:environment")
         return {"message": "Environment reset to auto-detect"}
     except pymysql.Error as e:
         logger.error(f"Error resetting environment: {str(e)}")

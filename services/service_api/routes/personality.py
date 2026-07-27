@@ -113,21 +113,10 @@ async def apply_personality_preset(data: PresetApply):
 @router.get("/personality/context")
 async def get_personality_context():
     try:
-        env_id = get_environment_id()
-        db = get_connection()
-        cursor = db.cursor(pymysql.cursors.DictCursor)
-        cursor.execute("SELECT * FROM context WHERE environment_id = %s LIMIT 1", (env_id,))
-        row = cursor.fetchone()
-        db.close()
-        if row:
-            return {
-                "repeat_count": row["repeat_count"],
-                "hour": row["hour"],
-                "weather": row["weather"] or "clear",
-                "mood": row["mood"],
-                "last_error_count": row["last_error_count"],
-                "llm_calls_today": row["llm_calls_today"],
-            }
+        from dependencies import _fetch_context
+        ctx = _get_cached_or_fetch(f"personality:context:{ALFR3D_ENV_NAME}", _fetch_context, ttl=300)
+        if ctx:
+            return ctx
         raise HTTPException(status_code=404, detail="Context not found")
     except pymysql.Error as e:
         logger.error(f"Error fetching context: {str(e)}")
@@ -156,6 +145,7 @@ async def update_personality_context(data: ContextUpdate):
             )
             db.commit()
         db.close()
+        _invalidate_cache(f"personality:context:{ALFR3D_ENV_NAME}")
         return {"message": "Context updated"}
     except pymysql.Error as e:
         logger.error(f"Error updating context: {str(e)}")
@@ -165,18 +155,8 @@ async def update_personality_context(data: ContextUpdate):
 @router.get("/personality/llm-config")
 async def get_llm_config():
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
-        )
-        rows = cursor.fetchall()
-        db.close()
-        config = {row[0]: row[1] for row in rows}
-        return {
-            "api_key": config.get("llm_api_key", ""),
-            "usage_limit": int(config.get("llm_usage_limit", 10)),
-        }
+        from dependencies import _fetch_llm_config
+        return _get_cached_or_fetch("personality:llm-config", _fetch_llm_config, ttl=600)
     except pymysql.Error as e:
         logger.error(f"Error fetching LLM config: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -199,6 +179,7 @@ async def update_llm_config(data: LLMConfigUpdate):
             )
         db.commit()
         db.close()
+        _invalidate_cache("personality:llm-config")
         return {"message": "LLM config updated"}
     except pymysql.Error as e:
         logger.error(f"Error updating LLM config: {str(e)}")

@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 import pymysql
 
-from dependencies import get_connection, manager, ALFR3D_ENV_NAME
+from dependencies import get_connection, _get_cached_or_fetch, _invalidate_cache_pattern, manager, ALFR3D_ENV_NAME
 from models import UserCreate, UserUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -14,50 +14,10 @@ router = APIRouter(prefix="/api", tags=["users"])
 @router.get("/users")
 async def get_users(online: bool = Query(False)):
     try:
-        db = get_connection()
-        cursor = db.cursor()
+        from dependencies import _fetch_users
+        users = _get_cached_or_fetch(f"api:users:{ALFR3D_ENV_NAME}", _fetch_users, ttl=120)
         if online:
-            cursor.execute(
-                """
-                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
-                       u.last_online, u.created_at
-                FROM user u
-                JOIN states s ON u.state = s.id
-                JOIN user_types ut ON u.type = ut.id
-                JOIN environment e ON u.environment_id = e.id
-                WHERE s.state = 'online' AND u.username NOT IN ('unknown', 'alfr3d')
-                      AND e.name = %s
-            """,
-                (ALFR3D_ENV_NAME,),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
-                u.last_online, u.created_at
-                FROM user u
-                JOIN states s ON u.state = s.id
-                JOIN user_types ut ON u.type = ut.id
-                JOIN environment e ON u.environment_id = e.id
-                WHERE u.username NOT IN ('unknown', 'alfr3d') AND e.name = %s
-            """,
-                (ALFR3D_ENV_NAME,),
-            )
-        users = []
-        for row in cursor.fetchall():
-            users.append(
-                {
-                    "id": row[0],
-                    "name": row[1],
-                    "email": row[2],
-                    "about_me": row[3],
-                    "state": row[4],
-                    "type": row[5],
-                    "last_online": row[6].isoformat() if row[6] else None,
-                    "created_at": row[7].isoformat() if row[7] else None,
-                }
-            )
-        db.close()
+            users = [u for u in users if u.get("state") == "online"]
         await manager.broadcast("users", users)
         return users
     except pymysql.Error as e:
@@ -104,6 +64,7 @@ async def create_user(data: UserCreate):
         db.commit()
         new_id = cursor.lastrowid
         db.close()
+        _invalidate_cache_pattern(f"api:users:{ALFR3D_ENV_NAME}")
         return {"id": new_id, "name": data.name, "type": data.type}
     except pymysql.Error as e:
         logger.error(f"Error creating user: {str(e)}")
@@ -137,6 +98,7 @@ async def update_user(user_id: int, data: UserUpdate):
             cursor.execute(f"UPDATE user SET {', '.join(updates)} WHERE id = %s", params)
             db.commit()
         db.close()
+        _invalidate_cache_pattern(f"api:users:{ALFR3D_ENV_NAME}")
         return {"message": "User updated"}
     except pymysql.Error as e:
         logger.error(f"Error updating user: {str(e)}")
@@ -151,6 +113,7 @@ async def delete_user(user_id: int):
         cursor.execute("DELETE FROM user WHERE id = %s", (user_id,))
         db.commit()
         db.close()
+        _invalidate_cache_pattern(f"api:users:{ALFR3D_ENV_NAME}")
         return {"message": "User deleted"}
     except pymysql.Error as e:
         logger.error(f"Error deleting user: {str(e)}")

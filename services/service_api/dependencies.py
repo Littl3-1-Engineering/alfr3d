@@ -42,6 +42,11 @@ def _invalidate_cache(key):
     _cache.invalidate(key)
 
 
+def _invalidate_cache_pattern(pattern):
+    """Invalidate all cache keys matching a pattern (e.g., 'api:devices:*')."""
+    return _cache.invalidate_pattern(pattern)
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[Any] = []
@@ -209,3 +214,174 @@ def _fetch_personality_presets():
         }
         for row in rows
     ]
+
+
+def _fetch_devices():
+    import pymysql
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, u.username, d.last_online,
+               d.position_x, d.position_y
+        FROM device d
+        JOIN states s ON d.state = s.id
+        JOIN device_types dt ON d.device_type = dt.id
+        LEFT JOIN user u ON d.user_id = u.id
+        JOIN environment e ON d.environment_id = e.id
+        WHERE e.name = %s
+        """,
+        (ALFR3D_ENV_NAME,),
+    )
+    devices = [
+        {
+            "id": row[0],
+            "name": row[1],
+            "ip": row[2],
+            "mac": row[3],
+            "state": row[4],
+            "type": row[5],
+            "user": row[6],
+            "last_online": row[7].isoformat() if row[7] else None,
+            "position": (
+                {"x": row[8], "y": row[9]}
+                if row[8] is not None and row[9] is not None
+                else None
+            ),
+        }
+        for row in cursor.fetchall()
+    ]
+    db.close()
+    return devices
+
+
+def _fetch_users():
+    import pymysql
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
+               u.last_online, u.created_at
+        FROM user u
+        JOIN states s ON u.state = s.id
+        JOIN user_types ut ON u.type = ut.id
+        JOIN environment e ON u.environment_id = e.id
+        WHERE u.username NOT IN ('unknown', 'alfr3d') AND e.name = %s
+        """,
+        (ALFR3D_ENV_NAME,),
+    )
+    users = [
+        {
+            "id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "about_me": row[3],
+            "state": row[4],
+            "type": row[5],
+            "last_online": row[6].isoformat() if row[6] else None,
+            "created_at": row[7].isoformat() if row[7] else None,
+        }
+        for row in cursor.fetchall()
+    ]
+    db.close()
+    return users
+
+
+def _fetch_weather():
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
+        "description, sunrise, sunset, pressure, humidity, manual_override, "
+        "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
+        (ALFR3D_ENV_NAME,),
+    )
+    row = cursor.fetchone()
+    db.close()
+    if row:
+        return {
+            "city": row[4],
+            "state": row[5],
+            "country": row[6],
+            "low": row[8],
+            "high": row[9],
+            "description": row[10],
+            "sunrise": row[11].isoformat() if row[11] else None,
+            "sunset": row[12].isoformat() if row[12] else None,
+            "pressure": row[13],
+            "humidity": row[14],
+            "timezone": row[18],
+        }
+    return None
+
+
+def _fetch_environment():
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT id, name, latitude, longitude, city, state, country, IP, low, high, "
+        "description, sunrise, sunset, pressure, humidity, manual_override, "
+        "manual_location_override, subjective_feel, timezone FROM environment WHERE name = %s",
+        (ALFR3D_ENV_NAME,),
+    )
+    row = cursor.fetchone()
+    db.close()
+    if row:
+        return {
+            "id": row[0],
+            "name": row[1],
+            "latitude": row[2],
+            "longitude": row[3],
+            "city": row[4],
+            "state": row[5],
+            "country": row[6],
+            "ip": row[7],
+            "temp_min": row[8],
+            "temp_max": row[9],
+            "description": row[10],
+            "sunrise": row[11].isoformat() if row[11] else None,
+            "sunset": row[12].isoformat() if row[12] else None,
+            "pressure": row[13],
+            "humidity": row[14],
+            "manual_override": row[15],
+            "manual_location_override": row[16],
+            "subjective_feel": row[17],
+            "timezone": row[18],
+        }
+    return None
+
+
+def _fetch_context():
+    import pymysql
+    env_id = get_environment_id()
+    db = get_connection()
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    cursor.execute("SELECT * FROM context WHERE environment_id = %s LIMIT 1", (env_id,))
+    row = cursor.fetchone()
+    db.close()
+    if row:
+        return {
+            "repeat_count": row["repeat_count"],
+            "hour": row["hour"],
+            "weather": row["weather"] or "clear",
+            "mood": row["mood"],
+            "last_error_count": row["last_error_count"],
+            "llm_calls_today": row["llm_calls_today"],
+        }
+    return None
+
+
+def _fetch_llm_config():
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
+    )
+    rows = cursor.fetchall()
+    db.close()
+    config = {row[0]: row[1] for row in rows}
+    return {
+        "api_key": config.get("llm_api_key", ""),
+        "usage_limit": int(config.get("llm_usage_limit", 10)),
+    }

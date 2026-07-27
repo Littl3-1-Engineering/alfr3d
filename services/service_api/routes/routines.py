@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 import orjson
 import pymysql
 
-from dependencies import get_connection, get_producer, _get_cached_or_fetch, _invalidate_cache, normalize_time, ALFR3D_ENV_NAME
+from dependencies import get_connection, get_producer, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern, normalize_time, ALFR3D_ENV_NAME
 from models import RoutineCreate, RoutineUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -132,6 +132,7 @@ async def run_routine(routine_id: int):
         cursor.execute("UPDATE routines SET last_run = NOW() WHERE id = %s", (routine_id,))
         db.commit()
         db.close()
+        _invalidate_cache(f"routines:{ALFR3D_ENV_NAME}")
 
         kafka_producer = get_producer()
         if not kafka_producer:
