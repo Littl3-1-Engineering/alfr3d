@@ -2,6 +2,7 @@ from .kafka_pool import get_producer, close_producer, get_kafka_url
 from .error_handling import handle_db_error, handle_kafka_error, handle_api_error
 from .db_pool import get_connection, close_pool
 from .cache import TTLCache, get_cache
+from .redis_client import get_redis, is_redis_available, redis_get, redis_set, redis_delete, redis_delete_pattern
 from . import db_utils
 from . import ha_utils
 from . import st_utils
@@ -17,6 +18,12 @@ __all__ = [
     "handle_api_error",
     "TTLCache",
     "get_cache",
+    "get_redis",
+    "is_redis_available",
+    "redis_get",
+    "redis_set",
+    "redis_delete",
+    "redis_delete_pattern",
     "db_utils",
     "ha_utils",
     "st_utils",

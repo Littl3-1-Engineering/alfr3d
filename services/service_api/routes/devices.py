@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 import pymysql
 
-from dependencies import get_connection, get_cache, manager, ALFR3D_ENV_NAME
+from dependencies import get_connection, get_cache, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern, manager, ALFR3D_ENV_NAME
 from models import DeviceCreate, DeviceUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -14,41 +14,8 @@ router = APIRouter(prefix="/api", tags=["devices"])
 @router.get("/devices")
 async def get_devices():
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            """
-            SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, u.username, d.last_online,
-                   d.position_x, d.position_y
-            FROM device d
-            JOIN states s ON d.state = s.id
-            JOIN device_types dt ON d.device_type = dt.id
-            LEFT JOIN user u ON d.user_id = u.id
-            JOIN environment e ON d.environment_id = e.id
-            WHERE e.name = %s
-            """,
-            (ALFR3D_ENV_NAME,),
-        )
-        devices = []
-        for row in cursor.fetchall():
-            devices.append(
-                {
-                    "id": row[0],
-                    "name": row[1],
-                    "ip": row[2],
-                    "mac": row[3],
-                    "state": row[4],
-                    "type": row[5],
-                    "user": row[6],
-                    "last_online": row[7].isoformat() if row[7] else None,
-                    "position": (
-                        {"x": row[8], "y": row[9]}
-                        if row[8] is not None and row[9] is not None
-                        else None
-                    ),
-                }
-            )
-        db.close()
+        from dependencies import _fetch_devices
+        devices = _get_cached_or_fetch(f"api:devices:{ALFR3D_ENV_NAME}", _fetch_devices, ttl=120)
         await manager.broadcast("devices", devices)
         return devices
     except pymysql.Error as e:
@@ -226,6 +193,7 @@ async def create_device(data: DeviceCreate):
         db.commit()
         new_id = cursor.lastrowid
         db.close()
+        _invalidate_cache_pattern(f"api:devices:{ALFR3D_ENV_NAME}")
         return {"id": new_id, "name": data.name, "type": data.type}
     except pymysql.Error as e:
         logger.error(f"Error creating device: {str(e)}")
@@ -277,6 +245,7 @@ async def update_device(device_id: int, data: DeviceUpdate):
             cursor.execute(f"UPDATE device SET {', '.join(updates)} WHERE id = %s", params)
             db.commit()
         db.close()
+        _invalidate_cache_pattern(f"api:devices:{ALFR3D_ENV_NAME}")
         return {"message": "Device updated"}
     except pymysql.Error as e:
         logger.error(f"Error updating device: {str(e)}")
@@ -291,6 +260,7 @@ async def delete_device(device_id: int):
         cursor.execute("DELETE FROM device WHERE id = %s", (device_id,))
         db.commit()
         db.close()
+        _invalidate_cache_pattern(f"api:devices:{ALFR3D_ENV_NAME}")
         return {"message": "Device deleted"}
     except pymysql.Error as e:
         logger.error(f"Error deleting device: {str(e)}")
