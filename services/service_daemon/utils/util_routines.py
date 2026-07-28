@@ -32,7 +32,6 @@ import sys
 import logging
 import orjson
 import pymysql as MySQLdb
-from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
 from common import get_producer, db_utils  # noqa: E402
@@ -159,14 +158,14 @@ def check_routines() -> bool:
         )
         # get routine trigger time and flag
         routine_time = routine[2]
-        routine_time = datetime.now().replace(
+        routine_time = db_utils.get_env_local_time(ENV_NAME).replace(
             hour=int(routine_time.seconds / 3600),
             minute=int((routine_time.seconds // 60) % 60),
         )
         routine_trigger = routine[6]
         recurrence = routine[4] if len(routine) > 4 else "daily"
         actions = routine[5] if len(routine) > 5 else None
-        cur_time = datetime.now()
+        cur_time = db_utils.get_env_local_time(ENV_NAME)
         cur_weekday = cur_time.weekday()
 
         should_trigger = False

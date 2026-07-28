@@ -48,6 +48,7 @@ from kafka import KafkaConsumer  # user to write messages to Kafka
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer  # noqa: E402
+from common import db_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -101,7 +102,8 @@ def get_random_quip(quip_type: str) -> str:
         max_id = max_id_result[0]
         random_id = random.randint(1, max_id)
         cursor.execute(
-            "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1", (random_id, quip_type)
+            "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1",
+            (random_id, quip_type),
         )
         result = cursor.fetchone()
         return result[0] if result else None
@@ -343,7 +345,7 @@ class MyDaemon:
                     + str(guest_count)
                     + ")"
                 )
-                hour = datetime.now().hour
+                hour = db_utils.get_env_local_time(ENV_NAME).hour
                 if 6 <= hour < 18:
                     time_of_day = "day"
                 elif 18 <= hour < 22:
