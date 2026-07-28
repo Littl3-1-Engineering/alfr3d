@@ -4,8 +4,8 @@
 
 | Status | Count | Items |
 |--------|-------|-------|
-| ✅ COMPLETED | 16 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson, Vite Compression, Manual Chunk Splitting, SWR/React Query, Docker Build Optimization |
-| 🔲 TODO | 4 | Python 3.10+ Upgrade, Redis Caching, Split service_api/app.py, Slow Query Analysis |
+| ✅ COMPLETED | 17 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson, Vite Compression, Manual Chunk Splitting, SWR/React Query, Docker Build Optimization, Split service_api/app.py |
+| 🔲 TODO | 3 | Python 3.10+ Upgrade, Redis Caching, Slow Query Analysis |
 
 ---
 
@@ -259,20 +259,23 @@
   1. Add uvicorn.middleware.gzip.GzipMiddleware
   2. Configure compression level
 
-#### 20. Split service_api/app.py (1986 lines → modular)
+#### 20. Split service_api/app.py (2144 → 164 lines) ✅
 - **New Structure:**
-  - `services/service_api/routes/users.py`
-  - `services/service_api/routes/devices.py`
-  - `services/service_api/routes/personality.py`
-  - `services/service_api/routes/routines.py`
-  - `services/service_api/routes/integrations.py`
-  - `services/service_api/routes/__init__.py`
-- **Impact:** Easier to maintain, test, optimize, cache
-- **Steps:**
-  1. Create routes/ directory and __init__.py
-  2. Extract route handlers to separate files
-  3. Register blueprints in app.py
-  4. Test all endpoints still work
+  - `models.py` — 20 Pydantic models (137 lines)
+  - `dependencies.py` — shared state, helpers, env vars (211 lines)
+  - `routes/users.py` — user CRUD (157 lines)
+  - `routes/devices.py` — device CRUD + types + states + history (371 lines)
+  - `routes/quips.py` — quips CRUD (70 lines)
+  - `routes/environment.py` — weather, environment, calendar (189 lines)
+  - `routes/integrations.py` — calendar/gmail sync (62 lines)
+  - `routes/audio.py` — audio file serving (32 lines)
+  - `routes/events.py` — events + SA (17 lines)
+  - `routes/containers.py` — container metrics + background task (113 lines)
+  - `routes/routines.py` — routines CRUD + Kafka execution (170 lines)
+  - `routes/personality.py` — personality, presets, context, LLM config (205 lines)
+  - `routes/iot.py` — HA + SmartThings + unified IoT (374 lines)
+- **Impact:** app.py: 2144 → 164 lines, each route file focused on single domain
+- **Status:** ✅ Complete — all 15 files pass syntax checks
 
 ---
 
@@ -326,7 +329,7 @@
 | 17 | Python 3.10+ Upgrade | 2 | 🔲 TODO | Medium | High |
 | 18 | Redis Caching | 3 | 🔲 TODO | High | Medium |
 | 19 | API Response Compression | 3 | ✅ Done | Medium | Low |
-| 20 | Split service_api/app.py | 3 | 🔲 TODO | Medium | High |
+| 20 | Split service_api/app.py | 3 | ✅ Done | Medium | High |
 | 21 | Slow Query Analysis | 4 | 🔲 TODO | Medium | Medium |
 | 22 | Query Result Caching | 4 | ✅ Done | Medium | Low |
 | 23 | Batch API Requests | - | ✅ Done | Low | Medium |
