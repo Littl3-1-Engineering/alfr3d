@@ -1,14 +1,18 @@
 import os
+import sys
 import logging
 import random
-from datetime import datetime
 
 import pymysql
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import db_utils  # noqa: E402
 
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
 MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
+ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", "default")
 
 logger = logging.getLogger(__name__)
 
@@ -52,22 +56,29 @@ def get_personality_by_environment(env_id=None):
             (env_id,),
         )
         result = cursor.fetchone()
+        logger.debug(f"Personality query result: {result}")
         if result:
-            return {
+            personality = {
                 "id": result["id"],
                 "name": result["name"],
-                "sarcasm": float(result["sarcasm"]),
-                "formality": float(result["formality"]),
-                "warmth": float(result["warmth"]),
-                "patience": float(result["patience"]),
+                "sarcasm": float(result["sarcasm"]) if result["sarcasm"] is not None else 0.0,
+                "formality": float(result["formality"]) if result["formality"] is not None else 0.5,
+                "warmth": float(result["warmth"]) if result["warmth"] is not None else 0.5,
+                "patience": float(result["patience"]) if result["patience"] is not None else 1.0,
                 "linguistic_style": result["linguistic_style"] or "",
                 "forbidden_words": result["forbidden_words"] or "",
                 "verbal_tics": result["verbal_tics"] or "",
             }
+            logger.debug(f"Returning personality dict: {personality}")
+            return personality
+        logger.warning("No personality found in DB, returning default")
         return get_default_personality()
     except pymysql.Error as e:
         logger.error(f"Database error getting personality: {e}")
         db.rollback()
+        return get_default_personality()
+    except Exception as e:
+        logger.error(f"Unexpected error getting personality: {e}", exc_info=True)
         return get_default_personality()
     finally:
         db.close()
@@ -192,21 +203,28 @@ def get_context_by_environment(env_id=None):
     try:
         cursor.execute("SELECT * FROM context WHERE environment_id = %s LIMIT 1", (env_id,))
         result = cursor.fetchone()
+        logger.debug(f"Context query result: {result}")
         if result:
-            return {
-                "repeat_count": result["repeat_count"],
-                "hour": result["hour"],
+            context = {
+                "repeat_count": result["repeat_count"] or 0,
+                "hour": result["hour"] or db_utils.get_env_local_time(ENV_NAME).hour,
                 "weather": result["weather"] or "clear",
-                "mood": result["mood"],
-                "last_error_count": result["last_error_count"],
-                "llm_calls_today": result["llm_calls_today"],
+                "mood": result["mood"] or "neutral",
+                "last_error_count": result["last_error_count"] or 0,
+                "llm_calls_today": result["llm_calls_today"] or 0,
                 "last_text": result["last_text"] or "",
                 "last_spoke_time": result["last_spoke_time"],
             }
+            logger.debug(f"Returning context dict: {context}")
+            return context
+        logger.warning("No context found in DB, returning default")
         return get_default_context()
     except pymysql.Error as e:
         logger.error(f"Database error getting context: {e}")
         db.rollback()
+        return get_default_context()
+    except Exception as e:
+        logger.error(f"Unexpected error getting context: {e}", exc_info=True)
         return get_default_context()
     finally:
         db.close()
@@ -215,7 +233,7 @@ def get_context_by_environment(env_id=None):
 def get_default_context():
     return {
         "repeat_count": 0,
-        "hour": datetime.now().hour,
+        "hour": db_utils.get_env_local_time(ENV_NAME).hour,
         "weather": "clear",
         "mood": "neutral",
         "last_error_count": 0,
@@ -349,6 +367,18 @@ def get_blended_personality(env_id=None):
     personality = get_personality_by_environment(env_id)
     context = get_context_by_environment(env_id)
 
+    if not isinstance(personality, dict):
+        logger.error(
+            "get_personality_by_environment returned "
+            f"{type(personality)} instead of dict, using default"
+        )
+        personality = get_default_personality()
+    if not isinstance(context, dict):
+        logger.error(
+            "get_context_by_environment returned " f"{type(context)} instead of dict, using default"
+        )
+        context = get_default_context()
+
     base_traits = {
         "sarcasm": personality.get("sarcasm", 0.5),
         "formality": personality.get("formality", 0.5),
@@ -362,6 +392,10 @@ def get_blended_personality(env_id=None):
     personality["blended"] = blended
     personality["mood"] = determine_mood(blended, context)
 
+    logger.debug(
+        f"Returning blended personality: "
+        f"name={personality.get('name')}, mood={personality.get('mood')}"
+    )
     return personality
 
 
@@ -412,7 +446,9 @@ def build_llm_system_prompt(personality):
     elif blended.get("sarcasm", 0.5) > 0.4:
         sarcasm_instruction = "Add occasional sarcasm and wit."
 
-    return f"""You are ALFR3D, a home assistant.
+    return f"""You are ALFR3D, a home assistant named "Alfred".
+
+CRITICAL: NEVER spell out ALFR3D as letters. ALWAYS say "Alfred" when referring to yourself by name.
 
 Current Personality State:
 - Style: {linguistic_style}
@@ -423,6 +459,7 @@ Current Personality State:
 - Mood: {personality.get("mood", "neutral")}
 
 Voice Constraints:
+- When speaking aloud, NEVER say "A-L-F-R-3-D" or spell out letters - ALWAYS say "Alfred"
 {tics_instruction}
 {forbidden_instruction}
 
@@ -477,11 +514,15 @@ def get_quips_for_environment(env_id=None):
     try:
         cursor.execute("SELECT type, quips FROM quips")
         results = cursor.fetchall()
+        logger.debug(f"Quips query returned {len(results)} results")
         random.shuffle(results)
         return [{"type": r["type"], "quips": r["quips"]} for r in results]
     except pymysql.Error as e:
         logger.error(f"Database error getting quips: {e}")
         db.rollback()
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error getting quips: {e}", exc_info=True)
         return []
     finally:
         db.close()

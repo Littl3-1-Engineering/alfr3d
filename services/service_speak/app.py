@@ -22,6 +22,7 @@ from gtts import gTTS
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer as _get_producer, get_kafka_url  # noqa: E402
+from common.db_utils import get_env_local_time  # noqa: E402
 
 # Local imports
 from personality import (  # noqa: E402
@@ -111,12 +112,12 @@ def check_mute() -> bool:
         return False
     bed_time = bed[2]
 
-    cur_time = datetime.now()
-    mor_time = datetime.now().replace(
+    cur_time = get_env_local_time(ENV_NAME)
+    mor_time = cur_time.replace(
         hour=int(morning_time.seconds / 3600),
         minute=int((morning_time.seconds // 60) % 60),
     )
-    end_time = datetime.now().replace(
+    end_time = cur_time.replace(
         hour=int(bed_time.seconds / 3600), minute=int((bed_time.seconds // 60) % 60)
     )
 
@@ -391,14 +392,14 @@ def process_speak_message(message):
                         else:
                             quips = get_quips_for_environment()
                             if quips:
-                                selected_quip = select_quip_by_traits(blended, quips)
+                                selected_quip = select_quip_by_traits(quips, blended)
                                 if selected_quip:
                                     text = selected_quip
                                     logger.info(f"Selected quip: {text[:50]}...")
                 else:
                     quips = get_quips_for_environment()
                     if quips:
-                        selected_quip = select_quip_by_traits(blended, quips)
+                        selected_quip = select_quip_by_traits(quips, blended)
                         if selected_quip:
                             text = selected_quip
 
