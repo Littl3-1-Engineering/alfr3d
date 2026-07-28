@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
 
-const ContainerHealth = ({ initialContainers = null, pollInterval = 10000 }) => {
+const ContainerHealth = ({ initialContainers = null }) => {
   const [selectedContainer, setSelectedContainer] = useState(null);
   const [containers, setContainers] = useState(initialContainers || []);
   const [hasLoaded, setHasLoaded] = useState(!!initialContainers);
@@ -22,11 +22,15 @@ const ContainerHealth = ({ initialContainers = null, pollInterval = 10000 }) => 
   };
 
   useEffect(() => {
-    if (!initialContainers || containers.length === 0) {
+    if (initialContainers && initialContainers.length > 0) {
+      setContainers(initialContainers);
+      setHasLoaded(true);
+    } else {
       fetchContainers().finally(() => setHasLoaded(true));
     }
-    const interval = setInterval(fetchContainers, pollInterval);
+  }, [initialContainers]);
 
+  useEffect(() => {
     const handleContainersUpdate = (data) => {
       setContainers(data);
       setHasLoaded(true);
@@ -35,7 +39,6 @@ const ContainerHealth = ({ initialContainers = null, pollInterval = 10000 }) => 
     socket.on('containers', handleContainersUpdate);
 
     return () => {
-      clearInterval(interval);
       socket.off('containers', handleContainersUpdate);
     };
   }, []);
