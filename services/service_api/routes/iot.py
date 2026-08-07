@@ -1,15 +1,84 @@
 """IoT integration routes (Home Assistant + SmartThings)."""
 
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 import orjson
 import pymysql
 
-from dependencies import get_connection, get_producer
+from dependencies import db_connection, get_producer, manager
 from models import HAControl, HAConfig, STControl, STConfig, IoTProvider, LinkDevice, IOTDeviceControl
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["iot"])
+
+
+def fetch_iot_devices_data(linked_only=False):
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
+            row = cursor.fetchone()
+            provider = row[0] if row else "homeassistant"
+
+            cursor.execute(
+                """
+                SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
+                       sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
+                       sd.mac_address, sd.device_id as linked_device_id,
+                       d.IP, d.position_x, d.position_y, dt.type as linked_device_type
+                FROM smarthome_devices sd
+                LEFT JOIN device d ON sd.device_id = d.id
+                LEFT JOIN device_types dt ON d.device_type = dt.id
+                WHERE sd.source = %s AND (%s = FALSE OR sd.device_id IS NOT NULL)
+            """,
+                (provider, 1 if linked_only else 0),
+            )
+
+            devices = []
+            for row in cursor.fetchall():
+                linked_device_id = row[11]
+                devices.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "source": row[2],
+                        "ha_entity_id": row[3],
+                        "st_device_id": row[4],
+                        "device_type": row[5],
+                        "room": row[6],
+                        "capabilities": orjson.loads(row[7]) if row[7] else [],
+                        "online": bool(row[8]),
+                        "last_state": orjson.loads(row[9]) if row[9] else {},
+                        "mac_address": row[10],
+                        "linked": linked_device_id is not None,
+                        "local_device": (
+                            {
+                                "id": linked_device_id,
+                                "IP": row[12],
+                                "position_x": row[13],
+                                "position_y": row[14],
+                                "device_type": row[15],
+                            }
+                            if linked_device_id
+                            else None
+                        ),
+                    }
+                )
+            return devices
+    except pymysql.Error as e:
+        logger.error(f"Error fetching IoT devices data: {str(e)}")
+        return []
+
+
+async def broadcast_iot_devices():
+    while True:
+        try:
+            devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+            await manager.broadcast("iot_devices", devices)
+        except Exception as e:
+            logger.error(f"Error broadcasting IoT devices: {str(e)}")
+        await asyncio.sleep(30)
 
 
 # --- Home Assistant ---
@@ -169,61 +238,13 @@ async def get_iot_status():
 
 
 @router.get("/iot/devices")
-async def get_iot_devices():
+async def get_iot_devices(linked: bool = False):
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
-        row = cursor.fetchone()
-        provider = row[0] if row else "homeassistant"
-
-        cursor.execute(
-            """
-            SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
-                   sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
-                   sd.mac_address, sd.device_id as linked_device_id,
-                   d.IP, d.position_x, d.position_y, dt.type as linked_device_type
-            FROM smarthome_devices sd
-            LEFT JOIN device d ON sd.device_id = d.id
-            LEFT JOIN device_types dt ON d.device_type = dt.id
-            WHERE sd.source = %s
-        """,
-            (provider,),
+        devices = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_iot_devices_data, linked
         )
-
-        devices = []
-        for row in cursor.fetchall():
-            linked_device_id = row[11]
-            devices.append(
-                {
-                    "id": row[0],
-                    "name": row[1],
-                    "source": row[2],
-                    "ha_entity_id": row[3],
-                    "st_device_id": row[4],
-                    "device_type": row[5],
-                    "room": row[6],
-                    "capabilities": orjson.loads(row[7]) if row[7] else [],
-                    "online": bool(row[8]),
-                    "last_state": orjson.loads(row[9]) if row[9] else {},
-                    "mac_address": row[10],
-                    "linked": linked_device_id is not None,
-                    "local_device": (
-                        {
-                            "id": linked_device_id,
-                            "IP": row[12],
-                            "position_x": row[13],
-                            "position_y": row[14],
-                            "device_type": row[15],
-                        }
-                        if linked_device_id
-                        else None
-                    ),
-                }
-            )
-        db.close()
         return devices
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Error fetching IoT devices: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -231,14 +252,13 @@ async def get_iot_devices():
 @router.post("/iot/devices/{device_id}/control")
 async def control_iot_device(device_id: int, data: IOTDeviceControl):
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT source, ha_entity_id, device_type FROM smarthome_devices WHERE id = %s",
-            (device_id,),
-        )
-        row = cursor.fetchone()
-        db.close()
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT source, ha_entity_id, device_type FROM smarthome_devices WHERE id = %s",
+                (device_id,),
+            )
+            row = cursor.fetchone()
 
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
@@ -287,6 +307,8 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
             params = data.params or {}
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
+                devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+                await manager.broadcast("iot_devices", devices)
                 return {
                     "message": message,
                     "device_id": device_id,
@@ -307,36 +329,38 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
 @router.put("/iot/devices/{device_id}/link")
 async def link_iot_device(device_id: int, data: LinkDevice):
     try:
-        db = get_connection()
-        cursor = db.cursor()
+        with db_connection() as db:
+            cursor = db.cursor()
 
-        cursor.execute("SELECT id, name FROM smarthome_devices WHERE id = %s", (device_id,))
-        row = cursor.fetchone()
-        if not row:
-            db.close()
-            raise HTTPException(status_code=404, detail="IoT device not found")
+            cursor.execute("SELECT id, name FROM smarthome_devices WHERE id = %s", (device_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="IoT device not found")
 
-        if data.device_id is None:
-            cursor.execute(
-                "UPDATE smarthome_devices SET device_id = NULL WHERE id = %s",
-                (device_id,),
-            )
-            db.commit()
-            db.close()
+            if data.device_id is None:
+                cursor.execute(
+                    "UPDATE smarthome_devices SET device_id = NULL WHERE id = %s",
+                    (device_id,),
+                )
+                db.commit()
+                unlinked = True
+            else:
+                cursor.execute("SELECT id, name FROM device WHERE id = %s", (data.device_id,))
+                target_row = cursor.fetchone()
+                if not target_row:
+                    raise HTTPException(status_code=404, detail="Target device not found")
+
+                cursor.execute(
+                    "UPDATE smarthome_devices SET device_id = %s WHERE id = %s",
+                    (data.device_id, device_id),
+                )
+                db.commit()
+                unlinked = False
+
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        if unlinked:
             return {"message": "Device unlinked", "device_id": device_id}
-
-        cursor.execute("SELECT id, name FROM device WHERE id = %s", (data.device_id,))
-        target_row = cursor.fetchone()
-        if not target_row:
-            db.close()
-            raise HTTPException(status_code=404, detail="Target device not found")
-
-        cursor.execute(
-            "UPDATE smarthome_devices SET device_id = %s WHERE id = %s",
-            (data.device_id, device_id),
-        )
-        db.commit()
-        db.close()
         return {
             "message": "Device linked",
             "device_id": device_id,
@@ -363,11 +387,10 @@ async def set_iot_provider(data: IoTProvider):
         raise HTTPException(status_code=400, detail="Invalid provider")
 
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (data.provider,))
-        db.commit()
-        db.close()
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (data.provider,))
+            db.commit()
         return {"message": f"Provider set to {data.provider}"}
     except Exception as e:
         logger.error(f"Error setting IoT provider: {str(e)}")

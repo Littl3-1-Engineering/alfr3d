@@ -33,7 +33,7 @@ const Domain = () => {
       transition={{ duration: 0.8 }}
       className="min-h-screen p-8 bg-fui-bg"
       style={{
-        backgroundImage: "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+        backgroundImage: "linear-gradient(to right, var(--theme-tactical-grid) 1px, transparent 1px), linear-gradient(to bottom, var(--theme-tactical-grid) 1px, transparent 1px)",
         backgroundSize: '20px 20px'
       }}
     >
