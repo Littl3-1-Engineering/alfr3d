@@ -6,6 +6,6 @@ spec:
   selector:
     app: service-api
   ports:
-  - port: 5002
+  - port: 5001
     targetPort: 5001
   type: ClusterIP

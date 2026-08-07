@@ -6,7 +6,7 @@ kafka-python-ng==2.2.3
 docker==7.0.0
 cryptography==48.0.1
 requests==2.33.0
-orjson
+orjson==3.11.9
 pydantic>=2.0.0
 websockets
 anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability

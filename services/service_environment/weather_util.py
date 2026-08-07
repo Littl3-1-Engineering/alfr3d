@@ -8,7 +8,7 @@ import socket
 import pymysql  # Changed from MySQLdb
 import sys
 from kafka.errors import KafkaError
-from time import strftime, localtime  # needed to obtain time
+
 from datetime import datetime, timedelta
 from urllib.request import urlopen  # used to make calls to www
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
@@ -36,6 +36,11 @@ MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "user")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
+
+
+def _utc_ts_to_local(ts, tz_offset):
+    """Convert a UTC unix timestamp to a naive local datetime using the location UTC offset."""
+    return datetime.utcfromtimestamp(ts) + timedelta(seconds=tz_offset)
 
 
 def check_mute() -> bool:
@@ -119,11 +124,15 @@ def parse_weather(cursor, lat, lon):
     logger.info("Current Temperature:            " + str(weatherData["main"]["temp"]))
     logger.info(
         "Sunrise:                        "
-        + datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S")
+        + _utc_ts_to_local(
+            weatherData["sys"]["sunrise"], weatherData.get("timezone", 0)
+        ).strftime("%Y-%m-%d %H:%M:%S")
     )
     logger.info(
         "Sunset:                         "
-        + datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S")
+        + _utc_ts_to_local(
+            weatherData["sys"]["sunset"], weatherData.get("timezone", 0)
+        ).strftime("%Y-%m-%d %H:%M:%S")
     )
     logger.info("Parsed weather data\n")
 
@@ -136,21 +145,62 @@ def parse_weather(cursor, lat, lon):
     return weatherData
 
 
+def deg_to_compass(deg):
+    """Convert wind direction degrees to a 16-point compass bearing."""
+    if deg is None:
+        return None
+    directions = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    ]
+    return directions[int(deg / 22.5 + 0.5) % 16]
+
+
 def update_db_weather(db, cursor, weatherData):
     logger.info("Updating weather data in DB")
 
     try:
+        # Compute pressure trend by comparing against the last stored reading.
         cursor.execute(
-            "UPDATE environment SET description = %s, low = %s, high = %s, sunrise = %s, "
-            "sunset = %s, pressure = %s, humidity = %s, subjective_feel = %s, timezone = %s "
-            "WHERE name = %s",
+            "SELECT pressure FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+        )
+        prev = cursor.fetchone()
+        prev_pressure = prev[0] if prev and prev[0] is not None else None
+        new_pressure = int(weatherData["main"]["pressure"])
+        if prev_pressure is None:
+            trend = "steady"
+        elif new_pressure > prev_pressure + 1:
+            trend = "rising"
+        elif new_pressure < prev_pressure - 1:
+            trend = "falling"
+        else:
+            trend = "steady"
+
+        wind = round(weatherData["wind"]["speed"] * 3.6, 1)
+        wind_dir = deg_to_compass(weatherData["wind"].get("deg"))
+        sunrise_local = _utc_ts_to_local(
+            weatherData["sys"]["sunrise"], weatherData.get("timezone", 0)
+        )
+        sunset_local = _utc_ts_to_local(
+            weatherData["sys"]["sunset"], weatherData.get("timezone", 0)
+        )
+
+        cursor.execute(
+            "UPDATE environment SET description = %s, low = %s, high = %s, "
+            "temperature = %s, wind = %s, wind_dir = %s, sunrise = %s, "
+            "sunset = %s, pressure = %s, pressure_trend = %s, humidity = %s, "
+            "subjective_feel = %s, timezone = %s WHERE name = %s",
             (
                 str(weatherData["weather"][0]["description"]),
                 int(weatherData["main"]["temp_min"]),
                 int(weatherData["main"]["temp_max"]),
-                datetime.fromtimestamp(weatherData["sys"]["sunrise"]).strftime("%Y-%m-%d %H:%M:%S"),
-                datetime.fromtimestamp(weatherData["sys"]["sunset"]).strftime("%Y-%m-%d %H:%M:%S"),
-                int(weatherData["main"]["pressure"]),
+                float(weatherData["main"]["temp"]),
+                wind,
+                wind_dir,
+                sunrise_local.strftime("%Y-%m-%d %H:%M:%S"),
+                sunset_local.strftime("%Y-%m-%d %H:%M:%S"),
+                new_pressure,
+                trend,
                 int(weatherData["main"]["humidity"]),
                 weatherData["subjective_feel"],
                 weatherData["timezone"],
@@ -173,12 +223,12 @@ def update_routines(db, cursor, weatherData):
     # actual event so that listeners have time to take action
     try:
         logger.info("Updating routines")
-        sunrise_trig = datetime.fromtimestamp(weatherData["sys"]["sunrise"]) - timedelta(
-            hours=0, minutes=30
-        )
-        sunset_trig = datetime.fromtimestamp(weatherData["sys"]["sunset"]) - timedelta(
-            hours=0, minutes=30
-        )
+        sunrise_trig = _utc_ts_to_local(
+            weatherData["sys"]["sunrise"], weatherData.get("timezone", 0)
+        ) - timedelta(hours=0, minutes=30)
+        sunset_trig = _utc_ts_to_local(
+            weatherData["sys"]["sunset"], weatherData.get("timezone", 0)
+        ) - timedelta(hours=0, minutes=30)
         cursor.execute("SELECT * FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
         env_data = cursor.fetchone()
 
@@ -322,10 +372,11 @@ def speak_weather(db, cursor, weatherData):
     random = ["Weather patterns ", "My scans "]
     greeting += random[randint(0, len(random) - 1)]
 
-    # Time variables
-    hour = strftime("%I", localtime())
+    # Time variables (location-local, not container UTC)
+    local_now = datetime.utcnow() + timedelta(seconds=weatherData.get("timezone", 0))
+    hour = local_now.strftime("%I")
 
-    ampm = strftime("%p", localtime())
+    ampm = local_now.strftime("%p")
 
     producer = get_producer()
     if not producer:
