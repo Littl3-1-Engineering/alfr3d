@@ -13,10 +13,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "se
 @patch("urllib.request.urlopen")
 def test_check_location(mock_urlopen, mock_connect, mock_producer):
     """Test checkLocation function with mocked DB and API calls."""
-    import os
     import environment
 
     os.environ["ALFR3D_ENV_NAME"] = "test"
+    import importlib
+
+    importlib.reload(environment)
     from unittest.mock import MagicMock
 
     # Mock producer
@@ -71,10 +73,10 @@ def test_check_location(mock_urlopen, mock_connect, mock_producer):
     mock_ip_response.read.return_value.decode.return_value = "192.168.1.1"
     # Mock API response
     mock_api_response = MagicMock()
-    mock_api_response.read.return_value.decode.return_value = (
+    mock_api_response.read.return_value = (
         '{"country_name": "NewCountry", "city": "NewCity", "ip": "192.168.1.1", '
         '"latitude": 10.0, "longitude": 20.0}'
-    )
+    ).encode("utf-8")
     mock_urlopen.side_effect = [mock_ip_response, mock_api_response]
 
     # Call the function
@@ -126,13 +128,13 @@ def test_check_weather(mock_connect, mock_weather):
     mock_weather.assert_called_with(10.0, 20.0)
 
 
-@patch("services.service_frontend.app.pymysql.connect")
-def test_environment_service_frontend_integration(mock_connect, frontend_client):
+@patch("services.service_frontend.app.get_connection")
+def test_environment_service_frontend_integration(mock_connection, frontend_client):
     """Test frontend users endpoint."""
     # Mock DB
     mock_db = MagicMock()
     mock_cursor = MagicMock()
-    mock_connect.return_value = mock_db
+    mock_connection.return_value = mock_db
     mock_db.cursor.return_value = mock_cursor
     mock_cursor.fetchall.return_value = [("user1", "resident")]
 

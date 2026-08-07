@@ -1,24 +1,25 @@
-"""Pytest configuration and fixtures for ALFR3D services testing."""
+"""Pytest configuration and fixtures for ALFR3D services testing.
+
+Fixtures that need external infrastructure (MySQL, Kafka) are driven by
+environment variables and automatically ``pytest.skip`` when the infrastructure
+is not reachable, so the unit test suite runs anywhere. Integration tests run
+when the infra is available (e.g. in CI, where MySQL and Kafka are started via
+GitHub Actions services or the ``tests/docker-compose.yml`` stack).
+"""
 
 import os
 import time
 import pytest
 import pymysql
-from confluent_kafka import Consumer
+from kafka import KafkaConsumer, KafkaProducer
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-def is_mysql_responsive(host, port):
+def is_mysql_responsive(config, timeout=5):
     try:
-        conn = pymysql.connect(
-            host=host,
-            port=port,
-            user="root",
-            password="testrootpassword",
-            database="test_alfr3d_db",
-        )
+        conn = pymysql.connect(**config, connect_timeout=timeout)
         conn.close()
         return True
     except Exception:
@@ -29,25 +30,24 @@ def wait_for_kafka_message(kafka_bootstrap_servers, topic, expected_value, timeo
     """Helper function to wait for a Kafka message containing expected_value."""
     import uuid
 
-    consumer = Consumer(
-        {
-            "bootstrap.servers": kafka_bootstrap_servers,
-            "group.id": f"test-group-{uuid.uuid4()}",
-            "auto.offset.reset": "earliest",
-        }
+    consumer = KafkaConsumer(
+        topic,
+        bootstrap_servers=kafka_bootstrap_servers,
+        group_id=f"test-group-{uuid.uuid4()}",
+        auto_offset_reset="earliest",
+        consumer_timeout_ms=1000,
     )
-    consumer.subscribe([topic])
     start_time = time.time()
     while time.time() - start_time < timeout:
-        msg = consumer.poll(1.0)
-        if msg is None:
+        records = consumer.poll(timeout_ms=1000)
+        if not records:
             continue
-        if msg.error():
-            continue
-        message_value = msg.value().decode("utf-8")
-        if expected_value in message_value:
-            consumer.close()
-            return True
+        for partition_records in records.values():
+            for record in partition_records:
+                message_value = record.value.decode("utf-8")
+                if expected_value in message_value:
+                    consumer.close()
+                    return True
     consumer.close()
     return False
 
@@ -70,28 +70,43 @@ def wait_for_db_user(mysql_config, username, exists=True, timeout=30):
     return False
 
 
+def _mysql_config_from_env():
+    return {
+        "host": os.getenv("MYSQL_TEST_HOST", "localhost"),
+        "port": int(os.getenv("MYSQL_TEST_PORT", "3306")),
+        "user": os.getenv("MYSQL_TEST_USER", "root"),
+        "password": os.getenv("MYSQL_TEST_PASSWORD", "testrootpassword"),
+        "database": os.getenv("MYSQL_TEST_DB", "test_alfr3d_db"),
+    }
+
+
 @pytest.fixture(scope="session")
 def kafka_bootstrap_servers():
-    return os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    """Kafka bootstrap servers for integration tests, skipping if unavailable."""
+    servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    try:
+        consumer = KafkaConsumer(
+            "test-reachability",
+            bootstrap_servers=servers,
+            auto_offset_reset="earliest",
+            consumer_timeout_ms=1000,
+        )
+        consumer.poll(timeout_ms=3000)
+        consumer.close()
+    except Exception as exc:
+        pytest.skip(f"Kafka unavailable at {servers}: {exc}")
+    return servers
 
 
 @pytest.fixture(scope="session")
-def mysql_service(docker_ip, docker_services):
-    """Fixture to ensure the MySQL container is fully responsive before any tests run."""
-    docker_services.wait_until_responsive(
-        timeout=30.0, pause=0.1, check=lambda: is_mysql_responsive(docker_ip, 3307)
-    )
-
-
-@pytest.fixture(scope="session")
-def mysql_config(mysql_service, docker_ip):
-    return {
-        "host": docker_ip,
-        "port": 3307,
-        "user": "root",
-        "password": "testrootpassword",
-        "database": "test_alfr3d_db",
-    }
+def mysql_config():
+    """MySQL connection settings for integration tests, skipping if unavailable."""
+    config = _mysql_config_from_env()
+    if not is_mysql_responsive(config):
+        pytest.skip(
+            f"MySQL test database unavailable at {config['host']}:{config['port']}"
+        )
+    return config
 
 
 @pytest.fixture(scope="session")
@@ -126,3 +141,4 @@ def apply_database_schema(mysql_config):
     conn.commit()
     cursor.close()
     conn.close()
+    return True
