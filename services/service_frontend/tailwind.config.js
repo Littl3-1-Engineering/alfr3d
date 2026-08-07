@@ -1,4 +1,4 @@
-import { themes } from './src/utils/themes.js';
+import { themes, boot } from './src/utils/themes.js';
 
 /** @type {import('tailwindcss').Config} */
 export default {
@@ -16,9 +16,9 @@ export default {
       colors: {
         // Theme-aware colors (dark theme as default)
         background: {
-          DEFAULT: themes.dark.background,
-          secondary: themes.dark.backgroundSecondary,
-          tertiary: themes.dark.backgroundTertiary,
+          DEFAULT: themes.dark.bg,
+          secondary: themes.dark.bgSecondary,
+          tertiary: themes.dark.bgTertiary,
         },
         primary: {
           DEFAULT: themes.dark.primary,
@@ -34,6 +34,15 @@ export default {
           DEFAULT: themes.dark.secondary,
           hover: themes.dark.secondaryHover,
           light: themes.dark.secondaryLight,
+        },
+        env: {
+          DEFAULT: themes.dark.env,
+          light: themes.dark.envLight,
+          border: themes.dark.envBorder,
+        },
+        magenta: {
+          DEFAULT: themes.dark.magenta,
+          light: themes.dark.magentaLight,
         },
         text: {
           primary: themes.dark.textPrimary,
@@ -59,19 +68,25 @@ export default {
           focus: themes.dark.inputFocus,
         },
         // Legacy colors for backward compatibility
-        'navy-dark': '#0A0F14',
+        'navy-dark': '#0d1117',
         'charcoal': '#05070A',
         // Tactical FUI colors
-        'fui-bg': '#0b0c0f',       // Deep matte black
-        'fui-panel': '#141619',    // Slightly lighter panel bg
-        'fui-border': '#33363d',   // Grey borders
-        'fui-accent': '#eab308',   // Amber/Yellow accent
-        'fui-text': '#94a3b8',     // Muted text
-        'fui-dim': 'rgba(234, 179, 8, 0.1)', // Dim amber background
-        'fui-grid': '#222',        // Grid lines
+        fui: {
+          bg: themes.dark.tactical.bg,       // Deep navy
+          panel: themes.dark.tactical.panel, // Slightly lighter panel bg
+          border: themes.dark.tactical.border, // Grey borders
+          accent: themes.dark.tactical.accent, // Cyan accent
+          magenta: themes.dark.magenta,      // Magenta secondary
+          env: themes.dark.env,              // Yellow env accent
+          text: themes.dark.tactical.text,   // Muted text
+          dim: themes.dark.tactical.dim,     // Dim cyan background
+          grid: themes.dark.tactical.grid,   // Grid lines
+        },
+        // Boot / terminal identity palette
+        boot: boot,
       },
        backgroundImage: {
-         'tech-grid': "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+         'tech-grid': `linear-gradient(to right, ${themes.dark.tactical.grid} 1px, transparent 1px), linear-gradient(to bottom, ${themes.dark.tactical.grid} 1px, transparent 1px)`,
        }
     },
   },

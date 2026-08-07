@@ -5,8 +5,10 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
+import { useTheme } from '../utils/useTheme';
 
-const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 }) => {
+const LocationPanel = ({ setTitle, initialLocation = null }) => {
+  const { themeColors } = useTheme();
   const [envData, setEnvData] = useState(initialLocation || {});
   const [isLoading, setIsLoading] = useState(!initialLocation);
   const [error, setError] = useState(false);
@@ -18,7 +20,7 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
       <div style="
         width: 20px;
         height: 20px;
-        border: 2px solid #eab308;
+        border: 2px solid ${themeColors.env};
         border-radius: 50%;
         position: relative;
       ">
@@ -28,7 +30,7 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
           left: 0;
           right: 0;
           height: 2px;
-          background: #eab308;
+          background: ${themeColors.env};
           transform: translateY(-50%);
         "></div>
         <div style="
@@ -37,7 +39,7 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
           top: 0;
           bottom: 0;
           width: 2px;
-          background: #eab308;
+          background: ${themeColors.env};
           transform: translateX(-50%);
         "></div>
       </div>
@@ -67,8 +69,6 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
     if (!initialLocation || !envData.city) {
       fetchEnv().finally(() => setIsLoading(false));
     }
-    const envTimer = setInterval(fetchEnv, pollInterval);
-
     const handleEnvUpdate = (data) => {
       setEnvData(data);
       setIsLoading(false);
@@ -77,7 +77,6 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
     socket.on('environment', handleEnvUpdate);
 
     return () => {
-      clearInterval(envTimer);
       socket.off('environment', handleEnvUpdate);
     };
   }, []);
@@ -141,8 +140,8 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
               center={[envData.latitude, envData.longitude]}
               radius={100}
               pathOptions={{
-                color: '#eab308',
-                fillColor: '#eab308',
+                color: themeColors.env,
+                fillColor: themeColors.env,
                 fillOpacity: 0.1,
                 weight: 2
               }}
@@ -171,6 +170,7 @@ const LocationPanel = ({ setTitle, initialLocation = null, pollInterval = 60000 
 
 LocationPanel.propTypes = {
   setTitle: PropTypes.func,
+  initialLocation: PropTypes.object,
 };
 
 export default LocationPanel;
