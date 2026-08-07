@@ -178,9 +178,64 @@ class MyDaemon:
     def play_tune(self):
         """
         Description:
-                pick a random song from current weather category and play it
+                pick a song or playlist based on current context (people/time/weather)
+                and play it via Spotify.
         """
         logger.info("playing a tune")
+        try:
+            from common import spotify_utils as spotify_api
+
+            if not spotify_api.is_authorized():
+                logger.warning("Spotify not authorized — cannot play a tune")
+                return
+
+            total_people = 0
+            guest_count = 0
+            try:
+                db = pymysql.connect(
+                    host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+                )
+                cursor = db.cursor()
+                cursor.execute("SELECT COUNT(*) FROM user WHERE state = 2")
+                online = cursor.fetchone()
+                total_people = online[0] if online and online[0] else 0
+                cursor.execute(
+                    "SELECT description, subjective_feel FROM environment WHERE name = %s",
+                    (ENV_NAME,),
+                )
+                desc_row = cursor.fetchone()
+                db.close()
+                desc, subj = desc_row if desc_row else (None, None)
+            except pymysql.Error as e:
+                logger.error("play_tune DB error: " + str(e))
+                desc, subj = None, None
+
+            hour = db_utils.get_env_local_time(ENV_NAME).hour
+            if 6 <= hour < 12:
+                time_of_day = "morning"
+            elif 12 <= hour < 18:
+                time_of_day = "day"
+            elif 18 <= hour < 22:
+                time_of_day = "evening"
+            else:
+                time_of_day = "night"
+
+            reco = spotify_utils.recommend(
+                total_people=total_people,
+                guest_count=guest_count,
+                time_of_day=time_of_day,
+                weather={"description": desc, "subjective_feel": subj},
+            )
+            hint = reco.get("playlist_hint") or reco.get("mood") or ""
+            logger.info(f"Playing a tune — context: {reco}")
+
+            ok, err = spotify_api.play_recommended(hint)
+            if ok:
+                logger.info(f"Playing tune: {hint}")
+            else:
+                logger.warning(f"Could not play tune ({hint}): {err}")
+        except Exception as e:
+            logger.error(f"play_tune error: {str(e)}")
 
     def night_light(self):
         """
@@ -448,7 +503,7 @@ class MyDaemon:
             logger.error("Traceback: " + str(e))
         try:
             logger.info("Time to check Gmail")
-            self.check_emails
+            self.check_emails()
         except KafkaError as e:
             logger.error("Failed to check Gmail")
             logger.error("Traceback: " + str(e))
@@ -491,6 +546,29 @@ def sync_iot_devices():
     if p:
         p.send("device", orjson.dumps({"action": "iot_ha_sync"}))
         p.send("device", orjson.dumps({"action": "iot_st_sync"}))
+
+
+def play_tune_scheduled():
+    """
+    Description:
+            Play a context-aware tune (scheduled, e.g. mornings).
+    """
+    logger.info("Scheduled tune playback")
+    daemon = MyDaemon()
+    daemon.play_tune()
+
+
+def rebuild_music_recommendations():
+    """
+    Description:
+            Rebuild the music recommendation pool in the background.
+    """
+    logger.info("Rebuilding music recommendations")
+    try:
+        from common import recommender_engine
+        recommender_engine.build_recommendation_pool()
+    except Exception as e:
+        logger.error(f"Failed to rebuild music recommendations: {str(e)}")
 
 
 def init_daemon():
@@ -542,6 +620,8 @@ def init_daemon():
         schedule.every().day.at("00:05").do(reset_routines)
         schedule.every(4).hours.do(check_weather_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
+        schedule.every().day.at("08:00").do(play_tune_scheduled)
+        schedule.every(6).hours.do(rebuild_music_recommendations)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
