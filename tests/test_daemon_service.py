@@ -113,9 +113,12 @@ class TestGmailUtils:
 class TestMapsUtils:
     """Tests for maps_utils.py"""
 
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key", "GAS_PRICE": "3.5", "MPG": "25"})
-    def test_get_travel_info(self):
-        """Test get_travel_info returns placeholder data."""
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "", "GAS_PRICE": "3.5", "MPG": "25"})
+    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "")
+    @patch("services.service_daemon.utils.maps_utils.GAS_PRICE", 3.5)
+    @patch("services.service_daemon.utils.maps_utils.MPG", 25)
+    def test_get_travel_info_no_api_key(self):
+        """Test get_travel_info returns placeholder data without an API key."""
         from services.service_daemon.utils.maps_utils import get_travel_info
 
         event_time = datetime.now() + timedelta(hours=2)
@@ -125,6 +128,21 @@ class TestMapsUtils:
         assert "departure" in result
         assert "fuel_cost" in result
         assert result["fuel_cost"] == 5.0
+        assert isinstance(result["departure"], datetime)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key", "GAS_PRICE": "3.5", "MPG": "25"})
+    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
+    @patch("services.service_daemon.utils.maps_utils.GAS_PRICE", 3.5)
+    @patch("services.service_daemon.utils.maps_utils.MPG", 25)
+    def test_get_travel_info_with_api_key(self):
+        """Test get_travel_info returns the fuel cost estimate with an API key set."""
+        from services.service_daemon.utils.maps_utils import get_travel_info
+
+        event_time = datetime.now() + timedelta(hours=2)
+        result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
+
+        assert result is not None
+        assert result["fuel_cost"] == round((3.5 / 25) * 10, 2)
         assert isinstance(result["departure"], datetime)
 
 
@@ -294,10 +312,14 @@ class TestUtilRoutines:
             "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
         },
     )
-    @patch("services.service_daemon.utils.util_routines.MySQLdb.connect")
-    def test_check_mute_during_day_with_users(self, mock_connect):
+    @patch("common.db_utils.datetime")
+    @patch("common.db_utils.get_db_connection")
+    def test_check_mute_during_day_with_users(self, mock_connect, mock_datetime):
         """Test check_mute returns False during day with users online."""
         from services.service_daemon.utils.util_routines import check_mute
+
+        # Mock current time to 2 PM UTC (offset 0)
+        mock_datetime.utcnow.return_value = datetime(2023, 1, 1, 14, 0)
 
         # Mock DB
         mock_cursor = MagicMock()
@@ -305,27 +327,14 @@ class TestUtilRoutines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
 
-        # Mock queries - morning at 8 AM, bed at 10 PM, current time 2 PM
-        morning_time = timedelta(hours=8)
-        bed_time = timedelta(hours=22)
+        # Mock queries - morning at 8 AM, bed at 10 PM, UTC timezone
         mock_cursor.fetchone.side_effect = [
-            (1,),  # environment id
-            (1, "Morning", morning_time, None, None),  # morning routine
-            (2, "Bedtime", bed_time, None, None),  # bed routine
-            (1,),  # online state id
+            (timedelta(hours=8), timedelta(hours=22)),  # morning/bed routine times
+            (0,),  # environment timezone offset (UTC)
         ]
-        mock_cursor.fetchall.side_effect = [
-            [(1,), (2,), (3,)],  # user types
-            [(1, "user1", 1)],  # online users
-        ]
+        mock_cursor.fetchall.return_value = [(1, "user1")]  # online users
 
-        with patch("services.service_daemon.utils.util_routines.datetime") as mock_datetime:
-            mock_datetime.now.return_value = datetime(2023, 1, 1, 14, 0)  # 2 PM
-            mock_datetime.now.replace = MagicMock(
-                side_effect=lambda **kwargs: datetime(2023, 1, 1, **kwargs)
-            )
-
-            result = check_mute()
+        result = check_mute()
 
         assert result is False  # Should not be mute during day with users
 
@@ -340,10 +349,14 @@ class TestUtilRoutines:
             "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
         },
     )
-    @patch("services.service_daemon.utils.util_routines.MySQLdb.connect")
-    def test_check_mute_at_night_no_users(self, mock_connect):
+    @patch("common.db_utils.datetime")
+    @patch("common.db_utils.get_db_connection")
+    def test_check_mute_at_night_no_users(self, mock_connect, mock_datetime):
         """Test check_mute returns True at night with no users online."""
         from services.service_daemon.utils.util_routines import check_mute
+
+        # Mock current time to 2 AM UTC (offset 0)
+        mock_datetime.utcnow.return_value = datetime(2023, 1, 1, 2, 0)
 
         # Mock DB
         mock_cursor = MagicMock()
@@ -351,23 +364,13 @@ class TestUtilRoutines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
 
-        # Mock queries - morning at 8 AM, bed at 10 PM, current time 2 AM
-        morning_time = timedelta(hours=8)
-        bed_time = timedelta(hours=22)
+        # Mock queries - morning at 8 AM, bed at 10 PM, UTC timezone
         mock_cursor.fetchone.side_effect = [
-            (1,),  # environment id
-            (1, "Morning", morning_time, None, None),  # morning routine
-            (2, "Bedtime", bed_time, None, None),  # bed routine
-            (1,),  # online state id
+            (timedelta(hours=8), timedelta(hours=22)),  # morning/bed routine times
+            (0,),  # environment timezone offset (UTC)
         ]
-        mock_cursor.fetchall.side_effect = [[(1,), (2,), (3,)], []]  # user types  # no users
+        mock_cursor.fetchall.return_value = []  # no users online
 
-        with patch("services.service_daemon.utils.util_routines.datetime") as mock_datetime:
-            mock_datetime.now.return_value = datetime(2023, 1, 1, 2, 0)  # 2 AM
-            mock_datetime.now.replace = MagicMock(
-                side_effect=lambda **kwargs: datetime(2023, 1, 1, **kwargs)
-            )
-
-            result = check_mute()
+        result = check_mute()
 
         assert result is True  # Should be mute at night with no users

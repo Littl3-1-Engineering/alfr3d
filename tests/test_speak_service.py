@@ -1,6 +1,7 @@
 import os
 import tempfile
 from unittest.mock import patch, MagicMock
+import pytest
 from services.service_speak.app import (
     generate_tts,
     process_speak_message,
@@ -9,30 +10,48 @@ from services.service_speak.app import (
 )
 
 
+@pytest.fixture(autouse=True)
+def reset_tts_instances():
+    """Clear the module-level TTS cache between tests."""
+    import services.service_speak.app as app
+
+    app.tts_instances.clear()
+    yield
+    app.tts_instances.clear()
+
+
+def _fake_tts_module(tts_class):
+    """Build a fake top-level `TTS` module usable via sys.modules injection."""
+    mock_module = MagicMock()
+    mock_module.api.TTS = tts_class
+    return mock_module, mock_module.api
+
+
 class TestSpeakService:
     def test_get_tts_initialization(self):
         """Test TTS instance initialization"""
-        mock_tts_module = MagicMock()
-        mock_tts_class = MagicMock()
-        mock_tts_module.api.TTS = mock_tts_class
         mock_tts = MagicMock()
+        mock_tts_class = MagicMock()
         mock_tts_class.return_value.to.return_value = mock_tts
 
-        with patch.dict("sys.modules", {"TTS": mock_tts_module, "TTS.api": mock_tts_module.api}):
+        mock_module, mock_api = _fake_tts_module(mock_tts_class)
+        with patch.dict("sys.modules", {"TTS": mock_module, "TTS.api": mock_api}):
             tts_instance = get_tts()
 
             assert tts_instance is mock_tts
 
-    @patch("TTS.api.TTS")
-    def test_get_tts_cached(self, mock_tts_class):
+    def test_get_tts_cached(self):
         """Test TTS instance caching"""
         mock_tts = MagicMock()
+        mock_tts_class = MagicMock()
         mock_tts_class.return_value.to.return_value = mock_tts
 
-        # First call initializes
-        tts1 = get_tts()
-        # Second call should return cached
-        tts2 = get_tts()
+        mock_module, mock_api = _fake_tts_module(mock_tts_class)
+        with patch.dict("sys.modules", {"TTS": mock_module, "TTS.api": mock_api}):
+            # First call initializes
+            tts1 = get_tts()
+            # Second call should return cached
+            tts2 = get_tts()
 
         assert tts1 is tts2
         assert mock_tts_class.call_count == 1  # Only called once
@@ -88,25 +107,50 @@ class TestSpeakService:
                     assert filename is None
                     mock_send.assert_called_once()
 
+    def _patch_pipeline(self, **kwargs):
+        """Patch the DB/personality pipeline used by process_speak_message."""
+        import contextlib
+        from contextlib import ExitStack
+
+        defaults = {
+            "check_mute": lambda: False,
+            "track_speak_text": MagicMock(),
+            "get_blended_personality": lambda: {"name": "test", "mood": "happy", "blended": {}},
+            "get_claude_config": lambda: {},
+            "get_quips_for_environment": lambda: [],
+            "send_personality_state": MagicMock(),
+        }
+        defaults.update(kwargs)
+
+        @contextlib.contextmanager
+        def _patched():
+            with ExitStack() as stack:
+                for name, value in defaults.items():
+                    stack.enter_context(patch(f"services.service_speak.app.{name}", value))
+                yield
+
+        return _patched()
+
     def test_process_speak_message_string(self):
         """Test processing string message"""
         with patch("services.service_speak.app.generate_tts") as mock_generate:
             with patch("services.service_speak.app.send_event") as mock_send:
                 mock_generate.return_value = "test.mp3"
 
-                message = MagicMock()
-                message.value = "Test message"
+                with self._patch_pipeline() as pipeline:
+                    message = MagicMock()
+                    message.value = "Test message"
 
-                process_speak_message(message)
+                    process_speak_message(message)
 
-                mock_generate.assert_called_once_with(
-                    "Test message",
-                    "Coqui",
-                    "tts_models/multilingual/multi-dataset/xtts_v2",
-                    None,
-                    None,
-                )
-                mock_send.assert_called_once()
+                    mock_generate.assert_called_once_with(
+                        "Test message",
+                        "Coqui",
+                        "tts_models/multilingual/multi-dataset/xtts_v2",
+                        None,
+                        None,
+                    )
+                    mock_send.assert_called_once()
 
     def test_process_speak_message_bytes(self):
         """Test processing bytes message"""
@@ -114,29 +158,29 @@ class TestSpeakService:
             with patch("services.service_speak.app.send_event") as mock_send:
                 mock_generate.return_value = "test.mp3"
 
-                message = MagicMock()
-                message.value = b"Test message"
+                with self._patch_pipeline() as pipeline:
+                    message = MagicMock()
+                    message.value = b"Test message"
 
-                process_speak_message(message)
+                    process_speak_message(message)
 
-                mock_generate.assert_called_once_with(
-                    "Test message",
-                    "Coqui",
-                    "tts_models/multilingual/multi-dataset/xtts_v2",
-                    None,
-                    None,
-                )
-                mock_send.assert_called_once()
+                    mock_generate.assert_called_once_with(
+                        "Test message",
+                        "Coqui",
+                        "tts_models/multilingual/multi-dataset/xtts_v2",
+                        None,
+                        None,
+                    )
+                    mock_send.assert_called_once()
 
-    @patch("TTS.api.TTS")
-    def test_get_tts_failure(self, mock_tts):
+    def test_get_tts_failure(self):
         """Test TTS loading failure handling"""
-        mock_tts.side_effect = ImportError("TTS not available")
-        tts_instance = get_tts()
+        mock_tts_class = MagicMock(side_effect=ImportError("TTS not available"))
+        mock_module, mock_api = _fake_tts_module(mock_tts_class)
+        with patch.dict("sys.modules", {"TTS": mock_module, "TTS.api": mock_api}):
+            tts_instance = get_tts()
 
         assert tts_instance is None
-
-    # Removed outdated test for voice extraction
 
     def test_cleanup_old_audio(self):
         """Test cleanup of old audio files"""
@@ -144,20 +188,21 @@ class TestSpeakService:
 
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch("services.service_speak.app.AUDIO_STORAGE_PATH", temp_dir):
-                # Create test files
-                old_file = os.path.join(temp_dir, "old.mp3")
-                new_file = os.path.join(temp_dir, "new.mp3")
+                with patch("services.service_speak.app.AUDIO_RETENTION_MINUTES", 5):
+                    # Create test files
+                    old_file = os.path.join(temp_dir, "old.mp3")
+                    new_file = os.path.join(temp_dir, "new.mp3")
 
-                with open(old_file, "w") as f:
-                    f.write("old")
-                with open(new_file, "w") as f:
-                    f.write("new")
+                    with open(old_file, "w") as f:
+                        f.write("old")
+                    with open(new_file, "w") as f:
+                        f.write("new")
 
-                # Make old file appear old
-                old_time = time.time() - (6 * 60)  # 6 minutes ago
-                os.utime(old_file, (old_time, old_time))
+                    # Make old file appear old
+                    old_time = time.time() - (6 * 60)  # 6 minutes ago
+                    os.utime(old_file, (old_time, old_time))
 
-                cleanup_old_audio()
+                    cleanup_old_audio()
 
-                assert not os.path.exists(old_file)
-                assert os.path.exists(new_file)
+                    assert not os.path.exists(old_file)
+                    assert os.path.exists(new_file)

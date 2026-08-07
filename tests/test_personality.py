@@ -193,5 +193,5 @@ class TestDatabaseFunctions:
             result = get_quips_for_environment(env_id=1)
             assert isinstance(result, list)
             assert len(result) == 2
-            assert isinstance(result[0], dict)
-            assert result[0]["type"] == "formal"
+            assert all(isinstance(item, dict) for item in result)
+            assert {item["type"] for item in result} == {"formal", "casual"}
