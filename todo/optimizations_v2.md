@@ -164,6 +164,7 @@
   - CI job `migrations` — runs the full chain against a clean MySQL, asserts `alembic current` = `0010`
   - Verified end-to-end: clean DB → upgrade chain → downgrade/upgrade round-trip → idempotent re-runs
 - **Remaining:** run `alembic stamp head` against the live DB once (existing deployments already have the schema) before relying on `migrate` for new changes
+  - ✅ DONE (2026-08-07) — live DB at `alfr3d_db` stamped/upgraded to `0017` via `docker compose run --rm migrate`; pending IoT cleanup (`0017`) applied. `0001_baseline` now skips `createTables.sql` when the base schema already exists (was failing with `1050 Table 'quips' already exists`), so `migrate` is idempotent on existing DBs.
 
 ---
 

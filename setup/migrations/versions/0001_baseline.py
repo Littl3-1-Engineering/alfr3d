@@ -4,7 +4,10 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-08-03
 """
+import logging
 import os
+
+import sqlalchemy as sa
 from alembic import op
 
 from run_sql import run_sql_file, sql_path
@@ -13,6 +16,8 @@ revision = "0001"
 down_revision = None
 branch_labels = None
 depends_on = None
+
+logger = logging.getLogger("alembic.migration")
 
 _BASE_TABLES = [
     "integrations_tokens",
@@ -30,7 +35,24 @@ _BASE_TABLES = [
 ]
 
 
+def _table_exists(table: str) -> bool:
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :name"
+        ),
+        {"name": table},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
 def upgrade():
+    if _table_exists("user"):
+        logger.info("baseline schema already present; skipping createTables.sql")
+        return
     run_sql_file(op, sql_path("createTables.sql"))
 
 
