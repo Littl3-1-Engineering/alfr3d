@@ -1,109 +1,108 @@
-/* Theme CSS Variables - Auto-generated from themes.js */
+/* AUTO-GENERATED from src/utils/themes.js — do not edit by hand. Run: npm run generate:theme */
+/* Single source of truth: services/service_frontend/src/utils/themes.js */
+
 /* Dark theme (default) */
 :root {
-  /* Core substrate – ultra-deep charcoal (darker than pure black for depth) */
-  --theme-background:           hsl(30, 17%, 6%);
-  --theme-background-secondary: hsl(30, 22%, 9%);
-  --theme-background-tertiary:  hsl(30, 18%, 12%);
-
-  /* Primary accent – electric amber/yellow (the glowing highlights in the reference) */
-  --theme-primary:              hsl(45, 100%, 58%);     /* #FFB84D → pure glowing amber */
-  --theme-primary-hover:        hsl(45, 100%, 65%);
-  --theme-primary-light:        hsl(45, 80%, 15%);      /* dark amber fill for active states */
-
-  /* Secondary accent – cold steel blue (used sparingly for text, orbits, healthy states) */
-  --theme-secondary:            hsl(200, 30%, 50%);
-  --theme-secondary-hover:      hsl(200, 35%, 60%);
-
-  /* Success / healthy – keep a very subtle cyan nod to the original “neural” theme */
-  --theme-success:              hsl(190, 80%, 45%);
-
-  /* Warning / environmental – bright amber (sun, alerts) */
-  --theme-warning:              hsl(45, 100%, 58%);
-  --theme-warning-light:        hsl(45, 80%, 18%);
-
-  /* Critical / error – shift to magenta only when truly critical (rare) */
-  --theme-error:                hsl(330, 90%, 65%);
-
-  /* Text – high-contrast off-white with slight blue tint */
-  --theme-text-primary:         hsl(200, 20%, 92%);
-  --theme-text-secondary:       hsl(200, 15%, 70%);
-  --theme-text-tertiary:        hsl(200, 10%, 50%);
-  --theme-text-inverse:         hsl(0, 0%, 100%);
-
-  /* Borders & glows – glowing amber edges */
-  --theme-border:               hsla(45, 100%, 58%, 0.4);
-  --theme-border-active:        hsl(45, 100%, 58%);
-  --theme-border-secondary:     hsla(45, 100%, 58%, 0.15);
-
-   /* Glassmorphic cards – dark transparent with amber border glow */
-   --theme-card:                 hsla(210, 8%, 4%, 0.65);
-  --theme-card-hover:           hsla(220, 25%, 10%, 0.85);
-  --theme-card-border:          hsla(45, 100%, 58%, 0.35);
-
-  /* Inputs & interactive elements */
-  --theme-input:                hsla(220, 25%, 8%, 0.75);
-  --theme-input-border:         hsla(45, 100%, 58%, 0.4);
-  --theme-input-focus:          hsl(45, 100%, 58%);
-
-  /* Backdrop blur overlay */
-  --theme-backdrop:             hsla(220, 30%, 4%, 0.85);
-
-  /* Extra glow utilities for orbits, pulses, etc. */
-  --glow-amber:                 0 0 12px hsla(45, 100%, 58%, 0.6);
-  --glow-amber-intense:         0 0 20px hsla(45, 100%, 58%, 0.9);
+  --theme-background: #0d1117;
+  --theme-background-secondary: #161b22;
+  --theme-background-tertiary: #21262d;
+  --theme-primary: hsl(188, 93%, 43%);
+  --theme-primary-hover: hsl(188, 93%, 52%);
+  --theme-primary-light: hsl(188, 80%, 14%);
+  --theme-secondary: hsl(330, 90%, 61%);
+  --theme-secondary-hover: hsl(330, 90%, 70%);
+  --theme-secondary-light: hsl(330, 80%, 16%);
+  --theme-accent: hsl(190, 95%, 55%);
+  --theme-accent-hover: hsl(190, 95%, 62%);
+  --theme-accent-light: hsl(190, 80%, 12%);
+  --theme-env: #eab308;
+  --theme-env-light: hsl(45, 80%, 18%);
+  --theme-env-border: hsla(45, 100%, 58%, 0.35);
+  --theme-magenta: #ec4899;
+  --theme-magenta-light: hsla(330, 90%, 65%, 0.15);
+  --theme-text-primary: hsl(200, 20%, 92%);
+  --theme-text-secondary: hsl(200, 15%, 70%);
+  --theme-text-tertiary: hsl(200, 10%, 50%);
+  --theme-text-inverse: hsl(0, 0%, 100%);
+  --theme-border: hsla(188, 93%, 43%, 0.4);
+  --theme-border-active: hsl(188, 93%, 43%);
+  --theme-border-secondary: hsla(188, 93%, 43%, 0.15);
+  --theme-glow: hsla(188, 93%, 43%, 0.6);
+  --theme-success: hsl(142, 76%, 45%);
+  --theme-warning: hsl(45, 100%, 58%);
+  --theme-warning-light: hsl(45, 80%, 18%);
+  --theme-error: hsl(330, 90%, 65%);
+  --theme-info: hsl(200, 30%, 50%);
+  --theme-card: hsla(210, 8%, 4%, 0.65);
+  --theme-card-hover: hsla(212, 26%, 12%, 0.85);
+  --theme-card-border: hsla(188, 93%, 43%, 0.35);
+  --theme-input: hsla(212, 26%, 8%, 0.75);
+  --theme-input-border: hsla(188, 93%, 43%, 0.4);
+  --theme-input-focus: hsl(188, 93%, 43%);
+  --theme-backdrop: hsla(212, 30%, 4%, 0.85);
+  --theme-tactical-bg: #0d1117;
+  --theme-tactical-panel: #161b22;
+  --theme-tactical-border: #30363d;
+  --theme-tactical-accent: #06b6d4;
+  --theme-tactical-text: #94a3b8;
+  --theme-tactical-dim: rgba(6, 182, 212, 0.1);
+  --theme-tactical-grid: #1f242b;
+  --theme-card-rgb: 9 10 11;
+  --theme-border-rgb: 8 184 212;
+  --theme-grid-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="20" y="20" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="hsla(188, 93%, 43%, 0.1)">+</text></svg>');
+  --theme-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2308B8D4' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
 /* Light theme */
 [data-theme="light"] {
-  /* Light substrate – pure tactical white with a hint of warmth */
-  --theme-background:           hsl(30, 20%, 99%);
-  --theme-background-secondary: hsl(30, 15%, 97%);
-  --theme-background-tertiary:  hsl(30, 12%, 95%);
-
-  /* Primary accent – vivid tactical orange (exactly like the reference) */
-  --theme-primary:              hsl(24, 100%, 58%);     /* #FF6A2B */
-  --theme-primary-hover:        hsl(24, 100%, 65%);
-  --theme-primary-light:        hsl(24, 90%, 92%);
-
-  /* Secondary accent – cool steel gray-blue for orbits and neutral elements */
-  --theme-secondary:            hsl(210, 15%, 68%);
-  --theme-secondary-hover:      hsl(210, 15%, 60%);
-
-  /* Success / healthy – subtle cyan nod preserved for continuity */
-  --theme-success:              hsl(190, 80%, 50%);
-
-  /* Warning – intense orange-red */
-  --theme-warning:              hsl(14, 100%, 58%);
-  --theme-error:                hsl(0, 90%, 65%);
-
-  /* Text – deep charcoal for maximum legibility on light */
-  --theme-text-primary:         hsl(220, 25%, 12%);
-  --theme-text-secondary:       hsl(220, 15%, 35%);
-  --theme-text-tertiary:        hsl(220, 10%, 55%);
-  --theme-text-inverse:         hsl(0, 0%, 100%);
-
-  /* Borders & glows – soft orange glow + crisp lines */
-  --theme-border:               hsla(24, 100%, 58%, 0.5);
-  --theme-border-active:        hsl(24, 100%, 58%);
-  --theme-border-secondary:     hsl(220, 10%, 80%);
-
-  /* Light glassmorphic cards – very subtle frost */
-  --theme-card:                 hsla(30, 30%, 98%, 0.85);
-  --theme-card-hover:           hsla(30, 30%, 96%, 0.95);
-  --theme-card-border:          hsla(24, 100%, 58%, 0.4);
-
-  /* Inputs */
-  --theme-input:                hsla(30, 20%, 99%, 0.9);
-  --theme-input-border:         hsl(220, 10%, 85%);
-  --theme-input-focus:          hsl(24, 100%, 58%);
-
-  /* Backdrop */
-  --theme-backdrop:             hsla(30, 30%, 98%, 0.9);
-
-  /* Glow utilities for light mode */
-  --glow-orange:                0 0 12px hsla(24, 100%, 58%, 0.5);
-   --glow-orange-intense:        0 0 20px hsla(24, 100%, 58%, 0.8);
+  --theme-background: hsl(210, 30%, 96%);
+  --theme-background-secondary: hsl(210, 25%, 92%);
+  --theme-background-tertiary: hsl(210, 20%, 88%);
+  --theme-primary: hsl(188, 93%, 38%);
+  --theme-primary-hover: hsl(188, 93%, 45%);
+  --theme-primary-light: hsl(188, 90%, 88%);
+  --theme-secondary: hsl(330, 85%, 55%);
+  --theme-secondary-hover: hsl(330, 85%, 60%);
+  --theme-secondary-light: hsl(330, 90%, 92%);
+  --theme-accent: hsl(190, 95%, 40%);
+  --theme-accent-hover: hsl(190, 95%, 48%);
+  --theme-accent-light: hsl(190, 90%, 88%);
+  --theme-env: #ca8a04;
+  --theme-env-light: hsl(45, 80%, 92%);
+  --theme-env-border: hsla(45, 100%, 40%, 0.4);
+  --theme-magenta: #ec4899;
+  --theme-magenta-light: hsla(330, 90%, 65%, 0.2);
+  --theme-text-primary: hsl(215, 20%, 12%);
+  --theme-text-secondary: hsl(215, 15%, 35%);
+  --theme-text-tertiary: hsl(215, 12%, 50%);
+  --theme-text-inverse: hsl(0, 0%, 100%);
+  --theme-border: hsl(210, 20%, 80%);
+  --theme-border-active: hsl(188, 93%, 38%);
+  --theme-border-secondary: hsl(210, 20%, 85%);
+  --theme-glow: hsla(188, 93%, 38%, 0.4);
+  --theme-success: hsl(142, 76%, 40%);
+  --theme-warning: hsl(45, 90%, 45%);
+  --theme-warning-light: hsl(45, 90%, 90%);
+  --theme-error: hsl(330, 85%, 50%);
+  --theme-info: hsl(210, 60%, 45%);
+  --theme-card: hsl(0, 0%, 100%);
+  --theme-card-hover: hsl(210, 20%, 96%);
+  --theme-card-border: hsl(210, 20%, 80%);
+  --theme-input: hsl(0, 0%, 100%);
+  --theme-input-border: hsl(210, 20%, 80%);
+  --theme-input-focus: hsl(188, 93%, 38%);
+  --theme-backdrop: hsla(210, 30%, 96%, 0.9);
+  --theme-tactical-bg: #f8fafc;
+  --theme-tactical-panel: #ffffff;
+  --theme-tactical-border: #e2e8f0;
+  --theme-tactical-accent: #0891b2;
+  --theme-tactical-text: #475569;
+  --theme-tactical-dim: rgba(8, 145, 178, 0.1);
+  --theme-tactical-grid: #e2e8f0;
+  --theme-card-rgb: 255 255 255;
+  --theme-border-rgb: 194 204 214;
+  --theme-grid-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="20" y="20" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="hsla(188, 93%, 38%, 0.1)">+</text></svg>');
+  --theme-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2307A3BB' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
 /* Leaflet Map Dark Theme Overrides */
@@ -112,27 +111,27 @@
 }
 
 .leaflet-control-container .leaflet-control {
-  background-color: hsl(210, 8%, 4%, 0.85) !important;
-  border: 1px solid hsla(45, 100%, 58%, 0.4) !important;
+  background-color: var(--theme-card) !important;
+  border: 1px solid color-mix(in srgb, var(--theme-primary) 40%, transparent) !important;
   border-radius: 0 !important;
 }
 
 .leaflet-control-container .leaflet-control a {
-  color: hsl(200, 20%, 92%) !important;
+  color: var(--theme-text-primary) !important;
   background-color: transparent !important;
 }
 
 .leaflet-control-container .leaflet-control a:hover {
-  background-color: hsla(45, 100%, 58%, 0.1) !important;
+  background-color: color-mix(in srgb, var(--theme-primary) 10%, transparent) !important;
 }
 
 .leaflet-control-attribution {
-  background-color: hsl(210, 8%, 4%, 0.85) !important;
-  color: hsl(200, 15%, 70%) !important;
+  background-color: var(--theme-card) !important;
+  color: var(--theme-text-secondary) !important;
   font-family: 'JetBrains Mono', monospace !important;
   font-size: 10px !important;
 }
 
 .leaflet-control-attribution a {
-  color: hsl(200, 15%, 70%) !important;
+  color: var(--theme-text-secondary) !important;
 }

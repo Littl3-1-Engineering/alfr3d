@@ -2,7 +2,7 @@ import PropTypes from 'prop-types';
 
 const TacticalPanelVariant3 = ({ title, children, className = "", showGrid = false }) => {
   return (
-    <div className={`relative bg-fui-panel border border-fui-border rounded-none shadow-[0_0_15px_rgba(234,179,8,0.4)] ${className}`}>
+    <div className={`relative bg-fui-panel border border-fui-border rounded-none ${className}`} style={{ boxShadow: `0 0 15px color-mix(in srgb, var(--theme-primary) 40%, transparent)` }}>
       {/* Enhanced layered corner markers */}
       <div className="absolute -top-px -left-px w-4 h-4 border-t-2 border-l-2 border-fui-accent z-10">
         <div className="absolute top-1 left-1 w-2 h-2 border-t border-l border-fui-accent/60" />
@@ -18,7 +18,7 @@ const TacticalPanelVariant3 = ({ title, children, className = "", showGrid = fal
       </div>
 
       {/* Gradient header */}
-      <div className="flex items-center justify-between px-3 py-1 border-b border-fui-border" style={{ background: 'linear-gradient(90deg, hsla(0, 0%, 40%, 0.4), hsla(0, 0%, 40%, 0.2))' }}>
+      <div className="flex items-center justify-between px-3 py-1 border-b border-fui-border" style={{ background: 'linear-gradient(90deg, color-mix(in srgb, var(--theme-text-tertiary) 40%, transparent), color-mix(in srgb, var(--theme-text-tertiary) 20%, transparent))' }}>
         <div className="flex space-x-1">
           <div className="w-6 h-1 bg-fui-border"></div>
           <div className="w-3 h-1 bg-fui-accent"></div>
