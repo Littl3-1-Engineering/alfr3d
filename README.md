@@ -16,16 +16,17 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, and frontend.
 - **Optimized Performance**:
+  - Python 3.14 + Node 24 LTS base images across all services
   - Vite with gzip/brotli compression for ~70% smaller bundles
   - Manual chunk splitting for parallel loading and better caching
   - React Query for client-side API caching (5-min stale time)
   - orjson for 3-10x faster JSON serialization
   - DBUtils connection pooling for database efficiency
   - Event-driven Kafka consumers for lower CPU usage
-- **Real-Time Dashboard**: Live monitoring with CPU/memory metrics via HTTP polling (10s), health status, and animated connection lines.
+- **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling).
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `situational-awareness`, `integrations`. Includes text-to-speech audio generation.
-- **Real-Time WebSocket**: Events, situational awareness, and audio updates via WebSocket (`/ws/` endpoint); container metrics use HTTP polling (10s).
+- **Real-Time WebSocket**: Events, situational awareness, audio, containers, users, devices, and IoT device state updates via WebSocket (`/ws/` endpoint). All dashboard metrics are WebSocket-powered — no HTTP polling.
 - **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, and blueprint display with MAC-based device linking.
 - **Routine Automation**: Time-based automation with recurrence options (daily, weekly, weekdays), action builder supporting speak, device, email, and scene actions.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
@@ -45,7 +46,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
 - **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring. Runs as a standalone container on the host machine for direct network access.
 - **Service Environment**: Handles geolocation, weather updates, and environmental data collection.
-- **Service API**: REST API gateway providing endpoints for users and container metrics, interfacing with database and Docker.
+- **Service API**: FastAPI REST API gateway with native WebSocket support, providing endpoints for users, devices, containers, routines, personality, and IoT metrics, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard, user/device management, and control panel.
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
 - **IoT Integration**: Unified IoT layer supporting Home Assistant and SmartThings with automatic device syncing and blueprint visualization.
@@ -275,7 +276,7 @@ The codebase uses `orjson` instead of the standard `json` module. Ensure any JSO
 The ALFR3D dashboard provides real-time monitoring and control:
 
 ### Real-Time Metrics
-- **Live CPU/Memory**: Actual system resource usage for all services (HTTP polling every 10s)
+- **Live CPU/Memory**: Actual system resource usage for all services (real-time via WebSocket)
 - **Health Indicators**: Visual status (🟢 Healthy, 🟡 Warning, 🔴 Unhealthy)
 - **Connection Lines**: Animated Kafka topic flows between services
 - **Event Updates**: WebSocket-powered instant updates for events and situational awareness
@@ -295,7 +296,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
 ## Development
 
 ### Architecture Overview
-- **Backend**: Flask-based microservices with Kafka messaging and REST API gateway
+- **Backend**: FastAPI-based microservices with Kafka messaging and REST API gateway
 - **Frontend**: React application with real-time updates
 - **Database**: MySQL with comprehensive schema
 - **Deployment**: Docker Compose (dev) and Kubernetes (prod)
@@ -363,7 +364,7 @@ The ALFR3D dashboard provides real-time monitoring and control:
   - `DELETE /api/routines/<id>`: Delete a routine
   - `POST /api/routines/<id>/run`: Manually execute a routine
 - **WebSocket**:
-  - `WS /ws/socket.io/`: Real-time events and situational awareness via SocketIO (port 5002)
+  - `WS /ws`: Real-time events, situational awareness, containers, users, devices, and IoT device state updates (FastAPI native WebSocket). Events broadcast: `events`, `situational_awareness`, `containers`, `users`, `devices`, `iot_devices`, `personality_state`, `project_tree`.
 - **Service Frontend**:
   - `GET /`: Landing page
   - `GET /dashboard`: Real-time monitoring dashboard

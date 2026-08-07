@@ -63,6 +63,39 @@ export const useDeleteRoutine = () => {
   });
 };
 
+export const useIotDevices = () => {
+  return useQuery({
+    queryKey: ['iot-devices'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/iot/devices`);
+      if (!response.ok) throw new Error('Failed to fetch IoT devices');
+      return response.json();
+    }
+  });
+};
+
+export const useDevices = () => {
+  return useQuery({
+    queryKey: ['devices'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/devices`);
+      if (!response.ok) throw new Error('Failed to fetch devices');
+      return response.json();
+    }
+  });
+};
+
+export const useUsers = () => {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/users`);
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return response.json();
+    }
+  });
+};
+
 export const usePersonality = () => {
   return useQuery({
     queryKey: ['personality'],

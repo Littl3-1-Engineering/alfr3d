@@ -1,0 +1,5 @@
+alembic==1.18.5
+pymysql==1.1.2
+cryptography==48.0.1
+SQLAlchemy>=2.0
+python-dotenv>=1.0

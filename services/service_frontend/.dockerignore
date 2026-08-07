@@ -1,0 +1,28 @@
+# Ignore node dependencies
+node_modules/
+
+# Ignore build output
+dist/
+build/
+
+# Ignore cache
+.vite/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore development files
+.env
+.env.local
+*.log
+
+# Ignore tests
+__tests__/
+test_*
+*.test.js
+*.test.jsx
+*.spec.js
+*.spec.jsx

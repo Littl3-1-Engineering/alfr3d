@@ -1,25 +1,20 @@
 import os
+import sys
 import logging
-
 import pymysql
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_connection
 
 logger = logging.getLogger(__name__)
 
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
-MYSQL_USER = os.environ.get("MYSQL_USER")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
-MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
-
 _claude_client = None
+
+DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
 
 
 def get_db_connection():
-    return pymysql.connect(
-        host=MYSQL_DATABASE,
-        user=MYSQL_USER,
-        passwd=MYSQL_PSWD,
-        db=MYSQL_DB,
-    )
+    return get_connection()
 
 
 def get_claude_config():
@@ -28,36 +23,34 @@ def get_claude_config():
     config = {}
     try:
         cursor.execute(
-            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit')"
+            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit', 'llm_model')"
         )
         for row in cursor.fetchall():
             config[row[0]] = row[1]
         return {
             "api_key": config.get("llm_api_key", ""),
             "usage_limit": int(config.get("llm_usage_limit", 10)),
+            "model": config.get("llm_model") or DEFAULT_LLM_MODEL,
         }
     except pymysql.Error as e:
         logger.error(f"Database error getting Claude config: {e}")
         db.rollback()
-        return {"api_key": "", "usage_limit": 10}
+        return {"api_key": "", "usage_limit": 10, "model": DEFAULT_LLM_MODEL}
     finally:
         db.close()
 
 
-def save_claude_config(api_key=None, usage_limit=None):
+def save_claude_config(api_key=None, usage_limit=None, model=None):
     db = get_db_connection()
     cursor = db.cursor()
     try:
-        if api_key is not None:
-            cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
-                (api_key,),
-            )
-        if usage_limit is not None:
-            cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
-                (str(usage_limit),),
-            )
+        for name, value in (("llm_api_key", api_key), ("llm_usage_limit", usage_limit), ("llm_model", model)):
+            if value is not None:
+                cursor.execute(
+                    "INSERT INTO config (name, value) VALUES (%s, %s) "
+                    "ON DUPLICATE KEY UPDATE value = %s",
+                    (name, str(value), str(value)),
+                )
         db.commit()
         return True
     except pymysql.Error as e:
@@ -89,8 +82,9 @@ def _get_calls_today():
         db.close()
 
 
-def check_usage_limit():
-    config = get_claude_config()
+def check_usage_limit(config=None):
+    if config is None:
+        config = get_claude_config()
     if not config.get("api_key"):
         return False, "No API key configured"
 
@@ -111,8 +105,10 @@ def increment_llm_calls():
     cursor = db.cursor()
     try:
         cursor.execute(
-            "UPDATE context SET llm_calls_today = llm_calls_today + 1, "
-            "updated_at = NOW() WHERE environment_id = %s",
+            "INSERT INTO context (environment_id, llm_calls_today, updated_at) "
+            "VALUES (%s, 1, NOW()) "
+            "ON DUPLICATE KEY UPDATE llm_calls_today = llm_calls_today + 1, "
+            "updated_at = NOW()",
             (env_id,),
         )
         db.commit()
@@ -123,11 +119,11 @@ def increment_llm_calls():
         db.close()
 
 
-def _get_claude_client():
+def _get_claude_client(api_key=None):
     global _claude_client
     if _claude_client is None:
-        config = get_claude_config()
-        api_key = config.get("api_key")
+        if api_key is None:
+            api_key = get_claude_config().get("api_key")
         if api_key:
             try:
                 from anthropic import Anthropic
@@ -139,19 +135,26 @@ def _get_claude_client():
     return _claude_client
 
 
-def call_claude_haiku(system_prompt, user_text):
-    client = _get_claude_client()
+def call_claude_haiku(system_prompt, user_text, config=None):
+    if config is None:
+        config = get_claude_config()
+
+    if not config.get("api_key"):
+        logger.warning("Claude call skipped: no API key configured")
+        return None
+
+    client = _get_claude_client(config.get("api_key"))
     if not client:
         return None
 
-    allowed, reason = check_usage_limit()
+    allowed, reason = check_usage_limit(config)
     if not allowed:
         logger.warning(f"Claude call skipped: {reason}")
         return None
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=config.get("model", DEFAULT_LLM_MODEL),
             max_tokens=100,
             system=system_prompt,
             messages=[{"role": "user", "content": user_text}],
@@ -174,8 +177,9 @@ def reset_daily_calls():
     cursor = db.cursor()
     try:
         cursor.execute(
-            "UPDATE context SET llm_calls_today = 0, updated_at = NOW() "
-            "WHERE environment_id = %s",
+            "INSERT INTO context (environment_id, llm_calls_today, updated_at) "
+            "VALUES (%s, 0, NOW()) "
+            "ON DUPLICATE KEY UPDATE llm_calls_today = 0, updated_at = NOW()",
             (env_id,),
         )
         db.commit()

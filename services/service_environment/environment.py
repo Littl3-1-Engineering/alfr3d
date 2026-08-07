@@ -272,18 +272,19 @@ def check_location(method="freegeoip"):
 
     city = "unknown"
 
-    cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+    cursor.execute(
+        "SELECT manual_location_override, city FROM environment WHERE name = %s",
+        (ALFR3D_ENV_NAME,),
+    )
     data = cursor.fetchone()
-    if data and len(data) > 16 and data[16] == 1:
+    if data and data[0] == 1:
         logger.info("Manual location override active, skipping auto location update")
         db.close()
         return [True, 0, 0]
 
     if data:
         logger.info("Found environment configuration for this host")
-
-        if len(data) > 4:
-            city = data[4]
+        city = data[1] or "unknown"
     else:
         logger.warning("Failed to find environment configuration for this host")
         logger.info("Creating environment configuration for this host")
@@ -348,6 +349,9 @@ def check_weather():
 # Main
 if __name__ == "__main__":
     logger.info("Starting Alfr3d's environment service")
+    if not db_utils.wait_for_db():
+        logger.error("Exiting: could not connect to MySQL")
+        sys.exit(1)
     consumer = None
     retry_count = 0
     while consumer is None and not shutdown_event.is_set():
