@@ -1,5 +1,6 @@
 import os
 import logging
+from contextlib import contextmanager
 from dbutils.pooled_db import PooledDB
 import pymysql
 
@@ -42,6 +43,19 @@ def get_pool():
 def get_connection():
     pool = get_pool()
     return pool.connection()
+
+
+@contextmanager
+def db_connection():
+    """Yield a pooled DB connection, guaranteeing it is returned to the pool."""
+    db = get_connection()
+    try:
+        yield db
+    finally:
+        try:
+            db.close()
+        except Exception as e:
+            logger.warning(f"Error closing database connection: {e}")
 
 
 def close_pool():
