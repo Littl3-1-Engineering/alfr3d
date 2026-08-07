@@ -35,7 +35,7 @@ Enable actual Spotify playback through alfr3d — play, pause, skip, volume, and
   - Search tracks
   - Device selector / transfer
   - Credential setup + OAuth authorize flow (with callback URL helper)
-- [ ] **Audio visualizer** — real-time frequency bars or waveform reacting to current playback (via Web Audio API or Spotify audio analysis endpoint) — *deferred*
+- [DONE] **Audio visualizer** — bar visualizer driven by Spotify audio-analysis segment loudness, synced to playback position via rAF; idle animation fallback. `AudioVisualizer.jsx` + `GET /api/music/spotify/audio-analysis/{track_id}` (trimmed server-side)
 - [DONE] Add Spotify control to voice command system:
   - `music`/`spotify` action type in `execute_actions` (`util_routines.py`) + `run_routine` (`routes/routines.py`) via `_execute_music_action` (play, pause, next, previous, volume, search+play)
   - Routines UI: "Music (Spotify)" action type with action dropdown + search query / volume inputs

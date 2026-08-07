@@ -7,6 +7,7 @@ import {
   Cast, Save, Trash2,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import AudioVisualizer from './AudioVisualizer';
 
 const Section = ({ icon: Icon, title, children, defaultOpen = true, right }) => {
   const [open, setOpen] = useState(defaultOpen);
@@ -467,6 +468,12 @@ const Music = () => {
                 </div>
               </div>
             </div>
+
+            <AudioVisualizer
+              trackId={item?.id}
+              isPlaying={isPlaying}
+              progressMs={state?.progress_ms || 0}
+            />
           </Section>
 
           {/* Search */}

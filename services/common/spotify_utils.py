@@ -277,6 +277,37 @@ def get_playback_state():
     }
 
 
+def get_audio_analysis(track_id):
+    """Fetch a trimmed version of Spotify's audio-analysis for a track.
+
+    The full /audio-analysis payload is several hundred KB; we extract only
+    the segment timing/loudness data the frontend visualizer needs, encoded as
+    compact tuples [start, duration, loudness_start, loudness_max].
+    """
+    data, err = _api_request("GET", f"/audio-analysis/{track_id}")
+    if err:
+        return None, err
+    if not data:
+        return None, {"error": {"message": "No analysis data", "status": 404}}
+    track = data.get("track") or {}
+    segments = [
+        (
+            s.get("start", 0),
+            s.get("duration", 0),
+            s.get("loudness_start", -60.0),
+            s.get("loudness_max", -60.0),
+        )
+        for s in (data.get("segments") or [])
+    ]
+    return {
+        "track_id": track_id,
+        "duration": track.get("duration"),
+        "tempo": track.get("tempo"),
+        "time_signature": track.get("time_signature"),
+        "segments": segments,
+    }, None
+
+
 def play(device_id=None, context_uri=None):
     body = {}
     if context_uri:
