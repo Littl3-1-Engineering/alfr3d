@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 import orjson
 import pymysql
 
-from dependencies import get_connection, _get_cached_or_fetch, _invalidate_cache, get_environment_id, ALFR3D_ENV_NAME
+from dependencies import db_connection, _get_cached_or_fetch, _invalidate_cache, get_environment_id, ALFR3D_ENV_NAME
 from models import PersonalityUpdate, ContextUpdate, LLMConfigUpdate, PresetApply
 
 logger = logging.getLogger("ApiLog")
@@ -31,27 +31,26 @@ async def get_personality():
 async def update_personality(data: PersonalityUpdate):
     try:
         env_id = get_environment_id()
-        db = get_connection()
-        cursor = db.cursor()
-        cursor.execute(
-            "UPDATE personality SET "
-            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
-            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
-            "name = %s WHERE type = 'current' AND environment_id = %s",
-            (
-                data.sarcasm,
-                data.formality,
-                data.warmth,
-                data.patience,
-                data.linguistic_style,
-                data.forbidden_words,
-                data.verbal_tics,
-                data.name,
-                env_id,
-            ),
-        )
-        db.commit()
-        db.close()
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "UPDATE personality SET "
+                "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+                "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+                "name = %s WHERE type = 'current' AND environment_id = %s",
+                (
+                    data.sarcasm,
+                    data.formality,
+                    data.warmth,
+                    data.patience,
+                    data.linguistic_style,
+                    data.forbidden_words,
+                    data.verbal_tics,
+                    data.name,
+                    env_id,
+                ),
+            )
+            db.commit()
         _invalidate_cache("personality:current")
         return {"message": "Personality updated"}
     except Exception as e:
@@ -73,36 +72,34 @@ async def get_personality_presets():
 async def apply_personality_preset(data: PresetApply):
     try:
         env_id = get_environment_id()
-        db = get_connection()
-        cursor = db.cursor(pymysql.cursors.DictCursor)
-        cursor.execute(
-            "SELECT * FROM personality WHERE type = 'preset' AND name = %s",
-            (data.preset,),
-        )
-        preset = cursor.fetchone()
-        if not preset:
-            db.close()
-            raise HTTPException(status_code=404, detail="Preset not found")
+        with db_connection() as db:
+            cursor = db.cursor(pymysql.cursors.DictCursor)
+            cursor.execute(
+                "SELECT * FROM personality WHERE type = 'preset' AND name = %s",
+                (data.preset,),
+            )
+            preset = cursor.fetchone()
+            if not preset:
+                raise HTTPException(status_code=404, detail="Preset not found")
 
-        cursor.execute(
-            "UPDATE personality SET "
-            "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
-            "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
-            "name = %s WHERE type = 'current' AND environment_id = %s",
-            (
-                preset["sarcasm"],
-                preset["formality"],
-                preset["warmth"],
-                preset["patience"],
-                preset["linguistic_style"],
-                preset["forbidden_words"],
-                preset["verbal_tics"],
-                preset["name"],
-                env_id,
-            ),
-        )
-        db.commit()
-        db.close()
+            cursor.execute(
+                "UPDATE personality SET "
+                "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
+                "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
+                "name = %s WHERE type = 'current' AND environment_id = %s",
+                (
+                    preset["sarcasm"],
+                    preset["formality"],
+                    preset["warmth"],
+                    preset["patience"],
+                    preset["linguistic_style"],
+                    preset["forbidden_words"],
+                    preset["verbal_tics"],
+                    preset["name"],
+                    env_id,
+                ),
+            )
+            db.commit()
         _invalidate_cache("personality:current")
         return {"message": f"Applied preset: {data.preset}"}
     except Exception as e:
@@ -127,24 +124,23 @@ async def get_personality_context():
 async def update_personality_context(data: ContextUpdate):
     try:
         env_id = get_environment_id()
-        db = get_connection()
-        cursor = db.cursor()
-        updates = []
-        values = []
-        allowed_fields = ["repeat_count", "hour", "weather", "mood", "last_error_count"]
-        for field in allowed_fields:
-            value = getattr(data, field, None)
-            if value is not None:
-                updates.append(f"{field} = %s")
-                values.append(value)
-        if updates:
-            values.append(env_id)
-            cursor.execute(
-                f"UPDATE context SET {', '.join(updates)} WHERE environment_id = %s",
-                values,
-            )
-            db.commit()
-        db.close()
+        with db_connection() as db:
+            cursor = db.cursor()
+            updates = []
+            values = []
+            allowed_fields = ["repeat_count", "hour", "weather", "mood", "last_error_count"]
+            for field in allowed_fields:
+                value = getattr(data, field, None)
+                if value is not None:
+                    updates.append(f"{field} = %s")
+                    values.append(value)
+            if updates:
+                values.append(env_id)
+                cursor.execute(
+                    f"UPDATE context SET {', '.join(updates)} WHERE environment_id = %s",
+                    values,
+                )
+                db.commit()
         _invalidate_cache(f"personality:context:{ALFR3D_ENV_NAME}")
         return {"message": "Context updated"}
     except pymysql.Error as e:
@@ -165,20 +161,19 @@ async def get_llm_config():
 @router.put("/personality/llm-config")
 async def update_llm_config(data: LLMConfigUpdate):
     try:
-        db = get_connection()
-        cursor = db.cursor()
-        if data.api_key is not None:
-            cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
-                (data.api_key,),
-            )
-        if data.usage_limit is not None:
-            cursor.execute(
-                "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
-                (str(data.usage_limit),),
-            )
-        db.commit()
-        db.close()
+        with db_connection() as db:
+            cursor = db.cursor()
+            if data.api_key is not None:
+                cursor.execute(
+                    "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
+                    (data.api_key,),
+                )
+            if data.usage_limit is not None:
+                cursor.execute(
+                    "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
+                    (str(data.usage_limit),),
+                )
+            db.commit()
         _invalidate_cache("personality:llm-config")
         return {"message": "LLM config updated"}
     except pymysql.Error as e:

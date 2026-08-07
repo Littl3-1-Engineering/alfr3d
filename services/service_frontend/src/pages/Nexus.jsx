@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import Lottie from 'lottie-react';
 import { API_BASE_URL } from '../config';
 import Core from '../components/Core';
 import SituationalAwareness from '../components/SituationalAwareness';
@@ -8,6 +9,7 @@ import OnlineUsers from '../components/OnlineUsers';
 import GuestRoster from '../components/GuestRoster';
 import ContainerHealth from '../components/ContainerHealth';
 import EventStream from '../components/EventStream';
+import ResidentsSummary from '../components/ResidentsSummary';
  import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
  import TacticalPanelVariant2 from '../components/TacticalPanelVariant2';
  import TacticalPanelVariant3 from '../components/TacticalPanelVariant3';
@@ -17,6 +19,102 @@ import WeatherPanel from '../components/WeatherPanel';
 import CalendarPanel from '../components/CalendarPanel';
 import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
 import ProjectTreeViz from '../components/ProjectTreeViz';
+import ErrorBoundary from '../components/ErrorBoundary';
+import CameraStream from '../components/CameraStream';
+import { boot } from '../utils/themes';
+
+const BOOT_MESSAGES = [
+  { msg: '[ OK ] Loading kernel modules...', delay: 200 },
+  { msg: '[ OK ] Initializing network stack...', delay: 400 },
+  { msg: '[WARN] ALFR3D firewall rules: 3 active, 2 legacy', delay: 600 },
+  { msg: '[ OK ] Mounting filesystems...', delay: 900 },
+  { msg: '[INFO] Scan root: /project (max depth: 3)', delay: 1100 },
+  { msg: '[ OK ] Starting container orchestration...', delay: 1400 },
+  { msg: '[ OK ] Establishing websocket gateway...', delay: 1700 },
+  { msg: '[INFO] Device registry: 12 registered, 8 online', delay: 2000 },
+  { msg: '[ OK ] Initializing sensor fusion pipeline...', delay: 2300 },
+  { msg: '[INFO] Core temperature: nominal', delay: 2600 },
+  { msg: '[ OK ] Nexus subsystems: all green', delay: 2900 },
+  { msg: '[ OK ] ALFR3D Nexus ready.', delay: 3200 },
+];
+
+const NexusLoader = () => {
+  const [animationData, setAnimationData] = useState(null);
+  const [logIndex, setLogIndex] = useState(0);
+  const [glitch, setGlitch] = useState(false);
+  const logEndRef = useRef(null);
+
+  useEffect(() => {
+    fetch('/assets/lottie/logo.json')
+      .then(r => r.json())
+      .then(setAnimationData)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (logIndex < BOOT_MESSAGES.length) {
+      const timer = setTimeout(() => setLogIndex(i => i + 1), BOOT_MESSAGES[logIndex].delay);
+      return () => clearTimeout(timer);
+    }
+  }, [logIndex]);
+
+  useEffect(() => {
+    const glitchInterval = setInterval(() => {
+      setGlitch(true);
+      setTimeout(() => setGlitch(false), 150);
+    }, 4000 + Math.random() * 3000);
+    return () => clearInterval(glitchInterval);
+  }, []);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logIndex]);
+
+  return (
+    <div className="min-h-screen p-8 bg-boot-bg flex flex-col items-center justify-center relative overflow-hidden">
+      <div className="boot-scanline" />
+      <div
+        className={`relative z-10 flex flex-col items-center ${glitch ? 'boot-glitch' : ''}`}
+        style={glitch ? { animation: 'boot-glitch 0.15s ease-in-out' } : undefined}
+      >
+        <div className="w-40 h-40 mb-4">
+          {animationData && (
+            <Lottie animationData={animationData} loop autoplay />
+          )}
+        </div>
+        <div className="w-[420px] max-w-full">
+          <div className="bg-black/60 border border-boot-cyan/30 rounded p-4 font-mono text-xs min-h-[260px] max-h-[320px] overflow-y-auto">
+            {BOOT_MESSAGES.slice(0, logIndex + 1).map((m, i) => {
+              const isWarn = m.msg.startsWith('[WARN]');
+              const isInfo = m.msg.startsWith('[INFO]');
+              const isReady = m.msg.includes('ready.');
+              return (
+                <p
+                  key={i}
+                  className="boot-log-line whitespace-nowrap"
+                  style={{
+                    color: isReady ? boot.cyan : isWarn ? boot.orange : isInfo ? boot.gray : boot.silver,
+                    animationDelay: '0s',
+                  }}
+                >
+                  <span style={{ color: isWarn ? boot.orange : isInfo ? boot.gray : boot.cyan }}>{'>'}</span>{' '}
+                  {m.msg}
+                </p>
+              );
+            })}
+            {logIndex <= BOOT_MESSAGES.length - 1 && (
+              <span className="inline-block w-2 h-4 bg-boot-cyan ml-1 align-middle" style={{ animation: 'boot-cursor-blink 1s step-end infinite' }} />
+            )}
+            <div ref={logEndRef} />
+          </div>
+          <p className="text-center text-[10px] text-boot-cyan/50 font-mono mt-2 tracking-widest uppercase">
+            Initializing nexus...
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Nexus = () => {
   const [systemHealth] = useState('cyan');
@@ -26,32 +124,50 @@ const Nexus = () => {
     weather: false,
     calendar: false,
     containerHealth: false,
-    projectTree: false
+    projectTree: false,
+    camera: false
   });
 
   const fetchJson = (url) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
 
   const { data: weather, error: weatherError } = useQuery({ queryKey: ['weather'], queryFn: () => fetchJson(`${API_BASE_URL}/api/weather`), staleTime: 5 * 60 * 1000 });
-  const { data: calendarEvents, error: calendarError } = useQuery({ queryKey: ['calendar-events'], queryFn: () => fetchJson(`${API_BASE_URL}/api/calendar/events`), staleTime: 5 * 60 * 1000 });
   const { data: containers, error: containersError } = useQuery({ queryKey: ['containers'], queryFn: () => fetchJson(`${API_BASE_URL}/api/containers`), staleTime: 5 * 60 * 1000 });
   const { data: devices, error: devicesError } = useQuery({ queryKey: ['devices'], queryFn: () => fetchJson(`${API_BASE_URL}/api/devices`), staleTime: 5 * 60 * 1000 });
   const { data: onlineUsers, error: usersError } = useQuery({ queryKey: ['online-users'], queryFn: () => fetchJson(`${API_BASE_URL}/api/users?online=true`), staleTime: 5 * 60 * 1000 });
   const { data: location, error: locationError } = useQuery({ queryKey: ['location'], queryFn: () => fetchJson(`${API_BASE_URL}/api/environment`), staleTime: 5 * 60 * 1000 });
 
-  const anyError = weatherError || calendarError || containersError || devicesError || usersError || locationError;
-  const isLoading = !anyError && (weather === undefined || calendarEvents === undefined || containers === undefined || devices === undefined || onlineUsers === undefined || location === undefined);
+  const hasData = weather !== undefined && containers !== undefined && devices !== undefined && onlineUsers !== undefined && location !== undefined;
+  const anyError = weatherError || containersError || devicesError || usersError || locationError;
+  const allFailed = weatherError && containersError && devicesError && usersError && locationError;
+  const isLoading = !hasData && !anyError;
 
   const filterGuests = (users) => {
     if (!users) return [];
     return users.filter(user => user.type === 'guest');
   };
 
-  if (isLoading) {
+  const filterResidents = (users) => {
+    if (!users) return [];
+    return users.filter(user => user.state === 'online' && ['technoking', 'owner', 'resident'].includes(user.type));
+  };
+
+  if (allFailed) {
     return (
-      <div className="min-h-screen p-8 bg-fui-bg flex items-center justify-center">
-        <p className="text-fui-accent font-mono uppercase text-xl">INITIALIZING NEXUS...</p>
+      <div className="min-h-screen p-8 bg-fui-bg flex flex-col items-center justify-center">
+        <p className="text-fui-accent font-mono uppercase text-xl mb-4">NEXUS OFFLINE</p>
+        <p className="text-fui-text font-mono text-sm mb-2">Unable to connect to backend services</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 px-6 py-2 border border-fui-accent text-fui-accent font-mono uppercase text-sm hover:bg-fui-accent hover:text-black transition-colors"
+        >
+          RETRY
+        </button>
       </div>
     );
+  }
+
+  if (isLoading) {
+    return <NexusLoader />;
   }
 
   return (
@@ -61,7 +177,7 @@ const Nexus = () => {
       transition={{ duration: 0.8 }}
       className="min-h-screen p-8 bg-fui-bg relative"
       style={{
-        backgroundImage: "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+        backgroundImage: "linear-gradient(to right, var(--theme-tactical-grid) 1px, transparent 1px), linear-gradient(to bottom, var(--theme-tactical-grid) 1px, transparent 1px)",
         backgroundSize: '20px 20px'
       }}
     >
@@ -74,6 +190,10 @@ const Nexus = () => {
         >
           ALFR3D Nexus
         </motion.h1>
+
+            <div className="mb-6">
+              <ResidentsSummary residents={filterResidents(onlineUsers).length} guests={filterGuests(onlineUsers).length} />
+            </div>
 
             <div className="flex justify-center">
                 <div className="grid gap-8 grid-cols-1 md:grid-cols-[300px_450px_300px]">
@@ -159,7 +279,7 @@ const Nexus = () => {
             tabIndex={2}
           >
 <TacticalPanelVariant3 title="C4lendar">
-              <CalendarPanel initialEvents={calendarEvents?.events} initialTimezone={calendarEvents?.timezone} />
+              <CalendarPanel />
             </TacticalPanelVariant3>
          </CollapsibleSidePanel>
 
@@ -185,8 +305,23 @@ const Nexus = () => {
             tabIndex={1}
           >
             <TacticalPanelVariant1 title="Pr0j3ct Tr33">
-              <ProjectTreeViz />
+              <ErrorBoundary>
+                <ProjectTreeViz />
+              </ErrorBoundary>
             </TacticalPanelVariant1>
+          </CollapsibleSidePanel>
+
+          <CollapsibleSidePanel
+            position="right"
+            title="C4M3R4"
+            isOpen={openPanels.camera}
+            onToggle={() => setOpenPanels(prev => ({ ...prev, camera: !prev.camera }))}
+            onClose={() => setOpenPanels(prev => ({ ...prev, camera: false }))}
+            tabIndex={2}
+          >
+            <TacticalPanelVariant2 title="Cam3ra Str3am">
+              <CameraStream />
+            </TacticalPanelVariant2>
           </CollapsibleSidePanel>
       </div>
     </motion.div>
