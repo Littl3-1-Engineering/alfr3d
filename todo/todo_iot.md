@@ -201,6 +201,7 @@ Devices integrated via HA should be matched to devices in the `device` table. Un
 - `Blueprint.jsx` now merges only linked IoT devices (`mergeWithIot` filters `iot.linked`) — unlinked HA devices no longer flood the Domain/Blueprint page
 - Removed dead unlinked-warning UI + unused `AlertTriangle` import from Blueprint.jsx
 - Cleanup migration `setup/migration_016_iot_device_cleanup.sql` (alembic `0017`) deletes existing auto-created device rows (IP='0.0.0.0') and unlinks them, respecting FK order (device_history → smarthome_devices → device)
+- ✅ Migration `0017` applied to live DB on 2026-08-07 (`docker compose run --rm migrate`) — 0 junk rows remain; `0001_baseline` made idempotent so `migrate` passes on existing DBs
 
 ### Notes
 - Unlinked HA devices are still managed/linkable in Domain → Devices → SMARTHOME DEVICES (DeviceRegistry keeps showing all)
