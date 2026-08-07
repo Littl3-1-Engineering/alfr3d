@@ -68,18 +68,8 @@ Animated D3.js force-directed tree visualization of the ALFR3D project structure
 - [x] Add search/filter functionality to find files quickly
 - [x] Add zoom controls (zoom in/out/reset buttons)
 - [x] Hide filenames by default, show on hover
-- [ ] Optimize for large directories (virtualization or level limits)
+- [x] Optimize for large directories (virtualization or level limits) — `MAX_VISIBLE_NODES=200` cap, auto-collapse at depth≥2, lazy `fetchChildren` on click, backend `max_depth=3` default
 
 ---
 
-## Acceptance Criteria
-
-- [x] Tree displays full project structure (excluding gitignore patterns)
-- [x] Gentle swaying animation at 60fps
-- [x] Cyan glowing nodes, yellow file leaves
-- [x] Glassmorphism styling with blur effect
-- [x] Hover shows tooltip with path/size
-- [x] Click expands/collapses nodes
-- [x] Real-time updates via WebSocket (polling every 10s)
-- [x] Fetches data on component mount
-- [x] Works in collapsible side panel
+## All criteria met — ✅ Complete
