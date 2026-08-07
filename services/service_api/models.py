@@ -38,11 +38,13 @@ class DeviceUpdate(BaseModel):
 class QuipCreate(BaseModel):
     type: str
     quips: str
+    category: Optional[str] = "custom"
 
 
 class QuipUpdate(BaseModel):
     type: str
     quips: str
+    category: Optional[str] = "custom"
 
 
 class EnvironmentUpdate(BaseModel):
@@ -66,6 +68,8 @@ class RoutineCreate(BaseModel):
     enabled: int = 1
     recurrence: str = "daily"
     actions: List[Dict[str, Any]] = []
+    triggers: List[Dict[str, Any]] = []
+    conditions: List[Dict[str, Any]] = []
 
 
 class RoutineUpdate(BaseModel):
@@ -74,6 +78,8 @@ class RoutineUpdate(BaseModel):
     enabled: Optional[int] = None
     recurrence: Optional[str] = None
     actions: Optional[List[Dict[str, Any]]] = None
+    triggers: Optional[List[Dict[str, Any]]] = None
+    conditions: Optional[List[Dict[str, Any]]] = None
 
 
 class PersonalityUpdate(BaseModel):
@@ -98,6 +104,7 @@ class ContextUpdate(BaseModel):
 class LLMConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     usage_limit: Optional[int] = None
+    model: Optional[str] = None
 
 
 class HAControl(BaseModel):

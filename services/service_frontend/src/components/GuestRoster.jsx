@@ -7,7 +7,7 @@ import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
 import socket from '../utils/socket';
 
-const GuestRoster = ({ initialGuests = null, pollInterval = 5000 }) => {
+const GuestRoster = ({ initialGuests = null }) => {
   const navigate = useNavigate();
   const [guests, setGuests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -15,7 +15,7 @@ const GuestRoster = ({ initialGuests = null, pollInterval = 5000 }) => {
   const hasLoadedInitially = useRef(false);
 
   const filterGuests = (users) => {
-    return users.filter(user => user.type === 'guest');
+    return users.filter(user => user.type === 'guest' && user.state === 'online');
   };
 
   const fetchGuests = async () => {
@@ -53,7 +53,6 @@ const GuestRoster = ({ initialGuests = null, pollInterval = 5000 }) => {
     } else {
       fetchGuests();
     }
-    const guestTimer = setInterval(fetchGuests, pollInterval);
 
     const handleUsersUpdate = (users) => {
       const onlineGuestUsers = filterGuests(users);
@@ -64,7 +63,6 @@ const GuestRoster = ({ initialGuests = null, pollInterval = 5000 }) => {
     socket.on('users', handleUsersUpdate);
 
     return () => {
-      clearInterval(guestTimer);
       socket.off('users', handleUsersUpdate);
     };
   }, []);

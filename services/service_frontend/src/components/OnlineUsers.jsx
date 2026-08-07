@@ -7,7 +7,7 @@ import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
 import socket from '../utils/socket';
 
-const OnlineUsers = ({ initialResidents = null, pollInterval = 5000 }) => {
+const OnlineUsers = ({ initialResidents = null }) => {
   const navigate = useNavigate();
   const [residents, setResidents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -16,7 +16,7 @@ const OnlineUsers = ({ initialResidents = null, pollInterval = 5000 }) => {
   const hasLoadedInitially = useRef(false);
 
   const filterResidents = (users) => {
-    return users.filter(user => ['technoking', 'owner', 'resident'].includes(user.type));
+    return users.filter(user => user.state === 'online' && ['technoking', 'owner', 'resident'].includes(user.type));
   };
 
   const fetchResidents = async () => {
@@ -54,7 +54,6 @@ const OnlineUsers = ({ initialResidents = null, pollInterval = 5000 }) => {
     } else {
       fetchResidents();
     }
-    const residentTimer = setInterval(fetchResidents, pollInterval);
 
     const handleUsersUpdate = (users) => {
       const onlineResidents = filterResidents(users);
@@ -65,7 +64,6 @@ const OnlineUsers = ({ initialResidents = null, pollInterval = 5000 }) => {
     socket.on('users', handleUsersUpdate);
 
     return () => {
-      clearInterval(residentTimer);
       socket.off('users', handleUsersUpdate);
     };
   }, []);
