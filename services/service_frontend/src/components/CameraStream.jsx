@@ -1,63 +1,106 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Camera, RefreshCw, AlertTriangle, Image } from 'lucide-react';
+import Hls from 'hls.js';
 import { API_BASE_URL } from '../config';
 
+const HLS_BASE = `${API_BASE_URL}/api/stream/hls`;
+const PLAYLIST_URL = `${HLS_BASE}/index.m3u8`;
 const SNAPSHOT_URL = `${API_BASE_URL}/api/stream/camera/snapshot`;
 
 const CameraStream = () => {
   const [status, setStatus] = useState('loading');
   const [showStream, setShowStream] = useState(true);
   const [snapshotUrl, setSnapshotUrl] = useState(null);
-  const intervalRef = useRef(null);
-  const imgRef = useRef(null);
+  const videoRef = useRef(null);
+  const hlsRef = useRef(null);
   const statusRef = useRef('loading');
 
-  const scheduleNextRef = useRef(null);
-
-  const cleanup = useCallback(() => {
-    if (scheduleNextRef.current) clearTimeout(scheduleNextRef.current);
-    scheduleNextRef.current = null;
+  const setStatusBoth = useCallback((next) => {
+    statusRef.current = next;
+    setStatus(next);
   }, []);
 
-  const scheduleNext = useCallback(() => {
-    cleanup();
-    scheduleNextRef.current = setTimeout(() => {
-      if (imgRef.current) {
-        imgRef.current.src = `${SNAPSHOT_URL}?_=${Date.now()}`;
-      }
-    }, 500);
-  }, [cleanup]);
-
-  const startPolling = useCallback(() => {
-    cleanup();
-    statusRef.current = 'loading';
-    setStatus('loading');
-    if (imgRef.current) {
-      imgRef.current.src = `${SNAPSHOT_URL}?_=${Date.now()}`;
+  const destroyHls = useCallback(() => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
-  }, [cleanup]);
+    const video = videoRef.current;
+    if (video) {
+      video.removeAttribute('src');
+      if (typeof video.load === 'function') video.load();
+    }
+  }, []);
+
+  const startBackend = useCallback(async () => {
+    try {
+      const res = await fetch(`${HLS_BASE}/start`, { method: 'POST' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const stopBackend = useCallback(async () => {
+    try {
+      await fetch(`${HLS_BASE}/stop`, { method: 'POST' });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const attach = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    destroyHls();
+    if (Hls.isSupported()) {
+      const hls = new Hls({ liveDurationInfinity: true });
+      hlsRef.current = hls;
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setStatusBoth('connected');
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) {
+          setStatusBoth('error');
+          destroyHls();
+        }
+      });
+      hls.loadSource(PLAYLIST_URL);
+      hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = PLAYLIST_URL;
+      video.addEventListener('loadedmetadata', () => {
+        setStatusBoth('connected');
+        video.play().catch(() => {});
+      });
+    } else {
+      setStatusBoth('error');
+    }
+  }, [destroyHls, setStatusBoth]);
+
+  const connect = useCallback(async () => {
+    setStatusBoth('loading');
+    destroyHls();
+    const ok = await startBackend();
+    if (!ok) {
+      setStatusBoth('error');
+      return;
+    }
+    attach();
+  }, [attach, destroyHls, setStatusBoth, startBackend]);
 
   useEffect(() => {
-    startPolling();
-    return () => cleanup();
-  }, [startPolling, cleanup]);
+    connect();
+    return () => {
+      destroyHls();
+      stopBackend();
+    };
+  }, [connect, destroyHls, stopBackend]);
 
   const reconnect = useCallback(() => {
-    startPolling();
-  }, [startPolling]);
-
-  const handleLoad = () => {
-    if (statusRef.current === 'loading') {
-      setStatus('connected');
-      statusRef.current = 'connected';
-    }
-    scheduleNext();
-  };
-
-  const handleError = () => {
-    setStatus('error');
-    statusRef.current = 'error';
-  };
+    connect();
+  }, [connect]);
 
   const captureSnapshot = async () => {
     try {
@@ -145,12 +188,12 @@ const CameraStream = () => {
           </div>
         ) : (
           <div className="relative border border-fui-border bg-black/40">
-            <img
-              ref={imgRef}
-              alt="Camera stream"
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
               className="w-full h-auto"
-              onLoad={handleLoad}
-              onError={handleError}
               style={{ minHeight: '120px' }}
             />
             {status === 'loading' && (
