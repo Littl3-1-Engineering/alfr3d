@@ -1,46 +1,23 @@
 import { useState, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 
-const CalendarPanel = ({ initialEvents = null, initialTimezone = null, pollInterval = 300000 }) => {
-  const [events, setEvents] = useState(initialEvents || []);
-  const [isLoading, setIsLoading] = useState(!initialEvents);
+const CalendarPanel = ({ initialTimezone = null }) => {
+  const [events, setEvents] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
   const [currentDate] = useState(new Date());
 
-  const fetchEvents = async () => {
-    try {
-      setError(false);
-      const response = await fetch(`${API_BASE_URL}/api/calendar/events`);
-      if (response.ok) {
-        const data = await response.json();
-        setEvents(data);
-      } else {
-        setError(true);
-      }
-    } catch (error) {
-      console.error('Failed to fetch calendar events:', error);
-      setError(true);
-    }
-  };
-
   useEffect(() => {
-    if (!initialEvents) {
-      fetchEvents().finally(() => setIsLoading(false));
-    }
-    const eventTimer = setInterval(fetchEvents, pollInterval);
-
-    const handleEventsUpdate = (data) => {
-      setEvents(data);
+    const handleCalendarUpdate = (data) => {
+      setEvents(data.events || []);
       setIsLoading(false);
     };
 
-    socket.on('events', handleEventsUpdate);
+    socket.on('calendar_events', handleCalendarUpdate);
 
     return () => {
-      clearInterval(eventTimer);
-      socket.off('events', handleEventsUpdate);
+      socket.off('calendar_events', handleCalendarUpdate);
     };
   }, []);
 
