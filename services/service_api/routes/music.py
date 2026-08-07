@@ -89,6 +89,23 @@ async def play(data: dict = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/music/spotify/audio-analysis/{track_id}")
+async def get_track_analysis(track_id: str):
+    """Trimmed audio-analysis (segments + timing) used by the visualizer."""
+    try:
+        analysis, err = spotify_utils.get_audio_analysis(track_id)
+        if err:
+            status = (err.get("error") or {}).get("status", 500)
+            detail = (err.get("error") or {}).get("message", "Failed to fetch analysis")
+            raise HTTPException(status_code=status, detail=detail)
+        return analysis
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching audio analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/music/spotify/pause")
 async def pause():
     try:
