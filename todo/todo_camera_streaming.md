@@ -58,8 +58,10 @@
 
 ## Implementation Notes
 - RTSP source: `c200` camera at `192.168.2.226`
-- HLS uses `-c copy` remux (no transcode) — requires the camera to emit H.264 video;
-  if the source is H.265 or has unsupported audio, switch to transcode
+- HLS uses `-c:v copy` remux (no video transcode) + `-c:a aac` audio transcode. The
+  camera emits **PCM ALAW** audio which browsers cannot decode when muxed raw into
+  MPEG-TS (hls.js showed a black frame); transcoding audio to AAC fixes playback.
+  If the source is H.265, switch to full transcode
   (`-c:v libx264 -preset veryfast -tune zerolatency -c:a aac`)
 - FFmpeg must be installed inside the service_api image for transcoding
 - `todo_iot.md` Phase 15 covers device registration — this builds on top of that

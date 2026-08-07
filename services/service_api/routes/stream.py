@@ -204,7 +204,7 @@ async def start_hls():
             "-rtsp_transport", "tcp",
             "-i", CAMERA_URL,
             "-c:v", "copy",
-            "-c:a", "copy",
+            "-c:a", "aac",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_TIME),
             "-hls_list_size", str(HLS_LIST_SIZE),
