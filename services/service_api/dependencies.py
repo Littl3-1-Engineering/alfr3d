@@ -144,6 +144,7 @@ def _fetch_quips():
 
 def _fetch_routines():
     import pymysql
+
     db = get_connection()
     cursor = db.cursor(pymysql.cursors.DictCursor)
     cursor.execute(
@@ -166,6 +167,7 @@ def _fetch_routines():
 
 def _fetch_personality():
     import pymysql
+
     env_id = get_environment_id()
     db = get_connection()
     cursor = db.cursor(pymysql.cursors.DictCursor)
@@ -190,11 +192,13 @@ def _fetch_personality():
             "verbal_tics": row["verbal_tics"] or "",
         }
     from fastapi import HTTPException
+
     raise HTTPException(status_code=404, detail="Personality not found")
 
 
 def _fetch_personality_presets():
     import pymysql
+
     db = get_connection()
     cursor = db.cursor(pymysql.cursors.DictCursor)
     cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
@@ -217,7 +221,6 @@ def _fetch_personality_presets():
 
 
 def _fetch_devices():
-    import pymysql
     db = get_connection()
     cursor = db.cursor()
     cursor.execute(
@@ -244,9 +247,7 @@ def _fetch_devices():
             "user": row[6],
             "last_online": row[7].isoformat() if row[7] else None,
             "position": (
-                {"x": row[8], "y": row[9]}
-                if row[8] is not None and row[9] is not None
-                else None
+                {"x": row[8], "y": row[9]} if row[8] is not None and row[9] is not None else None
             ),
         }
         for row in cursor.fetchall()
@@ -256,7 +257,6 @@ def _fetch_devices():
 
 
 def _fetch_users():
-    import pymysql
     db = get_connection()
     cursor = db.cursor()
     cursor.execute(
@@ -354,6 +354,7 @@ def _fetch_environment():
 
 def _fetch_context():
     import pymysql
+
     env_id = get_environment_id()
     db = get_connection()
     cursor = db.cursor(pymysql.cursors.DictCursor)
