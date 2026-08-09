@@ -143,3 +143,29 @@ def test_environment_service_frontend_integration(mock_connection, frontend_clie
 
     data = response.json()
     assert isinstance(data, list)
+
+
+@patch("services.service_environment.weather_util.ALFR3D_ENV_NAME", "test")
+def test_update_routines_does_not_reset_triggered():
+    """Test update_routines syncs sun times but leaves the triggered flag alone."""
+    import weather_util
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    # environment row with id 1
+    mock_cursor.fetchone.return_value = (1, "test")
+    # both Sunrise and Sunset routines already exist
+    mock_cursor.fetchall.return_value = [("Sunrise",), ("Sunset",)]
+
+    weather_data = {
+        "sys": {"sunrise": 1723050000, "sunset": 1723094400},
+        "timezone": -14400,
+    }
+
+    result = weather_util.update_routines(mock_db, mock_cursor, weather_data)
+
+    assert result is True
+    update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE routines" in c[0][0]]
+    assert len(update_calls) == 1
+    assert "triggered" not in update_calls[0][0][0]
+    mock_db.commit.assert_called()

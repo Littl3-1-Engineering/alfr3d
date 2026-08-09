@@ -276,10 +276,12 @@ def update_routines(db, cursor, weatherData):
                 ),
             )
 
-        # Update times for both routines
+        # Update times for both routines. Do NOT touch the triggered flag here:
+        # routines are only re-armed once per day by the daemon at local midnight,
+        # otherwise every weather refresh would re-fire them.
         cursor.execute(
             "UPDATE routines SET time = CASE name WHEN 'Sunrise' THEN %s "
-            "WHEN 'Sunset' THEN %s END, triggered = 0 WHERE name IN ('Sunrise', 'Sunset') "
+            "WHEN 'Sunset' THEN %s END WHERE name IN ('Sunrise', 'Sunset') "
             "AND environment_id = %s",
             (
                 sunrise_trig.strftime("%H:%M:%S"),
