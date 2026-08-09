@@ -33,6 +33,7 @@ import logging
 import orjson
 import pymysql as MySQLdb
 from datetime import timedelta
+from random import randint
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
 from common import get_producer, db_utils, ha_utils, spotify_utils, audio_cast  # noqa: E402
@@ -51,6 +52,24 @@ MYSQL_DB = os.environ.get("MYSQL_NAME") or "alfr3d_db"
 MYSQL_USER = os.environ.get("MYSQL_USER") or "user"
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD") or "password"
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
+
+# Routine names to quip types. These quips are only spoken by their matching routines.
+ROUTINE_QUIP_TYPES = {"Sunrise": "sunrise", "Sunset": "sunset", "Bedtime": "bedtime"}
+
+
+def _get_routine_quip(cursor, quip_type):
+    """Fetch a random quip of the given routine type using the routine's DB cursor."""
+    cursor.execute("SELECT MAX(id) FROM quips WHERE type = %s", (quip_type,))
+    max_row = cursor.fetchone()
+    if not max_row or not max_row[0]:
+        return None
+    random_id = randint(1, max_row[0])
+    cursor.execute(
+        "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1",
+        (random_id, quip_type),
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def execute_actions(actions_json):
@@ -475,6 +494,18 @@ def check_routines() -> bool:
 
         if should_trigger:
             logger.info(routine_name + " routine is being triggered")
+            quip_type = ROUTINE_QUIP_TYPES.get(routine_name)
+            if quip_type:
+                quip = _get_routine_quip(cursor, quip_type)
+                if quip:
+                    producer = get_producer()
+                    if producer:
+                        producer.send(
+                            "speak",
+                            orjson.dumps({"text": quip, "skip_personality": True}),
+                        )
+                        producer.flush()
+                        logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")
             if actions:
                 executed = execute_actions(actions)
                 logger.info(f"Executed {executed} actions for routine {routine_name}")
