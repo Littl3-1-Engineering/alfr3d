@@ -5,7 +5,14 @@ from fastapi import APIRouter, HTTPException
 import orjson
 import pymysql
 
-from dependencies import get_connection, get_producer, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern, normalize_time, ALFR3D_ENV_NAME
+from dependencies import (
+    get_connection,
+    get_producer,
+    _get_cached_or_fetch,
+    _invalidate_cache,
+    normalize_time,
+    ALFR3D_ENV_NAME,
+)
 from models import RoutineCreate, RoutineUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -16,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["routines"])
 async def get_routines():
     try:
         from dependencies import _fetch_routines
+
         cache_key = f"routines:{ALFR3D_ENV_NAME}"
         return _get_cached_or_fetch(cache_key, lambda: _fetch_routines())
     except Exception as e:
