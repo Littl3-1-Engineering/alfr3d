@@ -4,7 +4,6 @@ import asyncio
 import os
 import sys
 import logging
-import subprocess
 from contextlib import asynccontextmanager
 
 import orjson
@@ -19,7 +18,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from tree_of_alfr3d import project_tree_router, start_file_watcher_task, set_manager
 
 from dependencies import (
-    manager, recent_events, recent_sa, KAFKA_URL,
+    manager,
+    recent_events,
+    recent_sa,
+    KAFKA_URL,
 )
 from routes.users import router as users_router
 from routes.devices import router as devices_router

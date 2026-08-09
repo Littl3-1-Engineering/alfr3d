@@ -4,7 +4,14 @@ import logging
 from fastapi import APIRouter, HTTPException
 import pymysql
 
-from dependencies import get_connection, get_cache, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern, manager, ALFR3D_ENV_NAME
+from dependencies import (
+    get_connection,
+    get_cache,
+    _get_cached_or_fetch,
+    _invalidate_cache_pattern,
+    manager,
+    ALFR3D_ENV_NAME,
+)
 from models import DeviceCreate, DeviceUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -15,6 +22,7 @@ router = APIRouter(prefix="/api", tags=["devices"])
 async def get_devices():
     try:
         from dependencies import _fetch_devices
+
         devices = _get_cached_or_fetch(f"api:devices:{ALFR3D_ENV_NAME}", _fetch_devices, ttl=120)
         await manager.broadcast("devices", devices)
         return devices
