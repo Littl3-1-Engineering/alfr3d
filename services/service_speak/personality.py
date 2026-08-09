@@ -9,6 +9,10 @@ from common import get_connection, db_utils  # noqa: E402
 
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", "default")
 
+# Quip types reserved for their matching routines (Sunrise/Sunset/Bedtime).
+# They must not be picked randomly by the personality system.
+ROUTINE_QUIP_TYPES = {"sunrise", "sunset", "bedtime"}
+
 logger = logging.getLogger(__name__)
 
 
@@ -466,6 +470,10 @@ User request: """
 
 
 def select_quip_by_traits(quips, traits):
+    if not quips:
+        return None
+
+    quips = [q for q in quips if q.get("type", "").lower() not in ROUTINE_QUIP_TYPES]
     if not quips:
         return None
 

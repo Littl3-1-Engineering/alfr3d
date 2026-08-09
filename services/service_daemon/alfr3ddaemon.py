@@ -139,8 +139,13 @@ def consume_integrations() -> None:
 
 class MyDaemon:
     def run(self):
+        last_reset_date = None
         while True:
             schedule.run_pending()  # Execute any pending scheduled tasks
+            local_today = db_utils.get_env_local_time(ENV_NAME).date()
+            if last_reset_date is not None and local_today != last_reset_date:
+                reset_routines()
+            last_reset_date = local_today
             self.scan_devices()
             self.check_routines()
             if not self.check_mute_status():
@@ -613,11 +618,11 @@ def init_daemon():
             }
             p.send("event-stream", orjson.dumps(event))
         # utilities.createRoutines()
-        reset_routines()
+        # Routine flags are reset once per day by run() when the environment's
+        # local date rolls over (see MyDaemon.run), not at container UTC midnight.
 
         # "8.30" in the following function is just a placeholder
         # until i deploy a more configurable alarm clock
-        schedule.every().day.at("00:05").do(reset_routines)
         schedule.every(4).hours.do(check_weather_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)

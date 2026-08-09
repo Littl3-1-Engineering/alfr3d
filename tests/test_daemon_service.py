@@ -271,6 +271,113 @@ class TestUtilRoutines:
 
         assert result is False
 
+    def test_get_routine_quip_returns_matching_quip(self):
+        """Test routine quips are only fetched from the matching quip type."""
+        from services.service_daemon.utils.util_routines import _get_routine_quip
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.side_effect = [(42,), ("yet another sunset",)]
+
+        result = _get_routine_quip(mock_cursor, "sunset")
+
+        assert result == "yet another sunset"
+        calls = [c[0][0] for c in mock_cursor.execute.call_args_list]
+        assert "MAX(id)" in calls[0] and "type = %s" in calls[1]
+
+    def test_get_routine_quip_returns_none_when_no_quips(self):
+        """Test routine quip returns None when the type has no entries."""
+        from services.service_daemon.utils.util_routines import _get_routine_quip
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.side_effect = [(None,)]
+
+        result = _get_routine_quip(mock_cursor, "sunset")
+
+        assert result is None
+
+
+class TestDaemonRunLoop:
+    """Tests for the daemon's main run loop routine reset behavior."""
+
+    @patch.dict(
+        os.environ,
+        {
+            "MYSQL_DATABASE": "test_host",
+            "MYSQL_USER": "root",
+            "MYSQL_PSWD": "testrootpassword",
+            "MYSQL_NAME": "test_alfr3d_db",
+            "ALFR3D_ENV_NAME": "test_env",
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        },
+    )
+    @patch("services.service_daemon.alfr3ddaemon.schedule.run_pending")
+    @patch("services.service_daemon.alfr3ddaemon.time.sleep", side_effect=[None, Exception("stop")])
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    @patch("services.service_daemon.alfr3ddaemon.reset_routines")
+    def test_run_resets_routines_on_local_day_change(
+        self, mock_reset, mock_get_local_time, mock_sleep, mock_run_pending
+    ):
+        """Test routines are re-armed only when the env-local date rolls over."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        day1 = datetime(2026, 8, 7, 14, 0)
+        day2 = datetime(2026, 8, 8, 0, 10)
+        mock_get_local_time.side_effect = [day1, day2]
+
+        with patch.object(MyDaemon, "scan_devices"), patch.object(
+            MyDaemon, "check_routines"
+        ), patch.object(MyDaemon, "check_mute_status", return_value=True), patch.object(
+            MyDaemon, "perform_waking_hours_tasks"
+        ), patch.object(
+            MyDaemon, "check_situational_awareness"
+        ):
+            daemon = MyDaemon()
+            try:
+                daemon.run()
+            except Exception:
+                pass
+
+        mock_reset.assert_called_once()
+
+    @patch.dict(
+        os.environ,
+        {
+            "MYSQL_DATABASE": "test_host",
+            "MYSQL_USER": "root",
+            "MYSQL_PSWD": "testrootpassword",
+            "MYSQL_NAME": "test_alfr3d_db",
+            "ALFR3D_ENV_NAME": "test_env",
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        },
+    )
+    @patch("services.service_daemon.alfr3ddaemon.schedule.run_pending")
+    @patch("services.service_daemon.alfr3ddaemon.time.sleep", side_effect=[None, Exception("stop")])
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    @patch("services.service_daemon.alfr3ddaemon.reset_routines")
+    def test_run_does_not_reset_within_same_local_day(
+        self, mock_reset, mock_get_local_time, mock_sleep, mock_run_pending
+    ):
+        """Test routines are not reset multiple times within the same local day."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        now = datetime(2026, 8, 7, 14, 0)
+        mock_get_local_time.side_effect = [now, now]
+
+        with patch.object(MyDaemon, "scan_devices"), patch.object(
+            MyDaemon, "check_routines"
+        ), patch.object(MyDaemon, "check_mute_status", return_value=True), patch.object(
+            MyDaemon, "perform_waking_hours_tasks"
+        ), patch.object(
+            MyDaemon, "check_situational_awareness"
+        ):
+            daemon = MyDaemon()
+            try:
+                daemon.run()
+            except Exception:
+                pass
+
+        mock_reset.assert_not_called()
+
     @patch.dict(
         os.environ,
         {
