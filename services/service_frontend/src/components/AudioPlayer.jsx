@@ -162,22 +162,6 @@ const AudioPlayer = () => {
   };
 
   useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        const response = await fetch(API_BASE_URL + '/api/events');
-        const events = await response.json();
-        processAudioEvents(events);
-      } catch (error) {
-        console.error('Error fetching events for audio:', error);
-      }
-    };
-
-    fetchEvents();
-    const interval = setInterval(fetchEvents, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
     socket.on('events', (events) => {
       processAudioEvents(events);
     });

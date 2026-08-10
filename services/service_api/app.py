@@ -4,13 +4,16 @@ import asyncio
 import os
 import sys
 import logging
+import queue
+import subprocess
+import threading
 from contextlib import asynccontextmanager
 
 import orjson
 import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.gzip import GZipMiddleware
+
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
@@ -18,22 +21,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from tree_of_alfr3d import project_tree_router, start_file_watcher_task, set_manager
 
 from dependencies import (
-    manager,
-    recent_events,
-    recent_sa,
-    KAFKA_URL,
+    manager, recent_events, recent_sa, KAFKA_URL, _fetch_users, _fetch_devices,
 )
 from routes.users import router as users_router
 from routes.devices import router as devices_router
 from routes.quips import router as quips_router
-from routes.environment import router as environment_router
+from routes.environment import router as environment_router, broadcast_calendar_events
 from routes.integrations import router as integrations_router
 from routes.audio import router as audio_router
 from routes.events import router as events_router
 from routes.containers import router as containers_router, collect_container_metrics
 from routes.routines import router as routines_router
 from routes.personality import router as personality_router
-from routes.iot import router as iot_router
+from routes.iot import router as iot_router, broadcast_iot_devices
+from routes.stream import router as stream_router
+from routes.health import router as health_router
+from routes.system import router as system_router
+from routes.music import router as music_router
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -46,72 +50,123 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-async def consume_events():
+def _kafka_pump(topic: str, out_q: "queue.Queue", stop_event: threading.Event) -> None:
+    """Run a blocking Kafka consumer on a dedicated thread, pushing messages to a queue."""
+    logger.info(f"Kafka pump started for {topic}: {KAFKA_URL}")
     try:
-        logger.info(f"Event consumer bootstrap servers: {KAFKA_URL}")
         consumer = KafkaConsumer(
-            "event-stream", bootstrap_servers=KAFKA_URL, auto_offset_reset="latest"
+            topic,
+            bootstrap_servers=KAFKA_URL,
+            auto_offset_reset="latest",
+            consumer_timeout_ms=1000,
         )
-        logger.info("Connected to Kafka event-stream topic")
-        while True:
-            msg = consumer.poll(timeout_ms=1000)
-            if msg:
-                for tp, messages in msg.items():
-                    for message in messages:
-                        logger.info("Polling for event message")
-                        try:
-                            data = orjson.loads(message.value)
-                            if isinstance(data, list):
-                                recent_events.extend(data)
-                            else:
-                                recent_events.append(data)
-                            recent_events[:] = recent_events[-20:]
-                            logger.info(f"Received events: {data}")
-                            await manager.broadcast("events", recent_events)
-                            events_to_send = data if isinstance(data, list) else [data]
-                            for event in events_to_send:
-                                try:
-                                    headers = {"Content-Type": "application/json"}
-                                    url = "https://ntfy.sh/alfr3d-event-stream"
-                                    requests.post(url, json=event, headers=headers)
-                                except Exception as e:
-                                    logger.error(f"Failed to send event to nfty.sh: {e}")
-                        except orjson.JSONDecodeError as e:
-                            logger.error(f"Error processing event message: {str(e)}")
-            await asyncio.sleep(0.1)
+        logger.info(f"Connected to Kafka topic {topic}")
+        while not stop_event.is_set():
+            for message in consumer:
+                if stop_event.is_set():
+                    break
+                try:
+                    out_q.put_nowait(message.value)
+                except queue.Full:
+                    logger.warning(f"Kafka queue full for {topic}, dropping message")
     except KafkaError as e:
-        logger.error(f"Error connecting to Kafka for events: {str(e)}")
+        logger.error(f"Error connecting to Kafka for {topic}: {str(e)}")
+
+
+async def consume_events():
+    q: "asyncio.Queue" = asyncio.Queue(maxsize=1000)
+    stop_event = threading.Event()
+    t = threading.Thread(
+        target=_kafka_pump, args=("event-stream", q, stop_event), daemon=True
+    )
+    t.start()
+    try:
+        while True:
+            try:
+                value = await asyncio.wait_for(q.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                data = orjson.loads(value)
+                if isinstance(data, list):
+                    recent_events.extend(data)
+                else:
+                    recent_events.append(data)
+                recent_events[:] = recent_events[-20:]
+                logger.info(f"Received events: {data}")
+                await manager.broadcast("events", recent_events)
+                events_to_send = data if isinstance(data, list) else [data]
+                for event in events_to_send:
+                    try:
+                        headers = {"Content-Type": "application/json"}
+                        url = "https://ntfy.sh/alfr3d-event-stream"
+                        await asyncio.to_thread(
+                            requests.post,
+                            url,
+                            json=event,
+                            headers=headers,
+                            timeout=3,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send event to nfty.sh: {e}")
+            except orjson.JSONDecodeError as e:
+                logger.error(f"Error processing event message: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error handling event: {str(e)}")
+    finally:
+        stop_event.set()
 
 
 async def consume_sa():
+    q: "asyncio.Queue" = asyncio.Queue(maxsize=1000)
+    stop_event = threading.Event()
+    t = threading.Thread(
+        target=_kafka_pump,
+        args=("situational-awareness", q, stop_event),
+        daemon=True,
+    )
+    t.start()
     try:
-        logger.info(f"SA consumer bootstrap servers: {KAFKA_URL}")
-        consumer = KafkaConsumer(
-            "situational-awareness",
-            bootstrap_servers=KAFKA_URL,
-            auto_offset_reset="latest",
-        )
-        logger.info("Connected to Kafka situational-awareness topic")
         while True:
-            msg = consumer.poll(timeout_ms=1000)
-            if msg:
-                for tp, messages in msg.items():
-                    for message in messages:
-                        logger.info("Polling for SA message")
-                        try:
-                            data = orjson.loads(message.value)
-                            recent_sa.clear()
-                            if isinstance(data, list):
-                                recent_sa.extend(data)
-                            else:
-                                recent_sa.append(data)
-                            logger.info(f"Received SA: {data}")
-                            await manager.broadcast("situational_awareness", recent_sa)
-                        except orjson.JSONDecodeError as e:
-                            logger.error(f"Error processing SA message: {str(e)}")
-            await asyncio.sleep(0.1)
-    except KafkaError as e:
-        logger.error(f"Error connecting to Kafka for SA: {str(e)}")
+            try:
+                value = await asyncio.wait_for(q.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                data = orjson.loads(value)
+                recent_sa.clear()
+                if isinstance(data, list):
+                    recent_sa.extend(data)
+                else:
+                    recent_sa.append(data)
+                logger.info(f"Received SA: {data}")
+                await manager.broadcast("situational_awareness", recent_sa)
+            except orjson.JSONDecodeError as e:
+                logger.error(f"Error processing SA message: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error handling SA message: {str(e)}")
+    finally:
+        stop_event.set()
+
+
+async def broadcast_users():
+    while True:
+        try:
+            users = await asyncio.get_event_loop().run_in_executor(None, _fetch_users)
+            await manager.broadcast("users", users)
+        except Exception as e:
+            logger.error(f"Error broadcasting users: {str(e)}")
+        await asyncio.sleep(5)
+
+
+async def broadcast_devices():
+    while True:
+        try:
+            devices = await asyncio.get_event_loop().run_in_executor(None, _fetch_devices)
+            await manager.broadcast("devices", devices)
+        except Exception as e:
+            logger.error(f"Error broadcasting devices: {str(e)}")
+        await asyncio.sleep(10)
 
 
 @asynccontextmanager
@@ -120,6 +175,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(consume_events())
     asyncio.create_task(consume_sa())
     asyncio.create_task(collect_container_metrics())
+    asyncio.create_task(broadcast_users())
+    asyncio.create_task(broadcast_devices())
+    asyncio.create_task(broadcast_iot_devices())
+    asyncio.create_task(broadcast_calendar_events())
     asyncio.create_task(start_file_watcher_task())
     yield
 
@@ -134,7 +193,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.include_router(project_tree_router)
 app.include_router(users_router)
@@ -148,6 +206,10 @@ app.include_router(containers_router)
 app.include_router(routines_router)
 app.include_router(personality_router)
 app.include_router(iot_router)
+app.include_router(stream_router)
+app.include_router(health_router)
+app.include_router(system_router)
+app.include_router(music_router)
 
 
 @app.websocket("/ws")

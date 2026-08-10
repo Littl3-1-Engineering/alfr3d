@@ -1,5 +1,6 @@
 """Frontend service for ALFR3D, serving the web dashboard and API endpoints."""
 
+import sys
 import os
 import logging
 import pymysql
@@ -7,12 +8,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
 
-logger = logging.getLogger(__name__)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
+from common import get_connection
 
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
-MYSQL_USER = os.environ.get("MYSQL_USER", "root")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "")
-MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -27,9 +26,7 @@ app.add_middleware(
 
 @app.get("/api/users")
 async def get_users() -> List[Dict[str, str]]:
-    db = pymysql.connect(
-        host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
-    )
+    db = get_connection()
     cursor = db.cursor()
     try:
         cursor.execute(

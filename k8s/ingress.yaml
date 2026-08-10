@@ -12,7 +12,7 @@ spec:
           service:
             name: service-api
             port:
-              number: 5002
+              number: 5001
       - path: /
         pathType: Prefix
         backend:

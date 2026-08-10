@@ -15,13 +15,12 @@ from datetime import datetime
 
 # Third-party libraries
 import schedule
-import pymysql
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from gtts import gTTS
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import get_producer as _get_producer, get_kafka_url  # noqa: E402
+from common import get_producer as _get_producer, get_kafka_url, get_connection  # noqa: E402
 from common.db_utils import get_env_local_time  # noqa: E402
 
 # Local imports
@@ -32,7 +31,7 @@ from personality import (  # noqa: E402
     select_quip_by_traits,
     track_speak_text,
 )
-from llm_client import call_claude_haiku, get_claude_config, check_usage_limit  # noqa: E402
+from llm_client import call_claude_haiku, get_claude_config  # noqa: E402
 
 # Set up logging
 logger = logging.getLogger("SpeakService")
@@ -44,10 +43,6 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # Environment variables
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE")
-MYSQL_USER = os.environ.get("MYSQL_USER")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
-MYSQL_DB = os.environ.get("MYSQL_NAME")
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 AUDIO_STORAGE_PATH = os.environ.get("AUDIO_STORAGE_PATH", "/tmp/audio")
 AUDIO_RETENTION_MINUTES = int(os.environ.get("AUDIO_RETENTION_MINUTES", "5"))
@@ -75,9 +70,9 @@ def check_mute() -> bool:
         return False
 
     try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        db = get_connection()
         cursor = db.cursor()
-    except pymysql.Error as e:
+    except Exception as e:
         logger.error(f"Database connection error: {e}")
         return False
 
@@ -203,7 +198,7 @@ def send_event(event_type, message, audio_url=None, text=None):
         if text:
             event["text"] = text
         try:
-            p.send("event-stream", event)
+            p.send("event-stream", orjson.dumps(event))
             p.flush()
             logger.info(f"Sent event: {event}")
         except KafkaError as e:
@@ -229,10 +224,10 @@ def send_personality_state(personality, llm_used=False):
             "time": datetime.utcnow().isoformat() + "Z",
         }
         try:
-            p.send("personality", state)
+            p.send("personality", orjson.dumps(state))
             p.send(
                 "event-stream",
-                {"id": state["id"], "type": "personality_state", **state},
+                orjson.dumps({"id": state["id"], "type": "personality_state", **state}),
             )
             p.flush()
             logger.info(f"Sent personality state: {state['mood']}")
@@ -375,33 +370,26 @@ def process_speak_message(message):
 
                 config = get_claude_config()
                 if config.get("api_key"):
-                    allowed, _ = check_usage_limit()
-                    if allowed:
-                        logger.info(
-                            f"Using personality: {personality.get('name')}, "
-                            f"mood: {personality.get('mood')}"
-                        )
+                    logger.info(
+                        f"Using personality: {personality.get('name')}, "
+                        f"mood: {personality.get('mood')}"
+                    )
 
-                        system_prompt = build_llm_system_prompt(personality)
-                        llm_text = call_claude_haiku(system_prompt, text)
+                    system_prompt = build_llm_system_prompt(personality)
+                    llm_text = call_claude_haiku(system_prompt, text, config)
 
-                        if llm_text:
-                            text = llm_text
-                            llm_used = True
-                            logger.info(f"LLM enhanced text: {text[:50]}...")
-                        else:
-                            quips = get_quips_for_environment()
-                            if quips:
-                                selected_quip = select_quip_by_traits(quips, blended)
-                                if selected_quip:
-                                    text = selected_quip
-                                    logger.info(f"Selected quip: {text[:50]}...")
-                else:
+                    if llm_text:
+                        text = llm_text
+                        llm_used = True
+                        logger.info(f"LLM enhanced text: {text[:50]}...")
+
+                if not llm_used:
                     quips = get_quips_for_environment()
                     if quips:
                         selected_quip = select_quip_by_traits(quips, blended)
                         if selected_quip:
                             text = selected_quip
+                            logger.info(f"Selected quip: {text[:50]}...")
 
                 send_personality_state(personality, llm_used)
 
@@ -468,11 +456,17 @@ def reset_inactive_repeat_count():
 
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
-            "UPDATE context SET repeat_count = 0 "
-            "WHERE environment_id = %s AND last_spoke_time < DATE_SUB(NOW(), INTERVAL 5 MINUTE)",
+            "INSERT IGNORE INTO context (environment_id, repeat_count, last_spoke_time, updated_at) "
+            "VALUES (%s, 0, NOW(), NOW())",
+            (env_id,),
+        )
+        cursor.execute(
+            "UPDATE context SET repeat_count = 0, updated_at = NOW() "
+            "WHERE environment_id = %s AND "
+            "(last_spoke_time < DATE_SUB(NOW(), INTERVAL 5 MINUTE) OR last_spoke_time IS NULL)",
             (env_id,),
         )
         db.commit()
@@ -489,10 +483,12 @@ def reset_daily_llm_calls():
 
     try:
         env_id = get_environment_id()
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        db = get_connection()
         cursor = db.cursor()
         cursor.execute(
-            "UPDATE context SET llm_calls_today = 0 WHERE environment_id = %s",
+            "INSERT INTO context (environment_id, llm_calls_today, updated_at) "
+            "VALUES (%s, 0, NOW()) "
+            "ON DUPLICATE KEY UPDATE llm_calls_today = 0, updated_at = NOW()",
             (env_id,),
         )
         db.commit()

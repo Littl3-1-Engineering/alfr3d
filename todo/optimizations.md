@@ -4,8 +4,8 @@
 
 | Status | Count | Items |
 |--------|-------|-------|
-| ✅ COMPLETED | 17 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson, Vite Compression, Manual Chunk Splitting, SWR/React Query, Docker Build Optimization, Split service_api/app.py |
-| 🔲 TODO | 3 | Python 3.10+ Upgrade, Redis Caching, Slow Query Analysis |
+| ✅ COMPLETED | 23 | Database Indexes, Connection Pooling, ORDER BY RAND() removal, Debug logs, Kafka Reuse, Error Handling, Env Defaults, API Caching, React Memoization, Shared Utils, Event-Driven Sleep, orjson, Vite Compression, Manual Chunk Splitting, SWR/React Query, Docker Build Optimization, Python 3.14 + Node 24 Upgrade, Redis Caching, API Response Compression, Split service_api/app.py, Slow Query Analysis, Query Result Caching, Batch API Requests |
+| 🔲 TODO | 0 | All optimizations complete |
 
 ---
 
@@ -223,33 +223,43 @@
   - 2 .dockerignore files created (service_api, service_user)
   - Build verified successful with DOCKER_BUILDKIT=1
 
-#### 17. Python 3.10+ Upgrade
-- **Files:** All service Dockerfiles, requirements.txt
+#### 17. Python 3.14 + Node 24 Upgrade ✅
+- **Files:** All service Dockerfiles
 - **Changes:**
-  - Change base image from python:3.9-slim to python:3.10-slim or python:3.11-slim
-  - Update pinned package versions (e.g., requests==2.32.5)
-  - Test all services
-- **Impact:** ~10% performance boost, access to newer packages
-- **Steps:**
-  1. Audit all requirements.txt files for version constraints
-  2. Update Dockerfiles to python:3.10-slim
-  3. Fix any version compatibility issues
-  4. Test each service individually
-  5. Run full integration test suite
+  - 6 Python services: `python:3.11.9-slim` → `python:3.14-slim`
+  - 1 Node service: `node:20.20.2-alpine` → `node:24-alpine`
+  - Standardized all Python services to `python:3.14-slim` (latest stable)
+  - Node upgraded to v24 LTS (Active LTS until Apr 2028, replaces EOL v20)
+- **Impact:** ~10-15% Python performance boost, Node.js LTS with extended support
 
 ---
 
 ### PHASE 3: BACKEND DATA HANDLING (Medium-High Effort)
 
-#### 18. Redis Caching Layer
-- **Files:** `docker-compose.yml`, `services/common/`
+#### 18. Redis Caching Layer ✅
+- **Files:** `docker-compose.yml`, `services/common/redis_client.py`, `services/common/cache.py`, `.env.example`, all `requirements.txt`
 - **Add:** Redis service to docker-compose.yml
 - **Impact:** Cache DB queries, API responses, reduce DB load
-- **Steps:**
-  1. Add Redis container to docker-compose.yml
-  2. Create Redis client wrapper in common/
-  3. Cache personality, quips, config endpoints
-  4. Add cache invalidation on writes
+- **Status:** ✅ Complete
+- **Changes:**
+  1. `redis:7-alpine` container in `docker-compose.yml` (lines 35-45)
+  2. `services/common/redis_client.py` — singleton Redis client with connection pooling, JSON serialization, in-memory fallback
+  3. `services/common/cache.py` — `TTLCache` class using Redis as primary backend, falls back to in-memory when Redis is unavailable
+  4. Cache wired into service API via `_get_cached_or_fetch()` in `dependencies.py`:
+     - `api:users:{env}` — 120s TTL
+     - `api:devices:{env}` — 120s TTL
+     - `api:weather` — 300s TTL
+     - `api:environment` — 300s TTL
+     - `personality:current` — default TTL
+     - `personality:presets` — default TTL
+     - `personality:context:{env}` — 300s TTL
+     - `personality:llm-config` — 600s TTL
+     - `quips:all` — default TTL
+     - Routines list — default TTL
+  5. Cache invalidation on writes for devices, personality, quips, routines
+  6. `redis[hiredis]>=5.0.0` added to all 6 Python service requirements.txt
+  7. `REDIS_HOST=redis`, `REDIS_PORT=6379` added to `.env.example`
+  8. `redis_client.py` switched from stdlib `json` to `orjson` for consistency
 
 #### 19. API Response Compression
 - **File:** `services/service_api/app.py`
@@ -281,20 +291,34 @@
 
 ### PHASE 4: DATABASE OPTIMIZATION
 
-#### 21. Slow Query Analysis
+#### 21. Slow Query Analysis ✅
 - **Tool:** MySQL EXPLAIN, slow_query_log
-- **Steps:**
-  1. Enable slow query log in MySQL config
-  2. Identify slow queries (personality, quips, calendar)
-  3. Add indexes where missing
-  4. Optimize JOINs
+- **Status:** ✅ Complete
+- **Changes:**
+  1. `setup/my.cnf` — MySQL config enabling slow_query_log (long_query_time=1s, log_queries_not_using_indexes)
+  2. `docker-compose.yml` — mounts `./setup/my.cnf` into mysql container at `/etc/mysql/conf.d/slow_query.cnf`
+  3. `setup/migration_010_slow_query_indexes.sql` — 8 new indexes covering identified query patterns:
+     - `device(MAC)` — heavy WHERE MAC lookups
+     - `device(last_online)` — offline-detection range scan
+     - `device(user_id)` — JOINs with user table
+     - `user(username)` — WHERE username lookups
+     - `user(state)` — online-user filtering
+     - `user(last_online)` — ORDER BY last_online DESC
+     - `personality(type, environment_id)` — compound index for filtered+ordered queries
+     - `calendar_events(start_time)` — range queries (was missing, DATE() wrapper made index unusable)
+  4. `services/service_api/routes/environment.py:99-101` — Changed `WHERE DATE(start_time) = %s` to `WHERE start_time >= %s AND start_time < %s + INTERVAL 1 DAY` so the new start_time index is usable
+  5. Modernized 4 implicit comma-join queries to explicit JOIN syntax:
+     - `services/service_device/app.py` — `FROM states s, device_types dt, user u, environment e` → explicit JOINs
+     - `services/service_user/app.py` — same pattern for user setup
+     - `services/common/ha_utils.py` — same pattern for device linking
+     - `services/common/st_utils.py` — same pattern for SmartThings linking
 
-#### 22. Query Result Caching (Expand existing cache.py)
-- **Files:** `services/common/cache.py` (exists, expand usage)
-- **Steps:**
-  1. Add cache for personality, presets, quips endpoints
-  2. Add cache for device lists
-  3. Add cache invalidation triggers on data changes
+#### 22. Query Result Caching (Expand existing cache.py) ✅
+- **Files:** `services/common/cache.py`
+- **Status:** ✅ Complete (covered by Redis Caching task #18)
+- **Changes:**
+  1. Redis cache now used for personality, presets, quips, device lists, config endpoints
+  2. Cache invalidation triggers on data changes
 
 ---
 
@@ -326,12 +350,12 @@
 | 14 | Manual Chunk Splitting | 1 | ✅ Done | Medium | Low |
 | 15 | SWR/React Query | 1 | ✅ Done | Medium | Medium |
 | 16 | Docker Build Optimization | 2 | ✅ Done | Medium | Medium |
-| 17 | Python 3.10+ Upgrade | 2 | 🔲 TODO | Medium | High |
-| 18 | Redis Caching | 3 | 🔲 TODO | High | Medium |
+| 17 | Python 3.10+ Upgrade | 2 | ✅ Done | Medium | High |
+| 18 | Redis Caching | 3 | ✅ Done | High | Medium |
 | 19 | API Response Compression | 3 | ✅ Done | Medium | Low |
 | 20 | Split service_api/app.py | 3 | ✅ Done | Medium | High |
-| 21 | Slow Query Analysis | 4 | 🔲 TODO | Medium | Medium |
-| 22 | Query Result Caching | 4 | ✅ Done | Medium | Low |
+| 21 | Slow Query Analysis | 4 | ✅ Done | Medium | Medium |
+| 22 | Query Result Caching (Redis) | 4 | ✅ Done | Medium | Low |
 | 23 | Batch API Requests | - | ✅ Done | Low | Medium |
 
 ---
@@ -342,4 +366,4 @@
 - Benchmark connection pooling (before/after)
 - Monitor Kafka consumer lag
 - Phase 1 items should be done first (highest impact, lowest effort)
-- Python 3.10+ upgrade is in progress via separate task
+- Python 3.14 + Node 24 upgrade completed with standardized base images across all services

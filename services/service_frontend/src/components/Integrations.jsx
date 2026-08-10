@@ -1,22 +1,23 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, Settings, Mail, Map, Calendar, Music, Home, Zap } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Settings, RefreshCw, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
-const baseIntegrations = [
-  { id: 1, name: 'Home Assistant', icon: Home, integrationType: 'iot_ha', description: 'Local smart home control' },
-  { id: 2, name: 'SmartThings', icon: Zap, integrationType: 'iot_st', description: 'Cloud-based smart home control' },
-  { id: 3, name: 'Alexa', icon: Settings, integrationType: null, description: 'Amazon Echo compatibility' },
-  { id: 4, name: 'HomeKit', icon: Settings, integrationType: null, description: 'Apple Home app integration' },
-  { id: 5, name: 'IFTTT', icon: Settings, integrationType: null, description: 'Applet automation' },
-  { id: 6, name: 'Google Gmail', icon: Mail, integrationType: 'google', description: 'Email notifications and unread count' },
-  { id: 7, name: 'Google Maps', icon: Map, integrationType: null, description: 'Travel time and directions for events' },
-  { id: 8, name: 'Google Calendar', icon: Calendar, integrationType: 'google', description: 'Upcoming events and scheduling' },
-  { id: 9, name: 'Spotify', icon: Music, integrationType: null, description: 'Music playlist suggestions' },
+const integrationsList = [
+  { id: 1, name: 'Home Assistant', integrationType: 'iot_ha', logo: '/assets/logos/homeassistant.svg', description: 'Local smart home control', configurable: true },
+  { id: 2, name: 'SmartThings', integrationType: 'iot_st', logo: '/assets/logos/smartthings.svg', description: 'Cloud-based smart home control', configurable: true },
+  { id: 3, name: 'Google', integrationType: 'google', logo: '/assets/logos/google.svg', description: 'Gmail + Calendar', configurable: false },
+  { id: 4, name: 'OpenWeatherMap', integrationType: 'openweather', logo: '/assets/logos/openweathermap.svg', description: 'Weather & environment data', configurable: true },
+  { id: 5, name: 'Spotify', integrationType: 'spotify', logo: '/assets/logos/spotify.svg', description: 'Music playback & recommendations', configurable: true },
+  { id: 6, name: 'Alexa', integrationType: null, logo: '/assets/logos/alexa.svg', description: 'Amazon Echo compatibility', configurable: false },
+  { id: 7, name: 'HomeKit', integrationType: null, logo: '/assets/logos/homekit.svg', description: 'Apple Home app integration', configurable: false },
+  { id: 8, name: 'IFTTT', integrationType: null, logo: '/assets/logos/ifttt.svg', description: 'Applet automation', configurable: false },
+  { id: 9, name: 'Google Maps', integrationType: null, logo: '/assets/logos/googlemaps.svg', description: 'Travel time and directions for events', configurable: false },
+  { id: 10, name: 'Google Calendar', integrationType: 'google', logo: '/assets/logos/googlecalendar.svg', description: 'Upcoming events and scheduling', configurable: false },
 ];
 
 const Integrations = () => {
-  const [integrations, setIntegrations] = useState(baseIntegrations);
+  const [integrations, setIntegrations] = useState(integrationsList);
   const [syncing, setSyncing] = useState({});
   const [configModal, setConfigModal] = useState(null);
   const [configForm, setConfigForm] = useState({});
@@ -44,6 +45,13 @@ const Integrations = () => {
           if (integration.id === 2 && iotStatus.st) {
             return { ...integration, status: iotStatus.st.connected ? 'connected' : 'not_connected' };
           }
+          if (integration.integrationType === 'openweather') {
+            return { ...integration, status: status.openweather ? 'connected' : 'not_connected' };
+          }
+          if (integration.integrationType === 'spotify') {
+            const spotify = status.spotify || {};
+            return { ...integration, status: spotify.authorized ? 'connected' : (spotify.configured ? 'requires_attention' : 'not_connected'), authUrl: spotify.auth_url || null };
+          }
           if (integration.integrationType && status[integration.integrationType]) {
             return { ...integration, status: 'connected' };
           } else if (integration.integrationType) {
@@ -66,7 +74,7 @@ const Integrations = () => {
         endpoint = '/api/iot/ha/sync';
       } else if (integration.id === 2) {
         endpoint = '/api/iot/st/sync';
-      } else if (integration.name === 'Google Gmail') {
+      } else if (integration.name === 'Google Gmail' || integration.name === 'Google') {
         endpoint = '/api/integrations/gmail/sync';
       } else if (integration.name === 'Google Calendar') {
         endpoint = '/api/integrations/calendar/sync';
@@ -90,14 +98,22 @@ const Integrations = () => {
   const handleConfigSave = async () => {
     try {
       let endpoint;
+      let method = 'PUT';
       if (configModal === 1) {
         endpoint = '/api/iot/ha/config';
       } else if (configModal === 2) {
         endpoint = '/api/iot/st/config';
+      } else if (configModal === 4) {
+        endpoint = '/api/integrations/openweather/config';
+      } else if (configModal === 5) {
+        endpoint = '/api/music/spotify/auth';
+        method = 'POST';
+      } else {
+        return;
       }
 
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: 'PUT',
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(configForm)
       });
@@ -114,22 +130,41 @@ const Integrations = () => {
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'connected': return 'text-success';
-      case 'requires_attention': return 'text-warning';
-      case 'not_connected': return 'text-error';
-      default: return 'text-text-tertiary';
+  const handleSpotifyAuthorize = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/music/spotify/auth`);
+      const data = await response.json();
+      if (data.auth_url) {
+        window.open(data.auth_url, '_blank', 'noopener,noreferrer');
+      } else {
+        alert('Save your Spotify credentials first, then authorize.');
+      }
+    } catch (error) {
+      alert(`Error starting authorization: ${error.message}`);
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusColor = (status) => {
     switch (status) {
-      case 'connected': return <CheckCircle className="w-5 h-5 text-success" />;
-      case 'requires_attention': return <AlertTriangle className="w-5 h-5 text-warning" />;
-      case 'not_connected': return <Settings className="w-5 h-5 text-error" />;
-      default: return <Settings className="w-5 h-5 text-text-tertiary" />;
+      case 'connected': return 'text-success border-success/40 bg-success/10';
+      case 'requires_attention': return 'text-warning border-warning/40 bg-warning/10';
+      case 'not_connected': return 'text-error border-error/40 bg-error/10';
+      default: return 'text-text-tertiary border-border bg-border/10';
     }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'connected': return 'ACTIVE';
+      case 'requires_attention': return 'ATTENTION';
+      case 'not_connected': return 'NOT CONFIGURED';
+      default: return 'UNKNOWN';
+    }
+  };
+
+  const openConfig = (integration) => {
+    setConfigModal(integration.id);
+    setConfigForm({});
   };
 
   return (
@@ -137,11 +172,16 @@ const Integrations = () => {
       <h2 className="text-2xl font-bold text-primary mb-6 drop-shadow-lg">Third-Party Integrations</h2>
 
       {configModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass p-6 rounded-2xl w-96">
-            <h3 className="text-xl font-bold text-primary mb-4">
-              {configModal === 1 ? 'Home Assistant' : 'SmartThings'} Configuration
-            </h3>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setConfigModal(null)}>
+          <div className="glass p-6 rounded-2xl w-96" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-primary">
+                {integrations.find(i => i.id === configModal)?.name} Configuration
+              </h3>
+              <button onClick={() => setConfigModal(null)} className="text-text-secondary hover:text-text-primary">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
             {configModal === 1 && (
               <>
@@ -178,6 +218,63 @@ const Integrations = () => {
               </div>
             )}
 
+            {configModal === 4 && (
+              <div className="mb-4">
+                <label className="block text-text-secondary mb-2">OpenWeatherMap API Key</label>
+                <input
+                  type="password"
+                  className="w-full bg-card border border-border rounded-lg px-3 py-2 text-text-primary"
+                  placeholder="Your OWM API key"
+                  onChange={(e) => setConfigForm({...configForm, api_key: e.target.value})}
+                />
+                <p className="text-xs text-text-tertiary mt-2">Get a key at openweathermap.org — powers the weather & environment panel.</p>
+              </div>
+            )}
+
+            {configModal === 5 && (
+              <>
+                <div className="mb-4">
+                  <label className="block text-text-secondary mb-2">Client ID</label>
+                  <input
+                    type="text"
+                    className="w-full bg-card border border-border rounded-lg px-3 py-2 text-text-primary"
+                    placeholder="Spotify Client ID"
+                    onChange={(e) => setConfigForm({...configForm, client_id: e.target.value})}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary mb-2">Client Secret</label>
+                  <input
+                    type="password"
+                    className="w-full bg-card border border-border rounded-lg px-3 py-2 text-text-primary"
+                    placeholder="Spotify Client Secret"
+                    onChange={(e) => setConfigForm({...configForm, client_secret: e.target.value})}
+                  />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary mb-2">Redirect URI</label>
+                  <input
+                    type="text"
+                    className="w-full bg-card border border-border rounded-lg px-3 py-2 text-text-primary"
+                    placeholder={`${window.location.origin}/api/music/spotify/callback`}
+                    onChange={(e) => setConfigForm({...configForm, redirect_uri: e.target.value})}
+                  />
+                  <p className="text-xs text-text-tertiary mt-2">
+                    Create an app at developer.spotify.com and add this URI to its Redirect URIs.
+                  </p>
+                </div>
+                <div className="mb-4">
+                  <button
+                    onClick={handleSpotifyAuthorize}
+                    className="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/80"
+                  >
+                    Authorize on Spotify
+                  </button>
+                  <p className="text-xs text-text-tertiary mt-2">Opens Spotify&apos;s login page in a new tab, then returns here.</p>
+                </div>
+              </>
+            )}
+
             <div className="flex gap-4">
               <button
                 onClick={handleConfigSave}
@@ -196,52 +293,51 @@ const Integrations = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6">
         {integrations.map((integration, index) => (
           <motion.div
             key={integration.id}
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: index * 0.1, duration: 0.5 }}
-            whileHover={{ scale: 1.03 }}
-            className="glass rounded-2xl p-6 cursor-pointer"
+            transition={{ delay: index * 0.05, duration: 0.4 }}
+            whileHover={{ scale: 1.02 }}
+            onClick={() => openConfig(integration)}
+            className="glass rounded-2xl p-5 cursor-pointer"
           >
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center text-primary drop-shadow-lg">
-                <integration.icon className="w-6 h-6" />
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-14 h-14 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden p-1.5">
+                <img src={integration.logo} alt={integration.name} className="w-full h-full object-contain" />
               </div>
-              {getStatusIcon(integration.status)}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono tracking-wider ${getStatusColor(integration.status)}`}>
+                {integration.status === 'connected' && <CheckCircle className="w-3 h-3" />}
+                {integration.status === 'requires_attention' && <AlertTriangle className="w-3 h-3" />}
+                {integration.status === 'not_connected' && <Settings className="w-3 h-3" />}
+                {getStatusLabel(integration.status)}
+              </span>
             </div>
 
-            <h3 className="text-lg font-semibold text-text-primary mb-2">{integration.name}</h3>
-            <p className="text-sm text-text-tertiary mb-4">{integration.description}</p>
+            <h3 className="text-base font-semibold text-text-primary mb-1">{integration.name}</h3>
+            <p className="text-xs text-text-tertiary mb-3">{integration.description}</p>
 
-            <div className="flex items-center justify-between">
-              <span className={`text-sm font-medium ${getStatusColor(integration.status)}`}>
-                {integration.status === 'connected' ? 'Connected' :
-                 integration.status === 'requires_attention' ? 'Requires Attention' :
-                 'Not Connected'}
-              </span>
-              <div className="flex gap-2">
-                {(integration.id === 1 || integration.id === 2) && (
-                  <button
-                    onClick={() => {
-                      setConfigModal(integration.id);
-                      setConfigForm({});
-                    }}
-                    className="px-4 py-2 bg-card/50 rounded-lg text-text-secondary hover:bg-card-hover/50 transition-colors"
-                  >
-                    Configure
-                  </button>
-                )}
+            <div className="flex items-center gap-2">
+              {integration.configurable && (
                 <button
-                  onClick={() => (integration.status === 'connected') ? handleSync(integration) : null}
-                  className="px-4 py-2 bg-card/50 rounded-lg text-text-secondary hover:bg-card-hover/50 transition-colors disabled:opacity-50"
+                  onClick={(e) => { e.stopPropagation(); openConfig(integration); }}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-text-secondary hover:bg-card-hover/50 hover:text-primary transition-colors"
+                >
+                  <Settings className="w-3.5 h-3.5" /> Configure
+                </button>
+              )}
+              {integration.id === 1 || integration.id === 2 || integration.integrationType === 'google' ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (integration.status === 'connected') handleSync(integration); }}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-text-secondary hover:bg-card-hover/50 hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={syncing[integration.id] || integration.status !== 'connected'}
                 >
-                  {syncing[integration.id] ? 'Syncing...' : 'Sync'}
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncing[integration.id] ? 'animate-spin' : ''}`} />
+                  {syncing[integration.id] ? 'Syncing' : 'Sync'}
                 </button>
-              </div>
+              ) : null}
             </div>
           </motion.div>
         ))}

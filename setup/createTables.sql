@@ -179,6 +179,7 @@ CREATE TABLE `config` (
 CREATE TABLE `quips` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for quip
   `type` VARCHAR(64) NULL DEFAULT NULL, -- Type of quip (e.g., smart, email, bedtime)
+  `category` VARCHAR(32) NULL DEFAULT 'custom', -- Category (greeting, weather_joke, sarcasm, wisdom, goodbye, custom)
   `quips` VARCHAR(256) NULL DEFAULT NULL, -- The quip text
   PRIMARY KEY (`id`)
 );

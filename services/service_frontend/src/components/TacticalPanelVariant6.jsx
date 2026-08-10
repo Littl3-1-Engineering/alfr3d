@@ -1,11 +1,11 @@
 import PropTypes from 'prop-types';
 
 const TacticalPanelVariant6 = ({ title, children, className = "", showGrid = false }) => {
-  const silverColor = 'hsl(210, 20%, 80%)';
-  const amberColor = 'hsl(45, 100%, 58%)';
+  const silverColor = 'var(--theme-text-secondary)';
+  const amberColor = 'var(--theme-primary)';
 
   return (
-    <div className={`relative bg-fui-panel border border-fui-border/60 rounded-none ${className}`} style={{ boxShadow: `0 0 10px rgba(245, 158, 11, 0.1)` }}>
+    <div className={`relative bg-fui-panel border border-fui-border/60 rounded-none ${className}`} style={{ boxShadow: `0 0 10px color-mix(in srgb, var(--theme-primary) 10%, transparent)` }}>
       {/* Minimalist corner accents - thin lines */}
       <div className="absolute top-0 left-0 w-8 h-px z-10" style={{ backgroundColor: silverColor }} />
       <div className="absolute top-0 left-0 w-px h-8 z-10" style={{ backgroundColor: silverColor }} />

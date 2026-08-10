@@ -2,28 +2,22 @@ import os
 import sys
 import logging
 import random
-
 import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import db_utils  # noqa: E402
+from common import get_connection, db_utils  # noqa: E402
 
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
-MYSQL_USER = os.environ.get("MYSQL_USER")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
-MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", "default")
+
+# Quip types reserved for their matching routines (Sunrise/Sunset/Bedtime).
+# They must not be picked randomly by the personality system.
+ROUTINE_QUIP_TYPES = {"sunrise", "sunset", "bedtime"}
 
 logger = logging.getLogger(__name__)
 
 
 def get_db_connection():
-    return pymysql.connect(
-        host=MYSQL_DATABASE,
-        user=MYSQL_USER,
-        passwd=MYSQL_PSWD,
-        db=MYSQL_DB,
-    )
+    return get_connection()
 
 
 def get_environment_id():
@@ -270,19 +264,20 @@ def track_speak_text(text, env_id=None):
                 repeat_increment = -1
 
         if repeat_increment != 0:
-            set_clause = "repeat_count = GREATEST(0, repeat_count + %s), "
+            cursor.execute(
+                "INSERT INTO context (environment_id, last_text, last_spoke_time, updated_at) "
+                "VALUES (%s, %s, NOW(), NOW()) "
+                "ON DUPLICATE KEY UPDATE repeat_count = GREATEST(0, repeat_count + %s), "
+                "last_text = %s, last_spoke_time = NOW(), updated_at = NOW()",
+                (env_id, text[:512], repeat_increment, text[:512]),
+            )
         else:
-            set_clause = ""
-
-        cursor.execute(
-            f"UPDATE context SET {set_clause}"
-            f"last_text = %s, last_spoke_time = NOW() WHERE environment_id = %s",
-            (
-                (repeat_increment, text[:512], env_id)
-                if repeat_increment != 0
-                else (text[:512], env_id)
-            ),
-        )
+            cursor.execute(
+                "INSERT INTO context (environment_id, last_text, last_spoke_time, updated_at) "
+                "VALUES (%s, %s, NOW(), NOW()) "
+                "ON DUPLICATE KEY UPDATE last_text = %s, last_spoke_time = NOW(), updated_at = NOW()",
+                (env_id, text[:512], text[:512]),
+            )
         db.commit()
 
     except pymysql.Error as e:
@@ -475,6 +470,10 @@ User request: """
 
 
 def select_quip_by_traits(quips, traits):
+    if not quips:
+        return None
+
+    quips = [q for q in quips if q.get("type", "").lower() not in ROUTINE_QUIP_TYPES]
     if not quips:
         return None
 

@@ -115,7 +115,9 @@ class User:
             cursor.execute(
                 """
                 SELECT s.id as state_id, ut.id as type_id, e.id as env_id
-                FROM states s, user_types ut, environment e
+                FROM states s
+                JOIN user_types ut ON 1=1
+                JOIN environment e ON 1=1
                 WHERE s.state = 'offline' AND ut.type = 'guest' AND e.name = %s
                 """,
                 (ALFR3D_ENV_NAME,),
@@ -495,6 +497,9 @@ def refresh_all():
 if __name__ == "__main__":
     # get all instructions from Kafka
     logger.info("Starting Alfr3d's user service")
+    if not db_utils.wait_for_db():
+        logger.error("Exiting: could not connect to MySQL")
+        sys.exit(1)
     consumer = None
     retry_count = 0
     while consumer is None and not shutdown_event.is_set():
