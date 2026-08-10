@@ -1,5 +1,13 @@
 import { WS_BASE_URL } from '../config';
 
+const DEV = import.meta.env.DEV;
+
+const logger = {
+  log: (...args) => { if (DEV) console.log(...args); },
+  warn: (...args) => { if (DEV) console.warn(...args); },
+  error: (...args) => { console.error(...args); },
+};
+
 class SocketClient {
   constructor() {
     this.socket = null;
@@ -12,27 +20,27 @@ class SocketClient {
 
   connect() {
     const wsUrl = WS_BASE_URL.replace(/^http/, 'ws') + '/ws';
-    console.log('Connecting to WebSocket:', wsUrl);
+    logger.log('Connecting to WebSocket:', wsUrl);
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected');
+      logger.log('WebSocket already connected');
       return;
     }
     this.socket = new WebSocket(wsUrl);
 
     this.socket.onopen = () => {
-      console.log('WebSocket connected');
+      logger.log('WebSocket connected');
       this.isConnected = true;
       this.reconnectAttempts = 0;
     };
 
     this.socket.onclose = () => {
-      console.log('WebSocket disconnected');
+      logger.log('WebSocket disconnected');
       this.isConnected = false;
       this.attemptReconnect();
     };
 
     this.socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      logger.error('WebSocket error:', error);
     };
 
     this.socket.onmessage = (event) => {
@@ -42,7 +50,7 @@ class SocketClient {
           this.listeners.get(message.event).forEach(callback => callback(message.data));
         }
       } catch (e) {
-        console.error('Error parsing WebSocket message:', e);
+        logger.error('Error parsing WebSocket message:', e);
       }
     };
   }
@@ -50,7 +58,7 @@ class SocketClient {
   attemptReconnect() {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      logger.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
       setTimeout(() => this.connect(), this.reconnectDelay);
     }
   }

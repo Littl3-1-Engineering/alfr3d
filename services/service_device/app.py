@@ -38,6 +38,9 @@ MYSQL_DB = os.environ["MYSQL_NAME"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
+LAN_IP_PREFIXES = tuple(
+    p for p in os.environ.get("LAN_IP_PREFIXES", "192.,10.").split(",") if p
+)
 
 producer = None
 while producer is None:
@@ -97,7 +100,10 @@ class Device:
             cursor.execute(
                 """
                 SELECT s.id as state_id, dt.id as type_id, u.id as user_id, e.id as env_id
-                FROM states s, device_types dt, user u, environment e
+                FROM states s
+                JOIN device_types dt ON 1=1
+                JOIN user u ON 1=1
+                JOIN environment e ON 1=1
                 WHERE s.state = %s AND dt.type = %s AND u.username = %s AND e.name = %s
                 """,
                 (self.state, self.deviceType, self.user, self.environment),
@@ -427,7 +433,7 @@ def check_lan():
     # parse MAC and IP addresses
     for line in netClients:
         print(line)
-        if not line.startswith("192.") and not line.startswith("10."):
+        if not line.startswith(LAN_IP_PREFIXES):
             continue
         ret = line.split("\t")
         # parse MAC addresses from arp-scan run

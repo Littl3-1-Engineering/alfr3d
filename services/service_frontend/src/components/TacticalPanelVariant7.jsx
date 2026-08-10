@@ -1,13 +1,13 @@
 import PropTypes from 'prop-types';
 
 const TacticalPanelVariant7 = ({ title, children, className = "", showGrid = false }) => {
-  const amberColor = 'hsl(45, 100%, 58%)';
+  const amberColor = 'var(--theme-primary)';
 
   return (
     <div className={`relative bg-fui-panel border border-fui-border rounded-none ${className}`}
          style={{
-           background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.02) 0%, rgba(0, 0, 0, 0) 100%)',
-           boxShadow: `0 0 15px rgba(245, 158, 11, 0.1)`
+           background: 'linear-gradient(180deg, color-mix(in srgb, var(--theme-primary) 2%, transparent) 0%, rgba(0, 0, 0, 0) 100%)',
+           boxShadow: `0 0 15px color-mix(in srgb, var(--theme-primary) 10%, transparent)`
          }}>
       {/* Glitch effect horizontal lines */}
       <div className="absolute top-2 left-0 right-0 h-px z-10 opacity-50"
@@ -36,7 +36,7 @@ const TacticalPanelVariant7 = ({ title, children, className = "", showGrid = fal
       {/* Header - Holographic style */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-fui-border/50"
            style={{
-             background: `linear-gradient(90deg, transparent 0%, rgba(245, 158, 11, 0.05) 50%, transparent 100%)`,
+             background: `linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--theme-primary) 5%, transparent) 50%, transparent 100%)`,
              borderImage: `linear-gradient(90deg, transparent, ${amberColor}, transparent) 1`
            }}>
         <div className="flex items-center space-x-2">

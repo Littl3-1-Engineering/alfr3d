@@ -128,13 +128,20 @@ const usePersonality = () => {
   };
 };
 
+const QUIP_CATEGORIES = ['greeting', 'weather_joke', 'sarcasm', 'wisdom', 'goodbye', 'custom'];
+
 const useQuips = () => {
   const [quips, setQuips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
-  const fetchQuips = async () => {
+  const fetchQuips = useCallback(async () => {
+    setLoading(true);
     try {
-      const response = await fetch(API_BASE_URL + '/api/quips');
+      const url = categoryFilter && categoryFilter !== 'all'
+        ? `${API_BASE_URL}/api/quips?category=${encodeURIComponent(categoryFilter)}`
+        : `${API_BASE_URL}/api/quips`;
+      const response = await fetch(url);
       const data = await response.json();
       setQuips(data);
     } catch (error) {
@@ -142,23 +149,25 @@ const useQuips = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [categoryFilter]);
 
   useEffect(() => {
     fetchQuips();
-  }, []);
+  }, [fetchQuips]);
 
-  return { quips, loading, fetchQuips };
+  return { quips, loading, fetchQuips, categoryFilter, setCategoryFilter };
 };
 
 const useEditQuip = (onSave) => {
   const [editingId, setEditingId] = useState(null);
   const [editType, setEditType] = useState('');
+  const [editCategory, setEditCategory] = useState('custom');
   const [editText, setEditText] = useState('');
 
-  const handleEdit = (id, type, text) => {
+  const handleEdit = (id, type, category, text) => {
     setEditingId(id);
     setEditType(type);
+    setEditCategory(category || 'custom');
     setEditText(text);
   };
 
@@ -167,7 +176,7 @@ const useEditQuip = (onSave) => {
       const response = await fetch(API_BASE_URL + '/api/quips/' + editingId, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: editType, quips: editText }),
+        body: JSON.stringify({ type: editType, quips: editText, category: editCategory }),
       });
       if (response.ok) {
         onSave();
@@ -178,11 +187,12 @@ const useEditQuip = (onSave) => {
     }
   };
 
-  return { editingId, editType, editText, setEditType, setEditText, handleEdit, handleSave, setEditingId };
+  return { editingId, editType, editCategory, editText, setEditType, setEditCategory, setEditText, handleEdit, handleSave, setEditingId };
 };
 
 const useAddQuip = (onSave) => {
   const [newType, setNewType] = useState('');
+  const [newCategory, setNewCategory] = useState('custom');
   const [newText, setNewText] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -192,11 +202,12 @@ const useAddQuip = (onSave) => {
       const response = await fetch(API_BASE_URL + '/api/quips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: newType, quips: newText }),
+        body: JSON.stringify({ type: newType, quips: newText, category: newCategory }),
       });
       if (response.ok) {
         onSave();
         setNewType('');
+        setNewCategory('custom');
         setNewText('');
         setShowAddForm(false);
       }
@@ -205,7 +216,7 @@ const useAddQuip = (onSave) => {
     }
   };
 
-  return { newType, newText, showAddForm, setNewType, setNewText, setShowAddForm, handleAdd };
+  return { newType, newCategory, newText, showAddForm, setNewType, setNewCategory, setNewText, setShowAddForm, handleAdd };
 };
 
 const TraitSlider = ({ label, value, onChange, leftLabel, rightLabel }) => (
@@ -240,9 +251,9 @@ TraitSlider.propTypes = {
 
 const Personality = () => {
   const { personality, setPersonality, presets, llmConfig, setLlmConfig, currentMood, loading, saving, savePersonality, applyPreset, saveLlmConfig, refresh } = usePersonality();
-  const { quips, loading: quipsLoading, fetchQuips } = useQuips();
-  const { editingId, editType, editText, setEditType, setEditText, handleEdit, handleSave, setEditingId } = useEditQuip(fetchQuips);
-  const { newType, newText, showAddForm, setNewType, setNewText, setShowAddForm, handleAdd } = useAddQuip(fetchQuips);
+  const { quips, loading: quipsLoading, fetchQuips, categoryFilter, setCategoryFilter } = useQuips();
+  const { editingId, editType, editCategory, editText, setEditType, setEditCategory, setEditText, handleEdit, handleSave, setEditingId } = useEditQuip(fetchQuips);
+  const { newType, newCategory, newText, showAddForm, setNewType, setNewCategory, setNewText, setShowAddForm, handleAdd } = useAddQuip(fetchQuips);
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this quip?')) {
@@ -448,7 +459,22 @@ const Personality = () => {
       </div>
 
       <div className="glass rounded-lg p-4">
-        <h3 className="text-lg font-semibold text-fui-accent mb-4">Quips</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-fui-accent">Quips</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-tertiary font-mono uppercase">Category</span>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="p-1.5 bg-fui-dim border border-fui-border rounded text-text-primary text-sm"
+            >
+              <option value="all">All</option>
+              {QUIP_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         {quipsLoading ? (
           <div className="text-center text-text-tertiary">Loading quips...</div>
@@ -465,12 +491,23 @@ const Personality = () => {
                 <div className="flex-1">
                   {editingId === quip.id ? (
                     <div className="space-y-2">
-                      <input
-                        value={editType}
-                        onChange={(e) => setEditType(e.target.value)}
-                        className="w-full p-2 bg-card rounded text-text-primary text-sm uppercase"
-                        placeholder="Type"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={editType}
+                          onChange={(e) => setEditType(e.target.value)}
+                          className="flex-1 p-2 bg-card rounded text-text-primary text-sm uppercase"
+                          placeholder="Type"
+                        />
+                        <select
+                          value={editCategory}
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          className="p-2 bg-card rounded text-text-primary text-sm"
+                        >
+                          {QUIP_CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
                       <textarea
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
@@ -481,6 +518,9 @@ const Personality = () => {
                   ) : (
                     <>
                       <span className="text-sm text-primary uppercase tracking-wide">{quip.type}</span>
+                      <span className="ml-2 text-[10px] font-mono uppercase text-fui-accent/80 border border-fui-accent/30 px-1.5 py-0.5 rounded">
+                        {quip.category || 'custom'}
+                      </span>
                       <p className="text-text-primary mt-1">{quip.quips}</p>
                     </>
                   )}
@@ -503,7 +543,7 @@ const Personality = () => {
                     </>
                   ) : (
                     <button
-                      onClick={() => handleEdit(quip.id, quip.type, quip.quips)}
+                      onClick={() => handleEdit(quip.id, quip.type, quip.category, quip.quips)}
                       className="p-2 text-primary hover:bg-primary/20 rounded"
                     >
                       <Edit className="w-4 h-4" />
@@ -529,12 +569,23 @@ const Personality = () => {
           >
             <h4 className="text-lg font-semibold text-primary mb-4">Add New Quip</h4>
             <div className="space-y-3">
-              <input
-                value={newType}
-                onChange={(e) => setNewType(e.target.value)}
-                className="w-full p-2 bg-card rounded text-text-primary"
-                placeholder="Type (e.g., smart, email, bedtime)"
-              />
+              <div className="flex gap-2">
+                <input
+                  value={newType}
+                  onChange={(e) => setNewType(e.target.value)}
+                  className="flex-1 p-2 bg-card rounded text-text-primary"
+                  placeholder="Type (e.g., smart, email, bedtime)"
+                />
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  className="p-2 bg-card rounded text-text-primary"
+                >
+                  {QUIP_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
               <textarea
                 value={newText}
                 onChange={(e) => setNewText(e.target.value)}

@@ -1,8 +1,8 @@
 import PropTypes from 'prop-types';
 
 const TacticalPanelVariant5 = ({ title, children, className = "", showGrid = false }) => {
-  const amberColor = 'hsl(45, 100%, 58%)';
-  const grayColor = 'hsl(0, 0%, 50%)';
+  const amberColor = 'var(--theme-primary)';
+  const grayColor = 'var(--theme-text-tertiary)';
 
   return (
     <div className={`relative bg-fui-panel border border-fui-border rounded-none ${className}`}

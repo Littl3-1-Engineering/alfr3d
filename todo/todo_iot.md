@@ -129,16 +129,20 @@
 
 ---
 
-## Phase 13: Real-time State Updates (Future)
+## Phase 13: Real-time State Updates ✓
 
 ### Goal
 Implement WebSocket for real-time device state changes instead of polling.
 
-### Tasks
-- Add WebSocket endpoint in service_api
-- Subscribe to HA state changes via websocket API
-- Push state updates to frontend in real-time
-- Remove/reduce polling intervals
+### Completed
+- Added `broadcast_iot_devices()` background task in `routes/iot.py` (30s interval)
+- Added `fetch_iot_devices_data()` reusable function for consistent IoT device queries
+- WebSocket broadcast after device control, link, and unlink operations
+- Refactored `GET /api/iot/devices` to reuse shared fetch function
+- Frontend `Blueprint.jsx`: Subscribes to `iot_devices` WebSocket events, merges IoT devices with local devices in real-time
+- Frontend `DeviceRegistry.jsx`: Subscribes to `iot_devices` and `devices` WebSocket events for live updates
+- WebSocket events: `devices` (5s broadcast), `users` (10s broadcast), `iot_devices` (30s broadcast)
+- Removed HTTP polling for users/devices from Core.jsx, OnlineUsers.jsx, GuestRoster.jsx
 
 ---
 
@@ -167,6 +171,42 @@ Allow users to create automations like "turn on light at sunset".
 | 006 | migration_006_personality_context.sql | Context tracking |
 | 007 | migration_007_device_types_expansion.sql | Device types (fan, climate, cover, lock, media_player, sensor, etc.) |
 | 008 | migration_008_iot_device_link.sql | FK relationship between smarthome_devices and device tables |
+| 016 | migration_016_iot_device_cleanup.sql | Remove auto-created device rows (IP='0.0.0.0') from past syncs |
+
+---
+
+---
+
+## Phase 15: RTSP Camera as Smart Device ✓
+
+### Goal
+Register the RTSP camera (`c200`) as a `camera`-type device in the device registry so it appears on the Blueprint with a camera icon and links to its RTSP stream.
+
+### Completed
+- Camera already registered in DB as device ID 79 ("C200", type HW, IP `192.168.2.226`) via LAN scan — no `/etc/hosts` entry needed
+- `services/service_api/routes/stream.py` implements RTSP → MJPEG proxy (`GET /api/stream/camera` + `/api/stream/camera/config`)
+- `CameraStream.jsx` side panel with MJPEG display, snapshot, reconnect (integrated in Nexus)
+- See `todo/todo_camera_streaming.md` for details and future WebRTC/HLS options
+
+---
+
+## Phase 16: HA Device Matching & Domain Page Filtering ✓
+
+### Goal
+Devices integrated via HA should be matched to devices in the `device` table. Unmatched HA devices should NOT auto-create `device` table records and should NOT appear on the Domain/Blueprint page (too many HA devices to show all).
+
+### Completed
+- Stopped auto-creating `device` records in `sync_ha_devices()` (ha_utils.py) and `sync_st_devices()` (st_utils.py) — unmatched HA/ST devices stay in `smarthome_devices` only (device_id = NULL)
+- Added `?linked=true/false` filter to `GET /api/iot/devices` (routes/iot.py) — defaults to all for DeviceRegistry/Routines
+- `Blueprint.jsx` now merges only linked IoT devices (`mergeWithIot` filters `iot.linked`) — unlinked HA devices no longer flood the Domain/Blueprint page
+- Removed dead unlinked-warning UI + unused `AlertTriangle` import from Blueprint.jsx
+- Cleanup migration `setup/migration_016_iot_device_cleanup.sql` (alembic `0017`) deletes existing auto-created device rows (IP='0.0.0.0') and unlinks them, respecting FK order (device_history → smarthome_devices → device)
+- ✅ Migration `0017` applied to live DB on 2026-08-07 (`docker compose run --rm migrate`) — 0 junk rows remain; `0001_baseline` made idempotent so `migrate` passes on existing DBs
+
+### Notes
+- Unlinked HA devices are still managed/linkable in Domain → Devices → SMARTHOME DEVICES (DeviceRegistry keeps showing all)
+- Manual links persist across sync (COALESCE preserves existing device_id)
+- Migrations table below needs `016` row added
 
 ---
 
@@ -176,7 +216,7 @@ Allow users to create automations like "turn on light at sunset".
 - User selects default provider (HA or ST)
 - LAN scan (service_device) adds devices to `device` table
 - HA/ST sync populates `smarthome_devices` and auto-links via device_id FK
-- If MAC not found in device table, auto-creates device record
+- If MAC not found in device table, device stays unlinked (no device record created)
 - Device linking UI in Domain → Devices → SMARTHOME DEVICES section
 - Linked devices show "LINKED" status in blue
 - Unlinked devices show warning icon - must link before use on Blueprint

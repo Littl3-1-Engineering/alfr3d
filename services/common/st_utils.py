@@ -7,14 +7,6 @@ from .db_pool import get_connection
 
 logger = logging.getLogger("STLog")
 
-MYSQL_HOST = os.environ.get("MYSQL_HOST", "mysql")
-MYSQL_USER = os.environ.get("MYSQL_USER", "root")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "rootpassword")
-MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
-
-if MYSQL_HOST == "mysql":
-    MYSQL_HOST = "mysql"
-
 ST_API_BASE = "https://api.smartthings.com/v1"
 
 
@@ -159,7 +151,6 @@ def sync_st_devices():
 
     synced = 0
     linked = 0
-    created = 0
     for device in devices:
         st_device_id = device.get("deviceId")
         label = device.get("label", device.get("name", st_device_id))
@@ -177,34 +168,6 @@ def sync_st_devices():
             if row:
                 device_id = row[0]
                 linked += 1
-            else:
-                cursor.execute(
-                    """
-                    SELECT s.id as state_id, dt.id as type_id,
-                           u.id as user_id, e.id as env_id
-                    FROM states s, device_types dt, user u, environment e
-                    WHERE s.state = 'online' AND dt.type = 'guest'
-                    AND u.username = 'alfr3d' AND e.name = 'Home'
-                    """,
-                )
-                result = cursor.fetchone()
-                if result:
-                    devstate, devtype, usrid, envid = result
-                    cursor.execute(
-                        "INSERT INTO device(name, IP, MAC, last_online, state, "
-                        "device_type, user_id, environment_id) "
-                        "VALUES (%s, '0.0.0.0', %s, NOW(), %s, %s, %s, %s)",
-                        (
-                            label,
-                            mac_address,
-                            devstate,
-                            devtype,
-                            usrid,
-                            envid,
-                        ),
-                    )
-                    device_id = cursor.lastrowid
-                    created += 1
 
         cursor.execute(
             """
@@ -225,7 +188,7 @@ def sync_st_devices():
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} ST devices, linked {linked}, created {created} device records")
+    logger.info(f"Synced {synced} ST devices, linked {linked}")
     return True
 
 

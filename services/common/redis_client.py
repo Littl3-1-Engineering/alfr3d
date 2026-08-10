@@ -2,7 +2,7 @@
 
 import os
 import logging
-import json
+import orjson
 from typing import Any, Optional
 
 logger = logging.getLogger("ApiLog")
@@ -59,7 +59,7 @@ def redis_get(key: str) -> Optional[Any]:
         val = r.get(key)
         if val is None:
             return None
-        return json.loads(val)
+        return orjson.loads(val)
     except Exception as e:
         logger.warning(f"Redis GET error for {key}: {e}")
         return None
@@ -71,7 +71,7 @@ def redis_set(key: str, value: Any, ttl: int = 300) -> bool:
     if r is None:
         return False
     try:
-        r.setex(key, ttl, json.dumps(value, default=str))
+        r.setex(key, ttl, orjson.dumps(value))
         return True
     except Exception as e:
         logger.warning(f"Redis SET error for {key}: {e}")

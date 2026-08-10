@@ -1,15 +1,12 @@
 import os
 import logging
+import time
+import pymysql
 from datetime import datetime, timedelta
 
-import pymysql
+from .db_pool import get_connection
 
 logger = logging.getLogger("DBUtils")
-
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "mysql")
-MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
-MYSQL_USER = os.environ.get("MYSQL_USER", "user")
-MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
 
 _cached_states = None
 _cached_user_types = None
@@ -17,8 +14,29 @@ _cached_env_name = None
 _cached_env_id = None
 
 
+def wait_for_db(max_attempts=30, delay=2):
+    """Block until MySQL is reachable, retrying with backoff. Returns True on success."""
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            db = get_connection()
+            cursor = db.cursor()
+            cursor.execute("SELECT 1")
+            db.close()
+            logger.info(f"Database connection established (attempt {attempt})")
+            return True
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                f"Database not ready (attempt {attempt}/{max_attempts}): {e}"
+            )
+            time.sleep(delay)
+    logger.error(f"Database not reachable after {max_attempts} attempts: {last_err}")
+    return False
+
+
 def get_db_connection():
-    return pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+    return get_connection()
 
 
 def get_env_timezone(env_name):
