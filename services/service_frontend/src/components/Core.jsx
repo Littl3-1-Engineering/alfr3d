@@ -1,17 +1,17 @@
 // src/components/Core.jsx
 
-import { motion } from 'framer-motion';
-import { Sun } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Moon, Sun } from 'lucide-react';
 import Lottie from 'lottie-react';
 import PropTypes from 'prop-types';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
-import { getTimeRatio, getSunAngle } from '../utils/timeUtils';
+import { getSunAngle, getMoonAngle, getSunAltitude, getMoonAltitude } from '../utils/timeUtils';
 import { useTheme } from '../utils/useTheme';
 import socket from '../utils/socket';
 
 // --- A simplified Satellite component ---
-const Satellite = ({ radius, angle, size, color, glowColor, children }) => {
+const Satellite = ({ radius, angle, size, color, glowColor, opacity = 1, children }) => {
   // Satellite positioning math: Convert polar coordinates (radius, angle) to Cartesian (x, y)
   // Center at 50% (middle of container), scale radius to fit within 0-100% range
   const x = 50 + (radius / 200) * 50 * Math.cos(angle);
@@ -29,6 +29,7 @@ const Satellite = ({ radius, angle, size, color, glowColor, children }) => {
         backgroundColor: color,
         borderRadius: '50%',
         boxShadow: `0 0 12px ${glowColor}`,
+        opacity,
       }}
     >
       {children}
@@ -42,6 +43,7 @@ Satellite.propTypes = {
   size: PropTypes.number.isRequired,
   color: PropTypes.string.isRequired,
   glowColor: PropTypes.string.isRequired,
+  opacity: PropTypes.number,
   children: PropTypes.node,
 };
 
@@ -316,7 +318,9 @@ SVGReticle.propTypes = {
   variant: PropTypes.oneOf(['crosshair', 'radar', 'crosshair1', 'crosshair2', 'crosshair3', 'grid']),
 };
 
-const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null, pollInterval = 10000 }) => {
+const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null }) => {
+  const DEFAULT_LOCATION = { latitude: 44.7866, longitude: 20.4489 };
+
   const [animationData, setAnimationData] = useState(null);
   const [isIntroFinished, setIsIntroFinished] = useState(false);
   const [rotationAngle, setRotationAngle] = useState(0);
@@ -324,6 +328,12 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
   const [users, setUsers] = useState(initialUsers || []);
   const [devices, setDevices] = useState(initialDevices || []);
   const [sunAngle, setSunAngle] = useState(0);
+  const [moonAngle, setMoonAngle] = useState(0);
+  const [sunAltitude, setSunAltitude] = useState(0);
+  const [moonAltitude, setMoonAltitude] = useState(0);
+  const [location, setLocation] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [showTooltip, setShowTooltip] = useState(false);
   const [reticle1Animate, setReticle1Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
   const [reticle2Animate, setReticle2Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
   const [reticle3Animate, setReticle3Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
@@ -334,6 +344,17 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       .then(response => response.json())
       .then(data => setAnimationData(data))
       .catch(error => console.error('Error fetching animation data:', error));
+  }, []);
+
+  useEffect(() => {
+    fetch(API_BASE_URL + '/api/environment')
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (data && data.latitude != null && data.longitude != null) {
+          setLocation({ latitude: data.latitude, longitude: data.longitude });
+        }
+      })
+      .catch(() => {});
   }, []);
 
 
@@ -401,13 +422,15 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
     if (!initialUsers || users.length === 0) {
       fetchUsers();
     }
-    const interval = setInterval(fetchUsers, 5000);
 
-    socket.on('users', setUsers);
+    const handleUsersUpdate = (users) => {
+      setUsers(users.filter(user => user.state === 'online'));
+    };
+
+    socket.on('users', handleUsersUpdate);
 
     return () => {
-      clearInterval(interval);
-      socket.off('users', setUsers);
+      socket.off('users', handleUsersUpdate);
     };
   }, []);
 
@@ -415,12 +438,10 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
     if (!initialDevices || devices.length === 0) {
       fetchDevices();
     }
-    const interval = setInterval(fetchDevices, pollInterval);
 
     socket.on('devices', setDevices);
 
     return () => {
-      clearInterval(interval);
       socket.off('devices', setDevices);
     };
   }, []);
@@ -447,17 +468,39 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
     }
   }, [isIntroFinished]);
 
-  // Effect to update sun angle based on time
+  const refreshHealth = () => {
+    fetch(API_BASE_URL + '/api/health')
+      .then(response => response.ok ? response.json() : null)
+      .then(data => data && setHealth(data))
+      .catch(() => {});
+  };
+
   useEffect(() => {
-    const updateSunAngle = () => {
-      const timeRatio = getTimeRatio();
-      const angle = getSunAngle(timeRatio);
-      setSunAngle(angle);
-    };
-    updateSunAngle();
-    const interval = setInterval(updateSunAngle, 60000); // Update every minute
-    return () => clearInterval(interval);
+    refreshHealth();
   }, []);
+
+  // Effect to update sun/moon/clock angles based on real ephemeris (lat/lon + time)
+  useEffect(() => {
+    const loc = location || DEFAULT_LOCATION;
+    const updateAstroAngles = () => {
+      const now = new Date();
+      setSunAltitude(getSunAltitude(now, loc.latitude, loc.longitude));
+      setMoonAltitude(getMoonAltitude(now, loc.latitude, loc.longitude));
+      setSunAngle(getSunAngle(now, loc.latitude, loc.longitude));
+      setMoonAngle(getMoonAngle(now, loc.latitude, loc.longitude));
+    };
+    updateAstroAngles();
+    const interval = setInterval(updateAstroAngles, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, [location]);
+
+  const formatUptime = (seconds) => {
+    if (seconds == null) return 'N/A';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${d}d ${h}h ${m}m`;
+  };
 
   // Effect for reticle 1 independent rotation
   useEffect(() => {
@@ -500,7 +543,25 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
 
   return (
     // Responsive container that maintains a square aspect ratio
-    <div className="relative w-full max-w-[450px] aspect-square">
+    <div
+      className="relative w-full max-w-[450px] aspect-square"
+      onMouseEnter={() => { setShowTooltip(true); refreshHealth(); }}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <AnimatePresence>
+        {showTooltip && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-3 py-2 font-mono text-[10px] text-primary border border-primary/40 bg-black/80 rounded pointer-events-none whitespace-nowrap"
+          >
+            <div>SYSTEM UPTIME: {formatUptime(health && health.uptime_seconds)}</div>
+            <div>VERSION: {health ? health.version : '...'}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.div
         className="absolute inset-0"
@@ -629,7 +690,7 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
         })}
       </motion.div>
 
-      {/* Sun Orbit - Positioned based on time */}
+      {/* Sun Orbit - Positioned by solar ephemeris (lat/lon + time), dimmed below horizon */}
       <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
         <Satellite
           radius={240} // Outside the rings
@@ -637,8 +698,23 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
           size={24}
           color="transparent"
           glowColor={themeColors.warning}
+          opacity={sunAltitude >= 0 ? 1 : 0.3}
         >
           <Sun className="w-full h-full" style={{ color: themeColors.warning }} />
+        </Satellite>
+      </div>
+
+      {/* Moon Orbit - Positioned by lunar ephemeris (lat/lon + time), dimmed below horizon */}
+      <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
+        <Satellite
+          radius={220} // Just inside the sun orbit
+          angle={moonAngle}
+          size={18}
+          color="transparent"
+          glowColor={themeColors.accent}
+          opacity={moonAltitude >= 0 ? 1 : 0.3}
+        >
+          <Moon className="w-full h-full" style={{ color: themeColors.accent }} />
         </Satellite>
       </div>
     </div>

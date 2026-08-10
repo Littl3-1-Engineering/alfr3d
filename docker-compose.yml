@@ -55,12 +55,35 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./setup/my.cnf:/etc/mysql/conf.d/slow_query.cnf
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER}", "-p${MYSQL_PSWD}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  migrate:
+    build:
+      context: ./setup
+      dockerfile: ./migrations/Dockerfile
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=mysql
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PSWD=${MYSQL_PSWD}
+      - MYSQL_NAME=${MYSQL_NAME}
 
   service-user:
     build:
       context: ./services
       dockerfile: ./service_user/Dockerfile
     user: "1000:1000"
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -75,6 +98,7 @@ services:
     build:
       context: ./services
       dockerfile: ./service_api/Dockerfile
+    restart: unless-stopped
     depends_on:
       mysql:
         condition: service_started
@@ -102,6 +126,7 @@ services:
       dockerfile: ./service_device/Dockerfile
     # Host network mode and root required for ARP scanning
     network_mode: host
+    restart: unless-stopped
     env_file: .env
     environment:
       - MYSQL_DATABASE=localhost
@@ -113,6 +138,7 @@ services:
       context: ./services
       dockerfile: ./service_environment/Dockerfile
     user: "1000:1000"
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -127,6 +153,7 @@ services:
     build:
       context: ./services
       dockerfile: ./service_speak/Dockerfile
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -142,6 +169,7 @@ services:
       context: ./services
       dockerfile: ./service_daemon/Dockerfile
     user: "1000:1000"
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -160,6 +188,7 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     user: "1001:1001"
+    restart: unless-stopped
     env_file: .env
     expose:
       - "8000"
@@ -170,8 +199,10 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       service-frontend:
         condition: service_started
@@ -179,7 +210,7 @@ services:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "--no-check-certificate", "-q", "-O", "/dev/null", "https://127.0.0.1/health"]
       interval: 30s
       timeout: 10s
       retries: 3

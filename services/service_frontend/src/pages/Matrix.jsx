@@ -9,11 +9,13 @@ import TacticalPanelVariant4 from '../components/TacticalPanelVariant4';
 import TacticalPanelVariant5 from '../components/TacticalPanelVariant5';
 import TacticalPanelVariant6 from '../components/TacticalPanelVariant6';
 import TacticalPanelVariant7 from '../components/TacticalPanelVariant7';
+import { useTheme } from '../utils/useTheme';
 
 const Routines = lazy(() => import('../components/Routines'));
 const Personality = lazy(() => import('../components/Personality'));
 const Integrations = lazy(() => import('../components/Integrations'));
 const System = lazy(() => import('../components/System'));
+const Music = lazy(() => import('../components/Music'));
 
 const LoadingFallback = () => (
   <div className="flex items-center justify-center h-64">
@@ -24,12 +26,14 @@ const LoadingFallback = () => (
 
 const Matrix = () => {
   const [activeTab, setActiveTab] = useState('routines');
+  const { themeColors } = useTheme();
 
   const tabs = [
     { id: 'routines', label: 'Routines', component: Routines },
     { id: 'personality', label: 'Personality', component: Personality },
     { id: 'integrations', label: 'Integrations', component: Integrations },
     { id: 'customizations', label: 'Customizations', component: null },
+    { id: 'music', label: 'Music', component: Music },
     { id: 'system', label: 'System', component: System },
   ];
 
@@ -42,7 +46,7 @@ const Matrix = () => {
       transition={{ duration: 0.8 }}
       className="min-h-screen p-8 bg-fui-bg"
       style={{
-        backgroundImage: "linear-gradient(to right, #222 1px, transparent 1px), linear-gradient(to bottom, #222 1px, transparent 1px)",
+        backgroundImage: "linear-gradient(to right, var(--theme-tactical-grid) 1px, transparent 1px), linear-gradient(to bottom, var(--theme-tactical-grid) 1px, transparent 1px)",
         backgroundSize: '20px 20px'
       }}
     >
@@ -104,7 +108,7 @@ const Matrix = () => {
                       <TacticalPanelVariant2 title="Panel Variant 2">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Amber accent (#f59e0b)</p>
+                          <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
                           <p className="mb-2">Style: Striped header pattern</p>
                           <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
                         </div>
@@ -112,7 +116,7 @@ const Matrix = () => {
                       <TacticalPanelVariant3 title="Panel Variant 3">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Yellow accent (#eab308)</p>
+                          <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
                           <p className="mb-2">Style: Layered corners, gradient header</p>
                           <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
                         </div>
@@ -120,7 +124,7 @@ const Matrix = () => {
                       <TacticalPanelVariant4 title="Panel Variant 4">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Mono / JetBrains</p>
-                          <p className="mb-2">Colors: Amber terminal (#f59e0b)</p>
+                          <p className="mb-2">Colors: Cyan terminal ({themeColors.primary})</p>
                           <p className="mb-2">Style: Scanlines, blinking cursor, ASCII corners</p>
                           <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.</p>
                         </div>
@@ -128,7 +132,7 @@ const Matrix = () => {
                       <TacticalPanelVariant5 title="Panel Variant 5">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Amber (#f59e0b) + gray</p>
+                          <p className="mb-2">Colors: Cyan ({themeColors.primary}) + gray</p>
                           <p className="mb-2">Style: Industrial riveted frame, segmented lights</p>
                           <p>Totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae.</p>
                         </div>
@@ -136,7 +140,7 @@ const Matrix = () => {
                       <TacticalPanelVariant6 title="Panel Variant 6">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Silver minimalist (#c0c0c0)</p>
+                          <p className="mb-2">Colors: Silver minimalist ({themeColors.textSecondary})</p>
                           <p className="mb-2">Style: Thin corner lines, centered text</p>
                           <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
                         </div>
@@ -144,7 +148,7 @@ const Matrix = () => {
                       <TacticalPanelVariant7 title="Panel Variant 7">
                         <div className="text-fui-text">
                           <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Amber (#f59e0b)</p>
+                          <p className="mb-2">Colors: Cyan ({themeColors.primary})</p>
                           <p className="mb-2">Style: Diagonal brackets, glitch lines</p>
                           <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur.</p>
                         </div>

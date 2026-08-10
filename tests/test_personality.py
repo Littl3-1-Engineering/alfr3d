@@ -17,6 +17,8 @@ from services.service_speak.personality import (
     calculate_mood_offset,
     blend_traits,
     determine_mood,
+    select_quip_by_traits,
+    ROUTINE_QUIP_TYPES,
 )
 
 
@@ -131,6 +133,28 @@ class TestPersonalityFunctions:
         assert result["sarcasm"] == 1.0
         assert result["patience"] == 0.0
 
+    def test_select_quip_by_traits_excludes_routine_quips(self):
+        quips = [
+            {"type": "smart", "quips": "To err is human"},
+            {"type": "sunrise", "quips": "ah sunrise. it is good to be alive"},
+            {
+                "type": "sunset",
+                "quips": "yet another sunset. perhaps this is a good time to take a break",
+            },
+            {"type": "bedtime", "quips": "Unless we are burning the midnight oil"},
+        ]
+        traits = {"formality": 0.5, "warmth": 0.5, "sarcasm": 0.5}
+        result = select_quip_by_traits(quips, traits)
+        assert result == "To err is human"
+
+    def test_select_quip_by_traits_returns_none_when_only_routine_quips(self):
+        quips = [{"type": "sunset", "quips": "yet another sunset"}]
+        result = select_quip_by_traits(quips, {"formality": 0.5, "warmth": 0.5, "sarcasm": 0.5})
+        assert result is None
+
+    def test_routine_quip_types_are_reserved(self):
+        assert ROUTINE_QUIP_TYPES == {"sunrise", "sunset", "bedtime"}
+
 
 class TestDatabaseFunctions:
     def test_get_personality_by_environment_handles_null_values(self):
@@ -193,5 +217,5 @@ class TestDatabaseFunctions:
             result = get_quips_for_environment(env_id=1)
             assert isinstance(result, list)
             assert len(result) == 2
-            assert isinstance(result[0], dict)
-            assert result[0]["type"] == "formal"
+            assert all(isinstance(item, dict) for item in result)
+            assert {item["type"] for item in result} == {"formal", "casual"}

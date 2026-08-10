@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Monitor, AlertTriangle, Link2, Unlink, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import socket from '../utils/socket';
 
 const USER_DEVICE_TYPES = ['HW', 'guest', 'resident'];
 
@@ -165,6 +166,19 @@ const DeviceRegistry = () => {
 
   useEffect(() => {
     fetchData();
+
+    socket.on('iot_devices', (iotData) => {
+      setIotDevices(iotData);
+    });
+
+    socket.on('devices', (devicesData) => {
+      setDevices(devicesData);
+    });
+
+    return () => {
+      socket.off('iot_devices');
+      socket.off('devices');
+    };
   }, []);
 
   const userDevices = devices.filter((d) => d.user && d.user !== 'alfr3d' && d.user.toLowerCase() !== 'unknown');

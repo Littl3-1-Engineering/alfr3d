@@ -1,0 +1,25 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore virtual environments
+venv/
+.venv/
+env/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore tests
+test_*.py
+*_test.py
+tests/
+
+# Ignore development files
+.env
+.env.local
+*.log

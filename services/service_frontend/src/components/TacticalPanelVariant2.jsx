@@ -1,7 +1,7 @@
 import PropTypes from 'prop-types';
 
 const TacticalPanelVariant2 = ({ title, children, className = "", showGrid = false }) => {
-  const amberColor = 'hsl(45, 100%, 58%)';
+  const amberColor = 'var(--theme-primary)';
   return (
     <div className={`relative bg-fui-panel border border-fui-border rounded-none ${className}`}>
       {/* Corner Markers - Amber */}
@@ -11,7 +11,7 @@ const TacticalPanelVariant2 = ({ title, children, className = "", showGrid = fal
       <div className="absolute -bottom-px -right-px w-3 h-3 border-b-2 border-r-2 z-10" style={{ borderColor: amberColor }} />
 
       {/* Header Bar - Striped amber pattern */}
-      <div className="flex items-center justify-between px-3 py-1 border-b border-fui-border" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, hsla(45, 100%, 58%, 0.2) 8px, hsla(45, 100%, 58%, 0.2) 16px)' }}>
+      <div className="flex items-center justify-between px-3 py-1 border-b border-fui-border" style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 8px, color-mix(in srgb, var(--theme-primary) 20%, transparent) 8px, color-mix(in srgb, var(--theme-primary) 20%, transparent) 16px)' }}>
          <h3 className="font-tech font-bold text-base uppercase tracking-widest text-white">
           <span className="mr-2" style={{ color: amberColor }}> /</span>{title}
         </h3>

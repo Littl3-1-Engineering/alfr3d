@@ -11,9 +11,11 @@ const EventStream = () => {
     const fetchEvents = async () => {
       try {
         const response = await fetch(API_BASE_URL + '/api/events');
-        const events = await response.json();
-        const latestEvents = events.reverse().slice(0, 4);
-        setDisplayedEvents(latestEvents);
+        if (response.ok) {
+          const events = await response.json();
+          const latestEvents = events.reverse().slice(0, 4);
+          setDisplayedEvents(latestEvents);
+        }
       } catch (error) {
         console.error('Error fetching events:', error);
       }

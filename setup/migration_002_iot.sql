@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `smarthome_devices` (
   `environment_id` INTEGER NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_source_device` (`source`, COALESCE(ha_entity_id, st_device_id))
+  UNIQUE KEY `unique_source_device` (`source`, (COALESCE(`ha_entity_id`, `st_device_id`)))
 );
 
 -- Create device_command_history table
