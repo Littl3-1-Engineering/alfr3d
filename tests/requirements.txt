@@ -11,5 +11,5 @@ fastapi>=0.109.1
 httpx>=0.27.0
 schedule==1.2.2
 gtts==2.5.4
-alembic==1.18.5
+alembic==1.19.0
 SQLAlchemy>=2.0
