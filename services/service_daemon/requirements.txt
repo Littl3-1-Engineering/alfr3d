@@ -3,7 +3,7 @@ schedule
 python-dotenv
 pymysql==1.1.2
 DBUtils==3.1.0
-cryptography==48.0.1
+cryptography==50.0.0
 requests
 googlemaps
 google-api-python-client
