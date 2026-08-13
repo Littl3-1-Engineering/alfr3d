@@ -66,14 +66,27 @@ def save_spotify_credentials(client_id, client_secret, redirect_uri=""):
     cursor = db.cursor()
     cursor.execute("UPDATE config SET value = %s WHERE name = 'spotify_client_id'", (client_id,))
     if cursor.rowcount == 0:
-        cursor.execute("INSERT INTO config (name, value) VALUES ('spotify_client_id', %s)", (client_id,))
-    cursor.execute("UPDATE config SET value = %s WHERE name = 'spotify_client_secret'", (client_secret,))
+        cursor.execute(
+            "INSERT INTO config (name, value) VALUES ('spotify_client_id', %s)",
+            (client_id,),
+        )
+    cursor.execute(
+        "UPDATE config SET value = %s WHERE name = 'spotify_client_secret'", (client_secret,)
+    )
     if cursor.rowcount == 0:
-        cursor.execute("INSERT INTO config (name, value) VALUES ('spotify_client_secret', %s)", (client_secret,))
+        cursor.execute(
+            "INSERT INTO config (name, value) VALUES ('spotify_client_secret', %s)",
+            (client_secret,),
+        )
     if redirect_uri:
-        cursor.execute("UPDATE config SET value = %s WHERE name = 'spotify_redirect_uri'", (redirect_uri,))
+        cursor.execute(
+            "UPDATE config SET value = %s WHERE name = 'spotify_redirect_uri'", (redirect_uri,)
+        )
         if cursor.rowcount == 0:
-            cursor.execute("INSERT INTO config (name, value) VALUES ('spotify_redirect_uri', %s)", (redirect_uri,))
+            cursor.execute(
+                "INSERT INTO config (name, value) VALUES ('spotify_redirect_uri', %s)",
+                (redirect_uri,),
+            )
     db.commit()
     db.close()
     return True
@@ -121,7 +134,8 @@ def _store_tokens(access_token, refresh_token, expires_in):
     db = get_connection()
     cursor = db.cursor()
     cursor.execute(
-        "INSERT INTO integrations_tokens (integration_type, access_token, refresh_token, expires_at) "
+        "INSERT INTO integrations_tokens "
+        "(integration_type, access_token, refresh_token, expires_at) "
         "VALUES ('spotify', %s, %s, %s) "
         "ON DUPLICATE KEY UPDATE access_token = %s, refresh_token = %s, expires_at = %s",
         (access_token, refresh_token, expires_at, access_token, refresh_token, expires_at),
@@ -267,7 +281,11 @@ def get_playback_state():
             "name": item.get("name"),
             "artists": [a.get("name") for a in (item.get("artists") or [])],
             "album": (item.get("album") or {}).get("name"),
-            "album_art": ((item.get("album") or {}).get("images") or [{}])[0].get("url") if (item.get("album") or {}).get("images") else None,
+            "album_art": (
+                ((item.get("album") or {}).get("images") or [{}])[0].get("url")
+                if (item.get("album") or {}).get("images")
+                else None
+            ),
             "duration_ms": item.get("duration_ms"),
             "uri": item.get("uri"),
         },
@@ -354,6 +372,7 @@ def get_queue():
     data, err = _api_request("GET", "/me/player/queue")
     if err:
         return None, err.get("error", {}).get("message")
+
     def _simplify(track):
         if not track:
             return None
@@ -365,6 +384,7 @@ def get_queue():
             "duration_ms": track.get("duration_ms"),
             "uri": track.get("uri"),
         }
+
     return {
         "currently_playing": _simplify(data.get("currently_playing")),
         "queue": [_simplify(t) for t in (data.get("queue") or []) if t],
@@ -400,9 +420,7 @@ def transfer_playback(device_id):
 
 
 def search(query, types="track", limit=20):
-    data, err = _api_request(
-        "GET", "/search", params={"q": query, "type": types, "limit": limit}
-    )
+    data, err = _api_request("GET", "/search", params={"q": query, "type": types, "limit": limit})
     if err:
         return {}, err.get("error", {}).get("message")
     return data, None

@@ -44,7 +44,6 @@ def get_redis():
 
 def is_redis_available() -> bool:
     """Check if Redis is available. Triggers connection on first call."""
-    global _available
     if _available:
         return True
     get_redis()

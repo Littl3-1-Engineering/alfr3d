@@ -173,6 +173,85 @@ class TestSpeakService:
                     )
                     mock_send.assert_called_once()
 
+    def test_process_speak_message_llm_success(self):
+        """Claude success -> LLM text is spoken"""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event") as mock_send:
+                mock_generate.return_value = "test.mp3"
+
+                with self._patch_pipeline(
+                    get_claude_config=lambda: {
+                        "api_key": "sk-test",
+                        "usage_limit": 10,
+                        "model": "claude-haiku-4-5-20251001",
+                    },
+                    call_claude_haiku=lambda *args: "LLM enhanced response",
+                ) as pipeline:
+                    message = MagicMock()
+                    message.value = "Test message"
+
+                    process_speak_message(message)
+
+                    mock_generate.assert_called_once_with(
+                        "LLM enhanced response",
+                        "Coqui",
+                        "tts_models/multilingual/multi-dataset/xtts_v2",
+                        None,
+                        None,
+                    )
+
+    def test_process_speak_message_llm_failure_speaks_original(self):
+        """Claude failure -> original text spoken, no quip swap"""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event") as mock_send:
+                mock_generate.return_value = "test.mp3"
+
+                with self._patch_pipeline(
+                    get_claude_config=lambda: {
+                        "api_key": "sk-test",
+                        "usage_limit": 10,
+                        "model": "claude-haiku-4-5-20251001",
+                    },
+                    call_claude_haiku=lambda *args: None,
+                    get_quips_for_environment=lambda: [{"type": "smart", "quips": "random quip"}],
+                ) as pipeline:
+                    message = MagicMock()
+                    message.value = "Test message"
+
+                    process_speak_message(message)
+
+                    mock_generate.assert_called_once_with(
+                        "Test message",
+                        "Coqui",
+                        "tts_models/multilingual/multi-dataset/xtts_v2",
+                        None,
+                        None,
+                    )
+
+    def test_process_speak_message_no_key_uses_quip(self):
+        """No API key -> personality quip spoken"""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event") as mock_send:
+                mock_generate.return_value = "test.mp3"
+
+                with self._patch_pipeline(
+                    get_claude_config=lambda: {},
+                    get_quips_for_environment=lambda: [{"type": "smart", "quips": "random quip"}],
+                    select_quip_by_traits=lambda quips, traits: "random quip",
+                ) as pipeline:
+                    message = MagicMock()
+                    message.value = "Test message"
+
+                    process_speak_message(message)
+
+                    mock_generate.assert_called_once_with(
+                        "random quip",
+                        "Coqui",
+                        "tts_models/multilingual/multi-dataset/xtts_v2",
+                        None,
+                        None,
+                    )
+
     def test_get_tts_failure(self):
         """Test TTS loading failure handling"""
         mock_tts_class = MagicMock(side_effect=ImportError("TTS not available"))

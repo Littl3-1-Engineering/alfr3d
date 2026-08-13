@@ -50,4 +50,12 @@ cd ../service_environment || exit 1
 flake8 environment.py weather_util.py --max-line-length=100 --ignore=E203,W503 || exit 1
 black --check --diff --line-length=100 environment.py weather_util.py || exit 1
 
+# Common service
+echo "Linting service_common..."
+# Use flake8 to check for Python style violations in the common/ shared module, with max line length 100 and ignoring E203,W503
+# Use black to check if the common/ files are properly formatted
+cd ../common || exit 1
+flake8 . --max-line-length=100 --ignore=E203,W503,F401 || exit 1
+black --check --diff --line-length=100 . || exit 1
+
 echo "Linting complete."

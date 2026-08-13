@@ -201,6 +201,7 @@ def sync_ha_devices():
     env_id = env_row[0] if env_row else None
 
     synced = 0
+    updated = 0
     linked = 0
     for device in devices:
         entity_id = device["entity_id"]
@@ -221,37 +222,46 @@ def sync_ha_devices():
                 device_id = row[0]
                 linked += 1
 
+        last_state = orjson.dumps(device).decode("utf-8")
+        online = state == "on"
+
         cursor.execute(
-            """
-            INSERT INTO smarthome_devices
-                (name, source, ha_entity_id, mac_address, device_type, online,
-                 last_state, environment_id, device_id)
-            VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                name = VALUES(name),
-                mac_address = COALESCE(VALUES(mac_address), mac_address),
-                device_type = VALUES(device_type),
-                online = VALUES(online),
-                last_state = VALUES(last_state),
-                device_id = COALESCE(device_id, VALUES(device_id))
-        """,
-            (
-                name,
-                entity_id,
-                mac_address,
-                device_type,
-                state == "on",
-                orjson.dumps(device).decode("utf-8"),
-                env_id,
-                device_id,
-            ),
+            "SELECT id FROM smarthome_devices WHERE source = 'homeassistant' AND ha_entity_id = %s",
+            (entity_id,),
         )
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute(
+                """
+                UPDATE smarthome_devices
+                SET name = %s,
+                    mac_address = COALESCE(%s, mac_address),
+                    device_type = %s,
+                    online = %s,
+                    last_state = %s,
+                    device_id = COALESCE(device_id, %s)
+                WHERE id = %s
+                """,
+                (name, mac_address, device_type, online, last_state, device_id, existing[0]),
+            )
+            updated += 1
+        else:
+            cursor.execute(
+                """
+                INSERT INTO smarthome_devices
+                    (name, source, ha_entity_id, mac_address, device_type, online,
+                     last_state, environment_id, device_id)
+                VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (name, entity_id, mac_address, device_type, online, last_state, env_id, device_id),
+            )
         synced += 1
 
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} HA devices, linked {linked}")
+    logger.info(f"Synced {synced} HA devices ({updated} updated), linked {linked}")
     return True
 
 

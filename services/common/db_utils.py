@@ -27,9 +27,7 @@ def wait_for_db(max_attempts=30, delay=2):
             return True
         except Exception as e:
             last_err = e
-            logger.warning(
-                f"Database not ready (attempt {attempt}/{max_attempts}): {e}"
-            )
+            logger.warning(f"Database not ready (attempt {attempt}/{max_attempts}): {e}")
             time.sleep(delay)
     logger.error(f"Database not reachable after {max_attempts} attempts: {last_err}")
     return False
@@ -147,16 +145,14 @@ def check_mute_optimized(env_name) -> bool:
             db.close()
             return True
 
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT u.username
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type IN ('owner', 'technoking', 'resident')
             AND u.username != 'unknown'
-            """
-        )
+            """)
         online_users = cursor.fetchall()
 
         if not online_users:
