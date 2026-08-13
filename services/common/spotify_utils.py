@@ -228,9 +228,9 @@ def _api_request(method, path, params=None, body=None):
             logger.error(f"Spotify API error {response.status_code}: {response.text[:300]}")
             return None, {"error": {"message": response.text[:300], "status": response.status_code}}
         return response.json(), None
-    except Exception as e:
-        logger.error(f"Spotify API request error: {e}")
-        return None, {"error": {"message": str(e), "status": 500}}
+    except Exception:
+        logger.exception("Spotify API request error")
+        return None, {"error": {"message": "Spotify API request failed", "status": 500}}
 
 
 def exchange_code(code):
@@ -426,6 +426,12 @@ def search(query, types="track", limit=20):
     return data, None
 
 
+def _playlist_url(p):
+    return (p.get("external_urls") or {}).get("spotify") or (
+        f"https://open.spotify.com/playlist/{p.get('id')}" if p.get("id") else None
+    )
+
+
 def get_playlists(limit=20):
     data, err = _api_request("GET", "/me/playlists", params={"limit": limit})
     if err:
@@ -436,11 +442,81 @@ def get_playlists(limit=20):
             "id": p.get("id"),
             "name": p.get("name"),
             "uri": p.get("uri"),
+            "url": _playlist_url(p),
             "track_count": p.get("tracks", {}).get("total", 0),
             "image": (p.get("images") or [{}])[0].get("url") if p.get("images") else None,
         }
         for p in playlists
     ], None
+
+
+def _score_playlist_match(name, keywords):
+    """Word-overlap score between a playlist name and hint/genre keywords
+    (case-insensitive, substring-tolerant). Deliberately simple/tunable, not
+    a hard science."""
+    if not name or not keywords:
+        return 0
+    name_lower = name.lower()
+    score = 0
+    for kw in keywords:
+        kw = kw.strip().lower()
+        if len(kw) < 3:
+            continue
+        if kw in name_lower:
+            score += 1
+    return score
+
+
+def find_playlist_for_hint(hint, genre=""):
+    """Resolve a text hint (e.g. "chill, acoustic, lo-fi") into one specific,
+    real Spotify playlist — the household's own saved playlists are checked
+    first (by keyword match against playlist name), falling back to a global
+    Spotify playlist search (mirrors the existing play_recommended() "search,
+    take the top result" pattern, just for playlists instead of tracks).
+
+    Returns (playlist_dict, None) or (None, error_message). Never raises —
+    callers (situational-awareness cards, the recommend/playlist endpoint)
+    must be able to degrade gracefully when Spotify isn't connected.
+    """
+    if not hint:
+        return None, "No playlist hint provided"
+    if not is_authorized():
+        return None, "Spotify not connected"
+
+    try:
+        combined = hint.replace("/", " ") + " " + (genre or "").replace("/", " ")
+        keywords = combined.replace(",", " ").split()
+
+        library, lib_err = get_playlists(limit=50)
+        if not lib_err and library:
+            scored = [(p, _score_playlist_match(p.get("name"), keywords)) for p in library]
+            scored = [(p, s) for p, s in scored if s > 0]
+            if scored:
+                scored.sort(key=lambda ps: ps[1], reverse=True)
+                best = dict(scored[0][0])
+                best["source"] = "library"
+                return best, None
+
+        data, err = search(hint, "playlist", 1)
+        if err:
+            return None, f"Search failed: {err}"
+        items = (data.get("playlists") or {}).get("items") or []
+        items = [p for p in items if p]
+        if not items:
+            return None, f"No playlist results for '{hint}'"
+        p = items[0]
+        return {
+            "id": p.get("id"),
+            "name": p.get("name"),
+            "uri": p.get("uri"),
+            "url": _playlist_url(p),
+            "track_count": (p.get("tracks") or {}).get("total", 0),
+            "image": (p.get("images") or [{}])[0].get("url") if p.get("images") else None,
+            "source": "global",
+        }, None
+    except Exception:
+        logger.exception("find_playlist_for_hint error")
+        return None, "Unable to resolve playlist right now"
 
 
 def play_recommended(hint):
@@ -490,3 +566,105 @@ def search_by_seeds(track_ids, artist_names, limit=20):
     except Exception as e:
         logger.error(f"search_by_seeds error: {e}")
         return [], str(e)
+
+
+def _normalize_time_of_day(hour):
+    if 6 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 18:
+        return "day"
+    if 18 <= hour < 22:
+        return "evening"
+    return "night"
+
+
+def recommend(total_people, guest_count, time_of_day, weather=None):
+    """
+    Deterministic mood/genre/energy recommendation from situational inputs.
+    Lives in `common` (rather than only `service_daemon`) so both the daemon
+    (gathering-triggered situational-awareness card) and the API service
+    (on-demand `GET /api/music/recommend/playlist`) share one recommendation
+    engine instead of drifting apart. `service_daemon.utils.spotify_utils`
+    re-exports this for its existing call sites.
+
+    Args:
+        total_people: total number of people present (residents + guests)
+        guest_count: number of guests (may be 0)
+        time_of_day: one of 'morning','day','evening','night' (or an hour int)
+        weather: either a string (e.g. 'rainy', 'sunny') or a dict containing
+                 keys like 'subjective_feel', 'description', 'main', 'temp'.
+
+    Returns:
+        dict with keys: 'mood','genre','energy'(0-1),'tempo_hint','playlist_hint'
+    """
+    if time_of_day is None:
+        time_of_day = "day"
+    if isinstance(time_of_day, int):
+        time_of_day = _normalize_time_of_day(time_of_day)
+
+    subj = None
+    if isinstance(weather, dict):
+        subj = weather.get("subjective_feel") or weather.get("description")
+    elif isinstance(weather, str):
+        subj = weather
+
+    if total_people <= 1:
+        energy = 0.2
+    elif total_people <= 3:
+        energy = 0.4
+    elif total_people <= 6:
+        energy = 0.7
+    else:
+        energy = 0.9
+
+    if guest_count and guest_count > 0:
+        energy += 0.08
+
+    if time_of_day in ("evening", "night"):
+        energy += 0.05
+    if time_of_day == "morning":
+        energy -= 0.05
+
+    if subj:
+        low_energy_keywords = ["rain", "drizzle", "snow", "cold", "bad weather"]
+        high_energy_keywords = ["sunny", "perfect", "pleasant", "warm"]
+        s = subj.lower()
+        if any(k in s for k in low_energy_keywords):
+            energy -= 0.12
+        if any(k in s for k in high_energy_keywords):
+            energy += 0.06
+
+    energy = max(0.0, min(1.0, energy))
+
+    if energy < 0.3:
+        genre = "acoustic / ambient / lofi"
+        mood = "relaxed"
+        tempo = "slow"
+        playlist_hint = (
+            "chill, acoustic, lo-fi" if subj and "rain" in str(subj).lower() else "acoustic, mellow"
+        )
+    elif energy < 0.6:
+        genre = "indie / soft pop / jazz"
+        mood = "warm"
+        tempo = "medium"
+        playlist_hint = "indie / soft pop / mellow jazz"
+    elif energy < 0.8:
+        genre = "alt-rock / upbeat pop / nu-disco"
+        mood = "upbeat"
+        tempo = "medium-fast"
+        playlist_hint = "upbeat pop, alt-rock, nu-disco"
+    else:
+        genre = "dance / house / party hits"
+        mood = "energetic"
+        tempo = "fast"
+        playlist_hint = "party, dance, high-energy"
+
+    descriptor = f"{mood} {genre.split('/')[0].strip()}"
+
+    return {
+        "mood": descriptor,
+        "genre": genre,
+        "energy": round(energy, 2),
+        "tempo_hint": tempo,
+        "playlist_hint": playlist_hint,
+    }

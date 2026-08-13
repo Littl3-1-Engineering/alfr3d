@@ -2,10 +2,15 @@
 
 import logging
 from fastapi import APIRouter, HTTPException
-import orjson
 import pymysql
 
-from dependencies import db_connection, _get_cached_or_fetch, _invalidate_cache, get_environment_id, ALFR3D_ENV_NAME
+from dependencies import (
+    db_connection,
+    _get_cached_or_fetch,
+    _invalidate_cache,
+    get_environment_id,
+    ALFR3D_ENV_NAME,
+)
 from models import PersonalityUpdate, ContextUpdate, LLMConfigUpdate, PresetApply
 
 logger = logging.getLogger("ApiLog")
@@ -16,6 +21,7 @@ router = APIRouter(prefix="/api", tags=["personality"])
 async def get_personality():
     try:
         from dependencies import _fetch_personality
+
         return _get_cached_or_fetch("personality:current", _fetch_personality)
     except pymysql.Error as e:
         logger.error(f"Error fetching personality: {str(e)}")
@@ -65,6 +71,7 @@ async def update_personality(data: PersonalityUpdate):
 async def get_personality_presets():
     try:
         from dependencies import _fetch_personality_presets
+
         return _get_cached_or_fetch("personality:presets", _fetch_personality_presets)
     except Exception as e:
         logger.error(f"Error fetching presets: {str(e)}")
@@ -117,7 +124,10 @@ async def apply_personality_preset(data: PresetApply):
 async def get_personality_context():
     try:
         from dependencies import _fetch_context
-        ctx = _get_cached_or_fetch(f"personality:context:{ALFR3D_ENV_NAME}", _fetch_context, ttl=300)
+
+        ctx = _get_cached_or_fetch(
+            f"personality:context:{ALFR3D_ENV_NAME}", _fetch_context, ttl=300
+        )
         if ctx:
             return ctx
         raise HTTPException(status_code=404, detail="Context not found")
@@ -158,6 +168,7 @@ async def update_personality_context(data: ContextUpdate):
 async def get_llm_config():
     try:
         from dependencies import _fetch_llm_config
+
         return _get_cached_or_fetch("personality:llm-config", _fetch_llm_config, ttl=600)
     except pymysql.Error as e:
         logger.error(f"Error fetching LLM config: {str(e)}")

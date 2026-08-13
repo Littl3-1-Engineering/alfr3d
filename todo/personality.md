@@ -1,8 +1,42 @@
 # Personality Matrix Implementation Plan
 
-## Status: ✅ COMPLETE
+## Status: ⚠️ COMPLETE WITH OPEN TASKS
 
-All phases implemented including context tracking for repeat detection.
+Core phases implemented including context tracking for repeat detection. Two open items remain — see below.
+
+---
+
+## 🔲 Open Tasks
+
+### 1. BUG: Changing personality to "Snarky" and pressing Save doesn't persist
+
+**Symptom:** Selecting the **Snarky** preset in the Personality panel and pressing **Save Personality** appears to work, but revisiting the page reloads with **Butler** selected by default.
+
+**Root cause analysis (multi-part):**
+
+- The frontend `applyPreset()` (`Personality.jsx:96-101`) only does `setPersonality(preset)` — it sets local React state and never calls the backend `/api/personality/apply-preset` endpoint (which exists in `routes/personality.py:71`).
+- The seeded `current` row (`setup/migration_004_personality.sql:54-56`) has `environment_id = NULL`. The `PUT /api/personality` handler (`routes/personality.py:35-51`) updates `WHERE type = 'current' AND environment_id = %s` — a non-NULL env id matches **0 rows** against the NULL row, so the UPDATE silently succeeds without changing anything.
+- On reload, `GET /api/personality` (`dependencies.py:173-176`) matches `environment_id = %s OR environment_id IS NULL ORDER BY environment_id DESC LIMIT 1`, returning the NULL `'Current'` row. The dropdown has no `Current` option, so the browser displays the first option (**Butler**).
+
+**Fix checklist:**
+- [ ] Frontend: `applyPreset` should call `POST /api/personality/apply-preset` (not just set local state), then refresh from the API.
+- [ ] Backend: `PUT /api/personality` and `POST /api/personality/apply-preset` should also match rows where `environment_id IS NULL` (or upsert a `current` row for the env).
+- [ ] Backend: report affected row count and 404/error if 0 rows updated instead of silently returning success.
+- [ ] Verify: save Snarky → reload page → Snarky persists.
+
+### 2. Show LLM usage vs available limit in the Personality panel
+
+**Symptom:** The LLM Settings panel shows the "Daily Usage Limit" input (`usage_limit`) but no indication of current usage, so users can't tell how many calls remain.
+
+**Current state:**
+- Usage is tracked as `context.llm_calls_today` (incremented in `services/service_speak/llm_client.py:114`), exposed via `GET /api/personality/context` (`dependencies.py:368`).
+- Limit lives in `config.llm_usage_limit` (`llmConfig.usage_limit` in the frontend).
+
+**Fix checklist:**
+- [ ] Fetch `/api/personality/context` in the Personality panel (add to `usePersonality` in `Personality.jsx`).
+- [ ] Display **"X / Y calls used today"** (or tokens used vs available) in the LLM Settings card, e.g. `llm_calls_today` / `usage_limit`.
+- [ ] Show a warning/progress indicator when nearing the limit.
+- [ ] Consider exposing token usage from `llm_client.py` (Anthropic usage metadata) if token-level detail is desired.
 
 ---
 

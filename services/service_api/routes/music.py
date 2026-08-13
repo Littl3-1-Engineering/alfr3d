@@ -1,14 +1,55 @@
 """Spotify / music routes."""
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from common import spotify_utils
+from common import spotify_utils, db_connection, db_utils
+from dependencies import ALFR3D_ENV_NAME
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["music"])
+
+
+def _current_situational_inputs():
+    """Occupancy, time-of-day, and weather for right now — the same shape of
+    inputs `alfr3ddaemon.py`'s `check_gatherings()` computes for its
+    gathering-triggered card, but on-demand and independent of "is a guest
+    home", so `/music/recommend/playlist` can resolve a specific playlist at
+    any time, not only during a detected gathering."""
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            SELECT
+                SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
+                COUNT(*) as total_count
+            FROM user u
+            JOIN states s ON u.state = s.id
+            JOIN user_types ut ON u.type = ut.id
+            WHERE s.state = 'online' AND u.username != 'unknown'
+            """
+        )
+        row = cursor.fetchone()
+        guest_count = row[0] if row and row[0] else 0
+        total_count = row[1] if row and row[1] else 0
+
+        cursor.execute(
+            "SELECT description, subjective_feel FROM environment WHERE name = %s",
+            (ALFR3D_ENV_NAME,),
+        )
+        desc_row = cursor.fetchone()
+        desc, subj = desc_row if desc_row else (None, None)
+
+    hour = db_utils.get_env_local_time(ALFR3D_ENV_NAME).hour
+    if 6 <= hour < 18:
+        time_of_day = "day"
+    elif 18 <= hour < 22:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+
+    return total_count, guest_count, time_of_day, {"description": desc, "subjective_feel": subj}
 
 
 @router.get("/music/spotify/status")
@@ -78,7 +119,9 @@ async def auth_callback(code: str = Query(default=""), error: str = Query(defaul
 async def play(data: dict = None):
     try:
         data = data or {}
-        ok, err = spotify_utils.play(device_id=data.get("device_id"), context_uri=data.get("context_uri"))
+        ok, err = spotify_utils.play(
+            device_id=data.get("device_id"), context_uri=data.get("context_uri")
+        )
         if not ok:
             raise HTTPException(status_code=400, detail=err or "Play failed")
         return {"message": "Playing"}
@@ -246,7 +289,11 @@ async def search(q: str = Query(default=""), limit: int = Query(default=20, ge=1
                     "name": t.get("name"),
                     "artists": [a.get("name") for a in (t.get("artists") or [])],
                     "album": (t.get("album") or {}).get("name"),
-                    "album_art": ((t.get("album") or {}).get("images") or [{}])[0].get("url") if (t.get("album") or {}).get("images") else None,
+                    "album_art": (
+                        ((t.get("album") or {}).get("images") or [{}])[0].get("url")
+                        if (t.get("album") or {}).get("images")
+                        else None
+                    ),
                     "duration_ms": t.get("duration_ms"),
                     "uri": t.get("uri"),
                 }
@@ -274,21 +321,58 @@ async def playlists(limit: int = Query(default=20, ge=1, le=50)):
 async def recommend(limit: int = Query(default=20, ge=1, le=50)):
     try:
         from common import recommender_engine
+
         return recommender_engine.recommend(limit=limit)
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error generating recommendations")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/music/recommend/playlist")
+async def recommend_playlist():
+    """On-demand mood/genre/energy recommendation resolved into one specific,
+    real Spotify playlist — the household's own saved playlists are checked
+    first (keyword match), falling back to a global Spotify playlist search.
+    Unlike the gathering-triggered `mode: "music"` situational-awareness card,
+    this works any time, so a client always has something specific to play.
+    Returns `"playlist": null` (not a 4xx) when Spotify isn't connected or
+    nothing matched — callers should degrade gracefully, not treat it as an error.
+    """
+    try:
+        total_people, guest_count, time_of_day, weather = _current_situational_inputs()
+        reco = spotify_utils.recommend(
+            total_people=total_people,
+            guest_count=guest_count,
+            time_of_day=time_of_day,
+            weather=weather,
+        )
+        hint = reco.get("playlist_hint") or reco.get("mood") or ""
+        playlist, err = spotify_utils.find_playlist_for_hint(hint, reco.get("genre", ""))
+        response = {
+            "mood": reco.get("mood"),
+            "genre": reco.get("genre"),
+            "energy": reco.get("energy"),
+            "tempo_hint": reco.get("tempo_hint"),
+            "playlist": playlist,
+        }
+        if not playlist and err:
+            response["error"] = "Unable to fetch playlist recommendation right now"
+        return response
+    except Exception:
+        logger.exception("Error generating playlist recommendation")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/music/recommend/refresh")
 async def refresh_recommendations():
     try:
         from common import recommender_engine
+
         recommender_engine.build_recommendation_pool()
         return {"message": "Recommendation pool refreshed"}
-    except Exception as e:
-        logger.error(f"Error refreshing recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error refreshing recommendations")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/music/history")
@@ -296,6 +380,7 @@ async def record_history(data: dict):
     """Record a played track so the recommender can learn preferences."""
     try:
         from common import recommender_engine
+
         track_id = data.get("track_id") or data.get("id")
         if not track_id:
             raise HTTPException(status_code=400, detail="track_id is required")
@@ -303,7 +388,9 @@ async def record_history(data: dict):
             track_id=track_id,
             track_name=data.get("name") or data.get("track_name"),
             album=data.get("album"),
-            artist=", ".join(data.get("artists") or []) if data.get("artists") else data.get("artist"),
+            artist=(
+                ", ".join(data.get("artists") or []) if data.get("artists") else data.get("artist")
+            ),
             context=data.get("context"),
         )
         return {"message": "Recorded"}
@@ -319,6 +406,7 @@ async def get_speakers():
     """List available speaker targets and groups + active cast status."""
     try:
         from common import audio_cast
+
         return audio_cast.get_cast_status()
     except Exception as e:
         logger.error(f"Error listing speakers: {e}")
@@ -330,6 +418,7 @@ async def cast(data: dict):
     """Cast current playback to a speaker or group."""
     try:
         from common import audio_cast
+
         context_uri = data.get("context_uri")
         volume = data.get("volume_percent")
         entity_id = data.get("entity_id")
@@ -354,6 +443,7 @@ async def cast(data: dict):
 async def stop_cast():
     try:
         from common import audio_cast
+
         ok, err = audio_cast.stop_cast()
         if not ok:
             raise HTTPException(status_code=400, detail=err or "Stop failed")
@@ -368,6 +458,7 @@ async def manage_groups(data: dict):
     """Create/replace a speaker group."""
     try:
         from common import audio_cast
+
         name = (data.get("name") or "").strip()
         entities = data.get("entities") or []
         if data.get("action") == "delete":
@@ -387,6 +478,7 @@ async def cast_volume(data: dict):
     """Set volume on a speaker or a group."""
     try:
         from common import audio_cast
+
         volume = data.get("volume_percent")
         if volume is None:
             raise HTTPException(status_code=400, detail="volume_percent is required")

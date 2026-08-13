@@ -136,15 +136,21 @@ def _fetch_quips(category=None):
     with db_connection() as db:
         cursor = db.cursor()
         if category:
-            cursor.execute("SELECT id, type, category, quips FROM quips WHERE category = %s", (category,))
+            cursor.execute(
+                "SELECT id, type, category, quips FROM quips WHERE category = %s", (category,)
+            )
         else:
             cursor.execute("SELECT id, type, category, quips FROM quips")
-        quips = [{"id": row[0], "type": row[1], "category": row[2], "quips": row[3]} for row in cursor.fetchall()]
+        quips = [
+            {"id": row[0], "type": row[1], "category": row[2], "quips": row[3]}
+            for row in cursor.fetchall()
+        ]
         return quips
 
 
 def _fetch_routines():
     import pymysql
+
     with db_connection() as db:
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute(
@@ -170,6 +176,7 @@ def _fetch_routines():
 
 def _fetch_personality():
     import pymysql
+
     env_id = get_environment_id()
     with db_connection() as db:
         cursor = db.cursor(pymysql.cursors.DictCursor)
@@ -193,11 +200,13 @@ def _fetch_personality():
                 "verbal_tics": row["verbal_tics"] or "",
             }
     from fastapi import HTTPException
+
     raise HTTPException(status_code=404, detail="Personality not found")
 
 
 def _fetch_personality_presets():
     import pymysql
+
     with db_connection() as db:
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute("SELECT * FROM personality WHERE type = 'preset' ORDER BY name")
@@ -220,6 +229,7 @@ def _fetch_personality_presets():
 
 def _fetch_devices():
     import pymysql
+
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -258,6 +268,7 @@ def _fetch_devices():
 
 def _fetch_users():
     import pymysql
+
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -357,6 +368,7 @@ def _fetch_environment():
 
 def _fetch_context():
     import pymysql
+
     env_id = get_environment_id()
     with db_connection() as db:
         cursor = db.cursor(pymysql.cursors.DictCursor)
