@@ -9,6 +9,7 @@ import TacticalPanelVariant4 from '../components/TacticalPanelVariant4';
 import TacticalPanelVariant5 from '../components/TacticalPanelVariant5';
 import TacticalPanelVariant6 from '../components/TacticalPanelVariant6';
 import TacticalPanelVariant7 from '../components/TacticalPanelVariant7';
+import ThemeCustomization from '../components/ThemeCustomization';
 import { useTheme } from '../utils/useTheme';
 
 const Routines = lazy(() => import('../components/Routines'));
@@ -96,71 +97,81 @@ const Matrix = () => {
               >
                 <Suspense fallback={<LoadingFallback />}>
                   {activeTab === 'customizations' ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <TacticalPanelVariant1 title="Panel Variant 1">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
-                          <p className="mb-2">Style: L-shaped corner markers</p>
-                          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+                    <div className="grid grid-cols-1 gap-8">
+                      <div>
+                        <ThemeCustomization />
+                      </div>
+                      <div>
+                        <h3 className="font-tech font-bold text-lg uppercase tracking-widest text-fui-accent mb-4">
+                          Panel Styles
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <TacticalPanelVariant1 title="Panel Variant 1">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
+                              <p className="mb-2">Style: L-shaped corner markers</p>
+                              <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+                            </div>
+                          </TacticalPanelVariant1>
+                          <TacticalPanelVariant2 title="Panel Variant 2">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
+                              <p className="mb-2">Style: Striped header pattern</p>
+                              <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                            </div>
+                          </TacticalPanelVariant2>
+                          <TacticalPanelVariant3 title="Panel Variant 3">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
+                              <p className="mb-2">Style: Layered corners, gradient header</p>
+                              <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
+                            </div>
+                          </TacticalPanelVariant3>
+                          <TacticalPanelVariant4 title="Panel Variant 4">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Mono / JetBrains</p>
+                              <p className="mb-2">Colors: Cyan terminal ({themeColors.primary})</p>
+                              <p className="mb-2">Style: Scanlines, blinking cursor, ASCII corners</p>
+                              <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.</p>
+                            </div>
+                          </TacticalPanelVariant4>
+                          <TacticalPanelVariant5 title="Panel Variant 5">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan ({themeColors.primary}) + gray</p>
+                              <p className="mb-2">Style: Industrial riveted frame, segmented lights</p>
+                              <p>Totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae.</p>
+                            </div>
+                          </TacticalPanelVariant5>
+                          <TacticalPanelVariant6 title="Panel Variant 6">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Silver minimalist ({themeColors.textSecondary})</p>
+                              <p className="mb-2">Style: Thin corner lines, centered text</p>
+                              <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
+                            </div>
+                          </TacticalPanelVariant6>
+                          <TacticalPanelVariant7 title="Panel Variant 7">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan ({themeColors.primary})</p>
+                              <p className="mb-2">Style: Diagonal brackets, glitch lines</p>
+                              <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur.</p>
+                            </div>
+                          </TacticalPanelVariant7>
+                          <TacticalPanel title="Base Panel">
+                            <div className="text-fui-text">
+                              <p className="mb-2">Font: Tech / Rajdhani</p>
+                              <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
+                              <p className="mb-2">Style: Standard corners</p>
+                              <p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+                            </div>
+                          </TacticalPanel>
                         </div>
-                      </TacticalPanelVariant1>
-                      <TacticalPanelVariant2 title="Panel Variant 2">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
-                          <p className="mb-2">Style: Striped header pattern</p>
-                          <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
-                        </div>
-                      </TacticalPanelVariant2>
-                      <TacticalPanelVariant3 title="Panel Variant 3">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan accent ({themeColors.primary})</p>
-                          <p className="mb-2">Style: Layered corners, gradient header</p>
-                          <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
-                        </div>
-                      </TacticalPanelVariant3>
-                      <TacticalPanelVariant4 title="Panel Variant 4">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Mono / JetBrains</p>
-                          <p className="mb-2">Colors: Cyan terminal ({themeColors.primary})</p>
-                          <p className="mb-2">Style: Scanlines, blinking cursor, ASCII corners</p>
-                          <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.</p>
-                        </div>
-                      </TacticalPanelVariant4>
-                      <TacticalPanelVariant5 title="Panel Variant 5">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan ({themeColors.primary}) + gray</p>
-                          <p className="mb-2">Style: Industrial riveted frame, segmented lights</p>
-                          <p>Totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae.</p>
-                        </div>
-                      </TacticalPanelVariant5>
-                      <TacticalPanelVariant6 title="Panel Variant 6">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Silver minimalist ({themeColors.textSecondary})</p>
-                          <p className="mb-2">Style: Thin corner lines, centered text</p>
-                          <p>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
-                        </div>
-                      </TacticalPanelVariant6>
-                      <TacticalPanelVariant7 title="Panel Variant 7">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan ({themeColors.primary})</p>
-                          <p className="mb-2">Style: Diagonal brackets, glitch lines</p>
-                          <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur.</p>
-                        </div>
-                      </TacticalPanelVariant7>
-                      <TacticalPanel title="Base Panel">
-                        <div className="text-fui-text">
-                          <p className="mb-2">Font: Tech / Rajdhani</p>
-                          <p className="mb-2">Colors: Cyan accent (#06b6d4)</p>
-                          <p className="mb-2">Style: Standard corners</p>
-                          <p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
-                        </div>
-                      </TacticalPanel>
+                      </div>
                     </div>
                   ) : ActiveComponent && <ActiveComponent />}
                 </Suspense>

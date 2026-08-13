@@ -18,6 +18,18 @@ function parseColor(colorStr) {
   if (m) {
     return { h: +m[1], s: +m[2], l: +m[3], a: m[4] !== undefined ? +m[4] : 1 };
   }
+  m = colorStr.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+  if (m) {
+    const { h, s, l } = rgbToHsl(+m[1], +m[2], +m[3]);
+    return { h, s, l, a: m[4] !== undefined ? +m[4] : 1 };
+  }
+  m = colorStr.match(/^#([0-9a-f]{3})$/i);
+  if (m) {
+    const r = parseInt(m[1][0] + m[1][0], 16);
+    const g = parseInt(m[1][1] + m[1][1], 16);
+    const b = parseInt(m[1][2] + m[1][2], 16);
+    return { ...rgbToHsl(r, g, b), a: 1 };
+  }
   m = colorStr.match(/^#([0-9a-f]{6})$/i);
   if (m) {
     const r = parseInt(m[1].slice(0, 2), 16);
@@ -73,9 +85,25 @@ function toHex(color) {
   return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
-function toRgbTriplet(colorStr) {
+// Alpha-composite a color over an opaque background so translucent tokens keep their
+// perceived tint when used through opaque RGB-channel utilities (Tailwind v3 has no
+// color-mix, so channels must be pre-blended). Returns { r, g, b }.
+function blendOver(fg, bg) {
+  const fgRgb = hslToRgb(fg.h, fg.s, fg.l);
+  const a = fg.a;
+  if (a >= 1) return fgRgb;
+  return {
+    r: Math.round(fgRgb.r * a + bg.r * (1 - a)),
+    g: Math.round(fgRgb.g * a + bg.g * (1 - a)),
+    b: Math.round(fgRgb.b * a + bg.b * (1 - a)),
+  };
+}
+
+// RGB triplet (space-separated) for a token, alpha-composited over the theme background.
+function toRgbTriplet(colorStr, bgColorStr) {
   const c = parseColor(colorStr);
-  const { r, g, b } = hslToRgb(c.h, c.s, c.l);
+  const bg = hslToRgb(parseColor(bgColorStr).h, parseColor(bgColorStr).s, parseColor(bgColorStr).l);
+  const { r, g, b } = blendOver(c, bg);
   return `${r} ${g} ${b}`;
 }
 
@@ -119,19 +147,26 @@ const NAME_MAP = {
   backdrop: 'backdrop',
 };
 
+const THEME_META = {
+  dark: { selector: ':root', label: 'Dark theme (default)' },
+  amber: { selector: '[data-theme="amber"]', label: 'Amber / charcoal theme' },
+  light: { selector: '[data-theme="light"]', label: 'Light theme' },
+};
+
 function themeBlock(themeName, selector, theme) {
+  const label = THEME_META[themeName]?.label || themeName;
   const lines = [
-    `/* ${themeName === 'dark' ? 'Dark theme (default)' : 'Light theme'} */`,
+    `/* ${label} */`,
     `${selector} {`,
   ];
   for (const key of Object.keys(NAME_MAP)) {
     lines.push(`  --theme-${NAME_MAP[key]}: ${theme[key]};`);
+    lines.push(`  --theme-${NAME_MAP[key]}-rgb: ${toRgbTriplet(theme[key], theme.bg)};`);
   }
   for (const [k, v] of Object.entries(theme.tactical)) {
     lines.push(`  --theme-tactical-${k}: ${v};`);
+    lines.push(`  --theme-tactical-${k}-rgb: ${toRgbTriplet(v, theme.tactical.bg)};`);
   }
-  lines.push(`  --theme-card-rgb: ${toRgbTriplet(theme.card)};`);
-  lines.push(`  --theme-border-rgb: ${toRgbTriplet(theme.border)};`);
   const primary = parseColor(theme.primary);
   lines.push(
     `  --theme-grid-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text x="20" y="20" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="${withAlpha(primary, 0.1)}">+</text></svg>');`
@@ -179,8 +214,9 @@ const header = `/* AUTO-GENERATED from src/utils/themes.js — do not edit by ha
 
 const css = [
   header,
-  themeBlock('dark', ':root', themes.dark),
-  themeBlock('light', '[data-theme="light"]', themes.light),
+  themeBlock('dark', THEME_META.dark.selector, themes.dark),
+  themeBlock('amber', THEME_META.amber.selector, themes.amber),
+  themeBlock('light', THEME_META.light.selector, themes.light),
   LEAFLET,
 ].join('\n\n') + '\n';
 

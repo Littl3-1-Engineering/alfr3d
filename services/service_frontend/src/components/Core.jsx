@@ -721,4 +721,10 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
   );
 };
 
+Core.propTypes = {
+  initialContainers: PropTypes.array,
+  initialDevices: PropTypes.array,
+  initialUsers: PropTypes.array,
+};
+
 export default Core;

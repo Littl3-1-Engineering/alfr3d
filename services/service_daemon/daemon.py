@@ -7,7 +7,6 @@ import atexit
 import logging
 from signal import SIGTERM
 
-
 # set up logging
 logger = logging.getLogger("DaemonLifecycle")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()

@@ -8,6 +8,7 @@ GitHub Actions services or the ``tests/docker-compose.yml`` stack).
 """
 
 import os
+import sys
 import time
 import pytest
 import pymysql
@@ -128,12 +129,50 @@ def frontend_client(frontend_app):
 @pytest.fixture(scope="session")
 def apply_database_schema(mysql_config):
     """Apply database schema and seed data for tests."""
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "setup", "migrations")
+    )
+    from run_sql import split_sql_script
+
     conn = pymysql.connect(**mysql_config)
     cursor = conn.cursor()
 
+    # Reset any schema left over from a previous run so the fixture is idempotent.
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+    for table in (
+        "integrations_tokens",
+        "calendar_events",
+        "quips",
+        "config",
+        "environment",
+        "routines",
+        "device_history",
+        "device",
+        "states",
+        "device_types",
+        "user_types",
+        "user",
+        "smarthome_devices",
+        "device_command_history",
+        "personality",
+        "context",
+        "listening_history",
+        "speaker_groups",
+        "alembic_version",
+    ):
+        cursor.execute(f"DROP TABLE IF EXISTS `{table}`")
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+    for event in (
+        "cleanup_device_history_event",
+        "cleanup_calendar_events_event",
+        "cleanup_device_command_history_event",
+    ):
+        cursor.execute(f"DROP EVENT IF EXISTS `{event}`")
+    cursor.execute("DROP TRIGGER IF EXISTS `before_device_update`")
+
     with open("setup/createTables.sql", "r") as f:
         sql = f.read()
-    statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+    statements = split_sql_script(sql)
     for stmt in statements:
         if stmt:
             cursor.execute(stmt)

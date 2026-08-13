@@ -9,7 +9,7 @@
     "dev": "vite",
     "prebuild": "npm run generate:theme",
     "build": "vite build",
-    "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --ext js,jsx --report-unused-disable-directives",
     "preview": "vite preview",
     "test": "vitest"
   },

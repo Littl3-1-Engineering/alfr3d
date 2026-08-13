@@ -67,7 +67,8 @@ def save_spotify_credentials(client_id, client_secret, redirect_uri=""):
     cursor.execute("UPDATE config SET value = %s WHERE name = 'spotify_client_id'", (client_id,))
     if cursor.rowcount == 0:
         cursor.execute(
-            "INSERT INTO config (name, value) VALUES ('spotify_client_id', %s)", (client_id,)
+            "INSERT INTO config (name, value) VALUES ('spotify_client_id', %s)",
+            (client_id,),
         )
     cursor.execute(
         "UPDATE config SET value = %s WHERE name = 'spotify_client_secret'", (client_secret,)

@@ -150,45 +150,50 @@ def sync_st_devices():
     env_id = env_row[0] if env_row else None
 
     synced = 0
+    updated = 0
     linked = 0
     for device in devices:
         st_device_id = device.get("deviceId")
         label = device.get("label", device.get("name", st_device_id))
         device_type = device.get("deviceTypeName", device.get("typeName", "unknown"))
 
-        mac_address = None
         device_id = None
 
-        if mac_address:
-            cursor.execute(
-                "SELECT id FROM device WHERE UPPER(MAC) = %s",
-                (mac_address.upper(),),
-            )
-            row = cursor.fetchone()
-            if row:
-                device_id = row[0]
-                linked += 1
-
         cursor.execute(
-            """
-            INSERT INTO smarthome_devices
-                (name, source, st_device_id, device_type,
-                 online, environment_id, device_id)
-            VALUES (%s, 'smartthings', %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                name = VALUES(name),
-                device_type = VALUES(device_type),
-                online = VALUES(online),
-                device_id = COALESCE(device_id, VALUES(device_id))
-        """,
-            (label, st_device_id, device_type, True, env_id, device_id),
+            "SELECT id FROM smarthome_devices WHERE source = 'smartthings' AND st_device_id = %s",
+            (st_device_id,),
         )
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute(
+                """
+                UPDATE smarthome_devices
+                SET name = %s,
+                    device_type = %s,
+                    online = %s,
+                    device_id = COALESCE(device_id, %s)
+                WHERE id = %s
+                """,
+                (label, device_type, True, device_id, existing[0]),
+            )
+            updated += 1
+        else:
+            cursor.execute(
+                """
+                INSERT INTO smarthome_devices
+                    (name, source, st_device_id, device_type,
+                     online, environment_id, device_id)
+                VALUES (%s, 'smartthings', %s, %s, %s, %s, %s)
+                """,
+                (label, st_device_id, device_type, True, env_id, device_id),
+            )
         synced += 1
 
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} ST devices, linked {linked}")
+    logger.info(f"Synced {synced} ST devices ({updated} updated), linked {linked}")
     return True
 
 
