@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
+import PropTypes from 'prop-types'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   useRoutines,
@@ -21,9 +22,13 @@ import {
 const originalFetch = globalThis.fetch
 
 function makeWrapper(client) {
-  return function Wrapper({ children }) {
+  function Wrapper({ children }) {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>
   }
+  Wrapper.propTypes = {
+    children: PropTypes.node.isRequired,
+  }
+  return Wrapper
 }
 
 function createClient() {

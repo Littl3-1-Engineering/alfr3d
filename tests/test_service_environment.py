@@ -33,14 +33,14 @@ def test_check_location(mock_urlopen, mock_connect, mock_producer):
 
     # Mock existing environment in DB and config
     env_tuple = (
-        1,
-        "test",
-        None,
-        None,
+        0,  # manual_location_override (0 = auto location updates enabled)
         "OldCity",
+        None,
+        None,
         "OldState",
         "OldCountry",
         "oldip",
+        None,
         None,
         None,
         None,

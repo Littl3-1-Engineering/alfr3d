@@ -1,6 +1,7 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Main module for the ALFR3D environment service, handling location detection and
 weather updates."""
+
 # Standard libraries
 import os
 import re

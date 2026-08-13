@@ -104,7 +104,8 @@ def save_personality(personality, env_id=None):
             "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
             "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
             "name = %s, environment_id = %s "
-            "WHERE type = 'current'",
+            "WHERE type = 'current' AND (environment_id = %s OR environment_id IS NULL) "
+            "ORDER BY environment_id DESC LIMIT 1",
             (
                 personality.get("sarcasm", 0.5),
                 personality.get("formality", 0.5),
@@ -114,6 +115,7 @@ def save_personality(personality, env_id=None):
                 personality.get("forbidden_words", ""),
                 personality.get("verbal_tics", ""),
                 personality.get("name", "Custom"),
+                env_id,
                 env_id,
             ),
         )
@@ -455,11 +457,13 @@ Current Personality State:
 
 Voice Constraints:
 - When speaking aloud, NEVER say "A-L-F-R-3-D" or spell out letters - ALWAYS say "Alfred"
+- There is no microphone or speech-to-text input: whatever you say is never heard, so a genuine question never gets an answer. NEVER ask a question that expects or waits for a reply (no "What would you like me to do?", "Should I proceed?", "Anything else?", etc.)
+- Rhetorical or sarcastic questions are fine when the personality calls for them (e.g. "Another meeting? Shocking."), as long as they don't require a response
 {tics_instruction}
 {forbidden_instruction}
 
 Instructions:
-- Respond to the user's request
+- Respond to the user's request as a statement, not a request for more information
 - Keep it under 20 words for TTS efficiency
 - Stay in character based on the personality traits above
 {formality_instruction}

@@ -37,7 +37,9 @@ async def update_personality(data: PersonalityUpdate):
                 "UPDATE personality SET "
                 "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
                 "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
-                "name = %s WHERE type = 'current' AND environment_id = %s",
+                "name = %s, environment_id = %s "
+                "WHERE type = 'current' AND (environment_id = %s OR environment_id IS NULL) "
+                "ORDER BY environment_id DESC LIMIT 1",
                 (
                     data.sarcasm,
                     data.formality,
@@ -47,6 +49,7 @@ async def update_personality(data: PersonalityUpdate):
                     data.forbidden_words,
                     data.verbal_tics,
                     data.name,
+                    env_id,
                     env_id,
                 ),
             )
@@ -86,7 +89,9 @@ async def apply_personality_preset(data: PresetApply):
                 "UPDATE personality SET "
                 "sarcasm = %s, formality = %s, warmth = %s, patience = %s, "
                 "linguistic_style = %s, forbidden_words = %s, verbal_tics = %s, "
-                "name = %s WHERE type = 'current' AND environment_id = %s",
+                "name = %s, environment_id = %s "
+                "WHERE type = 'current' AND (environment_id = %s OR environment_id IS NULL) "
+                "ORDER BY environment_id DESC LIMIT 1",
                 (
                     preset["sarcasm"],
                     preset["formality"],
@@ -96,6 +101,7 @@ async def apply_personality_preset(data: PresetApply):
                     preset["forbidden_words"],
                     preset["verbal_tics"],
                     preset["name"],
+                    env_id,
                     env_id,
                 ),
             )
