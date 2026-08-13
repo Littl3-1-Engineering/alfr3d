@@ -142,7 +142,14 @@ class TestMapsUtils:
         distance_meters = 16000  # 16 km
         duration_seconds = 1800  # 30 minutes
         mock_client.return_value.directions.return_value = [
-            {"legs": [{"duration": {"value": duration_seconds}, "distance": {"value": distance_meters}}]}
+            {
+                "legs": [
+                    {
+                        "duration": {"value": duration_seconds},
+                        "distance": {"value": distance_meters},
+                    }
+                ]
+            }
         ]
 
         event_time = datetime.now() + timedelta(hours=2)
@@ -157,14 +164,18 @@ class TestMapsUtils:
 class TestSpotifyUtils:
     """Tests for spotify_utils.py"""
 
-    def test_get_playlist_suggestion(self):
-        """Test get_playlist_suggestion returns the hint."""
-        from services.service_daemon.utils.spotify_utils import get_playlist_suggestion
+    def test_resolve_playlist_none_when_not_authorized(self):
+        """Test resolve_playlist returns None gracefully when Spotify isn't connected."""
+        from unittest.mock import patch
+        from services.service_daemon.utils.spotify_utils import resolve_playlist
 
-        hint = "chill vibes"
-        result = get_playlist_suggestion(hint)
+        with patch(
+            "common.spotify_utils.find_playlist_for_hint",
+            return_value=(None, "Spotify not connected"),
+        ):
+            result = resolve_playlist("chill vibes")
 
-        assert result == hint
+        assert result is None
 
     def test_recommend_single_person_morning(self):
         """Test recommend for single person in morning."""
