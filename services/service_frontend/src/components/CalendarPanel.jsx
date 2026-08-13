@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import socket from '../utils/socket';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 
 const CalendarPanel = ({ initialTimezone = null }) => {
   const [events, setEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error] = useState(false);
   const [currentDate] = useState(new Date());
 
   useEffect(() => {
@@ -118,6 +119,10 @@ const CalendarPanel = ({ initialTimezone = null }) => {
         </div>
     </div>
   );
+};
+
+CalendarPanel.propTypes = {
+  initialTimezone: PropTypes.string,
 };
 
 export default CalendarPanel;

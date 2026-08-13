@@ -51,13 +51,16 @@ def _day_partition(dt=None):
     return "weekend"
 
 
-def record_listening(track_id, track_name=None, album=None, artist=None, context=None, source="spotify"):
+def record_listening(
+    track_id, track_name=None, album=None, artist=None, context=None, source="spotify"
+):
     """Record a track play into listening_history. Safe to call frequently."""
     try:
         db = get_connection()
         cursor = db.cursor()
         cursor.execute(
-            "INSERT INTO listening_history (track_id, track_name, album, artist, played_at, context, source) "
+            "INSERT INTO listening_history "
+            "(track_id, track_name, album, artist, played_at, context, source) "
             "VALUES (%s, %s, %s, %s, NOW(), %s, %s)",
             (track_id, track_name, album, artist, context or _time_of_day(), source),
         )
@@ -154,9 +157,11 @@ def build_recommendation_pool():
     daemon task can warm the pool ahead of requests.
     """
     signals = _build_recommendations()
-    logger.info(f"Recommendation pool built: context={signals.get('context')}, "
-                f"seeds={len(signals.get('seeds', []))}, "
-                f"artists={len(signals.get('top_artists', []))}")
+    logger.info(
+        f"Recommendation pool built: context={signals.get('context')}, "
+        f"seeds={len(signals.get('seeds', []))}, "
+        f"artists={len(signals.get('top_artists', []))}"
+    )
     return signals
 
 
@@ -237,7 +242,11 @@ def _track_card(track, reason):
         "name": track.get("name"),
         "artists": [a.get("name") for a in (track.get("artists") or [])],
         "album": (track.get("album") or {}).get("name"),
-        "album_art": ((track.get("album") or {}).get("images") or [{}])[0].get("url") if (track.get("album") or {}).get("images") else None,
+        "album_art": (
+            ((track.get("album") or {}).get("images") or [{}])[0].get("url")
+            if (track.get("album") or {}).get("images")
+            else None
+        ),
         "duration_ms": track.get("duration_ms"),
         "uri": track.get("uri"),
         "reason": reason,

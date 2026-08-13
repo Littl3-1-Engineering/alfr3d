@@ -1,5 +1,6 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Main application for the ALFR3D device service, managing device tracking and network scanning."""
+
 # Standard libraries
 import os
 import sys
@@ -38,9 +39,7 @@ MYSQL_DB = os.environ["MYSQL_NAME"]
 MYSQL_USER = os.environ["MYSQL_USER"]
 MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
-LAN_IP_PREFIXES = tuple(
-    p for p in os.environ.get("LAN_IP_PREFIXES", "192.,10.").split(",") if p
-)
+LAN_IP_PREFIXES = tuple(p for p in os.environ.get("LAN_IP_PREFIXES", "192.,10.").split(",") if p)
 
 producer = None
 while producer is None:

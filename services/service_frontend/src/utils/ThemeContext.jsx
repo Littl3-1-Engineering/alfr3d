@@ -4,16 +4,22 @@ import { themes, defaultTheme, getThemeColors } from './themes';
 
 const ThemeContext = createContext();
 
-export const ThemeProvider = ({ children }) => {
-  const [currentTheme, setCurrentTheme] = useState(defaultTheme);
-
-  useEffect(() => {
-    // Load theme from localStorage on mount
+// Resolve the saved theme synchronously so the UI (including the initial loading
+// screen) renders in the correct theme from the very first paint.
+const getInitialTheme = () => {
+  try {
     const savedTheme = localStorage.getItem('alfr3d-theme');
-    if (savedTheme && themes[savedTheme]) {
-      setCurrentTheme(savedTheme);
-    }
-  }, []);
+    return savedTheme && themes[savedTheme] ? savedTheme : defaultTheme;
+  } catch {
+    return defaultTheme;
+  }
+};
+
+// Apply before first paint to avoid a flash of the default theme on load.
+document.documentElement.setAttribute('data-theme', getInitialTheme());
+
+export const ThemeProvider = ({ children }) => {
+  const [currentTheme, setCurrentTheme] = useState(getInitialTheme);
 
   useEffect(() => {
     // Apply theme to document
@@ -22,7 +28,11 @@ export const ThemeProvider = ({ children }) => {
   }, [currentTheme]);
 
   const toggleTheme = () => {
-    setCurrentTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+    const order = Object.keys(themes);
+    setCurrentTheme(prevTheme => {
+      const idx = order.indexOf(prevTheme);
+      return order[(idx + 1) % order.length];
+    });
   };
 
   const themeColors = getThemeColors(currentTheme);

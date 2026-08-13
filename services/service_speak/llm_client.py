@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 _claude_client = None
 
-DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001"
 
 
 def get_db_connection():

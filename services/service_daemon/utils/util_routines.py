@@ -3,6 +3,7 @@
 """
 This is a utility for Routines for Alfr3d:
 """
+
 # Copyright (c) 2010-2020 LiTtl3.1 Industries (LiTtl3.1).
 # All rights reserved.
 # This source code and any compilation or derivative thereof is the
@@ -248,17 +249,13 @@ _SUN_FIRED = {}
 
 def _fetch_user_states(cursor, env_id):
     """Return {user_id: bool} where bool is True when user is online."""
-    cursor.execute(
-        "SELECT id, state FROM user WHERE environment_id = %s", (env_id,)
-    )
+    cursor.execute("SELECT id, state FROM user WHERE environment_id = %s", (env_id,))
     return {row[0]: (row[1] == 2) for row in cursor.fetchall()}
 
 
 def _fetch_device_states(cursor, env_id):
     """Return {device_id: bool} where bool is True when device is online."""
-    cursor.execute(
-        "SELECT id, state FROM device WHERE environment_id = %s", (env_id,)
-    )
+    cursor.execute("SELECT id, state FROM device WHERE environment_id = %s", (env_id,))
     return {row[0]: (row[1] == 2) for row in cursor.fetchall()}
 
 
@@ -273,16 +270,16 @@ def _eval_sun_trigger(routine_id, kind, sunrise, sunset, cur_time, today):
     key = (routine_id, kind)
     if _SUN_FIRED.get(key) == today:
         return False
-    sun_dt = cur_time.replace(
-        hour=sun_time.hour, minute=sun_time.minute, second=0, microsecond=0
-    )
+    sun_dt = cur_time.replace(hour=sun_time.hour, minute=sun_time.minute, second=0, microsecond=0)
     if sun_dt <= cur_time <= sun_dt + timedelta(minutes=15):
         _SUN_FIRED[key] = today
         return True
     return False
 
 
-def _eval_event_trigger(kind, params, user_states, device_states, sunrise, sunset, cur_time, today, routine_id):
+def _eval_event_trigger(
+    kind, params, user_states, device_states, sunrise, sunset, cur_time, today, routine_id
+):
     """Evaluate a single non-time trigger; returns (fired, all_handled)."""
     if kind in ("sunrise", "sunset"):
         return _eval_sun_trigger(routine_id, kind, sunrise, sunset, cur_time, today), True
@@ -502,7 +499,7 @@ def check_routines() -> bool:
                     if producer:
                         producer.send(
                             "speak",
-                            orjson.dumps({"text": quip, "skip_personality": True}),
+                            orjson.dumps({"text": quip}),
                         )
                         producer.flush()
                         logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")

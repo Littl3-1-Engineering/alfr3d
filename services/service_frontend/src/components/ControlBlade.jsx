@@ -7,7 +7,6 @@ import { API_BASE_URL } from '../config';
 const ControlBlade = ({ device, onClose, style }) => {
   const [power, setPower] = useState(false);
   const [brightness, setBrightness] = useState(75);
-  const [currentTemp, setCurrentTemp] = useState(70);
   const [targetTemp, setTargetTemp] = useState(70);
   const [lockState, setLockState] = useState('unlocked');
   const [fanSpeed, setFanSpeed] = useState('off');
@@ -30,7 +29,6 @@ const ControlBlade = ({ device, onClose, style }) => {
       setPower(state.state === 'on');
     } else if (device.device_type === 'climate') {
       setPower(state.state === 'heat' || state.state === 'cool' || state.state === 'auto');
-      setCurrentTemp(attrs.current_temperature || 70);
       setTargetTemp(attrs.temperature || 70);
     } else if (device.device_type === 'lock') {
       setLockState(state.state);
