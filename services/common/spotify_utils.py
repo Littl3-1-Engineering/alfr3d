@@ -228,9 +228,9 @@ def _api_request(method, path, params=None, body=None):
             logger.error(f"Spotify API error {response.status_code}: {response.text[:300]}")
             return None, {"error": {"message": response.text[:300], "status": response.status_code}}
         return response.json(), None
-    except Exception as e:
-        logger.error(f"Spotify API request error: {e}")
-        return None, {"error": {"message": str(e), "status": 500}}
+    except Exception:
+        logger.exception("Spotify API request error")
+        return None, {"error": {"message": "Spotify API request failed", "status": 500}}
 
 
 def exchange_code(code):
@@ -514,9 +514,9 @@ def find_playlist_for_hint(hint, genre=""):
             "image": (p.get("images") or [{}])[0].get("url") if p.get("images") else None,
             "source": "global",
         }, None
-    except Exception as e:
-        logger.error(f"find_playlist_for_hint error: {e}")
-        return None, str(e)
+    except Exception:
+        logger.exception("find_playlist_for_hint error")
+        return None, "Unable to resolve playlist right now"
 
 
 def play_recommended(hint):
