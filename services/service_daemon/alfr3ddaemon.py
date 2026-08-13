@@ -442,11 +442,28 @@ class MyDaemon:
                     }
                     p.send("event-stream", orjson.dumps(event))
 
-                playlist = spotify_utils.get_playlist_suggestion(
-                    reco.get("playlist_hint", reco.get("mood", ""))
-                )
-                content = f"Play {playlist} ({reco['genre']}, energy={reco['energy']})"
-                return {"mode": "music", "content": content, "priority": 3}
+                hint = reco.get("playlist_hint", reco.get("mood", ""))
+                playlist = None
+                try:
+                    playlist = spotify_utils.resolve_playlist(hint, reco.get("genre", ""))
+                except Exception as e:
+                    logger.warning(f"Playlist resolution failed, using text hint only: {e}")
+
+                display_name = playlist.get("name") if playlist else hint
+                content = f"Play {display_name} ({reco['genre']}, energy={reco['energy']})"
+                card = {"mode": "music", "content": content, "priority": 3}
+                if playlist:
+                    card.update(
+                        {
+                            "playlist_id": playlist.get("id"),
+                            "playlist_name": playlist.get("name"),
+                            "playlist_uri": playlist.get("uri"),
+                            "playlist_url": playlist.get("url"),
+                            "playlist_image": playlist.get("image"),
+                            "playlist_source": playlist.get("source"),
+                        }
+                    )
+                return card
             return None
         except pymysql.Error as e:
             logger.error("Gathering check error: " + str(e))
@@ -571,6 +588,7 @@ def rebuild_music_recommendations():
     logger.info("Rebuilding music recommendations")
     try:
         from common import recommender_engine
+
         recommender_engine.build_recommendation_pool()
     except Exception as e:
         logger.error(f"Failed to rebuild music recommendations: {str(e)}")
