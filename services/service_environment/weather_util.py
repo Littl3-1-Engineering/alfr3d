@@ -1,5 +1,6 @@
 # Adapted for containerization: logging to stdout, MySQLdb to pymysql
 """Utility functions for fetching and processing weather data from OpenWeatherMap API."""
+
 import orjson  # used to handle jsons returned from www
 import os  # used to allow execution of system level commands
 import math  # used to round numbers
@@ -124,15 +125,15 @@ def parse_weather(cursor, lat, lon):
     logger.info("Current Temperature:            " + str(weatherData["main"]["temp"]))
     logger.info(
         "Sunrise:                        "
-        + _utc_ts_to_local(
-            weatherData["sys"]["sunrise"], weatherData.get("timezone", 0)
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        + _utc_ts_to_local(weatherData["sys"]["sunrise"], weatherData.get("timezone", 0)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
     )
     logger.info(
         "Sunset:                         "
-        + _utc_ts_to_local(
-            weatherData["sys"]["sunset"], weatherData.get("timezone", 0)
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        + _utc_ts_to_local(weatherData["sys"]["sunset"], weatherData.get("timezone", 0)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
     )
     logger.info("Parsed weather data\n")
 
@@ -150,8 +151,22 @@ def deg_to_compass(deg):
     if deg is None:
         return None
     directions = [
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
     ]
     return directions[int(deg / 22.5 + 0.5) % 16]
 
@@ -161,9 +176,7 @@ def update_db_weather(db, cursor, weatherData):
 
     try:
         # Compute pressure trend by comparing against the last stored reading.
-        cursor.execute(
-            "SELECT pressure FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,)
-        )
+        cursor.execute("SELECT pressure FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
         prev = cursor.fetchone()
         prev_pressure = prev[0] if prev and prev[0] is not None else None
         new_pressure = int(weatherData["main"]["pressure"])

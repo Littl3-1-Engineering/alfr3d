@@ -3,6 +3,7 @@
 """
 This is the main Alfr3d daemon running most standard services
 """
+
 # Copyright (c) 2010-2018 LiTtl3.1 Industries (LiTtl3.1).
 # All rights reserved.
 # This source code and any compilation or derivative thereof is the
@@ -382,8 +383,7 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -391,8 +391,7 @@ class MyDaemon:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """
-            )
+                """)
             row = cursor.fetchone()
             guest_count = row[0] if row and row[0] else 0
             total_count = row[1] if row and row[1] else 0
@@ -571,6 +570,7 @@ def rebuild_music_recommendations():
     logger.info("Rebuilding music recommendations")
     try:
         from common import recommender_engine
+
         recommender_engine.build_recommendation_pool()
     except Exception as e:
         logger.error(f"Failed to rebuild music recommendations: {str(e)}")

@@ -5,7 +5,6 @@ import os
 import sys
 import logging
 import queue
-import subprocess
 import threading
 from contextlib import asynccontextmanager
 
@@ -18,26 +17,31 @@ from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from tree_of_alfr3d import project_tree_router, start_file_watcher_task, set_manager
+from tree_of_alfr3d import project_tree_router, start_file_watcher_task, set_manager  # noqa: E402
 
-from dependencies import (
-    manager, recent_events, recent_sa, KAFKA_URL, _fetch_users, _fetch_devices,
+from dependencies import (  # noqa: E402
+    manager,
+    recent_events,
+    recent_sa,
+    KAFKA_URL,
+    _fetch_users,
+    _fetch_devices,
 )
-from routes.users import router as users_router
-from routes.devices import router as devices_router
-from routes.quips import router as quips_router
-from routes.environment import router as environment_router, broadcast_calendar_events
-from routes.integrations import router as integrations_router
-from routes.audio import router as audio_router
-from routes.events import router as events_router
-from routes.containers import router as containers_router, collect_container_metrics
-from routes.routines import router as routines_router
-from routes.personality import router as personality_router
-from routes.iot import router as iot_router, broadcast_iot_devices
-from routes.stream import router as stream_router
-from routes.health import router as health_router
-from routes.system import router as system_router
-from routes.music import router as music_router
+from routes.users import router as users_router  # noqa: E402
+from routes.devices import router as devices_router  # noqa: E402
+from routes.quips import router as quips_router  # noqa: E402
+from routes.environment import router as environment_router, broadcast_calendar_events  # noqa: E402
+from routes.integrations import router as integrations_router  # noqa: E402
+from routes.audio import router as audio_router  # noqa: E402
+from routes.events import router as events_router  # noqa: E402
+from routes.containers import router as containers_router, collect_container_metrics  # noqa: E402
+from routes.routines import router as routines_router  # noqa: E402
+from routes.personality import router as personality_router  # noqa: E402
+from routes.iot import router as iot_router, broadcast_iot_devices  # noqa: E402
+from routes.stream import router as stream_router  # noqa: E402
+from routes.health import router as health_router  # noqa: E402
+from routes.system import router as system_router  # noqa: E402
+from routes.music import router as music_router  # noqa: E402
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -76,9 +80,7 @@ def _kafka_pump(topic: str, out_q: "queue.Queue", stop_event: threading.Event) -
 async def consume_events():
     q: "asyncio.Queue" = asyncio.Queue(maxsize=1000)
     stop_event = threading.Event()
-    t = threading.Thread(
-        target=_kafka_pump, args=("event-stream", q, stop_event), daemon=True
-    )
+    t = threading.Thread(target=_kafka_pump, args=("event-stream", q, stop_event), daemon=True)
     t.start()
     try:
         while True:

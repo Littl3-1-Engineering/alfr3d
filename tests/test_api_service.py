@@ -39,19 +39,19 @@ def _clear_api_cache():
     yield
 
 
-def _mock_connection(mock_connection, fetchall_value):
+def _mock_connection(mock_db_connection, fetchall_value):
     mock_db = MagicMock()
     mock_cursor = MagicMock()
-    mock_connection.return_value = mock_db
+    mock_db_connection.return_value.__enter__.return_value = mock_db
     mock_db.cursor.return_value = mock_cursor
     mock_cursor.fetchall.return_value = fetchall_value
     return mock_db
 
 
-@patch("dependencies.get_connection")
-def test_api_health_check(mock_connection, api_client):
+@patch("dependencies.db_connection")
+def test_api_health_check(mock_db_connection, api_client):
     """Test API health check endpoint."""
-    _mock_connection(mock_connection, [])
+    _mock_connection(mock_db_connection, [])
 
     response = api_client.get("/api/devices")
     assert response.status_code == 200
@@ -59,11 +59,11 @@ def test_api_health_check(mock_connection, api_client):
     assert isinstance(data, list)
 
 
-@patch("dependencies.get_connection")
-def test_api_get_users(mock_connection, api_client):
+@patch("dependencies.db_connection")
+def test_api_get_users(mock_db_connection, api_client):
     """Test get users endpoint."""
     _mock_connection(
-        mock_connection,
+        mock_db_connection,
         [
             (1, "user1", "email1", "about1", "online", "resident", None, None),
             (2, "user2", "email2", "about2", "offline", "guest", None, None),
@@ -78,11 +78,11 @@ def test_api_get_users(mock_connection, api_client):
     assert data[0]["name"] == "user1"
 
 
-@patch("dependencies.get_connection")
-def test_api_get_devices(mock_connection, api_client):
+@patch("dependencies.db_connection")
+def test_api_get_devices(mock_db_connection, api_client):
     """Test get devices endpoint."""
     _mock_connection(
-        mock_connection,
+        mock_db_connection,
         [
             (
                 1,
