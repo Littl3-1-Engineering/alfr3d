@@ -323,9 +323,9 @@ async def recommend(limit: int = Query(default=20, ge=1, le=50)):
         from common import recommender_engine
 
         return recommender_engine.recommend(limit=limit)
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error generating recommendations")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/music/recommend/playlist")
@@ -356,11 +356,11 @@ async def recommend_playlist():
             "playlist": playlist,
         }
         if not playlist and err:
-            response["error"] = err
+            response["error"] = "Unable to fetch playlist recommendation right now"
         return response
-    except Exception as e:
-        logger.error(f"Error generating playlist recommendation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error generating playlist recommendation")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/music/recommend/refresh")
@@ -370,9 +370,9 @@ async def refresh_recommendations():
 
         recommender_engine.build_recommendation_pool()
         return {"message": "Recommendation pool refreshed"}
-    except Exception as e:
-        logger.error(f"Error refreshing recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error refreshing recommendations")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/music/history")
