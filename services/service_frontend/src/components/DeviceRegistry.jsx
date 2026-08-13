@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import { Monitor, AlertTriangle, Link2, Unlink, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
+import { sortByOnlineState } from '../utils/sortUtils';
 
 const USER_DEVICE_TYPES = ['HW', 'guest', 'resident'];
 
@@ -181,9 +182,18 @@ const DeviceRegistry = () => {
     };
   }, []);
 
-  const userDevices = devices.filter((d) => d.user && d.user !== 'alfr3d' && d.user.toLowerCase() !== 'unknown');
-  const alfr3dDevices = devices.filter((d) => d.user === 'alfr3d');
-  const unassignedDevices = devices.filter((d) => !d.user || d.user.toLowerCase() === 'unknown');
+  const userDevices = sortByOnlineState(
+    devices.filter((d) => d.user && d.user !== 'alfr3d' && d.user.toLowerCase() !== 'unknown')
+  );
+  const alfr3dDevices = sortByOnlineState(devices.filter((d) => d.user === 'alfr3d'));
+  const unassignedDevices = sortByOnlineState(
+    devices.filter((d) => !d.user || d.user.toLowerCase() === 'unknown')
+  );
+  const sortedIotDevices = sortByOnlineState(
+    iotDevices,
+    (device) => device.online,
+    () => null
+  );
 
   const handleDeviceSave = async (updatedDevice) => {
     try {
@@ -316,13 +326,13 @@ const DeviceRegistry = () => {
 
       <div className="border-t border-border pt-8">
         <h2 className="text-xl font-bold text-fui-accent mb-4">SMARTHOME DEVICES</h2>
-        {iotDevices.length === 0 ? (
+        {sortedIotDevices.length === 0 ? (
           <p className="text-text-tertiary text-sm font-mono">
             [ NO SMARTHOME DEVICES ]
           </p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {iotDevices.map((device) => (
+            {sortedIotDevices.map((device) => (
               <div
                 key={device.id}
                 className="glass rounded-2xl p-4 border border-primary/30 bg-card/20"

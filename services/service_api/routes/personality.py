@@ -173,6 +173,11 @@ async def update_llm_config(data: LLMConfigUpdate):
                     "UPDATE config SET value = %s WHERE name = 'llm_usage_limit'",
                     (str(data.usage_limit),),
                 )
+            if data.model is not None:
+                cursor.execute(
+                    "UPDATE config SET value = %s WHERE name = 'llm_model'",
+                    (data.model,),
+                )
             db.commit()
         _invalidate_cache("personality:llm-config")
         return {"message": "LLM config updated"}
