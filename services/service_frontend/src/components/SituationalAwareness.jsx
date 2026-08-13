@@ -59,6 +59,19 @@ const SituationalAwareness = ({ timezone = null }) => {
             <div>
               <p className="text-sm text-fui-text/60 font-mono uppercase">[{card.mode || 'STATUS'}]</p>
               <p className="text-lg font-mono text-fui-text">{card.mode === 'time' ? formatTimeWithTimezone(card.content, timezone) : (card.content || 'NO DATA')}</p>
+              {card.mode === 'music' && card.playlist_name && (
+                <a
+                  href={card.playlist_url || undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center space-x-2 mt-1 text-xs font-mono text-fui-accent hover:underline"
+                >
+                  {card.playlist_image && (
+                    <img src={card.playlist_image} alt="" className="w-6 h-6 object-cover" />
+                  )}
+                  <span>▶ {card.playlist_name}</span>
+                </a>
+              )}
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
           </motion.div>

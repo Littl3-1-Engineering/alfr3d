@@ -5,7 +5,15 @@ from fastapi import APIRouter, HTTPException
 import orjson
 import pymysql
 
-from dependencies import db_connection, get_producer, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern, normalize_time, ALFR3D_ENV_NAME
+from dependencies import (
+    db_connection,
+    get_producer,
+    _get_cached_or_fetch,
+    _invalidate_cache,
+    _invalidate_cache_pattern,
+    normalize_time,
+    ALFR3D_ENV_NAME,
+)
 from models import RoutineCreate, RoutineUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -16,6 +24,7 @@ router = APIRouter(prefix="/api", tags=["routines"])
 async def get_routines():
     try:
         from dependencies import _fetch_routines
+
         cache_key = f"routines:{ALFR3D_ENV_NAME}"
         return _get_cached_or_fetch(cache_key, lambda: _fetch_routines())
     except Exception as e:
@@ -43,7 +52,16 @@ async def create_routine(data: RoutineCreate):
             cursor.execute(
                 "INSERT INTO routines (name, time, enabled, recurrence, actions, triggers, conditions, environment_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (data.name, routine_time, data.enabled, recurrence, actions_json, triggers_json, conditions_json, env_id),
+                (
+                    data.name,
+                    routine_time,
+                    data.enabled,
+                    recurrence,
+                    actions_json,
+                    triggers_json,
+                    conditions_json,
+                    env_id,
+                ),
             )
             db.commit()
             routine_id = cursor.lastrowid
