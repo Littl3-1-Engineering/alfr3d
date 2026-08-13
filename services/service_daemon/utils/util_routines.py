@@ -502,7 +502,7 @@ def check_routines() -> bool:
                     if producer:
                         producer.send(
                             "speak",
-                            orjson.dumps({"text": quip, "skip_personality": True}),
+                            orjson.dumps({"text": quip}),
                         )
                         producer.flush()
                         logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")

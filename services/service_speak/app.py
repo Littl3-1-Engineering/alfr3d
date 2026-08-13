@@ -382,8 +382,9 @@ def process_speak_message(message):
                         text = llm_text
                         llm_used = True
                         logger.info(f"LLM enhanced text: {text[:50]}...")
-
-                if not llm_used:
+                    else:
+                        logger.warning("Claude call failed, speaking original text")
+                else:
                     quips = get_quips_for_environment()
                     if quips:
                         selected_quip = select_quip_by_traits(quips, blended)

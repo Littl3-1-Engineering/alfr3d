@@ -526,7 +526,7 @@ body {
 .boot-scanline {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, transparent 0%, rgba(0, 255, 255, 0.03) 50%, transparent 100%);
+  background: linear-gradient(to bottom, transparent 0%, color-mix(in srgb, var(--theme-primary) 6%, transparent) 50%, transparent 100%);
   background-size: 100% 8px;
   animation: boot-scanline 3s linear infinite;
   pointer-events: none;

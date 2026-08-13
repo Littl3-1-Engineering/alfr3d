@@ -385,5 +385,5 @@ def _fetch_llm_config():
         return {
             "api_key": config.get("llm_api_key", ""),
             "usage_limit": int(config.get("llm_usage_limit", 10)),
-            "model": config.get("llm_model") or "claude-sonnet-4-20250514",
+            "model": config.get("llm_model") or "claude-haiku-4-5-20251001",
         }

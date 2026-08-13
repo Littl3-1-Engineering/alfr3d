@@ -21,7 +21,7 @@ import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
 import ProjectTreeViz from '../components/ProjectTreeViz';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CameraStream from '../components/CameraStream';
-import { boot } from '../utils/themes';
+import { useTheme } from '../utils/useTheme';
 
 const BOOT_MESSAGES = [
   { msg: '[ OK ] Loading kernel modules...', delay: 200 },
@@ -43,6 +43,7 @@ const NexusLoader = () => {
   const [logIndex, setLogIndex] = useState(0);
   const [glitch, setGlitch] = useState(false);
   const logEndRef = useRef(null);
+  const { themeColors } = useTheme();
 
   useEffect(() => {
     fetch('/assets/lottie/logo.json')
@@ -71,7 +72,7 @@ const NexusLoader = () => {
   }, [logIndex]);
 
   return (
-    <div className="min-h-screen p-8 bg-boot-bg flex flex-col items-center justify-center relative overflow-hidden">
+    <div className="min-h-screen p-8 bg-fui-bg flex flex-col items-center justify-center relative overflow-hidden">
       <div className="boot-scanline" />
       <div
         className={`relative z-10 flex flex-col items-center ${glitch ? 'boot-glitch' : ''}`}
@@ -83,31 +84,43 @@ const NexusLoader = () => {
           )}
         </div>
         <div className="w-[420px] max-w-full">
-          <div className="bg-black/60 border border-boot-cyan/30 rounded p-4 font-mono text-xs min-h-[260px] max-h-[320px] overflow-y-auto">
+          <div className="bg-card/70 border border-fui-accent/30 rounded p-4 font-mono text-xs min-h-[260px] max-h-[320px] overflow-y-auto">
             {BOOT_MESSAGES.slice(0, logIndex + 1).map((m, i) => {
               const isWarn = m.msg.startsWith('[WARN]');
               const isInfo = m.msg.startsWith('[INFO]');
               const isReady = m.msg.includes('ready.');
+              const lineColor = isReady
+                ? themeColors.primary
+                : isWarn
+                  ? themeColors.warning
+                  : isInfo
+                    ? themeColors.textSecondary
+                    : themeColors.textPrimary;
+              const promptColor = isWarn
+                ? themeColors.warning
+                : isInfo
+                  ? themeColors.textSecondary
+                  : themeColors.primary;
               return (
                 <p
                   key={i}
                   className="boot-log-line whitespace-nowrap"
                   style={{
-                    color: isReady ? boot.cyan : isWarn ? boot.orange : isInfo ? boot.gray : boot.silver,
+                    color: lineColor,
                     animationDelay: '0s',
                   }}
                 >
-                  <span style={{ color: isWarn ? boot.orange : isInfo ? boot.gray : boot.cyan }}>{'>'}</span>{' '}
+                  <span style={{ color: promptColor }}>{'>'}</span>{' '}
                   {m.msg}
                 </p>
               );
             })}
             {logIndex <= BOOT_MESSAGES.length - 1 && (
-              <span className="inline-block w-2 h-4 bg-boot-cyan ml-1 align-middle" style={{ animation: 'boot-cursor-blink 1s step-end infinite' }} />
+              <span className="inline-block w-2 h-4 bg-fui-accent ml-1 align-middle" style={{ animation: 'boot-cursor-blink 1s step-end infinite' }} />
             )}
             <div ref={logEndRef} />
           </div>
-          <p className="text-center text-[10px] text-boot-cyan/50 font-mono mt-2 tracking-widest uppercase">
+          <p className="text-center text-[10px] text-fui-accent/50 font-mono mt-2 tracking-widest uppercase">
             Initializing nexus...
           </p>
         </div>

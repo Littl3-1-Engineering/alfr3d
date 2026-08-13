@@ -53,7 +53,10 @@ def _get_groups():
         rows = cursor.fetchall()
         db.close()
         for row in rows:
-            row["entities"] = orjson.loads(row["entities"]) if isinstance(row["entities"], str) else (row["entities"] or [])
+            entities = row["entities"]
+            row["entities"] = (
+                orjson.loads(entities) if isinstance(entities, str) else (entities or [])
+            )
         return rows
     except pymysql.Error as e:
         logger.error(f"Error fetching speaker groups: {e}")
@@ -177,9 +180,7 @@ def stop_cast():
 def set_speaker_volume(entity_id, volume):
     """Set volume on a single HA speaker (0-100)."""
     volume = max(0, min(100, int(volume)))
-    ok, err = ha_utils.ha_control_device(
-        entity_id, "volume_set", {"volume_level": volume / 100.0}
-    )
+    ok, err = ha_utils.ha_control_device(entity_id, "volume_set", {"volume_level": volume / 100.0})
     return ok, err
 
 
@@ -192,9 +193,7 @@ def set_group_volume(group_name, volume):
     volume = max(0, min(100, int(volume)))
     results = []
     for entity in group.get("entities") or []:
-        ok, err = ha_utils.ha_control_device(
-            entity, "volume_set", {"volume_level": volume / 100.0}
-        )
+        ok, err = ha_utils.ha_control_device(entity, "volume_set", {"volume_level": volume / 100.0})
         results.append((entity, ok))
     if any(ok for _e, ok in results):
         return True, None

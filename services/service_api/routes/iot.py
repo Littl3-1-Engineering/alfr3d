@@ -28,6 +28,11 @@ def fetch_iot_devices_data(linked_only=False):
                        sd.mac_address, sd.device_id as linked_device_id,
                        d.IP, d.position_x, d.position_y, dt.type as linked_device_type
                 FROM smarthome_devices sd
+                JOIN (
+                    SELECT MAX(id) AS id
+                    FROM smarthome_devices
+                    GROUP BY source, COALESCE(ha_entity_id, st_device_id)
+                ) latest ON latest.id = sd.id
                 LEFT JOIN device d ON sd.device_id = d.id
                 LEFT JOIN device_types dt ON d.device_type = dt.id
                 WHERE sd.source = %s AND (%s = FALSE OR sd.device_id IS NOT NULL)

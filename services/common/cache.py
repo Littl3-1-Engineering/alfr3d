@@ -3,7 +3,13 @@ import threading
 import logging
 from typing import Any, Callable, Optional
 
-from .redis_client import redis_get, redis_set, redis_delete, redis_delete_pattern, is_redis_available
+from .redis_client import (
+    redis_get,
+    redis_set,
+    redis_delete,
+    redis_delete_pattern,
+    is_redis_available,
+)
 
 logger = logging.getLogger("ApiLog")
 
@@ -106,7 +112,9 @@ def cached_endpoint(ttl: int = 300):
             result = func(*args, **kwargs)
             cache.set(cache_key, result, ttl)
             return result
+
         wrapper.__name__ = func.__name__
         wrapper.__doc__ = func.__doc__
         return wrapper
+
     return decorator

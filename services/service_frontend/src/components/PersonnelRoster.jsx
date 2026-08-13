@@ -5,6 +5,7 @@ import { User, Monitor, Plus } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
+import { sortByOnlineState } from '../utils/sortUtils';
 
 const UserCard = ({ user, onClick }) => (
   <div
@@ -228,6 +229,9 @@ const PersonnelRoster = ({ initialUserId }) => {
     }
   };
 
+  const sortedUsers = sortByOnlineState(users);
+  const sortedDevices = sortByOnlineState(devices);
+
   PersonnelRoster.propTypes = {
     initialUserId: PropTypes.string
   };
@@ -246,7 +250,7 @@ const PersonnelRoster = ({ initialUserId }) => {
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {users.map((user) => (
+          {sortedUsers.map((user) => (
             <UserCard key={user.id} user={user} onClick={handleUserClick} />
           ))}
         </div>
@@ -304,7 +308,7 @@ const PersonnelRoster = ({ initialUserId }) => {
       <div>
         <h2 className="text-2xl font-bold text-primary mb-4">Devices</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {devices.map((device) => (
+          {sortedDevices.map((device) => (
             <DeviceCard key={device.id} device={device} onClick={handleDeviceHistoryClick} />
           ))}
         </div>
