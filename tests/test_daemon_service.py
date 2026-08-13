@@ -134,16 +134,24 @@ class TestMapsUtils:
     @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
     @patch("services.service_daemon.utils.maps_utils.GAS_PRICE", 3.5)
     @patch("services.service_daemon.utils.maps_utils.MPG", 25)
-    def test_get_travel_info_with_api_key(self):
+    @patch("googlemaps.Client")
+    def test_get_travel_info_with_api_key(self, mock_client):
         """Test get_travel_info returns the fuel cost estimate with an API key set."""
         from services.service_daemon.utils.maps_utils import get_travel_info
+
+        distance_meters = 16000  # 16 km
+        duration_seconds = 1800  # 30 minutes
+        mock_client.return_value.directions.return_value = [
+            {"legs": [{"duration": {"value": duration_seconds}, "distance": {"value": distance_meters}}]}
+        ]
 
         event_time = datetime.now() + timedelta(hours=2)
         result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
 
+        distance_miles = (distance_meters / 1000.0) * 0.621371
         assert result is not None
-        assert result["fuel_cost"] == round((3.5 / 25) * 10, 2)
-        assert isinstance(result["departure"], datetime)
+        assert result["fuel_cost"] == round((distance_miles / 25) * 3.5, 2)
+        assert result["departure"] == event_time - timedelta(seconds=duration_seconds)
 
 
 class TestSpotifyUtils:
@@ -239,8 +247,10 @@ class TestUtilRoutines:
             "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
         },
     )
+    @patch("services.service_daemon.utils.util_routines.ENV_NAME", "test_env")
+    @patch("services.service_daemon.utils.util_routines.db_utils.get_env_local_time")
     @patch("services.service_daemon.utils.util_routines.MySQLdb.connect")
-    def test_check_routines_success(self, mock_connect):
+    def test_check_routines_success(self, mock_connect, mock_local_time):
         """Test checkRoutines processes enabled routines."""
         from services.service_daemon.utils.util_routines import check_routines
 
@@ -250,10 +260,38 @@ class TestUtilRoutines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
 
-        # Mock environment query
-        mock_cursor.fetchone.side_effect = [
-            (1,),  # environment id
-            ((1, "Test Routine", timedelta(hours=10), None, 0),),  # routine
+        mock_local_time.return_value = datetime(2026, 8, 7, 14, 0)
+
+        # Mock environment query (22 explicit columns, same order as the SELECT)
+        env_row = (
+            1,  # id
+            None,  # latitude
+            None,  # longitude
+            "Testville",  # city
+            "Test",  # state
+            "Testland",  # country
+            "127.0.0.1",  # IP
+            0,  # low
+            30,  # high
+            20,  # temperature
+            5,  # wind
+            "N",  # wind_dir
+            "clear",  # description
+            None,  # sunrise
+            None,  # sunset
+            1013,  # pressure
+            "steady",  # pressure_trend
+            50,  # humidity
+            0,  # manual_override
+            0,  # manual_location_override
+            "clear",  # subjective_feel
+            0,  # timezone
+        )
+        mock_cursor.fetchone.return_value = env_row
+        mock_cursor.fetchall.side_effect = [
+            [],  # user states
+            [],  # device states
+            [(1, "Test Routine", timedelta(hours=10), 1, "daily", None, 0, None, None)],  # routines
         ]
 
         result = check_routines()

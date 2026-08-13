@@ -19,15 +19,6 @@ const queryClient = new QueryClient({
   }
 });
 
-const PageLoader = () => (
-  <div className="flex items-center justify-center min-h-screen">
-    <div className="text-center">
-      <div className="w-12 h-12 border-4 border-fui-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-      <p className="text-fui-text font-mono text-sm">[ LOADING... ]</p>
-    </div>
-  </div>
-);
-
 function AppContent() {
   const location = useLocation();
 

@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User } from 'lucide-react';
+import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { getGravatarUrl } from '../utils/gravatarUtils';
 import { formatCreatedDate } from '../utils/timeUtils';
@@ -198,6 +199,10 @@ const GuestRoster = ({ initialGuests = null }) => {
       ))}
     </div>
   );
+};
+
+GuestRoster.propTypes = {
+  initialGuests: PropTypes.array,
 };
 
 export default GuestRoster;
