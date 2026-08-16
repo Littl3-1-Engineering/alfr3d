@@ -271,35 +271,33 @@ class MyDaemon:
         if results:
             self.publish_sa(results)
 
+    # Registry of situational-awareness display rules: (id, priority, check method name).
+    # Each check_* method still stamps its own "priority" onto the card it returns;
+    # the id/priority here just drive iteration order and logging.
+    DISPLAY_RULES = (
+        ("time", 1, "check_time"),
+        ("event", 2, "check_events"),
+        ("music", 3, "check_gatherings"),
+        ("email", 4, "check_emails"),
+        ("weather", 5, "check_weather"),
+    )
+
+    # Cap on cards published per cycle. Tied to the number of registered rules so
+    # that every currently-registered category can coexist — previously a hardcoded
+    # [:4] slice silently dropped weather (priority 5) whenever all five checks
+    # fired. Grows automatically if DISPLAY_RULES grows, so adding a rule doesn't
+    # silently reintroduce the same drop.
+    MAX_DISPLAYS = len(DISPLAY_RULES)
+
     def decide_displays(self):
-        """Collect up to 4 SA items: emails, events, gatherings; default to time + weather."""
-        """
-        Priority mapping in the daemon:
-            1 — time (check_time)
-            2 — event (check_events)
-            3 — music/gathering suggestion (check_gatherings)
-            4 — email (check_emails)
-            5 — weather (check_weather)
-        """
+        """Run every registered display rule and return non-None cards, sorted by priority."""
         displays = []
-        time_card = self.check_time()
-        weather_card = self.check_weather()
-        if time_card:
-            displays.append(time_card)
-        if weather_card:
-            displays.append(weather_card)
-        logger.info("Collecting displays: checking emails")
-        emails = self.check_emails()
-        if emails:
-            displays.append(emails)
-        logger.info("Collecting displays: checking events")
-        events = self.check_events()
-        if events:
-            displays.append(events)
-        logger.info("Collecting displays: checking gatherings")
-        gatherings = self.check_gatherings()
-        if gatherings:
-            displays.append(gatherings)
+        for rule_id, _priority, check_name in self.DISPLAY_RULES:
+            logger.info(f"Collecting displays: checking {rule_id}")
+            card = getattr(self, check_name)()
+            if card:
+                displays.append(card)
+
         if not displays:
             logger.info("No priority displays, defaulting to time and weather")
 
@@ -308,8 +306,7 @@ class MyDaemon:
         displays.sort(key=lambda x: x["priority"])
 
         logger.debug("Final displays selected: " + str(displays))
-        # Limit to 4
-        return displays[:4]
+        return displays[: self.MAX_DISPLAYS]
 
     def check_emails(self):
         """Check for unread emails using Gmail utils."""
