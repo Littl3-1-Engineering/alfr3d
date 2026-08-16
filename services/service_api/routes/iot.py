@@ -7,7 +7,15 @@ import orjson
 import pymysql
 
 from dependencies import db_connection, get_producer, manager
-from models import HAControl, HAConfig, STControl, STConfig, IoTProvider, LinkDevice, IOTDeviceControl
+from models import (
+    HAControl,
+    HAConfig,
+    STControl,
+    STConfig,
+    IoTProvider,
+    LinkDevice,
+    IOTDeviceControl,
+)
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["iot"])
@@ -88,10 +96,12 @@ async def broadcast_iot_devices():
 
 # --- Home Assistant ---
 
+
 @router.get("/iot/ha/status")
 async def get_ha_status():
     try:
         from common import ha_utils
+
         connected, message = ha_utils.test_ha_connection()
         return {"connected": connected, "message": message}
     except Exception as e:
@@ -103,6 +113,7 @@ async def get_ha_status():
 async def get_ha_devices():
     try:
         from common import ha_utils
+
         devices = ha_utils.get_ha_devices()
         return devices
     except Exception as e:
@@ -122,6 +133,7 @@ async def control_ha_device(entity_id: str, data: HAControl):
 
     try:
         from common import ha_utils
+
         success, message = ha_utils.ha_control_device(entity_id, service, data.params)
         if success:
             return {"message": message, "entity_id": entity_id, "command": data.command}
@@ -136,6 +148,7 @@ async def control_ha_device(entity_id: str, data: HAControl):
 async def save_ha_config(data: HAConfig):
     try:
         from common import ha_utils
+
         ha_utils.save_ha_config(data.ha_url, data.ha_token)
         return {"message": "Configuration saved"}
     except Exception as e:
@@ -161,10 +174,12 @@ async def trigger_ha_sync():
 
 # --- SmartThings ---
 
+
 @router.get("/iot/st/status")
 async def get_st_status():
     try:
         from common import st_utils
+
         connected, message = st_utils.test_st_connection()
         return {"connected": connected, "message": message}
     except Exception as e:
@@ -176,6 +191,7 @@ async def get_st_status():
 async def get_st_devices():
     try:
         from common import st_utils
+
         devices = st_utils.get_st_devices()
         return devices
     except Exception as e:
@@ -187,6 +203,7 @@ async def get_st_devices():
 async def control_st_device(device_id: str, data: STControl):
     try:
         from common import st_utils
+
         success, message = st_utils.st_control_device(
             device_id, data.capability, data.command, data.args
         )
@@ -203,6 +220,7 @@ async def control_st_device(device_id: str, data: STControl):
 async def save_st_config(data: STConfig):
     try:
         from common import st_utils
+
         st_utils.save_st_config(data.st_pat)
         return {"message": "Configuration saved"}
     except Exception as e:
@@ -228,10 +246,12 @@ async def trigger_st_sync():
 
 # --- Unified IoT ---
 
+
 @router.get("/iot/status")
 async def get_iot_status():
     try:
         from common import ha_utils
+
         ha_connected, ha_message = ha_utils.test_ha_connection()
         return {
             "ha": {"connected": ha_connected, "message": ha_message},
@@ -312,7 +332,9 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
             params = data.params or {}
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
-                devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+                devices = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_iot_devices_data
+                )
                 await manager.broadcast("iot_devices", devices)
                 return {
                     "message": message,
@@ -394,7 +416,9 @@ async def set_iot_provider(data: IoTProvider):
     try:
         with db_connection() as db:
             cursor = db.cursor()
-            cursor.execute("UPDATE config SET value = %s WHERE name = 'iot_provider'", (data.provider,))
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = 'iot_provider'", (data.provider,)
+            )
             db.commit()
         return {"message": f"Provider set to {data.provider}"}
     except Exception as e:

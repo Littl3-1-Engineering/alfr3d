@@ -64,9 +64,7 @@ def _fetch_service_uptimes() -> list:
 
     env = os.environ.copy()
     env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-    output = run_docker_command(
-        ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}"], env
-    )
+    output = run_docker_command(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}"], env)
     services = []
     for line in output.strip().split("\n"):
         if not line.strip():
@@ -84,9 +82,7 @@ def _fetch_service_uptimes() -> list:
 @router.get("/health")
 async def get_health():
     try:
-        services = await asyncio.get_event_loop().run_in_executor(
-            None, _fetch_service_uptimes
-        )
+        services = await asyncio.get_event_loop().run_in_executor(None, _fetch_service_uptimes)
     except Exception as e:
         logger.error(f"Error fetching health: {str(e)}")
         services = []

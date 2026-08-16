@@ -460,7 +460,8 @@ def reset_inactive_repeat_count():
         db = get_connection()
         cursor = db.cursor()
         cursor.execute(
-            "INSERT IGNORE INTO context (environment_id, repeat_count, last_spoke_time, updated_at) "
+            "INSERT IGNORE INTO context (environment_id, repeat_count, last_spoke_time, "
+            "updated_at) "
             "VALUES (%s, 0, NOW(), NOW())",
             (env_id,),
         )

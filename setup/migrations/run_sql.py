@@ -61,6 +61,76 @@ def run_sql_file(op, path):
         op.execute(statement)
 
 
+def column_exists(op, table, column):
+    """Whether ``table.column`` already exists in the connected schema."""
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table "
+            "AND COLUMN_NAME = :column"
+        ),
+        {"table": table, "column": column},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
+def index_exists(op, table, index):
+    """Whether ``index`` already exists on ``table`` in the connected schema."""
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table "
+            "AND INDEX_NAME = :index"
+        ),
+        {"table": table, "index": index},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
+def event_exists(op, event):
+    """Whether a scheduled EVENT of this name already exists in the connected schema.
+
+    Deliberately owner-agnostic: MySQL 8 requires the SYSTEM_USER privilege to
+    DROP/ALTER an event whose DEFINER also holds SYSTEM_USER (e.g. root, which
+    is how the documented setup flow loads createTables.sql). A migration
+    running as the unprivileged app DB user can't drop such an event, so
+    callers should use this to skip re-creating one that already exists
+    rather than attempting DROP EVENT IF EXISTS on it.
+    """
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.EVENTS "
+            "WHERE EVENT_SCHEMA = DATABASE() AND EVENT_NAME = :event"
+        ),
+        {"event": event},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
+def table_exists(op, table):
+    """Whether ``table`` already exists in the connected schema."""
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table"
+        ),
+        {"table": table},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
 def drop_foreign_keys_for_column(op, table, column):
     """Drop FK constraints on ``table`` that reference ``column``.
 

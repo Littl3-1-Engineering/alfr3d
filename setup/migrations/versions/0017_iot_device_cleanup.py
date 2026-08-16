@@ -9,6 +9,7 @@ Revision ID: 0017
 Revises: 0016
 Create Date: 2026-08-07
 """
+
 from alembic import op
 
 from run_sql import run_sql_file, sql_path

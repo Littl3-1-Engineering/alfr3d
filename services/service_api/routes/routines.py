@@ -10,7 +10,6 @@ from dependencies import (
     get_producer,
     _get_cached_or_fetch,
     _invalidate_cache,
-    _invalidate_cache_pattern,
     normalize_time,
     ALFR3D_ENV_NAME,
 )
@@ -50,7 +49,8 @@ async def create_routine(data: RoutineCreate):
             routine_time = normalize_time(data.time)
 
             cursor.execute(
-                "INSERT INTO routines (name, time, enabled, recurrence, actions, triggers, conditions, environment_id) "
+                "INSERT INTO routines (name, time, enabled, recurrence, actions, triggers, "
+                "conditions, environment_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     data.name,

@@ -13,11 +13,11 @@ logger = logging.getLogger("ApiLog")
 
 router = APIRouter(prefix="/api/stream")
 
-CAMERA_URL = (
-    os.environ.get("STREAM_CAMERA_URL")
-    or os.environ.get("CAMERA_URL")
-    or "rtsp://armageddion%40gmail.com:qweQWE123%21%40%23@192.168.2.226:554/stream1"
-)
+CAMERA_URL = os.environ.get("STREAM_CAMERA_URL") or os.environ.get("CAMERA_URL")
+if not CAMERA_URL:
+    logger.warning(
+        "STREAM_CAMERA_URL/CAMERA_URL not set — camera streaming endpoints will return 503"
+    )
 
 HLS_ROOT = Path("/tmp/hls")
 HLS_CAMERA_ID = "camera"
@@ -30,16 +30,15 @@ _SEGMENT_RE = re.compile(r"^seg_\d+\.ts$")
 
 STREAM_CONFIG = {
     "url": CAMERA_URL,
-    "status": "configured",
+    "status": "configured" if CAMERA_URL else "unconfigured",
     "protocol": "rtsp",
-    "host": "192.168.2.226",
-    "port": 554,
-    "path": "/stream1",
 }
 
 
 @router.get("/camera")
 async def stream_camera():
+    if not CAMERA_URL:
+        raise HTTPException(status_code=503, detail="Camera not configured")
     try:
         subprocess.run(
             ["ffmpeg", "-version"],
@@ -52,12 +51,18 @@ async def stream_camera():
     async def generate():
         process = await asyncio.create_subprocess_exec(
             "ffmpeg",
-            "-rtsp_transport", "tcp",
-            "-i", CAMERA_URL,
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-q:v", "5",
-            "-r", "15",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            CAMERA_URL,
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-r",
+            "15",
             "pipe:1",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -66,6 +71,7 @@ async def stream_camera():
         buf = b""
         frames = 0
         try:
+
             async def log_stderr():
                 while True:
                     line = await process.stderr.readline()
@@ -87,8 +93,8 @@ async def stream_camera():
                         end = buf.find(b"\xff\xd9", start + 2)
                         if end == -1:
                             break
-                        frame = buf[start:end + 2]
-                        buf = buf[end + 2:]
+                        frame = buf[start : end + 2]
+                        buf = buf[end + 2 :]
                         yield b"--" + boundary + b"\r\n"
                         yield b"Content-Type: image/jpeg\r\n"
                         yield b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
@@ -138,16 +144,24 @@ async def camera_config():
 
 @router.get("/camera/snapshot")
 async def camera_snapshot():
+    if not CAMERA_URL:
+        raise HTTPException(status_code=503, detail="Camera not configured")
     try:
         result = subprocess.run(
             [
                 "ffmpeg",
-                "-rtsp_transport", "tcp",
-                "-i", CAMERA_URL,
-                "-vframes", "1",
-                "-f", "image2pipe",
-                "-vcodec", "mjpeg",
-                "-q:v", "3",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                CAMERA_URL,
+                "-vframes",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "3",
                 "pipe:1",
             ],
             capture_output=True,
@@ -158,6 +172,7 @@ async def camera_snapshot():
     if result.returncode != 0 or not result.stdout:
         raise HTTPException(status_code=502, detail="failed to capture snapshot")
     from starlette.responses import Response
+
     return Response(
         content=result.stdout,
         media_type="image/jpeg",
@@ -184,6 +199,8 @@ def _hls_dir() -> Path:
 
 
 async def start_hls():
+    if not CAMERA_URL:
+        raise HTTPException(status_code=503, detail="Camera not configured")
     async with _hls_lock:
         proc = _hls_state.get("process")
         if proc and proc.returncode is None:
@@ -200,17 +217,28 @@ async def start_hls():
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-hide_banner",
-            "-loglevel", "error",
-            "-rtsp_transport", "tcp",
-            "-i", CAMERA_URL,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-f", "hls",
-            "-hls_time", str(HLS_SEGMENT_TIME),
-            "-hls_list_size", str(HLS_LIST_SIZE),
-            "-hls_flags", "delete_segments+append_list",
-            "-hls_segment_type", "mpegts",
-            "-hls_segment_filename", str(out_dir / "seg_%05d.ts"),
+            "-loglevel",
+            "error",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            CAMERA_URL,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-f",
+            "hls",
+            "-hls_time",
+            str(HLS_SEGMENT_TIME),
+            "-hls_list_size",
+            str(HLS_LIST_SIZE),
+            "-hls_flags",
+            "delete_segments+append_list",
+            "-hls_segment_type",
+            "mpegts",
+            "-hls_segment_filename",
+            str(out_dir / "seg_%05d.ts"),
             str(out_dir / "index.m3u8"),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

@@ -4,6 +4,7 @@ Revision ID: 0010
 Revises: 0009
 Create Date: 2026-08-03
 """
+
 from alembic import op
 
 from run_sql import drop_foreign_keys_for_column, run_sql_file, sql_path

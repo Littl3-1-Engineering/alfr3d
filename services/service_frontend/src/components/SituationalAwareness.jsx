@@ -1,10 +1,15 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { Clock, Thermometer, Mail, Calendar, Music } from 'lucide-react';
+import { Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 import socket from '../utils/socket';
+
+// Matches MAX_DISPLAYS in service_daemon/alfr3ddaemon.py (len(DISPLAY_RULES) = 9
+// registered card types). Keep in sync -- a lower cap here silently drops cards
+// the backend intentionally raised its own cap to stop dropping.
+const MAX_DISPLAY_CARDS = 9;
 
 const SituationalAwareness = ({ timezone = null }) => {
   const [saData, setSaData] = useState([]);
@@ -40,6 +45,15 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'email': return <Mail className="text-fui-accent" />;
       case 'event': return <Calendar className="text-fui-accent" />;
       case 'music': return <Music className="text-fui-text" />;
+      // Ambient context, not an actionable alert -- cyan like the other status cards.
+      case 'mood': return <Smile className="text-fui-accent" />;
+      // Time-boxed and actionable ("find a quiet spot") -- magenta alert treatment.
+      case 'focus_needed': return <PhoneCall className="text-fui-magenta" />;
+      // Forward-looking and actionable ("bring an umbrella"), unlike the passive
+      // weather readout above -- magenta, and a distinct icon from Thermometer.
+      case 'weather_advisory': return <CloudRain className="text-fui-magenta" />;
+      // Leave-by guidance is as time-boxed/actionable as focus_needed -- same treatment.
+      case 'travel': return <Car className="text-fui-magenta" />;
       default: return <Thermometer className="text-error" />;
     }
   };
@@ -47,7 +61,7 @@ const SituationalAwareness = ({ timezone = null }) => {
   return (
     <div className="space-y-4">
       {saData.length > 0 ? (
-        saData.slice(0, 4).map((card, index) => (
+        saData.slice(0, MAX_DISPLAY_CARDS).map((card, index) => (
           <motion.div
             key={index}
             initial={{ opacity: 0, y: 20 }}
@@ -56,20 +70,20 @@ const SituationalAwareness = ({ timezone = null }) => {
             className="flex items-center space-x-3 p-2 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
           >
             <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">{getIcon(card.mode)}</div>
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-sm text-fui-text/60 font-mono uppercase">[{card.mode || 'STATUS'}]</p>
-              <p className="text-lg font-mono text-fui-text">{card.mode === 'time' ? formatTimeWithTimezone(card.content, timezone) : (card.content || 'NO DATA')}</p>
+              <p className="text-lg font-mono text-fui-text break-words">{card.mode === 'time' ? formatTimeWithTimezone(card.content, timezone) : (card.content || 'NO DATA')}</p>
               {card.mode === 'music' && card.playlist_name && (
                 <a
                   href={card.playlist_url || undefined}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center space-x-2 mt-1 text-xs font-mono text-fui-accent hover:underline"
+                  className="flex items-center space-x-2 mt-1 text-xs font-mono text-fui-accent hover:underline min-w-0"
                 >
                   {card.playlist_image && (
-                    <img src={card.playlist_image} alt="" className="w-6 h-6 object-cover" />
+                    <img src={card.playlist_image} alt="" className="w-6 h-6 object-cover flex-shrink-0" />
                   )}
-                  <span>▶ {card.playlist_name}</span>
+                  <span className="break-words min-w-0">▶ {card.playlist_name}</span>
                 </a>
               )}
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
