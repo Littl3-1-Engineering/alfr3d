@@ -36,6 +36,7 @@ async def save_openweather_config(data: dict):
 def _invalidate_environment_cache():
     try:
         from dependencies import _invalidate_cache
+
         _invalidate_cache("api:weather")
         _invalidate_cache("api:environment")
     except Exception:
@@ -96,6 +97,7 @@ async def get_integrations_status():
         }
         try:
             from common import spotify_utils
+
             spotify_status = {
                 "configured": spotify_utils.is_spotify_configured(),
                 "authorized": spotify_utils.is_authorized(),

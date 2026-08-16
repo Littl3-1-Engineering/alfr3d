@@ -1,4 +1,3 @@
-import os
 import orjson
 import logging
 import requests
