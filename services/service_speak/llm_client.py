@@ -23,7 +23,8 @@ def get_claude_config():
     config = {}
     try:
         cursor.execute(
-            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit', 'llm_model')"
+            "SELECT name, value FROM config "
+            "WHERE name IN ('llm_api_key', 'llm_usage_limit', 'llm_model')"
         )
         for row in cursor.fetchall():
             config[row[0]] = row[1]
@@ -44,7 +45,11 @@ def save_claude_config(api_key=None, usage_limit=None, model=None):
     db = get_db_connection()
     cursor = db.cursor()
     try:
-        for name, value in (("llm_api_key", api_key), ("llm_usage_limit", usage_limit), ("llm_model", model)):
+        for name, value in (
+            ("llm_api_key", api_key),
+            ("llm_usage_limit", usage_limit),
+            ("llm_model", model),
+        ):
             if value is not None:
                 cursor.execute(
                     "INSERT INTO config (name, value) VALUES (%s, %s) "

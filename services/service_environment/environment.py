@@ -347,6 +347,33 @@ def check_weather():
         logger.warning("No location data available for weather check")
 
 
+def check_forecast():
+    """Fetch a home-location forecast and persist it to the environment table.
+
+    Mirrors check_weather()'s DB-read-location -> fetch -> persist flow, so
+    service_daemon can later read the forecast snapshot the same way it
+    already reads current conditions (a direct SELECT, no Kafka round-trip).
+    """
+    logger.info("Checking latest weather forecast")
+    db = pymysql.connect(
+        host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+    )
+    cursor = db.cursor()
+
+    cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+    data = cursor.fetchone()
+
+    if data and data[2] and data[3]:
+        forecast = weather_util.get_forecast(data[2], data[3])
+        if forecast:
+            weather_util.update_db_forecast(db, cursor, forecast)
+        else:
+            logger.warning("Failed to fetch weather forecast")
+    else:
+        logger.warning("No location data available for forecast check")
+    db.close()
+
+
 # Main
 if __name__ == "__main__":
     logger.info("Starting Alfr3d's environment service")
@@ -385,3 +412,5 @@ if __name__ == "__main__":
                     check_location()
                 if msg == "check weather":
                     check_weather()
+                if msg == "check forecast":
+                    check_forecast()

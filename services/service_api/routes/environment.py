@@ -6,7 +6,13 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 import pymysql
 
-from dependencies import db_connection, _get_cached_or_fetch, _invalidate_cache, manager, ALFR3D_ENV_NAME
+from dependencies import (
+    db_connection,
+    _get_cached_or_fetch,
+    _invalidate_cache,
+    manager,
+    ALFR3D_ENV_NAME,
+)
 from models import EnvironmentUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -17,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["environment"])
 async def get_weather():
     try:
         from dependencies import _fetch_weather
+
         weather_data = _get_cached_or_fetch("api:weather", _fetch_weather, ttl=300)
         if weather_data:
             await manager.broadcast("weather", weather_data)
@@ -31,6 +38,7 @@ async def get_weather():
 async def get_environment():
     try:
         from dependencies import _fetch_environment
+
         env_data = _get_cached_or_fetch("api:environment", _fetch_environment, ttl=300)
         if env_data:
             await manager.broadcast("environment", env_data)
@@ -97,7 +105,8 @@ async def get_calendar_events():
             today = datetime.now().date()
             cursor.execute(
                 "SELECT title, start_time, end_time, address, notes FROM calendar_events "
-                "WHERE start_time >= %s AND start_time < %s + INTERVAL 1 DAY ORDER BY start_time ASC",
+                "WHERE start_time >= %s AND start_time < %s + INTERVAL 1 DAY "
+                "ORDER BY start_time ASC",
                 (today, today),
             )
             events = [

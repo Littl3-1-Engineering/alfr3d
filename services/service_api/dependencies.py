@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 import orjson
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import get_connection, db_connection, get_producer as _get_producer, get_cache
+from common import db_connection, get_producer as _get_producer, get_cache
 
 logger = logging.getLogger("ApiLog")
 
@@ -154,7 +154,8 @@ def _fetch_routines():
     with db_connection() as db:
         cursor = db.cursor(pymysql.cursors.DictCursor)
         cursor.execute(
-            "SELECT id, name, time, enabled, triggered, recurrence, actions, triggers, conditions, last_run "
+            "SELECT id, name, time, enabled, triggered, recurrence, actions, triggers, "
+            "conditions, last_run "
             "FROM routines WHERE environment_id = (SELECT id FROM environment WHERE name = %s) "
             "ORDER BY time",
             (ALFR3D_ENV_NAME,),
@@ -228,8 +229,6 @@ def _fetch_personality_presets():
 
 
 def _fetch_devices():
-    import pymysql
-
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -267,8 +266,6 @@ def _fetch_devices():
 
 
 def _fetch_users():
-    import pymysql
-
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -390,7 +387,8 @@ def _fetch_llm_config():
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
-            "SELECT name, value FROM config WHERE name IN ('llm_api_key', 'llm_usage_limit', 'llm_model')"
+            "SELECT name, value FROM config "
+            "WHERE name IN ('llm_api_key', 'llm_usage_limit', 'llm_model')"
         )
         rows = cursor.fetchall()
         config = {row[0]: row[1] for row in rows}

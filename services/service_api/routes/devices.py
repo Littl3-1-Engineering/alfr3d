@@ -8,7 +8,6 @@ from dependencies import (
     db_connection,
     get_cache,
     _get_cached_or_fetch,
-    _invalidate_cache,
     _invalidate_cache_pattern,
     manager,
     ALFR3D_ENV_NAME,

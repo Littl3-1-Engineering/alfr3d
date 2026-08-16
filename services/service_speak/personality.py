@@ -277,7 +277,8 @@ def track_speak_text(text, env_id=None):
             cursor.execute(
                 "INSERT INTO context (environment_id, last_text, last_spoke_time, updated_at) "
                 "VALUES (%s, %s, NOW(), NOW()) "
-                "ON DUPLICATE KEY UPDATE last_text = %s, last_spoke_time = NOW(), updated_at = NOW()",
+                "ON DUPLICATE KEY UPDATE last_text = %s, last_spoke_time = NOW(), "
+                "updated_at = NOW()",
                 (env_id, text[:512], text[:512]),
             )
         db.commit()
@@ -457,8 +458,11 @@ Current Personality State:
 
 Voice Constraints:
 - When speaking aloud, NEVER say "A-L-F-R-3-D" or spell out letters - ALWAYS say "Alfred"
-- There is no microphone or speech-to-text input: whatever you say is never heard, so a genuine question never gets an answer. NEVER ask a question that expects or waits for a reply (no "What would you like me to do?", "Should I proceed?", "Anything else?", etc.)
-- Rhetorical or sarcastic questions are fine when the personality calls for them (e.g. "Another meeting? Shocking."), as long as they don't require a response
+- There is no microphone or speech-to-text input: whatever you say is never heard, so a genuine \
+question never gets an answer. NEVER ask a question that expects or waits for a reply (no "What \
+would you like me to do?", "Should I proceed?", "Anything else?", etc.)
+- Rhetorical or sarcastic questions are fine when the personality calls for them (e.g. "Another \
+meeting? Shocking."), as long as they don't require a response
 {tics_instruction}
 {forbidden_instruction}
 

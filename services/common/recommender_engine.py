@@ -11,7 +11,7 @@ The engine is deterministic and explainable: every recommendation carries a
 import logging
 import os
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pymysql
 
