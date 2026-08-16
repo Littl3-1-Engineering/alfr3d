@@ -61,7 +61,9 @@ def count_children(path: str) -> int:
     return sum(1 for e in entries if not should_exclude(e, os.path.join(path, e)))
 
 
-def scan_directory(path: str, root_name: Optional[str] = None, max_depth: Optional[int] = None, _depth: int = 0) -> dict:
+def scan_directory(
+    path: str, root_name: Optional[str] = None, max_depth: Optional[int] = None, _depth: int = 0
+) -> dict:
     if root_name is None:
         root_name = os.path.basename(path)
 
@@ -136,7 +138,9 @@ async def get_project_tree_endpoint(max_depth: Optional[int] = Query(None)):
 
 
 @project_tree_router.get("/project-tree/expand")
-async def expand_node_endpoint(path: str = Query(..., description="Absolute path of the folder to expand")):
+async def expand_node_endpoint(
+    path: str = Query(..., description="Absolute path of the folder to expand")
+):
     """Lazy-load: expand a truncated node by returning its immediate children."""
     if not path.startswith(SCAN_ROOT):
         return {"error": "Path must be under /project"}

@@ -4,7 +4,12 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 import pymysql
 
-from dependencies import db_connection, _get_cached_or_fetch, _invalidate_cache, _invalidate_cache_pattern
+from dependencies import (
+    db_connection,
+    _get_cached_or_fetch,
+    _invalidate_cache,
+    _invalidate_cache_pattern,
+)
 from models import QuipCreate, QuipUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -17,9 +22,10 @@ VALID_CATEGORIES = {"greeting", "weather_joke", "sarcasm", "wisdom", "goodbye", 
 async def get_quips(category: str | None = Query(default=None)):
     try:
         from dependencies import _fetch_quips
+
         if category and category not in VALID_CATEGORIES:
             raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
-        cache_key = f"quips:all" if not category else f"quips:{category}"
+        cache_key = "quips:all" if not category else f"quips:{category}"
         return _get_cached_or_fetch(cache_key, lambda: _fetch_quips(category))
     except HTTPException:
         raise

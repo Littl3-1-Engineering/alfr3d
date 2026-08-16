@@ -4,7 +4,13 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 import pymysql
 
-from dependencies import db_connection, _get_cached_or_fetch, _invalidate_cache_pattern, manager, ALFR3D_ENV_NAME
+from dependencies import (
+    db_connection,
+    _get_cached_or_fetch,
+    _invalidate_cache_pattern,
+    manager,
+    ALFR3D_ENV_NAME,
+)
 from models import UserCreate, UserUpdate
 
 logger = logging.getLogger("ApiLog")
@@ -15,6 +21,7 @@ router = APIRouter(prefix="/api", tags=["users"])
 async def get_users(online: bool = Query(False)):
     try:
         from dependencies import _fetch_users
+
         users = _get_cached_or_fetch(f"api:users:{ALFR3D_ENV_NAME}", _fetch_users, ttl=120)
         if online:
             users = [u for u in users if u.get("state") == "online"]
@@ -24,13 +31,45 @@ async def get_users(online: bool = Query(False)):
         logger.error(f"Error fetching users: {str(e)}")
         mock_users = (
             [
-                {"id": 1, "name": "Alice", "type": "resident", "email": "", "about_me": "", "state": "online", "last_online": ""},
-                {"id": 2, "name": "Bob", "type": "guest", "email": "", "about_me": "", "state": "online", "last_online": ""},
+                {
+                    "id": 1,
+                    "name": "Alice",
+                    "type": "resident",
+                    "email": "",
+                    "about_me": "",
+                    "state": "online",
+                    "last_online": "",
+                },
+                {
+                    "id": 2,
+                    "name": "Bob",
+                    "type": "guest",
+                    "email": "",
+                    "about_me": "",
+                    "state": "online",
+                    "last_online": "",
+                },
             ]
             if online
             else [
-                {"id": 1, "name": "Alice", "type": "resident", "email": "", "about_me": "", "state": "online", "last_online": ""},
-                {"id": 2, "name": "Bob", "type": "guest", "email": "", "about_me": "", "state": "offline", "last_online": ""},
+                {
+                    "id": 1,
+                    "name": "Alice",
+                    "type": "resident",
+                    "email": "",
+                    "about_me": "",
+                    "state": "online",
+                    "last_online": "",
+                },
+                {
+                    "id": 2,
+                    "name": "Bob",
+                    "type": "guest",
+                    "email": "",
+                    "about_me": "",
+                    "state": "offline",
+                    "last_online": "",
+                },
             ]
         )
         return mock_users
@@ -57,7 +96,8 @@ async def create_user(data: UserCreate):
                 raise HTTPException(status_code=500, detail="Environment not found")
             env_id = env_row[0]
             cursor.execute(
-                "INSERT INTO user (username, email, about_me, created_at, state, type, environment_id) "
+                "INSERT INTO user (username, email, about_me, created_at, state, type, "
+                "environment_id) "
                 "VALUES (%s, %s, %s, NOW(), %s, %s, %s)",
                 (data.name, data.email, data.about_me, state_id, type_id, env_id),
             )

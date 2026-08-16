@@ -215,7 +215,7 @@ const Nexus = () => {
                  initial={{ opacity: 0, y: -20 }}
                  animate={{ opacity: 1, y: 0 }}
                  transition={{ delay: 0.5, duration: 0.6 }}
-                 className="flex flex-col gap-4 order-3 md:order-none"
+                 className="flex flex-col gap-4 order-3 md:order-none min-w-0"
                >
 <TacticalPanelVariant3 title="R3sidents">
                     <OnlineUsers initialResidents={onlineUsers} />
@@ -230,10 +230,10 @@ const Nexus = () => {
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.6, duration: 0.8 }}
-                className="flex flex-col gap-8 px-6 items-center order-1 md:order-none"
+                className="flex flex-col gap-8 px-6 items-center order-1 md:order-none min-w-0"
               >
               <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} />
-<TacticalPanelVariant1 title="Situat1onal Awar3ness">
+<TacticalPanelVariant1 title="Situat1onal Awar3ness" className="w-full">
                   <SituationalAwareness timezone={location?.timezone} />
                 </TacticalPanelVariant1>
             </motion.div>
@@ -243,7 +243,7 @@ const Nexus = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.7, duration: 0.6 }}
-                className="flex flex-col gap-6 order-2 md:order-none"
+                className="flex flex-col gap-6 order-2 md:order-none min-w-0"
               >
 <TacticalPanelVariant1 title="Gue5t R0ster">
                    <GuestRoster initialGuests={filterGuests(onlineUsers)} />

@@ -4,6 +4,7 @@ Revision ID: 0007
 Revises: 0006
 Create Date: 2026-08-03
 """
+
 from alembic import op
 
 from run_sql import run_sql_file, sql_path

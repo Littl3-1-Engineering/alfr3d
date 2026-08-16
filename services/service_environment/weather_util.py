@@ -16,7 +16,7 @@ from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import get_producer, db_utils  # noqa: E402
+from common import get_producer, db_utils, get_cache  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -37,6 +37,10 @@ MYSQL_DB = os.environ.get("MYSQL_NAME", "alfr3d_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "user")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD", "password")
 ALFR3D_ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", socket.gethostname())
+
+# Forecast lookups hit a 3-hour-step API, so a fresh call more often than this
+# just re-returns the same window; cached between refreshes.
+FORECAST_CACHE_TTL = 1800
 
 
 def _utc_ts_to_local(ts, tz_offset):
@@ -75,16 +79,21 @@ def send_event(event_type, message):
             logger.error(f"Failed to send event: {e}")
 
 
-def parse_weather(cursor, lat, lon):
+def _get_openweather_api_key(cursor):
     logger.info("getting API key for openWeather from DB")
     cursor.execute("SELECT * from config WHERE name = %s", ("openWeather",))
     data = cursor.fetchone()
 
     if data:
         logger.info("Found API key")
-        apikey = data[2]
-    else:
-        logger.warning("Failed to get API key for openWeather")
+        return data[2]
+    logger.warning("Failed to get API key for openWeather")
+    return None
+
+
+def parse_weather(cursor, lat, lon):
+    apikey = _get_openweather_api_key(cursor)
+    if not apikey:
         return None
 
     weatherData = None
@@ -225,6 +234,32 @@ def update_db_weather(db, cursor, weatherData):
         return True
     except Exception as e:
         logger.error("Failed to update Environment database with weather info")
+        logger.error("Traceback " + str(e))
+        db.rollback()
+        return False
+
+
+def update_db_forecast(db, cursor, forecastData):
+    """Persist a forecast snapshot (rain probability, temp, conditions) to the
+    environment table, mirroring update_db_weather()'s current-conditions write."""
+    logger.info("Updating weather forecast in DB")
+    try:
+        cursor.execute(
+            "UPDATE environment SET forecast_rain_probability = %s, forecast_temp = %s, "
+            "forecast_conditions = %s, forecast_updated_at = %s WHERE name = %s",
+            (
+                float(forecastData["rain_probability"]),
+                float(forecastData["temp"]),
+                str(forecastData["conditions"]),
+                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                ALFR3D_ENV_NAME,
+            ),
+        )
+        db.commit()
+        logger.info("Environment forecast info updated")
+        return True
+    except Exception as e:
+        logger.error("Failed to update Environment database with forecast info")
         logger.error("Traceback " + str(e))
         db.rollback()
         return False
@@ -494,6 +529,86 @@ def get_weather(lat, lon):
         return False
     db.close()
     return True
+
+
+def get_forecast(lat, lon, hours_ahead=6):
+    """
+    Fetches a forecast for the given latitude/longitude from OpenWeatherMap's
+    5-day/3-hour forecast endpoint and returns the window nearest to
+    `hours_ahead` from now.
+
+    Home-location only: this does not accept or resolve a destination address.
+
+    Parameters:
+        lat (float): Latitude of the location.
+        lon (float): Longitude of the location.
+        hours_ahead (int): How far ahead to look for a forecast window.
+
+    Returns:
+        dict: {"rain_probability": float 0-100, "temp": float, "conditions": str}
+        for the nearest forecast window within hours_ahead, or None on failure.
+    """
+    cache = get_cache()
+    cache_key = f"weather_forecast:{lat}:{lon}:{hours_ahead}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    db = pymysql.connect(
+        host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+    )
+    cursor = db.cursor()
+    apikey = _get_openweather_api_key(cursor)
+    db.close()
+    if not apikey:
+        return None
+
+    url = (
+        "https://api.openweathermap.org/data/2.5/forecast?lat="
+        + str(lat)
+        + "&lon="
+        + str(lon)
+        + "&units=metric&appid="
+        + apikey
+    )
+    try:
+        forecastData = orjson.loads(urlopen(url).read())
+    except OSError as e:
+        logger.error(f"Network error getting forecast data: {e}")
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        if "appid" in query_params:
+            del query_params["appid"]
+        sanitized_query = urlencode(query_params, doseq=True)
+        sanitized_url = urlunparse(parsed_url._replace(query=sanitized_query))
+        logger.info(f"URL: {sanitized_url}")
+        return None
+
+    try:
+        cutoff = datetime.utcnow() + timedelta(hours=hours_ahead)
+        window = None
+        for entry in forecastData["list"]:
+            entry_time = datetime.utcfromtimestamp(entry["dt"])
+            window = entry
+            if entry_time >= cutoff:
+                break
+
+        if window is None:
+            logger.warning("No forecast windows returned")
+            return None
+
+        result = {
+            "rain_probability": round(float(window.get("pop", 0)) * 100, 1),
+            "temp": float(window["main"]["temp"]),
+            "conditions": str(window["weather"][0]["description"]),
+        }
+    except (KeyError, IndexError, TypeError) as e:
+        logger.error(f"Failed to parse forecast data: {e}")
+        return None
+
+    logger.info(f"Parsed forecast data: {result}")
+    cache.set(cache_key, result, FORECAST_CACHE_TTL)
+    return result
 
 
 def kto_c(tempK):

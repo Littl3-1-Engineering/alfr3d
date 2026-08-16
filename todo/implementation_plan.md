@@ -56,7 +56,7 @@ File: `services/service_api/routes/stream.py`, `src/components/CameraStream.jsx`
 - Backend: FastAPI streaming endpoint `/api/stream/camera` proxies RTSP → MJPEG via ffmpeg subprocess
 - Frontend: Collapsible side panel on Nexus page with `<img>` MJPEG display
 - Status indicator (connecting/connected/error), show/hide toggle, snapshot capture, reconnect button
-- URL: `rtsp://armageddion%40gmail.com:qweQWE123%21%40%23@192.168.2.226:554/stream1`
+- URL: configured via `STREAM_CAMERA_URL` env var (see `.env.example`)
 
 #### 1.3.2 `[DONE]` Camera already in DB as device ID 79 ("C200", type "HW", IP `192.168.2.226`)
 
