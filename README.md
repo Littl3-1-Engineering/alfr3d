@@ -396,7 +396,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Real-Time Metrics**: Live CPU/memory, service health bars, user/device/IoT metrics via WebSocket
 - **WeatherPanel**: Animated weather icon, large current temp, wind + pressure trend
 - **ResidentsSummary**: Residents vs. guests online
-- **Situational Awareness**: Live cards (time, weather, events, music, email) with priority ordering; music cards link to the resolved Spotify playlist
+- **Situational Awareness**: Live, priority-ordered cards from a registry-based engine — time, upcoming events, leave-by travel guidance (drive time and fuel cost, when a destination and Google Maps are configured), gathering-triggered music, "call starting soon" focus alerts, unread email, forward-looking rain advisories, current weather, and ambient day-mood; music cards link to the resolved Spotify playlist
 - **Calendar & Event Stream**: Upcoming events and event feed
 - **Camera Stream**: Live RTSP camera panel
 - **Project Tree**: Interactive force-directed visualization of the project structure

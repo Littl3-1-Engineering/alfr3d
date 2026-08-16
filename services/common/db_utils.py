@@ -1,4 +1,3 @@
-import os
 import logging
 import time
 import pymysql
@@ -145,14 +144,16 @@ def check_mute_optimized(env_name) -> bool:
             db.close()
             return True
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT u.username
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type IN ('owner', 'technoking', 'resident')
             AND u.username != 'unknown'
-            """)
+            """
+        )
         online_users = cursor.fetchall()
 
         if not online_users:

@@ -10,6 +10,7 @@ Revision ID: 0018
 Revises: 0017
 Create Date: 2026-08-12
 """
+
 import logging
 
 import sqlalchemy as sa
