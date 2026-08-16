@@ -530,3 +530,96 @@ class TestDaemonRunLoop:
         result = check_mute()
 
         assert result is True  # Should be mute at night with no users
+
+
+class TestDecideDisplays:
+    """Tests for MyDaemon.decide_displays() and its DISPLAY_RULES registry."""
+
+    TIME_CARD = {"mode": "time", "content": "t", "priority": 1}
+    EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
+    MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
+    EMAIL_CARD = {"mode": "email", "content": "em", "priority": 4}
+    WEATHER_CARD = {"mode": "weather", "content": "w", "priority": 5}
+
+    def _stub_daemon(
+        self,
+        check_time=None,
+        check_events=None,
+        check_gatherings=None,
+        check_emails=None,
+        check_weather=None,
+    ):
+        """Build a MyDaemon with each check_* replaced by a stub returning the given card."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        daemon.check_time = MagicMock(return_value=check_time)
+        daemon.check_events = MagicMock(return_value=check_events)
+        daemon.check_gatherings = MagicMock(return_value=check_gatherings)
+        daemon.check_emails = MagicMock(return_value=check_emails)
+        daemon.check_weather = MagicMock(return_value=check_weather)
+        return daemon
+
+    def test_all_five_checks_produce_cards_in_priority_order(self):
+        """When every check fires, cards come back sorted by priority (time..weather)."""
+        daemon = self._stub_daemon(
+            check_time=self.TIME_CARD,
+            check_events=self.EVENT_CARD,
+            check_gatherings=self.MUSIC_CARD,
+            check_emails=self.EMAIL_CARD,
+            check_weather=self.WEATHER_CARD,
+        )
+
+        result = daemon.decide_displays()
+
+        assert [card["mode"] for card in result] == [
+            "time",
+            "event",
+            "music",
+            "email",
+            "weather",
+        ]
+
+    def test_weather_is_not_dropped_when_all_five_fire(self):
+        """Regression test for the drop-at-4 bug: weather must survive the cap."""
+        daemon = self._stub_daemon(
+            check_time=self.TIME_CARD,
+            check_events=self.EVENT_CARD,
+            check_gatherings=self.MUSIC_CARD,
+            check_emails=self.EMAIL_CARD,
+            check_weather=self.WEATHER_CARD,
+        )
+
+        result = daemon.decide_displays()
+
+        assert len(result) == 5
+        assert self.WEATHER_CARD in result
+
+    def test_none_results_are_excluded_without_crashing(self):
+        """Checks that return None must not appear in the output or raise."""
+        daemon = self._stub_daemon(
+            check_time=self.TIME_CARD,
+            check_events=None,
+            check_gatherings=None,
+            check_emails=None,
+            check_weather=self.WEATHER_CARD,
+        )
+
+        result = daemon.decide_displays()
+
+        assert None not in result
+        assert [card["mode"] for card in result] == ["time", "weather"]
+
+    def test_sorting_is_correct_for_an_arbitrary_subset(self):
+        """A non-contiguous subset of firing checks still sorts correctly by priority."""
+        daemon = self._stub_daemon(
+            check_time=None,
+            check_events=self.EVENT_CARD,
+            check_gatherings=None,
+            check_emails=self.EMAIL_CARD,
+            check_weather=self.WEATHER_CARD,
+        )
+
+        result = daemon.decide_displays()
+
+        assert [card["mode"] for card in result] == ["event", "email", "weather"]
