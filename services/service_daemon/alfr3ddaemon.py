@@ -43,7 +43,7 @@ import threading
 import pymysql
 import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
-from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils
+from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils, mood_utils, focus_utils
 from kafka.errors import KafkaError
 from kafka import KafkaConsumer  # user to write messages to Kafka
 
@@ -69,6 +69,15 @@ GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")  # For destination weather if needed
 GAS_PRICE = float(os.environ.get("GAS_PRICE", "3.5"))  # Default gas price
 MPG = float(os.environ.get("MPG", "25"))  # Default MPG
+
+# How far ahead of a call-like event's start time check_focus_needed() will fire.
+FOCUS_LEAD_MINUTES = 15
+
+# Minimum forecast rain probability (%) for check_weather_advisory() to fire.
+RAIN_ADVISORY_THRESHOLD = 30
+
+# How far ahead the forecast checked by check_weather_advisory() looks.
+FORECAST_HOURS_AHEAD = 6
 
 # time of sunset/sunrise - defaults
 # SUNSET_TIME = datetime.datetime.now().replace(hour=19, minute=0)
@@ -277,9 +286,27 @@ class MyDaemon:
     DISPLAY_RULES = (
         ("time", 1, "check_time"),
         ("event", 2, "check_events"),
+        # Travel guidance has its own urgency curve -- a leave-by time relative
+        # to *now*, not just the event's start time -- so it's a separate card
+        # from check_events() rather than folded into it. Priority 2.5 keeps
+        # it right after the event it's derived from, ahead of music.
+        ("travel", 2.5, "check_travel"),
         ("music", 3, "check_gatherings"),
+        # A call starting soon is more actionable/time-boxed than the ambient
+        # "should I play music" gathering check, but not as centrally
+        # orchestrating as an event departure — priority 3.5 sits it directly
+        # between music (3) and email (4) without renumbering existing rules.
+        ("focus_needed", 3.5, "check_focus_needed"),
         ("email", 4, "check_emails"),
+        # Forward-looking and actionable ("bring an umbrella"), unlike the
+        # passive weather status readout below it -- sits between email (4)
+        # and weather (5) the same way focus_needed sits between music and
+        # email.
+        ("weather_advisory", 4.5, "check_weather_advisory"),
         ("weather", 5, "check_weather"),
+        # mood is lower-urgency ambient context, not an actionable alert —
+        # slotted just below weather rather than competing with priorities 1-5.
+        ("mood", 6, "check_mood"),
     )
 
     # Cap on cards published per cycle. Tied to the number of registered rules so
@@ -318,59 +345,107 @@ class MyDaemon:
             return {"mode": "email", "content": content, "priority": 4}
 
     def check_events(self):
-        """Check for upcoming events with addresses."""
+        """Check for upcoming events, showing plain title/time info.
+
+        Travel-specific guidance (leave-by time, fuel cost) lives in
+        check_travel() instead -- see its docstring for why this stays
+        separate rather than folded into this card.
+        """
         events = calendar_utils.get_upcoming_events()
-        if events:
-            event = events[0]  # Take first
-            if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=3):
-                return None  # Only care about events within next hour
-            title = event["title"]
-            start_time = event["start_time"]
-            address = event["address"]
-            # Get current location from DB
-            try:
-                db = pymysql.connect(
-                    host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-                )
-                cursor = db.cursor()
-                cursor.execute(
-                    "SELECT latitude, longitude FROM environment WHERE name = %s",
-                    (ENV_NAME,),
-                )
-                loc_row = cursor.fetchone()
+        if not events:
+            return None
+        event = events[0]  # Take first
+        if event["start_time"] - datetime.now(timezone.utc) > timedelta(hours=3):
+            return None  # Only care about events within next hour
+        title = event["title"]
+        start_time = event["start_time"]
+        content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+        return {"mode": "event", "content": content, "priority": 2}
+
+    def check_travel(self):
+        """Check whether the next upcoming event needs travel guidance.
+
+        Reuses calendar_utils.get_upcoming_events() (same source check_events()
+        uses). Travel timing has its own urgency curve -- a leave-by time
+        relative to *now*, not just the event's start time -- so it's its own
+        card rather than folded into check_events(). check_events() never
+        mentions departure time or fuel cost, so there's no double-reporting
+        of the same trip between the two cards even when both fire for the
+        same event.
+
+        Returns None (no card) whenever travel info can't be computed --
+        missing address, no known current location, or maps_utils.get_travel_info()
+        failing -- rather than falling back to fabricated numbers. check_events()
+        still shows the plain event line in that case.
+        """
+        events = calendar_utils.get_upcoming_events()
+        if not events:
+            return None
+        event = events[0]
+        address = event["address"]
+        if not address:
+            return None
+        start_time = event["start_time"]
+        if start_time - datetime.now(timezone.utc) > timedelta(hours=3):
+            return None
+
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT latitude, longitude FROM environment WHERE name = %s",
+                (ENV_NAME,),
+            )
+            loc_row = cursor.fetchone()
+        except Exception as e:
+            logger.error("Travel location error: " + str(e))
+            return None
+        finally:
+            if db:
                 db.close()
-                if loc_row:
-                    lat, lng = loc_row
-                    travel_info = maps_utils.get_travel_info(lat, lng, address, start_time)
-                    if travel_info:
-                        departure = travel_info["departure"]
-                        fuel_cost = travel_info["fuel_cost"]
-                        # Placeholder for dress and umbrella
-                        temp = 20  # TODO: Fetch destination weather
-                        rain_prob = 0
-                        dress = (
-                            "light jacket"
-                            if 10 <= temp <= 20
-                            else "shorts" if temp > 25 else "normal"
-                        )
-                        umbrella = "Bring umbrella" if rain_prob > 30 else ""
-                        content = (
-                            f"Leave at {departure.strftime('%I:%M %p')} for {title}. "
-                            f"Wear {dress}. {umbrella}. Fuel: ~${fuel_cost:.2f}"
-                        )
-                        return {"mode": "event", "content": content, "priority": 2}
-                else:
-                    logger.warning("No location data found in environment table")
-                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
-                    return {"mode": "event", "content": content, "priority": 2}
-            except Exception as e:
-                logger.error("Event location error: " + str(e))
-                # Fallback content
-                # If event is within next hour, just show time
-                if start_time - datetime.now(timezone.utc) <= timedelta(hours=3):
-                    content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
-                    return {"mode": "event", "content": content, "priority": 2}
-        return None
+
+        if not loc_row:
+            logger.warning("No location data found in environment table")
+            return None
+
+        lat, lng = loc_row
+        travel_info = maps_utils.get_travel_info(lat, lng, address, start_time)
+        if not travel_info:
+            return None
+
+        title = event["title"]
+        departure = travel_info["departure"]
+        fuel_cost = travel_info["fuel_cost"]
+        content = f"Leave at {departure.strftime('%I:%M %p')} for {title}. Fuel: ~${fuel_cost:.2f}"
+        return {"mode": "travel", "content": content, "priority": 2.5}
+
+    def check_focus_needed(self):
+        """Check whether the next upcoming event looks like a call starting soon.
+
+        Reuses calendar_utils.get_upcoming_events() (same source check_events()
+        uses) and applies focus_utils.looks_like_call() — a text heuristic over
+        the event's address/notes, not a real conferencing signal. See
+        focus_utils' module docstring for its known false positive/negative
+        shape. Only fires within FOCUS_LEAD_MINUTES of the event's start.
+        """
+        events = calendar_utils.get_upcoming_events()
+        if not events:
+            return None
+        event = events[0]
+        if not focus_utils.looks_like_call(event["address"], event["notes"]):
+            return None
+        start_time = event["start_time"]
+        if start_time - datetime.now(timezone.utc) > timedelta(minutes=FOCUS_LEAD_MINUTES):
+            return None
+        title = event["title"]
+        content = (
+            f"Call starting soon: {title} at {start_time.strftime('%I:%M %p')}. "
+            "Find a quiet spot."
+        )
+        return {"mode": "focus_needed", "content": content, "priority": 3.5}
 
     def check_gatherings(self):
         """Check for gatherings (>3 guests/residents online)."""
@@ -403,13 +478,9 @@ class MyDaemon:
                     + str(guest_count)
                     + ")"
                 )
-                hour = db_utils.get_env_local_time(ENV_NAME).hour
-                if 6 <= hour < 18:
-                    time_of_day = "day"
-                elif 18 <= hour < 22:
-                    time_of_day = "evening"
-                else:
-                    time_of_day = "night"
+                time_of_day = mood_utils.get_day_mood(db_utils.get_env_local_time(ENV_NAME))[
+                    "time_of_day"
+                ]
                 cursor.execute(
                     "SELECT description, subjective_feel FROM environment WHERE name = %s",
                     (ENV_NAME,),
@@ -494,11 +565,55 @@ class MyDaemon:
             logger.error("Weather check error: " + str(e))
         return None
 
+    def check_weather_advisory(self):
+        """Forward-looking rain advisory for the home location.
+
+        Reads the forecast snapshot service_environment persists to the
+        environment table (via its "check forecast" Kafka message and
+        weather_util.get_forecast()) -- the same direct-DB-read pattern
+        check_weather() uses for current conditions, rather than a
+        synchronous cross-service call. Home location only; per-destination
+        forecasting would need geocoding calendar_events.address and is out
+        of scope here.
+        """
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT forecast_rain_probability FROM environment WHERE name = %s",
+                (ENV_NAME,),
+            )
+            row = cursor.fetchone()
+            db.close()
+            if row and row[0] is not None and row[0] > RAIN_ADVISORY_THRESHOLD:
+                content = (
+                    f"Rain likely in the next {FORECAST_HOURS_AHEAD} hours — bring an umbrella"
+                )
+                return {"mode": "weather_advisory", "content": content, "priority": 4.5}
+        except pymysql.Error as e:
+            logger.error("Weather advisory check error: " + str(e))
+        return None
+
     def check_time(self):
         """Get current time card."""
         now = datetime.now(timezone.utc)
         content = now.isoformat()
         return {"mode": "time", "content": content, "priority": 1}
+
+    def check_mood(self):
+        """Baseline day-mood card: weekday/time-of-day context with a qualitative energy read."""
+        day_mood = mood_utils.get_day_mood(db_utils.get_env_local_time(ENV_NAME))
+        energy = day_mood["base_energy"]
+        if energy < 0.35:
+            energy_label = "low energy"
+        elif energy < 0.65:
+            energy_label = "moderate energy"
+        else:
+            energy_label = "high energy"
+        content = f"{day_mood['day_of_week']} {day_mood['time_of_day']} — {energy_label}"
+        return {"mode": "mood", "content": content, "priority": 6}
 
     def scan_devices(self):
         logger.info("Time for localnet scan")
@@ -554,6 +669,19 @@ def check_weather_routine():
     p = get_producer()
     if p:
         p.send("environment", b"check weather")
+
+
+def check_forecast_routine():
+    """
+    Description:
+            Send a forecast check message to the environment topic every hour,
+            so check_weather_advisory() has a reasonably fresh forecast snapshot
+            to read from the environment table.
+    """
+    logger.info("Scheduled forecast check")
+    p = get_producer()
+    if p:
+        p.send("environment", b"check forecast")
 
 
 def sync_iot_devices():
@@ -619,6 +747,7 @@ def init_daemon():
     if p:
         p.send("environment", b"check location")
         p.send("environment", b"check weather")
+        p.send("environment", b"check forecast")
 
     # set up some routine schedules
     try:
@@ -640,6 +769,7 @@ def init_daemon():
         # "8.30" in the following function is just a placeholder
         # until i deploy a more configurable alarm clock
         schedule.every(4).hours.do(check_weather_routine)
+        schedule.every(1).hours.do(check_forecast_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)

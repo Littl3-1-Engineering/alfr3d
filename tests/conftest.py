@@ -12,7 +12,7 @@ import sys
 import time
 import pytest
 import pymysql
-from kafka import KafkaConsumer, KafkaProducer
+from kafka import KafkaConsumer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -104,9 +104,7 @@ def mysql_config():
     """MySQL connection settings for integration tests, skipping if unavailable."""
     config = _mysql_config_from_env()
     if not is_mysql_responsive(config):
-        pytest.skip(
-            f"MySQL test database unavailable at {config['host']}:{config['port']}"
-        )
+        pytest.skip(f"MySQL test database unavailable at {config['host']}:{config['port']}")
     return config
 
 

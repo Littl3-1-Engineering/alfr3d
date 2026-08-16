@@ -3,14 +3,18 @@
 import asyncio
 import logging
 import os
-import platform
 import socket
 import subprocess
 from fastapi import APIRouter, HTTPException
 
 from dependencies import (
-    db_connection, docker_available, run_docker_command,
-    MYSQL_DATABASE, MYSQL_USER, MYSQL_PSWD, MYSQL_DB,
+    db_connection,
+    docker_available,
+    run_docker_command,
+    MYSQL_DATABASE,
+    MYSQL_USER,
+    MYSQL_PSWD,
+    MYSQL_DB,
 )
 
 logger = logging.getLogger("ApiLog")
@@ -19,9 +23,7 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 def _run(command: list, env=None):
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=15, env=env
-        )
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15, env=env)
         return result.stdout.strip()
     except Exception as e:
         logger.error(f"Error running {' '.join(command)}: {e}")
@@ -45,7 +47,9 @@ async def get_network():
     try:
         hostname = socket.gethostname()
         ip = _get_ip()
-        dns = _run(["sh", "-c", "cat /etc/resolv.conf | grep nameserver | head -1 | awk '{print $2}'"])
+        dns = _run(
+            ["sh", "-c", "cat /etc/resolv.conf | grep nameserver | head -1 | awk '{print $2}'"]
+        )
         gateway = _run(["sh", "-c", "ip route | grep default | awk '{print $3}' | head -1"])
         return {
             "hostname": hostname,
@@ -89,17 +93,26 @@ async def backup_database():
         with db_connection() as db:
             cursor = db.cursor()
             cursor.execute("SHOW DATABASES")
-            databases = [row[0] for row in cursor.fetchall() if row[0] not in ("information_schema", "performance_schema", "mysql", "sys")]
+            databases = [
+                row[0]
+                for row in cursor.fetchall()
+                if row[0] not in ("information_schema", "performance_schema", "mysql", "sys")
+            ]
 
         if not databases:
             databases = [MYSQL_DB]
         for db_name in databases:
             result = subprocess.run(
                 [
-                    "mysqldump", f"--host={MYSQL_DATABASE}", f"--user={MYSQL_USER}",
-                    f"--password={MYSQL_PSWD}", db_name,
+                    "mysqldump",
+                    f"--host={MYSQL_DATABASE}",
+                    f"--user={MYSQL_USER}",
+                    f"--password={MYSQL_PSWD}",
+                    db_name,
                 ],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode != 0:
                 logger.error(f"mysqldump failed: {result.stderr}")
@@ -142,6 +155,7 @@ async def save_config(data: dict):
         if content is None:
             raise HTTPException(status_code=400, detail="content is required")
         import orjson
+
         parsed = orjson.loads(content)
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
@@ -193,9 +207,7 @@ async def restart_service(service_name: str):
             return {"message": f"Restart requested for {service_name} (docker unavailable)"}
         env = os.environ.copy()
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-        output = run_docker_command(
-            ["docker", "restart", service_name], env
-        )
+        output = run_docker_command(["docker", "restart", service_name], env)
         return {"message": f"Restart triggered: {service_name}", "output": output}
     except Exception as e:
         logger.error(f"Error restarting service {service_name}: {str(e)}")

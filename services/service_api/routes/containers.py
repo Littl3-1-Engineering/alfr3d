@@ -13,20 +13,76 @@ router = APIRouter(prefix="/api", tags=["containers"])
 def fetch_container_metrics() -> list:
     if not docker_available:
         import random
+
         return [
-            {"name": "alfr3d-service-user-1", "cpu": round(random.uniform(5, 20), 1), "mem": round(random.uniform(30, 60), 1), "disk": 20.0, "errors": 0},
-            {"name": "alfr3d-service-device-1", "cpu": round(random.uniform(3, 15), 1), "mem": round(random.uniform(25, 45), 1), "disk": 15.0, "errors": 0},
-            {"name": "alfr3d-service-environment-1", "cpu": round(random.uniform(8, 25), 1), "mem": round(random.uniform(35, 55), 1), "disk": 18.0, "errors": 0},
-            {"name": "alfr3d-service-daemon-1", "cpu": round(random.uniform(2, 10), 1), "mem": round(random.uniform(20, 35), 1), "disk": 12.0, "errors": 0},
-            {"name": "alfr3d-service-api-1", "cpu": round(random.uniform(1, 8), 1), "mem": round(random.uniform(15, 30), 1), "disk": 8.0, "errors": 0},
-            {"name": "alfr3d-service-frontend-1", "cpu": round(random.uniform(5, 15), 1), "mem": round(random.uniform(40, 70), 1), "disk": 25.0, "errors": 0},
-            {"name": "alfr3d-mysql-1", "cpu": round(random.uniform(10, 30), 1), "mem": round(random.uniform(50, 80), 1), "disk": 30.0, "errors": 0},
-            {"name": "alfr3d-zookeeper-1", "cpu": round(random.uniform(2, 8), 1), "mem": round(random.uniform(20, 40), 1), "disk": 10.0, "errors": 0},
-            {"name": "alfr3d-kafka-1", "cpu": round(random.uniform(15, 35), 1), "mem": round(random.uniform(60, 90), 1), "disk": 40.0, "errors": 0},
+            {
+                "name": "alfr3d-service-user-1",
+                "cpu": round(random.uniform(5, 20), 1),
+                "mem": round(random.uniform(30, 60), 1),
+                "disk": 20.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-service-device-1",
+                "cpu": round(random.uniform(3, 15), 1),
+                "mem": round(random.uniform(25, 45), 1),
+                "disk": 15.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-service-environment-1",
+                "cpu": round(random.uniform(8, 25), 1),
+                "mem": round(random.uniform(35, 55), 1),
+                "disk": 18.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-service-daemon-1",
+                "cpu": round(random.uniform(2, 10), 1),
+                "mem": round(random.uniform(20, 35), 1),
+                "disk": 12.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-service-api-1",
+                "cpu": round(random.uniform(1, 8), 1),
+                "mem": round(random.uniform(15, 30), 1),
+                "disk": 8.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-service-frontend-1",
+                "cpu": round(random.uniform(5, 15), 1),
+                "mem": round(random.uniform(40, 70), 1),
+                "disk": 25.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-mysql-1",
+                "cpu": round(random.uniform(10, 30), 1),
+                "mem": round(random.uniform(50, 80), 1),
+                "disk": 30.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-zookeeper-1",
+                "cpu": round(random.uniform(2, 8), 1),
+                "mem": round(random.uniform(20, 40), 1),
+                "disk": 10.0,
+                "errors": 0,
+            },
+            {
+                "name": "alfr3d-kafka-1",
+                "cpu": round(random.uniform(15, 35), 1),
+                "mem": round(random.uniform(60, 90), 1),
+                "disk": 40.0,
+                "errors": 0,
+            },
         ]
 
     import os
     import subprocess
+
     env = os.environ.copy()
     env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
     containers = []
@@ -43,7 +99,14 @@ def fetch_container_metrics() -> list:
 
         try:
             stats_output = run_docker_command(
-                ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}},{{.MemPerc}}", container_name],
+                [
+                    "docker",
+                    "stats",
+                    "--no-stream",
+                    "--format",
+                    "{{.CPUPerc}},{{.MemPerc}}",
+                    container_name,
+                ],
                 env,
             )
             stats_line = stats_output.strip()
@@ -61,7 +124,16 @@ def fetch_container_metrics() -> list:
         disk_percent = 15.0
         try:
             size_output = run_docker_command(
-                ["docker", "ps", "-a", "--size", "--format", "{{.Size}}", "-f", f"name={container_name}"],
+                [
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--size",
+                    "--format",
+                    "{{.Size}}",
+                    "-f",
+                    f"name={container_name}",
+                ],
                 env,
             )
             size_str = size_output.strip()
@@ -80,13 +152,15 @@ def fetch_container_metrics() -> list:
         status = container.get("Status", "").lower()
         errors = 0 if "up" in status else 1
 
-        containers.append({
-            "name": container_name,
-            "cpu": round(cpu_percent, 1),
-            "mem": round(mem_percent, 1),
-            "disk": round(disk_percent, 1),
-            "errors": errors,
-        })
+        containers.append(
+            {
+                "name": container_name,
+                "cpu": round(cpu_percent, 1),
+                "mem": round(mem_percent, 1),
+                "disk": round(disk_percent, 1),
+                "errors": errors,
+            }
+        )
 
     return containers
 
@@ -94,7 +168,9 @@ def fetch_container_metrics() -> list:
 async def collect_container_metrics():
     while True:
         try:
-            containers = await asyncio.get_event_loop().run_in_executor(None, fetch_container_metrics)
+            containers = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_container_metrics
+            )
             logger.info(f"Broadcasting {len(containers)} containers via WebSocket")
             await manager.broadcast("containers", containers)
         except Exception as e:
