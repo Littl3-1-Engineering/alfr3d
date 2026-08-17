@@ -125,3 +125,46 @@ def test_api_get_events(api_client):
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
+
+
+@patch("routes.music.db_connection")
+def test_api_get_now_playing_returns_persisted_state(mock_db_connection, api_client):
+    """GET /api/music/now-playing returns the daemon's last-persisted config
+    row as-is -- a fast local read, no live Spotify call."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (
+        '{"track_id": "track1", "title": "Song", "artist": "Artist", '
+        '"is_playing": true, "updated_at": "2026-08-17T00:00:00+00:00"}',
+    )
+
+    response = api_client.get("/api/music/now-playing")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["track_id"] == "track1"
+    assert data["title"] == "Song"
+    assert data["is_playing"] is True
+
+
+@patch("routes.music.db_connection")
+def test_api_get_now_playing_defaults_when_nothing_persisted(mock_db_connection, api_client):
+    """No config row yet (nothing observed playing since the last restart)
+    returns null fields rather than a 404/error."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = None
+
+    response = api_client.get("/api/music/now-playing")
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {
+        "track_id": None,
+        "title": None,
+        "artist": None,
+        "is_playing": False,
+        "updated_at": None,
+    }
