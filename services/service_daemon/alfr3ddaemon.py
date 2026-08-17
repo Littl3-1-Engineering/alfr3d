@@ -79,6 +79,17 @@ RAIN_ADVISORY_THRESHOLD = 30
 # How far ahead the forecast checked by check_weather_advisory() looks.
 FORECAST_HOURS_AHEAD = 6
 
+# Spotify's own 0.0-1.0 "energy" audio feature above which check_party_advisory()
+# considers what's actually playing to be genuinely high-energy, independent
+# of ALFR3D's own (capped, on weeknights) recommendation.
+PARTY_ADVISORY_ENERGY_THRESHOLD = 0.75
+
+# Minimum time between check_party_advisory() spoken nudges, so a rowdy
+# weeknight track doesn't get "it's a school night" repeated every polling
+# cycle -- the card itself still refreshes every cycle, only the TTS nudge
+# is rate-limited.
+PARTY_ADVISORY_COOLDOWN_MINUTES = 60
+
 # time of sunset/sunrise - defaults
 # SUNSET_TIME = datetime.datetime.now().replace(hour=19, minute=0)
 # SUNRISE_TIME = datetime.datetime.now().replace(hour=6, minute=30)
@@ -87,6 +98,11 @@ FORECAST_HOURS_AHEAD = 6
 # various counters to be used for pacing spreadout functions
 QUIP_START_TIME = time.time()
 QUIP_WAIT_TIME = randint(5, 10)
+
+# Last time check_party_advisory() spoke a nudge; 0.0 so the very first
+# detection always speaks rather than waiting out a cooldown against an
+# undefined "last time".
+PARTY_ADVISORY_LAST_NUDGE_TIME = 0.0
 
 # set up logging
 logger = logging.getLogger("DaemonLog")
@@ -225,7 +241,8 @@ class MyDaemon:
                 logger.error("play_tune DB error: " + str(e))
                 desc, subj = None, None
 
-            hour = db_utils.get_env_local_time(ENV_NAME).hour
+            local_dt = db_utils.get_env_local_time(ENV_NAME)
+            hour = local_dt.hour
             if 6 <= hour < 12:
                 time_of_day = "morning"
             elif 12 <= hour < 18:
@@ -240,6 +257,7 @@ class MyDaemon:
                 guest_count=guest_count,
                 time_of_day=time_of_day,
                 weather={"description": desc, "subjective_feel": subj},
+                is_party_night=spotify_utils.is_party_night(local_dt),
             )
             hint = reco.get("playlist_hint") or reco.get("mood") or ""
             logger.info(f"Playing a tune — context: {reco}")
@@ -292,6 +310,11 @@ class MyDaemon:
         # it right after the event it's derived from, ahead of music.
         ("travel", 2.5, "check_travel"),
         ("music", 3, "check_gatherings"),
+        # Follows directly on from music (3): checks whether what's actually
+        # playing is genuinely high-energy despite a capped weeknight
+        # recommendation. Priority 3.2 keeps it right after the card it's
+        # reacting to, ahead of focus_needed (3.5).
+        ("party_advisory", 3.2, "check_party_advisory"),
         # A call starting soon is more actionable/time-boxed than the ambient
         # "should I play music" gathering check, but not as centrally
         # orchestrating as an event departure — priority 3.5 sits it directly
@@ -478,9 +501,8 @@ class MyDaemon:
                     + str(guest_count)
                     + ")"
                 )
-                time_of_day = mood_utils.get_day_mood(db_utils.get_env_local_time(ENV_NAME))[
-                    "time_of_day"
-                ]
+                local_dt = db_utils.get_env_local_time(ENV_NAME)
+                time_of_day = mood_utils.get_day_mood(local_dt)["time_of_day"]
                 cursor.execute(
                     "SELECT description, subjective_feel FROM environment WHERE name = %s",
                     (ENV_NAME,),
@@ -494,6 +516,7 @@ class MyDaemon:
                     guest_count=guest_count,
                     time_of_day=time_of_day,
                     weather=weather_info,
+                    is_party_night=spotify_utils.is_party_night(local_dt),
                 )
                 logger.info(f"Recommendation: {reco}")
 
@@ -542,6 +565,70 @@ class MyDaemon:
         finally:
             if db:
                 db.close()
+
+    def check_party_advisory(self):
+        """Catch a real, high-energy gathering happening despite the capped
+        weeknight recommendation -- e.g. someone manually queues something
+        rowdy on a Tuesday -- and nudge toward winding down.
+
+        `common.spotify_utils.recommend()` only ever *suggests* capped
+        energy on non-party nights (see its `is_party_night` param); nothing
+        stops residents/guests from playing something high-energy anyway.
+        This checks what's actually playing via Spotify's own 0.0-1.0
+        'energy' audio feature for the current track, independent of
+        ALFR3D's own estimate. Only evaluated outside the household's
+        declared Friday/Saturday party-night window and once it's genuinely
+        late (time_of_day == "night"), not just any weeknight evening.
+
+        The returned card refreshes every cycle like any other display, but
+        the spoken nudge over the `speak` topic is cooldown-gated
+        (PARTY_ADVISORY_COOLDOWN_MINUTES) so it doesn't repeat the same
+        "school night" line every polling cycle.
+        """
+        global PARTY_ADVISORY_LAST_NUDGE_TIME
+        try:
+            local_dt = db_utils.get_env_local_time(ENV_NAME)
+            if spotify_utils.is_party_night(local_dt):
+                return None
+
+            day_mood = mood_utils.get_day_mood(local_dt)
+            if day_mood["time_of_day"] != "night":
+                return None
+
+            from common import spotify_utils as spotify_api
+
+            state = spotify_api.get_playback_state()
+            item = state.get("item") or {}
+            track_id = item.get("id")
+            if not state.get("is_playing") or not track_id:
+                return None
+
+            energy = spotify_api.get_track_energy(track_id)
+            if energy is None or energy < PARTY_ADVISORY_ENERGY_THRESHOLD:
+                return None
+
+            track_name = item.get("name") or "the music"
+            content = (
+                f'"{track_name}" is still high-energy for a {day_mood["day_of_week"]} '
+                "night -- work tomorrow, might be worth winding down."
+            )
+
+            if time.time() - PARTY_ADVISORY_LAST_NUDGE_TIME > PARTY_ADVISORY_COOLDOWN_MINUTES * 60:
+                p = get_producer()
+                if p:
+                    p.send(
+                        "speak",
+                        (
+                            f'Hey, it\'s a {day_mood["day_of_week"]} night and the music is '
+                            "still pretty high energy. Just a heads up, it's a work night."
+                        ).encode("utf-8"),
+                    )
+                PARTY_ADVISORY_LAST_NUDGE_TIME = time.time()
+
+            return {"mode": "party_advisory", "content": content, "priority": 3.2}
+        except Exception as e:
+            logger.error("Party advisory check error: " + str(e))
+            return None
 
     def check_weather(self):
         """Default: concise weather summary."""

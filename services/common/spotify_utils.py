@@ -326,6 +326,21 @@ def get_audio_analysis(track_id):
     }, None
 
 
+def get_track_energy(track_id):
+    """Spotify's own 0.0-1.0 'energy' audio feature for a track.
+
+    Used by the daemon's party-advisory check to tell what's *actually*
+    playing, independent of ALFR3D's own recommend() estimate -- e.g. a
+    resident manually queuing something high-energy on a weeknight despite
+    the capped suggestion. Returns None (rather than raising) on any
+    failure, so callers can treat "unknown" the same as "nothing to flag".
+    """
+    data, err = _api_request("GET", f"/audio-features/{track_id}")
+    if err or not data:
+        return None
+    return data.get("energy")
+
+
 def play(device_id=None, context_uri=None):
     body = {}
     if context_uri:
@@ -583,7 +598,56 @@ def _normalize_time_of_day(hour):
     return "night"
 
 
-def recommend(total_people, guest_count, time_of_day, weather=None):
+# The household's declared "party nights": Friday evening through Saturday
+# night. Sunday is deliberately excluded even though it's part of the
+# calendar weekend -- Sunday night is a school/work night, not a party
+# night.
+_PARTY_DAYS = ("Friday", "Saturday")
+
+
+def is_party_night(now=None):
+    """Whether `now` falls in the household's Friday-evening-through-
+    Saturday-night party window.
+
+    Lives here (rather than service_daemon/utils/mood_utils.py) so both the
+    daemon and the API service's on-demand `/music/recommend/playlist` can
+    call it without a cross-service import — same reasoning as `recommend()`
+    itself; see that function's docstring.
+
+    Hours 00:00-04:59 are attributed to the *previous* calendar day, so a
+    Saturday 2am gathering still reads as "Friday night" and a Sunday or
+    Monday 2am gathering does not inherit Saturday's party status. Mirrors
+    the same late-night attribution the deck app's
+    `ContextRules.dayMoodFor()` already uses for its WeekendNight mood, so
+    the two stay in agreement about when "party night" ends.
+
+    Args:
+        now: optional `datetime` to evaluate; defaults to `datetime.now()`.
+
+    Returns:
+        bool
+    """
+    if now is None:
+        now = datetime.now()
+
+    effective_day = now.strftime("%A")
+    if now.hour < 5:
+        effective_day = (now - timedelta(days=1)).strftime("%A")
+
+    return effective_day in _PARTY_DAYS and _normalize_time_of_day(now.hour) in (
+        "evening",
+        "night",
+    )
+
+
+# Above this energy, recommend() considers the pick "party tier" (dance /
+# house / party hits). Weeknights are hard-capped just below it -- see
+# is_party_night above.
+_PARTY_TIER_ENERGY = 0.8
+_WEEKNIGHT_ENERGY_CAP = 0.79
+
+
+def recommend(total_people, guest_count, time_of_day, weather=None, is_party_night=False):
     """
     Deterministic mood/genre/energy recommendation from situational inputs.
     Lives in `common` (rather than only `service_daemon`) so both the daemon
@@ -598,6 +662,16 @@ def recommend(total_people, guest_count, time_of_day, weather=None):
         time_of_day: one of 'morning','day','evening','night' (or an hour int)
         weather: either a string (e.g. 'rainy', 'sunny') or a dict containing
                  keys like 'subjective_feel', 'description', 'main', 'temp'.
+        is_party_night: whether tonight falls in the household's declared
+                 party-night window (Friday evening through Saturday night --
+                 see `is_party_night()` above). Defaults to False (conservative)
+                 so a caller that forgets to pass it gets the capped,
+                 weeknight-safe result rather than
+                 silently reaching full party energy. When False, a big
+                 headcount/guest gathering can still read as upbeat, but
+                 energy is capped below the "dance / house / party hits"
+                 tier -- a Tuesday gathering of 8 shouldn't sound like a
+                 Saturday one just because the headcount matches.
 
     Returns:
         dict with keys: 'mood','genre','energy'(0-1),'tempo_hint','playlist_hint'
@@ -640,6 +714,9 @@ def recommend(total_people, guest_count, time_of_day, weather=None):
             energy += 0.06
 
     energy = max(0.0, min(1.0, energy))
+
+    if not is_party_night:
+        energy = min(energy, _WEEKNIGHT_ENERGY_CAP)
 
     if energy < 0.3:
         genre = "acoustic / ambient / lofi"
