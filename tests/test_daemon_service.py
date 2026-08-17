@@ -259,14 +259,34 @@ class TestSpotifyUtils:
         assert "alt-rock" in result["genre"]
 
     def test_recommend_party_night_with_guests(self):
-        """Test recommend for party with guests at night."""
+        """Test recommend for party with guests at night, on a declared party night."""
         from services.service_daemon.utils.spotify_utils import recommend
 
-        result = recommend(8, 3, "night")
+        result = recommend(8, 3, "night", is_party_night=True)
 
         assert result["energy"] == 1.0  # 0.9 + 0.08 + 0.05 = 1.03, clamped to 1.0
         assert result["mood"] == "energetic dance"
         assert "dance" in result["genre"]
+
+    def test_recommend_weeknight_caps_energy_despite_big_gathering(self):
+        """Same headcount/guests/time as the party-night test above, but without
+        is_party_night -- energy must be capped below the party tier, not just
+        happen to land lower."""
+        from services.service_daemon.utils.spotify_utils import recommend
+
+        result = recommend(8, 3, "night")
+
+        assert result["energy"] == 0.79
+        assert result["mood"] != "energetic dance"
+        assert "dance" not in result["genre"]
+
+    def test_recommend_weeknight_cap_does_not_affect_already_low_energy(self):
+        """The weeknight cap (0.79) must not raise energy that was already lower."""
+        from services.service_daemon.utils.spotify_utils import recommend
+
+        result = recommend(1, 0, "morning")
+
+        assert result["energy"] == 0.15
 
     def test_recommend_with_weather_rain(self):
         """Test recommend adjusts for rainy weather."""
@@ -303,6 +323,79 @@ class TestSpotifyUtils:
         result = recommend(2, 0, None)
 
         assert result["mood"] == "warm indie"
+
+
+class TestIsPartyNight:
+    """Tests for common.spotify_utils.is_party_night()."""
+
+    def test_friday_evening_is_party_night(self):
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 14, 20, 0)) is True  # Friday 8pm
+
+    def test_saturday_night_is_party_night(self):
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 15, 22, 30)) is True  # Saturday 10:30pm
+
+    def test_sunday_night_is_not_party_night(self):
+        """The exact regression this whole feature exists for: Sunday night
+        must not read as a party night no matter how late it is."""
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 16, 22, 0)) is False  # Sunday 10pm
+
+    def test_thursday_night_is_not_party_night(self):
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 13, 23, 0)) is False  # Thursday 11pm
+
+    def test_friday_afternoon_is_not_party_night(self):
+        """Only Friday evening/night counts -- a Friday afternoon gathering
+        doesn't inherit party-night status just because it's a Friday."""
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 14, 14, 0)) is False  # Friday 2pm
+
+    def test_saturday_early_morning_still_reads_as_friday_night(self):
+        """00:00-04:59 is attributed to the previous calendar day, so a
+        Saturday 2am gathering is still "Friday night"."""
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 15, 2, 0)) is True  # Saturday 2am
+
+    def test_sunday_early_morning_still_reads_as_saturday_night(self):
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 16, 2, 0)) is True  # Sunday 2am
+
+    def test_monday_early_morning_is_not_party_night(self):
+        """The previous-day attribution must not let a Monday 2am gathering
+        inherit Sunday's (non-party) status as "party" by accident."""
+        from datetime import datetime
+
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night(datetime(2026, 8, 17, 2, 0)) is False  # Monday 2am
+
+    def test_defaults_to_now_when_omitted(self):
+        from services.common.spotify_utils import is_party_night
+
+        assert is_party_night() in (True, False)
 
 
 class TestUtilRoutines:
@@ -600,6 +693,7 @@ class TestDecideDisplays:
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     TRAVEL_CARD = {"mode": "travel", "content": "tr", "priority": 2.5}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
+    PARTY_ADVISORY_CARD = {"mode": "party_advisory", "content": "pa", "priority": 3.2}
     FOCUS_CARD = {"mode": "focus_needed", "content": "f", "priority": 3.5}
     EMAIL_CARD = {"mode": "email", "content": "em", "priority": 4}
     WEATHER_ADVISORY_CARD = {"mode": "weather_advisory", "content": "wa", "priority": 4.5}
@@ -612,6 +706,7 @@ class TestDecideDisplays:
         check_events=None,
         check_travel=None,
         check_gatherings=None,
+        check_party_advisory=None,
         check_focus_needed=None,
         check_emails=None,
         check_weather_advisory=None,
@@ -626,6 +721,7 @@ class TestDecideDisplays:
         daemon.check_events = MagicMock(return_value=check_events)
         daemon.check_travel = MagicMock(return_value=check_travel)
         daemon.check_gatherings = MagicMock(return_value=check_gatherings)
+        daemon.check_party_advisory = MagicMock(return_value=check_party_advisory)
         daemon.check_focus_needed = MagicMock(return_value=check_focus_needed)
         daemon.check_emails = MagicMock(return_value=check_emails)
         daemon.check_weather_advisory = MagicMock(return_value=check_weather_advisory)
@@ -633,13 +729,14 @@ class TestDecideDisplays:
         daemon.check_mood = MagicMock(return_value=check_mood)
         return daemon
 
-    def test_all_nine_checks_produce_cards_in_priority_order(self):
+    def test_all_ten_checks_produce_cards_in_priority_order(self):
         """When every check fires, cards come back sorted by priority (time..mood)."""
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
@@ -654,6 +751,7 @@ class TestDecideDisplays:
             "event",
             "travel",
             "music",
+            "party_advisory",
             "focus_needed",
             "email",
             "weather_advisory",
@@ -670,6 +768,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
@@ -685,6 +784,7 @@ class TestDecideDisplays:
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
         assert self.TRAVEL_CARD in result
+        assert self.PARTY_ADVISORY_CARD in result
 
     def test_focus_needed_sorts_between_music_and_email(self):
         """focus_needed (priority 3.5) lands between music (3) and email (4) when both fire."""
@@ -752,9 +852,9 @@ class TestDecideDisplays:
 
     def test_all_categories_firing_simultaneously_is_sorted_capped_and_collision_free(self):
         """End-to-end test of decide_displays() with the full, current category set
-        (all nine DISPLAY_RULES entries) firing at once.
+        (all ten DISPLAY_RULES entries) firing at once.
 
-        This is the test to extend when a future PR registers a tenth category:
+        This is the test to extend when a future PR registers an eleventh category:
         add its card to the `self._stub_daemon(...)` call below and to the
         expected `modes` list in priority order.
         """
@@ -763,6 +863,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
@@ -777,10 +878,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all nine cards come back -- nothing dropped.
+        # rule fired exactly once, so all ten cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 9 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 10 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         assert len(priorities) == len(set(priorities))
@@ -790,6 +891,7 @@ class TestDecideDisplays:
             "event",
             "travel",
             "music",
+            "party_advisory",
             "focus_needed",
             "email",
             "weather_advisory",

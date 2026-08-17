@@ -41,7 +41,8 @@ def _current_situational_inputs():
         desc_row = cursor.fetchone()
         desc, subj = desc_row if desc_row else (None, None)
 
-    hour = db_utils.get_env_local_time(ALFR3D_ENV_NAME).hour
+    local_dt = db_utils.get_env_local_time(ALFR3D_ENV_NAME)
+    hour = local_dt.hour
     if 6 <= hour < 18:
         time_of_day = "day"
     elif 18 <= hour < 22:
@@ -49,7 +50,13 @@ def _current_situational_inputs():
     else:
         time_of_day = "night"
 
-    return total_count, guest_count, time_of_day, {"description": desc, "subjective_feel": subj}
+    return (
+        total_count,
+        guest_count,
+        time_of_day,
+        {"description": desc, "subjective_feel": subj},
+        spotify_utils.is_party_night(local_dt),
+    )
 
 
 @router.get("/music/spotify/status")
@@ -339,12 +346,15 @@ async def recommend_playlist():
     nothing matched — callers should degrade gracefully, not treat it as an error.
     """
     try:
-        total_people, guest_count, time_of_day, weather = _current_situational_inputs()
+        total_people, guest_count, time_of_day, weather, is_party_night = (
+            _current_situational_inputs()
+        )
         reco = spotify_utils.recommend(
             total_people=total_people,
             guest_count=guest_count,
             time_of_day=time_of_day,
             weather=weather,
+            is_party_night=is_party_night,
         )
         hint = reco.get("playlist_hint") or reco.get("mood") or ""
         playlist, err = spotify_utils.find_playlist_for_hint(hint, reco.get("genre", ""))
