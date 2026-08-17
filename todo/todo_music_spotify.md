@@ -8,7 +8,7 @@ ALFR3D should **know what music is currently playing** (which song/artist on Spo
 
 ## Current State
 
-- **Backend has no now-playing data.** `services/service_daemon/utils/spotify_utils.py` is only a rule-based recommendation engine (mood/genre/energy). It carries explicit TODOs for Spotify Web API integration (`get_playlist_suggestion` at line 21, module docstring line 5) and has **no OAuth/API client**.
+- **Backend has full Spotify OAuth, but no now-playing data.** `services/common/spotify_utils.py` (752 lines) now provides a real OAuth (authorization-code + refresh) client and playback/search/playlist API — `services/service_daemon/utils/spotify_utils.py` is a thin re-export of it (`resolve_playlist`, `recommend`, etc.), no longer a standalone rule-only stub. What's still missing is a "what's currently playing" read: nothing polls `GET /v1/me/player/currently-playing` or exposes a now-playing endpoint. Option B below is therefore largely just "add a poller + endpoint on top of the OAuth client that already exists," not a from-scratch integration.
 - **Frontend has a placeholder only.** `Integrations.jsx:15` lists "Spotify — Music playlist suggestions" with `integrationType: null` (nothing wired to a backend). `SituationalAwareness.jsx:42` already renders a `music`-mode icon, so a music card can be surfaced with no frontend change.
 - **The launcher already has on-device now-playing.** The Nexus Launcher (`/home/athos/Projects/Alfr3d/alfr3d_launcher`) reads the active system `MediaSession` via:
   - `media/NowPlayingController.kt` — `MediaSessionManager.getActiveSessions()`, produces `NowPlayingSnapshot(appLabel, title, artist, isPlaying)` (incl. play/pause/skip controls).
