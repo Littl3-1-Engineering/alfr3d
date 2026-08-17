@@ -3,20 +3,20 @@
 """
 Spotify utilities for Alfr3d Daemon.
 
-`recommend()` / `_normalize_time_of_day()` live in `common.spotify_utils`
-now (shared with the API service's on-demand recommendation endpoint) and
-are re-exported here so existing call sites (`alfr3ddaemon.py`, tests) keep
-working unchanged. `resolve_playlist()` turns a recommendation's playlist
-hint into one specific, real Spotify playlist via the household's own
-authorized Spotify account (see `common.spotify_utils.find_playlist_for_hint`)
-— library match first, then a global Spotify search, gracefully returning
-None if Spotify isn't connected.
+`recommend()` / `_normalize_time_of_day()` / `is_party_night()` live in
+`common.spotify_utils` now (shared with the API service's on-demand
+recommendation endpoint) and are re-exported here so existing call sites
+(`alfr3ddaemon.py`, tests) keep working unchanged. `resolve_playlist()` turns
+a recommendation's playlist hint into one specific, real Spotify playlist via
+the household's own authorized Spotify account (see
+`common.spotify_utils.find_playlist_for_hint`) — library match first, then a
+global Spotify search, gracefully returning None if Spotify isn't connected.
 """
 
 import logging
 from typing import Dict, Any, Optional
 
-from common.spotify_utils import recommend, _normalize_time_of_day  # noqa: F401
+from common.spotify_utils import recommend, _normalize_time_of_day, is_party_night  # noqa: F401
 
 logger = logging.getLogger("SpotifyUtils")
 
@@ -44,9 +44,9 @@ def resolve_playlist(playlist_hint: str, genre: str = "") -> Optional[Dict[str, 
 if __name__ == "__main__":
     # Quick demonstration
     examples = [
-        (1, 0, "evening", {"subjective_feel": "Perfect / Great day", "temp": 22}),
-        (4, 2, "day", {"subjective_feel": "Bad weather: rain", "temp": 10}),
-        (8, 6, "night", {"subjective_feel": "Cold", "temp": -5}),
+        (1, 0, "evening", {"subjective_feel": "Perfect / Great day", "temp": 22}, False),
+        (4, 2, "day", {"subjective_feel": "Bad weather: rain", "temp": 10}, False),
+        (8, 6, "night", {"subjective_feel": "Cold", "temp": -5}, True),  # Friday/Saturday night
     ]
     for t in examples:
-        print(t, "=>", recommend(*t))
+        print(t, "=>", recommend(*t[:4], is_party_night=t[4]))
