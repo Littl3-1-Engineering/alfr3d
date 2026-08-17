@@ -13,7 +13,7 @@ from dependencies import docker_available, run_docker_command
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["health"])
 
-DEFAULT_VERSION = "0.1.0"
+DEFAULT_VERSION = "0.1.8"
 _UPTIME_RE = re.compile(
     r"Up (?:(?P<days>\d+) days?)?\s*(?:(?P<hours>\d+) hours?)?\s*"
     r"(?:(?P<minutes>\d+) minutes?)?\s*(?:(?P<seconds>\d+) seconds?)?"
