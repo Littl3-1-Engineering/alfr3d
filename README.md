@@ -17,11 +17,13 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Microservices Architecture**: Modular services for users, devices, environment, daemon, music, and frontend.
 - **Music & Spotify**: Full Spotify OAuth integration with playback control (play/pause/next/previous/seek/volume/queue), playlist browsing, device transfer, a context-aware recommendation engine, and whole-home speaker casting to Home Assistant media players.
 - **Context-Aware Music Recommendations**: Collaborative-filtering recommender plus an explainable mood/genre/energy engine (occupancy, guests, time of day, weather) that resolves into specific real Spotify playlists — exposed both on-demand (`/api/music/recommend/playlist`) and as situational-awareness music cards during detected gatherings.
+- **Situational Awareness Registry**: Rule-driven engine (`DISPLAY_RULES` in `alfr3ddaemon.py`) — new card types register as `(rule_id, priority, check_method)` triples without hardcoding a display slot; cards cover time, upcoming events, leave-by travel guidance, gathering music, call focus alerts, unread email, rain advisories, current weather, and ambient day mood.
+- **Weather Forecast**: OpenWeatherMap 5-day/3-hour forecast snapshot (rain probability, forecast temp/conditions) persisted to the `environment` table hourly (`forecast_*` columns, migration 019) and consumed by the situational-awareness rain advisory ("Rain likely in the next 6 hours — bring an umbrella").
 - **Camera Streaming**: RTSP cameras streamed to the browser via an ffmpeg proxy (MJPEG) or persistent RTSP→HLS pipelines with hls.js playback and snapshot capture.
 - **Routine Automation (WHEN/IF/THEN)**: Time-, sunrise/sunset-, and event-triggered routines with conditions (occupancy, device state, temperature, mode) and actions (speak, device, email, thermostat, lock, cover, music, cast).
 - **Personality & Quips**: Configurable personality matrix with semantic quip categories, one-click presets, context inputs, and optional LLM configuration for generated responses.
 - **Theme System**: Centralized theme tokens (single source of truth) with three built-in themes (Cyan/Navy, Amber/Charcoal, Light/Teal) and a live theme picker that persists across sessions.
-- **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling). Event types broadcast: events, situational awareness, containers, users, devices, IoT devices, personality state, project tree.
+- **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling). Event types broadcast: events, situational awareness, containers, users, devices, IoT devices, weather, environment, calendar events, personality state, project tree.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`. Includes text-to-speech audio generation.
 - **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, blueprint display with MAC-based device linking, and real-time device state updates via WebSocket.
@@ -34,7 +36,7 @@ A containerized microservices project for home automation, featuring Kafka messa
   - Manual chunk splitting for parallel loading and better caching
   - React Query for client-side API caching (5-min stale time)
   - orjson for 3-10x faster JSON serialization
-  - Alembic migration chain (versions 0001-0018) wrapping all raw SQL migrations
+  - Alembic migration chain (versions 0001-0019) wrapping all raw SQL migrations
   - Slow-query MySQL config with targeted indexes
   - Multi-stage frontend build and BuildKit pip cache
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
@@ -49,8 +51,10 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Zookeeper**: Required for Kafka coordination and cluster management.
 - **Kafka**: Message broker with auto-created topics (`speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`) for inter-service communication.
 - **MySQL**: Database with comprehensive schema including users, devices, environments, routines, states, listening history, and speaker groups.
-- **Redis**: Cache layer for frequently-accessed data with TTL and in-memory fallback.
-- **Service Daemon**: Core orchestration service handling voice commands, Google integrations, situational awareness with event-based travel planning, gathering detection and music cards, context-aware scheduled tune playback, music recommendation rebuilds, and message routing.
+- **Redis**: Cache layer for frequently-accessed data with TTL and in-memory fallback (users, devices, weather, environment, personality, quips, routines).
+- **Migrate**: Alembic migration runner — applies `setup/migrations/versions/0001-0019` against MySQL on startup.
+- **Test MySQL**: Separate MySQL instance (port 3307, `test_alfr3d_db`) for pytest fixtures to avoid interfering with production data.
+- **Service Daemon**: Core orchestration service handling voice commands, Google integrations, a registry-based situational-awareness engine (time/events/travel/gathering-music/focus/email/rain-advisory/weather/mood cards), event-based travel planning with fuel-cost estimation, weather + forecast scheduling, gathering detection and music cards, context-aware scheduled tune playback, music recommendation rebuilds, and message routing.
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
 - **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring. Runs as a standalone container on the host machine for direct network access.
 - **Service Environment**: Handles geolocation, weather updates, environmental data collection, and timezone-aware time-of-day logic.
@@ -76,6 +80,7 @@ A containerized microservices project for home automation, featuring Kafka messa
    docker-compose exec mysql mysql -u root -p${MYSQL_ROOT_PASSWORD} < setup/createTables.sql
    docker-compose up -d
    ```
+   The `migrate` service runs the Alembic migration chain (0001-0019) against MySQL on startup, so the schema stays current without manual SQL steps.
 4. **Access the Application**:
    - Dashboard: `http://localhost` (via nginx on port 80)
 
@@ -240,7 +245,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 ### Database Setup
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
-- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0018`):
+- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0019`):
   - `001_calendar_cleanup.sql` / `002_iot.sql` / `003_routines.sql`
   - `004_personality.sql` / `005_indexes.sql` / `006_personality_context.sql`
   - `007_device_types_expansion.sql` / `008_iot_device_link.sql`
@@ -248,6 +253,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
   - `010_slow_query_indexes.sql` / `011_quip_categories.sql` / `012_weather_expansion.sql`
   - `013_listening_history.sql` / `014_speaker_groups.sql`
   - `015_environment_timezone.sql` / `016_iot_device_cleanup.sql` / `017_iot_dedupe.sql`
+  - `018_weather_forecast.sql` (forecast rain probability / temp / conditions snapshot)
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
 
 ### IoT Integration
@@ -396,7 +402,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Real-Time Metrics**: Live CPU/memory, service health bars, user/device/IoT metrics via WebSocket
 - **WeatherPanel**: Animated weather icon, large current temp, wind + pressure trend
 - **ResidentsSummary**: Residents vs. guests online
-- **Situational Awareness**: Live, priority-ordered cards from a registry-based engine — time, upcoming events, leave-by travel guidance (drive time and fuel cost, when a destination and Google Maps are configured), gathering-triggered music, "call starting soon" focus alerts, unread email, forward-looking rain advisories, current weather, and ambient day-mood; music cards link to the resolved Spotify playlist
+- **Situational Awareness**: Live, priority-ordered cards from a registry-based engine (`DISPLAY_RULES`) — time, upcoming events, leave-by travel guidance (drive time and fuel cost, when a destination and Google Maps are configured), gathering-triggered music, "call starting soon" focus alerts, unread email, forward-looking rain advisories (from the persisted `forecast_rain_probability` snapshot), current weather, and ambient day-mood; music cards link to the resolved Spotify playlist
 - **Calendar & Event Stream**: Upcoming events and event feed
 - **Camera Stream**: Live RTSP camera panel
 - **Project Tree**: Interactive force-directed visualization of the project structure
@@ -512,7 +518,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
   - `DELETE /api/routines/<id>`: Delete a routine
   - `POST /api/routines/<id>/run`: Manually execute a routine
 - **WebSocket**:
-  - `WS /ws`: Real-time events, situational awareness, containers, users, devices, and IoT device state updates (FastAPI native WebSocket). Events broadcast: `events`, `situational_awareness`, `containers`, `users`, `devices`, `iot_devices`, `personality_state`, `project_tree`.
+  - `WS /ws`: Real-time events, situational awareness, containers, users, devices, and IoT device state updates (FastAPI native WebSocket). Events broadcast: `events`, `situational_awareness`, `containers`, `users`, `devices`, `iot_devices`, `weather`, `environment`, `calendar_events`, `personality_state`, `project_tree`.
 - **Service Frontend**:
   - `GET /`: Nexus dashboard
   - `GET /domain`: Device and user management
