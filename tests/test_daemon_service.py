@@ -102,7 +102,9 @@ class TestGmailUtils:
     """Tests for gmail_utils.py"""
 
     def test_check_unread_emails(self):
-        """Test check_unread_emails returns None (placeholder)."""
+        """check_unread_emails is a real Gmail API implementation; it returns
+        None here only because no OAuth credentials are configured in the test
+        environment, not because it's a stub."""
         from services.service_daemon.utils.gmail_utils import check_unread_emails
 
         result = check_unread_emails()

@@ -4,20 +4,21 @@
 
 ## Overview
 
-Today ALFR3D's music recommendation is text only. `service_daemon/utils/spotify_utils.py:recommend()` maps
-occupancy/weather/time-of-day into a mood/genre/energy tuple and a free-text `playlist_hint` (e.g. `"chill,
-acoustic, lo-fi"`); `check_gatherings()` in `alfr3ddaemon.py` formats that into a `mode: "music"` situational-
-awareness card whose `content` is just a sentence: `"Play chill, acoustic, lo-fi (acoustic / ambient / lofi,
-energy=0.2)"`. `get_playlist_suggestion()` (line 21 of that file) is a literal passthrough placeholder with a
-`TODO: Implement Spotify API integration` comment that's never been addressed. There is no playlist id/uri
-anywhere in this pipeline — the alfr3d_deck launcher's "ALFR3D's music pick" card can only regex the mood/genre
-back out of that sentence, and its "Play it" button just opens the Spotify app or runs a generic text search
-(see the companion plan in `alfr3d_deck/todo/todo_music_playlist_recommendation.md`).
+**Historical context (pre-implementation state, resolved by this plan):** before this work, ALFR3D's music
+recommendation was text only. `service_daemon/utils/spotify_utils.py:recommend()` maps occupancy/weather/time-of-day
+into a mood/genre/energy tuple and a free-text `playlist_hint` (e.g. `"chill, acoustic, lo-fi"`); `check_gatherings()`
+in `alfr3ddaemon.py` formatted that into a `mode: "music"` situational-awareness card whose `content` was just a
+sentence: `"Play chill, acoustic, lo-fi (acoustic / ambient / lofi, energy=0.2)"`. The old `get_playlist_suggestion()`
+was a literal passthrough placeholder with a `TODO: Implement Spotify API integration` comment; it has since been
+removed entirely and replaced by the real resolution pipeline described below. There was no playlist id/uri anywhere
+in that old pipeline — the alfr3d_deck launcher's "ALFR3D's music pick" card could only regex the mood/genre back out
+of that sentence, and its "Play it" button just opened the Spotify app or ran a generic text search (see the
+companion plan in `alfr3d_deck/todo/todo_music_playlist_recommendation.md`).
 
 This plan resolves that text hint into one **specific, real Spotify playlist** — id, name, `spotify:playlist:...`
 URI, `open.spotify.com` URL, and cover image — so the launcher can deep-link straight into it. It also adds a
-general-purpose endpoint so a specific pick is available even when no gathering is in progress (today's card only
-fires when a guest is detected home).
+general-purpose endpoint so a specific pick is available even when no gathering is in progress (the old card only
+fired when a guest was detected home).
 
 **Scoping decisions (confirmed with user):**
 - Add an always-available `GET /api/music/recommend/playlist` endpoint, not just resolve the existing

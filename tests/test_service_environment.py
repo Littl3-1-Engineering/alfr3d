@@ -11,7 +11,7 @@ import orjson
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "service_environment"))
 
 
-@patch("services.service_environment.environment.get_producer")
+@patch("common.get_producer")
 @patch("services.service_environment.environment.pymysql.connect")
 @patch("urllib.request.urlopen")
 def test_check_location(mock_urlopen, mock_connect, mock_producer):
@@ -21,6 +21,10 @@ def test_check_location(mock_urlopen, mock_connect, mock_producer):
     os.environ["ALFR3D_ENV_NAME"] = "test"
     import importlib
 
+    # environment.py does `from common import get_producer`, so the mock must be
+    # applied to common.get_producer *before* this reload re-executes that import
+    # (patching environment.get_producer directly would be wiped out by reload,
+    # which re-binds it from the now-unpatched real common.get_producer).
     importlib.reload(environment)
     from unittest.mock import MagicMock
 
