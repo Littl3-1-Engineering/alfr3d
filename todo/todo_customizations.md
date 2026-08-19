@@ -60,3 +60,15 @@ theme background by the generator).
       (lint issues that remain are pre-existing in unrelated files).
 - [x] Manual: switch between all three themes, check panels, buttons, grid, map,
       select chevrons, glows.
+
+### Phase 5: More themes (not started)
+Follow-up idea from the earlier `todo_themes.md` plan (retired — its core ask,
+the picker itself, is what Phases 1-4 above shipped). Two more theme options were
+proposed but never added:
+- [ ] **Matrix** — green-on-black terminal look.
+- [ ] **Steel/Graphite** — cold blue-gray.
+
+Same mechanism as the existing three: add a token block to `themes.js`, let
+`scripts/generate-theme-css.mjs` emit the `[data-theme="..."]` CSS block, extend
+`toggleTheme`'s cycle order in `ThemeContext.jsx`, and the `ThemeCustomization.jsx`
+grid picks it up automatically.

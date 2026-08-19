@@ -1,64 +1,58 @@
 # Know & Expose Currently-Playing Spotify Music
 
-## Status: 🔲 TODO
+## Status: Option B implemented 2026-08-17 — unit-tested, not yet verified against a live Spotify-authorized deployment
 
 ## Overview
 
 ALFR3D should **know what music is currently playing** (which song/artist on Spotify) and be able to **expose it** — via an API endpoint, the event-stream, and situational awareness / voice ("what's playing?").
 
-## Current State
+## Decision: Option B first (backend-only), Option A deferred
 
-- **Backend has no now-playing data.** `services/service_daemon/utils/spotify_utils.py` is only a rule-based recommendation engine (mood/genre/energy). It carries explicit TODOs for Spotify Web API integration (`get_playlist_suggestion` at line 21, module docstring line 5) and has **no OAuth/API client**.
-- **Frontend has a placeholder only.** `Integrations.jsx:15` lists "Spotify — Music playlist suggestions" with `integrationType: null` (nothing wired to a backend). `SituationalAwareness.jsx:42` already renders a `music`-mode icon, so a music card can be surfaced with no frontend change.
-- **The launcher already has on-device now-playing.** The Nexus Launcher (`/home/athos/Projects/Alfr3d/alfr3d_launcher`) reads the active system `MediaSession` via:
-  - `media/NowPlayingController.kt` — `MediaSessionManager.getActiveSessions()`, produces `NowPlayingSnapshot(appLabel, title, artist, isPlaying)` (incl. play/pause/skip controls).
-  - `media/MediaNotificationListener.kt` — a `NotificationListenerService` whose **notification-access grant** is the OS gate for cross-app session enumeration. Currently deliberately does **not** read notification content.
-  - This snapshot is only shown in the launcher's Media window (`media/ui/MediaWindowContent.kt`); it is **not pushed to the ALFR3D backend** (`alfr3d/Alfr3dClient.kt` / `HttpAlfr3dClient.kt` only do GETs of environment/weather/users/devices/routines/events/SA/calendar).
+Investigation (2026-08-17) found **most of Option B already exists**, which tips the scope decisively: `services/service_api/routes/music.py` already exposes `GET /api/music/spotify/status`, backed by `spotify_utils.get_playback_state()` (`services/common/spotify_utils.py`), which calls Spotify's `GET /me/player` (a superset of `/me/player/currently-playing`) through the existing OAuth client and already returns `is_playing`, `item.{name,artists,album,album_art,duration_ms,uri}`, `progress_ms`, `device`. There's no new Spotify integration to build — the remaining gap is narrower: **poll it, detect changes, persist the last-known value, and publish an event on change.**
 
-## Two Data Sources (choose one or both)
+Option A (launcher push, any app) stays a documented fast-follow — pick it up only if the household ever needs coverage for non-Spotify apps or a Spotify account the backend isn't authorized for. Not scoped further here; see the original section below.
 
-### Option A: Launcher → Backend push (recommended first)
-The launcher already captures now-playing on-device for **any** music app (Spotify, YT Music, etc.) and already has a backend HTTP client.
+## Implementation Plan (Option B)
 
-- Push `NowPlayingSnapshot` from `NowPlayingController` to ALFR3D on snapshot changes (poll/`StateFlow` collection in a `LaunchedEffect`).
-- New launcher API call, e.g. `POST /api/music/now-playing` (add to `Alfr3dClient.kt` + `HttpAlfr3dClient.kt`).
-- No Spotify OAuth needed; works for any device-streaming app; survives whatever the user actually plays.
+### Phase 1: Poller + persistence — ✅ DONE
+- Implemented as a new `DISPLAY_RULES` entry (`("now_playing", 3.1, "check_now_playing")`) in `alfr3ddaemon.py` rather than a separate `schedule` job — the daemon's outer loop only ticks every 60s (`MyDaemon.run()`), the same floor a `schedule.every(20).seconds` job would hit anyway, and `DISPLAY_RULES` already runs every cycle at that cadence.
+- `check_now_playing()` calls `spotify_api.get_playback_state()` (via a local `from common import spotify_utils as spotify_api`, mirroring `check_party_advisory()`) — no new Spotify API call needed.
+- Persists to `config` (`music_now_playing` key) via `_read_now_playing_config()` / `_write_now_playing_config()`, following the UPDATE-then-INSERT-if-0-rows pattern. Stores `{track_id, title, artist, is_playing, updated_at}` — no album art, and title/artist are capped at 150 chars each as a defensive margin under the `VARCHAR(512)` column.
+- Only writes + publishes when `track_id` or `is_playing` actually changed vs. the last-persisted value.
 
-### Option B: Spotify Web API (backend-side)
-- Real OAuth client (authorization-code flow, refresh token) in a new `service_daemon/utils/spotify_api.py` or `service_speak/...`.
-- Poll `GET https://api.spotify.com/v1/me/player/currently-playing` for `{track, artist, album, is_playing, progress_ms, duration_ms}`.
-- Store credentials in `config` table (like `llm_api_key`); add integration status to `Integrations.jsx` (replace the `integrationType: null` Spotify placeholder).
-- Works even when nothing is playing on the launcher device, but needs user Spotify auth.
+### Phase 2: Event-stream on change — ✅ DONE
+- Publishes via `get_producer()` on change, `type: "audio"` with a pre-formatted `message: "Now playing: {title} by {artist}"` — zero `EventStream.jsx` changes needed, as planned.
 
-## Backend Exposure Plan
+### Phase 3: Situational-awareness card — ✅ DONE
+- `check_now_playing()` returns `{"mode": "music", "content": ..., "priority": 3.1, "track_title": ..., "track_artist": ..., "is_playing": ...}`.
+- `SituationalAwareness.jsx` extended with a small block rendering `card.track_title`/`card.track_artist` (distinct from the existing `playlist_name` block, which is still driven by `check_gatherings()`'s recommendation card — the two coexist as separate `mode: "music"` cards at priorities 3 and 3.1).
 
-1. **Endpoint**: `GET /api/music/now-playing` in `services/service_api/routes/` (new `routes/music.py`), returning `{ source, title, artist, album, app, is_playing, progress_ms, duration_ms, timestamp }`; `404`/`null` when nothing is playing.
-2. **Storage**: keep a lightweight "current track" record — e.g. columns in `config` (`music_now_playing` JSON) or a small `now_playing` table — so the value survives restarts and is queryable.
-3. **Event-stream**: publish changes to the `event-stream` Kafka topic (e.g. `{"type": "music", "title": ..., "artist": ...}`) so:
-   - the frontend `EventStream.jsx` shows "Now playing: X by Y",
-   - situational awareness can generate a `music`-mode card (`SituationalAwareness.jsx` already renders that icon),
-   - the butler can answer "what's playing?" via the speak pipeline.
-4. **Frontend**: add a Now Playing card/panel (Matrix → Integrations, and/or a small live tile) fed by the endpoint + event-stream.
-5. **Launcher**: optionally also surface the backend-confirmed track back in the Media window for consistency.
+### Phase 4: Read endpoint — ✅ DONE
+- Added `GET /api/music/now-playing` (`services/service_api/routes/music.py`) — fast local read of the persisted `config` value, no live Spotify call. `GET /api/music/spotify/status` (pre-existing) is unchanged and still does the live proxy.
 
-## Files
+### Outstanding
+- **Live verification against a real Spotify-authorized deployment** — not yet done. Unit tests (`tests/test_daemon_service.py::TestCheckNowPlaying`, `tests/test_api_service.py`) cover the logic with mocked DB/Spotify calls, but nothing has exercised this against a live household Spotify session yet. Fold into the alfr3d_deck on-device verification pass (same "not yet verified live" gap as the playlist-recommendation plan).
+- Confirm the `schedule`-vs-60s-loop assumption doesn't need revisiting if "now playing" ever needs sub-60s freshness (not currently required).
 
-### Backend (`/home/athos/Projects/Alfr3d/alfr3d`)
-- `services/service_daemon/utils/spotify_utils.py` (extend or replace with real API)
-- `services/service_api/routes/music.py` (new — `GET/POST /api/music/now-playing`)
-- `services/service_api/app.py` / router registration
-- `services/service_api/models.py` (`NowPlayingUpdate`)
-- `services/service_frontend/src/components/Integrations.jsx`
-- `services/service_frontend/src/components/EventStream.jsx` / `SituationalAwareness.jsx`
+## Files (Option B) — implemented
 
-### Launcher (`/home/athos/Projects/Alfr3d/alfr3d_launcher`)
-- `app/src/main/java/com/alfr3d/launcher/media/NowPlayingController.kt`
-- `app/src/main/java/com/alfr3d/launcher/alfr3d/Alfr3dClient.kt` / `HttpAlfr3dClient.kt`
-- `app/src/main/java/com/alfr3d/launcher/alfr3d/model/Alfr3dModels.kt`
-- `app/src/main/java/com/alfr3d/launcher/media/ui/MediaWindowContent.kt`
+- `services/service_daemon/alfr3ddaemon.py` — `check_now_playing()`, `_read_now_playing_config()`/`_write_now_playing_config()`, `NOW_PLAYING_CONFIG_KEY`, `DISPLAY_RULES` entry
+- `services/common/spotify_utils.py` — unchanged, `get_playback_state()` reused as-is
+- `services/service_api/routes/music.py` — `GET /api/music/now-playing`
+- `services/service_frontend/src/components/SituationalAwareness.jsx` — track title/artist block for `music`-mode cards
+- `tests/test_daemon_service.py` (`TestCheckNowPlaying`, `TestDecideDisplays` updates), `tests/test_api_service.py` (`test_api_get_now_playing_*`)
 
-## Open Questions
+## Option A: Launcher → Backend push (deferred fast-follow, not scoped)
 
-- Should the backend trust the launcher push (Option A) or require authenticated Spotify (Option B)? Both can coexist — launcher push as live source, Spotify API as fallback/cross-device.
-- Token/credential storage + OAuth UX for Option B (match existing `llm_api_key` config pattern).
-- Rate/`state` dedup: only push/emit when title/artist/is_playing actually changes.
+The launcher already captures now-playing on-device for **any** music app (Spotify, YT Music, etc.) via `alfr3d_deck`'s `media/NowPlayingController.kt` (`MediaSessionManager.getActiveSessions()` → `NowPlayingSnapshot(appLabel, title, artist, isPlaying)`) and `media/MediaNotificationListener.kt` (notification-access grant gates cross-app session enumeration; deliberately doesn't read notification content). Currently only shown in the launcher's own Media window (`media/ui/MediaWindowContent.kt`) — never pushed to the backend.
+
+If picked up later:
+- New launcher API call, e.g. `POST /api/music/now-playing` (add to `alfr3d_deck`'s `Alfr3dClient.kt` + `HttpAlfr3dClient.kt`, push `NowPlayingSnapshot` on change via `LaunchedEffect`/`StateFlow` collection).
+- Backend accepts the push into the same Phase 1 persistence/event-stream path above (`source: "launcher"` vs `source: "spotify"` to distinguish).
+- Works for any device-streaming app, no Spotify OAuth needed; complements rather than replaces Option B (Option B still covers "what's playing" when nothing's active on the launcher device, or a different app/account is in use elsewhere).
+
+## Open Questions — resolved during implementation
+
+- ~~Confirm `schedule` library sub-minute job granularity~~ — moot; folded into the existing 60s `DISPLAY_RULES` cycle instead of a separate `schedule` job.
+- ~~`config.value VARCHAR(512)` fit~~ — resolved by dropping album art from the persisted value and capping title/artist at 150 chars each.
+- ~~Whether Phase 4's fast-read endpoint is worth adding~~ — added; cheap and matches the original "voice / API" ask.

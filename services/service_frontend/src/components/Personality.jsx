@@ -18,6 +18,7 @@ const usePersonality = () => {
   });
   const [presets, setPresets] = useState([]);
   const [llmConfig, setLlmConfig] = useState({ api_key: '', usage_limit: 10 });
+  const [llmCallsToday, setLlmCallsToday] = useState(null);
   const [currentMood, setCurrentMood] = useState('neutral');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,9 +59,21 @@ const usePersonality = () => {
     }
   };
 
+  const fetchContext = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/personality/context`);
+      if (response.ok) {
+        const data = await response.json();
+        setLlmCallsToday(data.llm_calls_today ?? null);
+      }
+    } catch (error) {
+      console.error('Error fetching personality context:', error);
+    }
+  };
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchPersonality(), fetchPresets(), fetchLlmConfig()]);
+    await Promise.all([fetchPersonality(), fetchPresets(), fetchLlmConfig(), fetchContext()]);
     setLoading(false);
   }, []);
 
@@ -95,8 +108,19 @@ const usePersonality = () => {
 
   const applyPreset = async (presetName) => {
     const preset = presets.find(p => p.name === presetName);
-    if (preset) {
-      setPersonality(preset);
+    if (!preset) return;
+    setPersonality(preset);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/personality/apply-preset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset: presetName }),
+      });
+      if (response.ok) {
+        await fetchPersonality();
+      }
+    } catch (error) {
+      console.error('Error applying preset:', error);
     }
   };
 
@@ -118,6 +142,7 @@ const usePersonality = () => {
     presets,
     llmConfig,
     setLlmConfig,
+    llmCallsToday,
     currentMood,
     loading,
     saving,
@@ -250,7 +275,7 @@ TraitSlider.propTypes = {
 };
 
 const Personality = () => {
-  const { personality, setPersonality, presets, llmConfig, setLlmConfig, currentMood, loading, saving, savePersonality, applyPreset, saveLlmConfig, refresh } = usePersonality();
+  const { personality, setPersonality, presets, llmConfig, setLlmConfig, llmCallsToday, currentMood, loading, saving, savePersonality, applyPreset, saveLlmConfig, refresh } = usePersonality();
   const { quips, loading: quipsLoading, fetchQuips, categoryFilter, setCategoryFilter } = useQuips();
   const { editingId, editType, editCategory, editText, setEditType, setEditCategory, setEditText, handleEdit, handleSave, setEditingId } = useEditQuip(fetchQuips);
   const { newType, newCategory, newText, showAddForm, setNewType, setNewCategory, setNewText, setShowAddForm, handleAdd } = useAddQuip(fetchQuips);
@@ -444,6 +469,40 @@ const Personality = () => {
                 className="w-full p-2 bg-fui-dim border border-fui-border rounded text-text-primary"
               />
             </div>
+
+            {llmCallsToday !== null && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-text-tertiary">Usage today</span>
+                  <span
+                    className={
+                      llmCallsToday >= llmConfig.usage_limit
+                        ? 'text-red-400 font-semibold'
+                        : llmCallsToday >= llmConfig.usage_limit * 0.8
+                        ? 'text-yellow-400'
+                        : 'text-text-primary'
+                    }
+                  >
+                    {llmCallsToday} / {llmConfig.usage_limit} calls
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-fui-dim rounded-full overflow-hidden">
+                  <div
+                    className={
+                      'h-full rounded-full ' +
+                      (llmCallsToday >= llmConfig.usage_limit
+                        ? 'bg-red-400'
+                        : llmCallsToday >= llmConfig.usage_limit * 0.8
+                        ? 'bg-yellow-400'
+                        : 'bg-fui-accent')
+                    }
+                    style={{
+                      width: `${Math.min(100, (llmCallsToday / Math.max(1, llmConfig.usage_limit)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             <motion.button
               whileHover={{ scale: 1.02 }}
