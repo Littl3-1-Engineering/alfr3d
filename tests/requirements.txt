@@ -13,4 +13,4 @@ schedule==1.2.2
 gtts==2.5.4
 googlemaps==4.10.0
 alembic==1.19.1
-SQLAlchemy>=2.0.51
+SQLAlchemy>=2.0.52
