@@ -4,6 +4,10 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/armageddion/alfr3d)
 
+## License
+
+Licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE) (FSL-1.1-ALv2). Free to self-host, modify, and read; the Software may not be used to offer a competing commercial product or service. Each version automatically converts to the Apache License, Version 2.0 two years after its release.
+
 ## Screenshot
 
 ![ALFR3D Dashboard](Nexus.png)
