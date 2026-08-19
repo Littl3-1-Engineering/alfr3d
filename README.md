@@ -4,6 +4,10 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/armageddion/alfr3d)
 
+## License
+
+Licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE) (FSL-1.1-ALv2). Free to self-host, modify, and read; the Software may not be used to offer a competing commercial product or service. Each version automatically converts to the Apache License, Version 2.0 two years after its release.
+
 ## Screenshot
 
 ![ALFR3D Dashboard](Nexus.png)
@@ -381,12 +385,12 @@ pre-commit run --all-files
 | check-yaml | Validates YAML syntax |
 | check-added-large-files | Prevents large file commits |
 | black | Python code formatting (line-length=100) |
-| flake8 | Python linting (max-line-length=100, ignores E203,W503,F401) |
+| flake8 | Python linting (max-line-length=100, ignores E203,W503,E402; `common/` also ignores F401) |
 | detect-secrets | Scans for committed secrets |
 
 ### E402 Workaround
 
-Some imports must come after `sys.path.insert()` for Docker container path resolution. These use `# noqa: E402` comments to suppress false positives.
+Some imports must come after `sys.path.insert()` for Docker container path resolution. Rather than annotate every such import individually, E402 is globally ignored in both `lint.sh` and `.pre-commit-config.yaml`.
 
 ### Undefined json Fix
 
@@ -549,7 +553,7 @@ docker-compose down
 
 ## Kubernetes Deployment
 
-The project includes complete Kubernetes manifests for production deployment with Minikube support.
+The project includes Kubernetes manifests for Minikube/production deployment, covering Zookeeper, Kafka, MySQL, the ingress, and all services except `service_device` (which requires host networking for `arp-scan` and is expected to run outside the cluster, directly on a host). Two things Docker Compose automates that the current manifests don't yet cover: there's no Redis manifest (services fall back to their in-memory TTL cache — see Redis in the Architecture section above), and no equivalent of Compose's `migrate` job — run the Alembic migrations against the cluster's MySQL manually (see `setup/migrations/`) before or after `kubectl apply -f k8s/`.
 
 ### Prerequisites
 - Minikube installed and running
@@ -569,13 +573,13 @@ The project includes complete Kubernetes manifests for production deployment wit
    # Build all service images using the provided script
    ./setup/build_images.sh
    eval $(minikube docker-env)
-   docker tag alfr3d/service-frontend:v0.1.5 alfr3d/service-frontend:latest
-   docker tag alfr3d/service-api:v0.1.5 alfr3d/service-api:latest
-   docker tag alfr3d/service-daemon:v0.1.5 alfr3d/service-daemon:latest
-   docker tag alfr3d/service-device:v0.1.5 alfr3d/service-device:latest
-   docker tag alfr3d/service-environment:v0.1.5 alfr3d/service-environment:latest
-   docker tag alfr3d/service-user:v0.1.5 alfr3d/service-user:latest
-   docker tag alfr3d/service-speak:v0.1.5 alfr3d/service-speak:latest
+   docker tag alfr3d/service-frontend:v0.1.8 alfr3d/service-frontend:latest
+   docker tag alfr3d/service-api:v0.1.8 alfr3d/service-api:latest
+   docker tag alfr3d/service-daemon:v0.1.8 alfr3d/service-daemon:latest
+   docker tag alfr3d/service-device:v0.1.8 alfr3d/service-device:latest
+   docker tag alfr3d/service-environment:v0.1.8 alfr3d/service-environment:latest
+   docker tag alfr3d/service-user:v0.1.8 alfr3d/service-user:latest
+   docker tag alfr3d/service-speak:v0.1.8 alfr3d/service-speak:latest
    ```
 
 3. **Deploy to Kubernetes**:

@@ -102,7 +102,9 @@ class TestGmailUtils:
     """Tests for gmail_utils.py"""
 
     def test_check_unread_emails(self):
-        """Test check_unread_emails returns None (placeholder)."""
+        """check_unread_emails is a real Gmail API implementation; it returns
+        None here only because no OAuth credentials are configured in the test
+        environment, not because it's a stub."""
         from services.service_daemon.utils.gmail_utils import check_unread_emails
 
         result = check_unread_emails()
@@ -693,6 +695,7 @@ class TestDecideDisplays:
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     TRAVEL_CARD = {"mode": "travel", "content": "tr", "priority": 2.5}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
+    NOW_PLAYING_CARD = {"mode": "music", "content": "np", "priority": 3.1}
     PARTY_ADVISORY_CARD = {"mode": "party_advisory", "content": "pa", "priority": 3.2}
     FOCUS_CARD = {"mode": "focus_needed", "content": "f", "priority": 3.5}
     EMAIL_CARD = {"mode": "email", "content": "em", "priority": 4}
@@ -706,6 +709,7 @@ class TestDecideDisplays:
         check_events=None,
         check_travel=None,
         check_gatherings=None,
+        check_now_playing=None,
         check_party_advisory=None,
         check_focus_needed=None,
         check_emails=None,
@@ -721,6 +725,7 @@ class TestDecideDisplays:
         daemon.check_events = MagicMock(return_value=check_events)
         daemon.check_travel = MagicMock(return_value=check_travel)
         daemon.check_gatherings = MagicMock(return_value=check_gatherings)
+        daemon.check_now_playing = MagicMock(return_value=check_now_playing)
         daemon.check_party_advisory = MagicMock(return_value=check_party_advisory)
         daemon.check_focus_needed = MagicMock(return_value=check_focus_needed)
         daemon.check_emails = MagicMock(return_value=check_emails)
@@ -729,13 +734,14 @@ class TestDecideDisplays:
         daemon.check_mood = MagicMock(return_value=check_mood)
         return daemon
 
-    def test_all_ten_checks_produce_cards_in_priority_order(self):
+    def test_all_eleven_checks_produce_cards_in_priority_order(self):
         """When every check fires, cards come back sorted by priority (time..mood)."""
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
@@ -750,6 +756,7 @@ class TestDecideDisplays:
             "time",
             "event",
             "travel",
+            "music",
             "music",
             "party_advisory",
             "focus_needed",
@@ -768,6 +775,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
@@ -784,6 +792,7 @@ class TestDecideDisplays:
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
         assert self.TRAVEL_CARD in result
+        assert self.NOW_PLAYING_CARD in result
         assert self.PARTY_ADVISORY_CARD in result
 
     def test_focus_needed_sorts_between_music_and_email(self):
@@ -852,9 +861,9 @@ class TestDecideDisplays:
 
     def test_all_categories_firing_simultaneously_is_sorted_capped_and_collision_free(self):
         """End-to-end test of decide_displays() with the full, current category set
-        (all ten DISPLAY_RULES entries) firing at once.
+        (all eleven DISPLAY_RULES entries) firing at once.
 
-        This is the test to extend when a future PR registers an eleventh category:
+        This is the test to extend when a future PR registers a twelfth category:
         add its card to the `self._stub_daemon(...)` call below and to the
         expected `modes` list in priority order.
         """
@@ -863,6 +872,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
+            check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
@@ -878,18 +888,21 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all ten cards come back -- nothing dropped.
+        # rule fired exactly once, so all eleven cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 10 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 11 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
+        # (music and now_playing intentionally share mode "music" at different
+        # priorities -- 3 vs 3.1 -- so they don't collide on priority either.)
         assert len(priorities) == len(set(priorities))
 
         assert [card["mode"] for card in result] == [
             "time",
             "event",
             "travel",
+            "music",
             "music",
             "party_advisory",
             "focus_needed",
@@ -1352,6 +1365,114 @@ class TestCheckGatherings:
 
         daemon = MyDaemon()
         result = daemon.check_gatherings()
+
+        assert result is None
+
+
+class TestCheckNowPlaying:
+    """Tests for MyDaemon.check_now_playing()."""
+
+    def _playback_state(self, track_id="track1", name="Song", artists=None, is_playing=True):
+        return {
+            "is_playing": is_playing,
+            "item": {"id": track_id, "name": name, "artists": artists or ["Artist"]},
+        }
+
+    @patch("common.spotify_utils.get_playback_state")
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_nothing_playing_returns_none_without_touching_db_or_producer(
+        self, mock_connect, mock_producer, mock_playback
+    ):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_playback.return_value = {"is_playing": False, "item": None}
+
+        daemon = MyDaemon()
+        result = daemon.check_now_playing()
+
+        assert result is None
+        mock_connect.assert_not_called()
+        mock_producer.assert_not_called()
+
+    @patch("common.spotify_utils.get_playback_state")
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_new_track_persists_state_and_publishes_event(
+        self, mock_connect, mock_producer, mock_playback
+    ):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_playback.return_value = self._playback_state()
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None  # nothing persisted yet
+        mock_cursor.rowcount = 1  # UPDATE "succeeds" -> no INSERT fallback
+
+        mock_p = MagicMock()
+        mock_producer.return_value = mock_p
+
+        daemon = MyDaemon()
+        card = daemon.check_now_playing()
+
+        assert card["mode"] == "music"
+        assert card["track_title"] == "Song"
+        assert card["track_artist"] == "Artist"
+        assert card["is_playing"] is True
+
+        update_calls = [
+            c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]
+        ]
+        assert len(update_calls) == 1
+        mock_p.send.assert_called_once()
+        assert mock_p.send.call_args.args[0] == "event-stream"
+
+    @patch("common.spotify_utils.get_playback_state")
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_unchanged_track_does_not_rewrite_or_republish(
+        self, mock_connect, mock_producer, mock_playback
+    ):
+        """Same track_id + is_playing as last cycle must not spam config writes
+        or event-stream messages every ~60s poll."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_playback.return_value = self._playback_state(track_id="track1", is_playing=True)
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (
+            '{"track_id": "track1", "title": "Song", "artist": "Artist", "is_playing": true}',
+        )
+
+        mock_p = MagicMock()
+        mock_producer.return_value = mock_p
+
+        daemon = MyDaemon()
+        card = daemon.check_now_playing()
+
+        assert card is not None
+        update_calls = [
+            c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]
+        ]
+        assert len(update_calls) == 0
+        mock_p.send.assert_not_called()
+
+    @patch("common.spotify_utils.get_playback_state")
+    def test_playback_lookup_error_is_caught_and_returns_none(self, mock_playback):
+        """A Spotify/network error must not crash decide_displays() -- same
+        graceful-degradation contract as the other DB/API-backed checks."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_playback.side_effect = Exception("network down")
+
+        daemon = MyDaemon()
+        result = daemon.check_now_playing()
 
         assert result is None
 

@@ -1,6 +1,10 @@
 # Plan to Implement Routine Management System in Frontend
 
-## Current State
+## Status: ✅ COMPLETE
+
+All phases below (database schema, backend API, daemon execution, frontend UI) are implemented — see "Implementation Progress" for what actually shipped. The original "Current State"/"Implementation Plan" section above it describes the pre-implementation starting point and is kept for historical context only.
+
+## Original Current State (pre-implementation, now historical)
 - DB stores basic routines (time-based, one-shot per day).
 - Daemon checks and triggers via `util_routines.py`, but no UI or custom actions.
 
@@ -40,12 +44,12 @@
   - Added index for faster lookups
 
 ### Phase 2: Backend API ✓
-- Added endpoints in `services/service_api/app.py`:
+- Endpoints now live in `services/service_api/routes/routines.py` (registered via `app.include_router()` in `app.py`), migrated from Flask to FastAPI since this was first written:
   - `GET /api/routines` - List all routines
   - `POST /api/routines` - Create routine
-  - `PUT /api/routines/<id>` - Update routine
-  - `DELETE /api/routines/<id>` - Delete routine
-  - `POST /api/routines/<id>/run` - Execute routine manually
+  - `PUT /api/routines/{routine_id}` - Update routine
+  - `DELETE /api/routines/{routine_id}` - Delete routine
+  - `POST /api/routines/{routine_id}/run` - Execute routine manually
 
 ### Phase 3: Daemon Execution ✓
 - Updated `services/service_daemon/utils/util_routines.py`:
