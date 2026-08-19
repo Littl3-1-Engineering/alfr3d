@@ -104,6 +104,10 @@ QUIP_WAIT_TIME = randint(5, 10)
 # undefined "last time".
 PARTY_ADVISORY_LAST_NUDGE_TIME = 0.0
 
+# `config` table key check_now_playing() persists the last-seen track under,
+# so the value survives daemon restarts and is queryable by other services.
+NOW_PLAYING_CONFIG_KEY = "music_now_playing"
+
 # set up logging
 logger = logging.getLogger("DaemonLog")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -310,6 +314,11 @@ class MyDaemon:
         # it right after the event it's derived from, ahead of music.
         ("travel", 2.5, "check_travel"),
         ("music", 3, "check_gatherings"),
+        # What's actually playing right now, independent of whether a
+        # gathering triggered a recommendation -- priority 3.1 keeps it
+        # right after the recommendation card it complements, ahead of the
+        # party advisory (3.2) that reacts to this same playback state.
+        ("now_playing", 3.1, "check_now_playing"),
         # Follows directly on from music (3): checks whether what's actually
         # playing is genuinely high-energy despite a capped weeknight
         # recommendation. Priority 3.2 keeps it right after the card it's
@@ -565,6 +574,115 @@ class MyDaemon:
         finally:
             if db:
                 db.close()
+
+    def _read_now_playing_config(self):
+        """Return the last-persisted now-playing state as a dict, or {} if
+        there is none yet or the read fails."""
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute("SELECT value FROM config WHERE name = %s", (NOW_PLAYING_CONFIG_KEY,))
+            row = cursor.fetchone()
+            return orjson.loads(row[0]) if row and row[0] else {}
+        except Exception as e:
+            logger.error(f"Now playing config read error: {e}")
+            return {}
+        finally:
+            if db:
+                db.close()
+
+    def _write_now_playing_config(self, state):
+        """Upsert the now-playing state into `config`, following the same
+        UPDATE-then-INSERT-if-0-rows pattern used elsewhere for this table
+        (e.g. spotify_utils.save_spotify_credentials())."""
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            value = orjson.dumps(state).decode("utf-8")
+            cursor.execute(
+                "UPDATE config SET value = %s WHERE name = %s", (value, NOW_PLAYING_CONFIG_KEY)
+            )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    "INSERT INTO config (name, value) VALUES (%s, %s)",
+                    (NOW_PLAYING_CONFIG_KEY, value),
+                )
+            db.commit()
+        except Exception as e:
+            logger.error(f"Now playing config write error: {e}")
+        finally:
+            if db:
+                db.close()
+
+    def check_now_playing(self):
+        """Surface a situational-awareness card for whatever's actually
+        playing on Spotify right now, independent of check_gatherings()'s
+        recommendation card.
+
+        Runs every ~60s cycle like every other DISPLAY_RULES check (no
+        separate poll loop -- the daemon's outer loop only ticks that often
+        anyway). Only persists to `config` and publishes an event-stream
+        message when the track or play state actually changed, so it
+        doesn't repeat the same "now playing" line every cycle.
+        """
+        try:
+            from common import spotify_utils as spotify_api
+
+            state = spotify_api.get_playback_state()
+            item = state.get("item") or {}
+            track_id = item.get("id")
+            is_playing = state.get("is_playing", False)
+            if not track_id or not is_playing:
+                return None
+
+            # config.value is VARCHAR(512) -- cap title/artist defensively
+            # (no album art is stored here; that's re-fetched live from
+            # GET /api/music/spotify/status when needed).
+            title = (item.get("name") or "")[:150]
+            artist = ", ".join(item.get("artists") or [])[:150]
+
+            last = self._read_now_playing_config()
+            if last.get("track_id") != track_id or last.get("is_playing") != is_playing:
+                self._write_now_playing_config(
+                    {
+                        "track_id": track_id,
+                        "title": title,
+                        "artist": artist,
+                        "is_playing": is_playing,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                p = get_producer()
+                if p:
+                    message = (
+                        f"Now playing: {title} by {artist}" if artist else f"Now playing: {title}"
+                    )
+                    event = {
+                        "id": f"now_playing_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                        "type": "audio",
+                        "message": message,
+                        "time": datetime.now(timezone.utc).isoformat(),
+                    }
+                    p.send("event-stream", orjson.dumps(event))
+
+            content = f"{title} — {artist}" if artist else title
+            return {
+                "mode": "music",
+                "content": f"Now playing: {content}",
+                "priority": 3.1,
+                "track_title": title,
+                "track_artist": artist,
+                "is_playing": is_playing,
+            }
+        except Exception as e:
+            logger.error(f"Now playing check error: {e}")
+            return None
 
     def check_party_advisory(self):
         """Catch a real, high-energy gathering happening despite the capped

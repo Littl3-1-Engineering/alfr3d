@@ -2,6 +2,7 @@
 
 import logging
 
+import orjson
 from fastapi import APIRouter, HTTPException, Query
 
 from common import spotify_utils, db_connection, db_utils
@@ -66,6 +67,30 @@ async def get_status():
         return state
     except Exception as e:
         logger.error(f"Error getting Spotify status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/music/now-playing")
+async def get_now_playing():
+    """Fast local read of the last track alfr3ddaemon.py's check_now_playing()
+    persisted to `config` — no live Spotify call, unlike /music/spotify/status.
+    Returns null fields when nothing has been observed playing yet."""
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT value FROM config WHERE name = 'music_now_playing'")
+            row = cursor.fetchone()
+        if not row or not row[0]:
+            return {
+                "track_id": None,
+                "title": None,
+                "artist": None,
+                "is_playing": False,
+                "updated_at": None,
+            }
+        return orjson.loads(row[0])
+    except Exception as e:
+        logger.error(f"Error getting now-playing: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

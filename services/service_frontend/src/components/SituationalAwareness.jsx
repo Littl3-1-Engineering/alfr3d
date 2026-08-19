@@ -86,6 +86,11 @@ const SituationalAwareness = ({ timezone = null }) => {
                   <span className="break-words min-w-0">▶ {card.playlist_name}</span>
                 </a>
               )}
+              {card.mode === 'music' && card.track_title && (
+                <p className="mt-1 text-xs font-mono text-fui-text/80 break-words">
+                  ♪ {card.track_title}{card.track_artist ? ` — ${card.track_artist}` : ''}
+                </p>
+              )}
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
           </motion.div>
