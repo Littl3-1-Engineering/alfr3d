@@ -7,7 +7,7 @@ DBUtils==3.1.2
 orjson==3.11.9
 python-dotenv==1.2.2
 requests==2.34.2
-fastapi>=0.109.1
+fastapi>=0.141.1
 httpx>=0.28.1
 schedule==1.2.2
 gtts==2.5.4
