@@ -11,6 +11,7 @@ alfr3d.code-workspace
 nginx.conf
 mysql_data/
 AGENTS.md
+CLAUDE.md
 node_modules/
 dist/
 **/dist/

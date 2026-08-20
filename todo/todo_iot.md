@@ -146,17 +146,8 @@ Implement WebSocket for real-time device state changes instead of polling.
 
 ---
 
-## Phase 14: Automations/Routines Engine (Future)
-
-### Goal
-Allow users to create automations like "turn on light at sunset".
-
-### Tasks
-- Create `automations` table
-- Create automation builder UI
-- Support triggers: time, device state, sun position
-- Support actions: control device, send notification, etc.
-- Execute via daemon service
+(Phase 14, "Automations/Routines Engine," was pruned here — already shipped via
+`implementation_plan.md` Phase 5 and `todo_routines.md`'s WHEN/IF/THEN engine.)
 
 ---
 
@@ -206,7 +197,6 @@ Devices integrated via HA should be matched to devices in the `device` table. Un
 ### Notes
 - Unlinked HA devices are still managed/linkable in Domain → Devices → SMARTHOME DEVICES (DeviceRegistry keeps showing all)
 - Manual links persist across sync (COALESCE preserves existing device_id)
-- Migrations table below needs `016` row added
 
 ---
 
