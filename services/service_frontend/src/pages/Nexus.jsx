@@ -21,6 +21,7 @@ import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
 import ProjectTreeViz from '../components/ProjectTreeViz';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CameraStream from '../components/CameraStream';
+import NowPlayingCard from '../components/NowPlayingCard';
 import { useTheme } from '../utils/useTheme';
 
 const BOOT_MESSAGES = [
@@ -248,6 +249,9 @@ const Nexus = () => {
 <TacticalPanelVariant1 title="Gue5t R0ster">
                    <GuestRoster initialGuests={filterGuests(onlineUsers)} />
                  </TacticalPanelVariant1>
+<ErrorBoundary>
+                  <NowPlayingCard />
+                </ErrorBoundary>
                   <TacticalPanelVariant3 title={locationTitle}>
                     <LocationPanel setTitle={setLocationTitle} initialLocation={location} />
                   </TacticalPanelVariant3>

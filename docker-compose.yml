@@ -64,6 +64,7 @@ services:
       start_period: 30s
 
   migrate:
+    profiles: ["test"]
     build:
       context: ./setup
       dockerfile: ./migrations/Dockerfile
@@ -218,6 +219,7 @@ services:
 
   # Separate MySQL instance for testing to avoid interfering with production data
   test-mysql:
+    profiles: ["test"]
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: testrootpassword
