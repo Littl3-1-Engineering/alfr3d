@@ -400,6 +400,119 @@ class TestIsPartyNight:
         assert is_party_night() in (True, False)
 
 
+class TestNowPlayingMonitor:
+    """Tests for now_playing_monitor.py"""
+
+    @staticmethod
+    def _state(track_id="t1", playing=True, title="Song One", artists=None, **overrides):
+        item = None
+        if track_id:
+            item = {
+                "id": track_id,
+                "name": title,
+                "artists": artists if artists is not None else ["Artist A"],
+                "album": "Album One",
+                "album_art": "http://img/art.jpg",
+                "duration_ms": 180000,
+                "uri": f"spotify:track:{track_id}",
+            }
+        state = {"is_playing": playing, "item": item, "progress_ms": 5000}
+        state.update(overrides)
+        return state
+
+    def test_new_track_emits_playing_song_event(self):
+        """A brand-new playing track publishes a 'playing song' event."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, new_track_id, new_is_playing = evaluate(self._state(), None, False)
+
+        assert new_track_id == "t1"
+        assert new_is_playing is True
+        assert event is not None
+        assert event["type"] == "audio"
+        assert event["message"] == "playing song: Song One by Artist A"
+        assert event["is_playing"] is True
+        assert event["track"]["id"] == "t1"
+        assert event["track"]["album_art"] == "http://img/art.jpg"
+        assert "time" in event
+
+    def test_track_change_emits_new_event(self):
+        """A different track while playing publishes a fresh event."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, new_track_id, _ = evaluate(self._state(track_id="t2", title="Song Two"), "t1", True)
+
+        assert new_track_id == "t2"
+        assert event is not None
+        assert event["message"] == "playing song: Song Two by Artist A"
+
+    def test_same_track_playing_emits_nothing(self):
+        """Repeated samples of the same playing track do not spam events."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, new_track_id, new_is_playing = evaluate(self._state(), "t1", True)
+
+        assert event is None
+        assert new_track_id == "t1"
+        assert new_is_playing is True
+
+    def test_playback_stop_emits_stopped_event(self):
+        """Transition playing -> stopped publishes a stop event with no track."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, new_track_id, new_is_playing = evaluate(
+            self._state(track_id=None, playing=False), "t1", True
+        )
+
+        assert event is not None
+        assert event["message"] == "playback stopped"
+        assert event["is_playing"] is False
+        assert event["track"] is None
+        assert new_track_id is None
+        assert new_is_playing is False
+
+    def test_stopped_stays_silent(self):
+        """No duplicate stop events while playback stays stopped."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, _, _ = evaluate(self._state(track_id=None, playing=False), None, False)
+
+        assert event is None
+
+    def test_not_authorized_is_silent(self):
+        """An un-authorized/error state emits nothing and resets tracking."""
+        from services.service_daemon.utils.now_playing_monitor import evaluate
+
+        event, new_track_id, new_is_playing = evaluate(
+            {"authorized": False, "error": "Not authorized"}, "t1", True
+        )
+
+        assert event is None
+        assert new_track_id is None
+        assert new_is_playing is False
+
+    @patch("services.service_daemon.utils.now_playing_monitor.get_producer")
+    def test_monitor_loop_publishes_event(self, mock_get_producer):
+        """The monitor loop publishes a song-start event via the Kafka producer."""
+        from services.service_daemon.utils.now_playing_monitor import monitor_now_playing
+
+        mock_producer = MagicMock()
+        mock_get_producer.return_value = mock_producer
+
+        stop_event = MagicMock()
+        stop_event.is_set.side_effect = [False, True]
+
+        with patch(
+            "services.service_daemon.utils.now_playing_monitor.spotify_api.get_playback_state",
+            return_value=self._state(),
+        ):
+            monitor_now_playing(stop_event=stop_event, poll_interval=0)
+
+        mock_producer.send.assert_called_once()
+        args, _ = mock_producer.send.call_args
+        assert args[0] == "event-stream"
+
+
 class TestUtilRoutines:
     """Tests for util_routines.py"""
 
