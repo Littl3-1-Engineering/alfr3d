@@ -2,7 +2,7 @@
 
 A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, Redis caching, and Python services. Includes a modern React web frontend with real-time dashboard monitoring, comprehensive user/device management, Spotify music integration with context-aware recommendations and whole-home speaker casting, RTSP camera streaming, and a WHEN/IF/THEN routine automation engine.
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/armageddion/alfr3d)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Littl3-1-Engineering/alfr3d)
 
 ## License
 
