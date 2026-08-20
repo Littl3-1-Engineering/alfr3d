@@ -159,7 +159,7 @@
 - **Issue:** SQL migrations are hand-written `.sql` files in `setup/migration_*.sql` (10 migrations). No automated tracking of which migrations have been applied.
 - **Recommendation:** Adopt Alembic for schema migrations with version tracking
 - **Status: ✅ DONE** — Alembic scaffold in `setup/migrations/` (chained revisions `0001`→`0010` wrapping all raw `.sql` files via `run_sql.py`; baseline from `createTables.sql`). Wired in:
-  - `docker-compose.yml` `migrate` service — one-shot `alembic upgrade head`, waits for healthy MySQL, runs before services
+  - `docker-compose.yml` `migrate` service (in `test` profile) — one-shot `alembic upgrade head`, waits for healthy MySQL, runs with `docker compose --profile test up migrate`
   - `setup/migrations/Dockerfile` — build context `./setup`, installs `alembic==1.18.5` + `pymysql`
   - CI job `migrations` — runs the full chain against a clean MySQL, asserts `alembic current` = `0010`
   - Verified end-to-end: clean DB → upgrade chain → downgrade/upgrade round-trip → idempotent re-runs
