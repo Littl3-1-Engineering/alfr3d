@@ -43,7 +43,7 @@ import threading
 import pymysql
 import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
-from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils, mood_utils, focus_utils
+from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils, mood_utils, focus_utils, now_playing_monitor
 from kafka.errors import KafkaError
 from kafka import KafkaConsumer  # user to write messages to Kafka
 
@@ -478,8 +478,7 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -487,8 +486,7 @@ class MyDaemon:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """
-            )
+                """)
             row = cursor.fetchone()
             guest_count = row[0] if row and row[0] else 0
             total_count = row[1] if row and row[1] else 0
@@ -907,6 +905,7 @@ if __name__ == "__main__":
             logger.info("Alfr3d Daemon initializing")
             init_daemon()
             threading.Thread(target=consume_integrations, daemon=True).start()
+            now_playing_monitor.start_now_playing_monitor()
             logger.info("Alfr3d Daemon starting...")
             daemon.run()
         elif "test" == sys.argv[1]:

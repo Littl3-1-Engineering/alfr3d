@@ -80,7 +80,7 @@ A containerized microservices project for home automation, featuring Kafka messa
    docker-compose exec mysql mysql -u root -p${MYSQL_ROOT_PASSWORD} < setup/createTables.sql
    docker-compose up -d
    ```
-   The `migrate` service runs the Alembic migration chain (0001-0019) against MySQL on startup, so the schema stays current without manual SQL steps.
+   To run database migrations separately: `docker compose --profile test up migrate`
 4. **Access the Application**:
    - Dashboard: `http://localhost` (via nginx on port 80)
 
