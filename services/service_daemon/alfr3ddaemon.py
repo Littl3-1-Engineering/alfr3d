@@ -907,6 +907,21 @@ def sync_iot_devices():
     if p:
         p.send("device", orjson.dumps({"action": "iot_ha_sync"}))
         p.send("device", orjson.dumps({"action": "iot_st_sync"}))
+        p.send("device", orjson.dumps({"action": "iot_esphome_sync"}))
+
+
+def discover_esphome_devices():
+    """
+    Description:
+            Send an ESPHome mDNS discovery scan message to the device topic every hour.
+            Separate cadence from sync_iot_devices()'s 15-minute entity sync: discovery is a
+            blocking LAN scan (see esphome_utils.discover_esphome_nodes) and only needs to run
+            often enough to catch newly-added nodes, not on every entity-state sync.
+    """
+    logger.info("Scheduled ESPHome discovery")
+    p = get_producer()
+    if p:
+        p.send("device", orjson.dumps({"action": "iot_esphome_discover"}))
 
 
 def play_tune_scheduled():
@@ -984,6 +999,7 @@ def init_daemon():
         schedule.every(4).hours.do(check_weather_routine)
         schedule.every(1).hours.do(check_forecast_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
+        schedule.every(60).minutes.do(discover_esphome_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)

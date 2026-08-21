@@ -61,3 +61,4 @@ No `gender` column exists today, and nothing in the codebase (personality engine
 ## Related
 - [[project-alfr3d-monetization-plan]] — ALFR3D Cloud (Path C) Phase 3 currently just lists "accounts/auth" unscoped; this doc is the scoping.
 - See `todo_multiuser_integrations.md` in this same directory — multi-user calendar/email support depends on this auth/user-identity work landing first (need a real logged-in user to attribute an integration to).
+- `todo_cloud_relay.md` (this directory, added 2026-08-21) — Cloud subscriber/billing identity, a deliberately separate system from the household RBAC users here; that doc's Design §2 discusses whether the two logins should ever converge.

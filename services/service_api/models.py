@@ -140,5 +140,19 @@ class IOTDeviceControl(BaseModel):
     params: Dict[str, Any] = {}
 
 
+class ESPHomeAccept(BaseModel):
+    psk: Optional[str] = None
+    name: Optional[str] = None
+
+
+class ESPHomeControl(BaseModel):
+    command: str
+    params: Dict[str, Any] = {}
+
+
+class ESPHomeConfig(BaseModel):
+    enabled: bool
+
+
 class PresetApply(BaseModel):
     preset: str
