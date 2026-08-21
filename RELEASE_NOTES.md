@@ -1,3 +1,13 @@
+# Release v0.2.0
+
+## Release Name: Multi-Camera Registry
+
+### Notes:
+- **Feature:** Camera streaming now reads from the device registry instead of a single global `STREAM_CAMERA_URL` env var — any device with `device_type = 'camera'` and a `stream_url` set (via Domain → Devices) can be streamed, and the Nexus camera panel lets you select/toggle between all configured cameras.
+- **Feature:** Added ESPHome as a local-only, always-on IoT provider (mDNS discovery + Noise-encrypted native API), running in parallel with whichever of Home Assistant/SmartThings is set as the default provider.
+- **Fix:** Camera stream panel showing "stream unavailable"/a black rectangle — nginx's CSP had no `media-src` directive, so `blob:` URLs (used by hls.js for playback) fell back to the `default-src 'self'` policy and were blocked.
+- **Security:** `stream_url` (which embeds RTSP credentials) is write-only through the API — `GET /api/devices` and its websocket broadcast only ever expose a `has_stream` boolean, never the raw URL.
+
 # Release v0.1.8
 
 ## Release Name: Situational Awareness Registry

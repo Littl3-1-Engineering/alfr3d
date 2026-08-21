@@ -30,7 +30,7 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
 - **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling). Event types broadcast: events, situational awareness, containers, users, devices, IoT devices, weather, environment, calendar events, personality state, project tree.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`. Includes text-to-speech audio generation.
-- **IoT Integration**: Home Assistant and SmartThings device integration with unified API endpoints, periodic sync, blueprint display with MAC-based device linking, and real-time device state updates via WebSocket.
+- **IoT Integration**: Home Assistant, SmartThings, and ESPHome device integration with unified API endpoints, periodic sync, blueprint display with MAC-based device linking, and real-time device state updates via WebSocket. ESPHome is local-only (mDNS discovery + Noise-encrypted native API, no cloud account) and runs always-on in parallel with whichever of HA/SmartThings is set as the default provider.
 - **System Management**: In-browser system panel with network info, database table counts/backup, environment config editor, and service health/restart.
 - **Optimized Performance**:
   - Python 3.14 + Node 24 LTS base images across all services
@@ -40,7 +40,7 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
   - Manual chunk splitting for parallel loading and better caching
   - React Query for client-side API caching (5-min stale time)
   - orjson for 3-10x faster JSON serialization
-  - Alembic migration chain (versions 0001-0019) wrapping all raw SQL migrations
+  - Alembic migration chain (versions 0001-0020) wrapping all raw SQL migrations
   - Slow-query MySQL config with targeted indexes
   - Multi-stage frontend build and BuildKit pip cache
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
@@ -56,7 +56,7 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
 - **Kafka**: Message broker with auto-created topics (`speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`) for inter-service communication.
 - **MySQL**: Database with comprehensive schema including users, devices, environments, routines, states, listening history, and speaker groups.
 - **Redis**: Cache layer for frequently-accessed data with TTL and in-memory fallback (users, devices, weather, environment, personality, quips, routines).
-- **Migrate**: Alembic migration runner — applies `setup/migrations/versions/0001-0019` against MySQL on startup.
+- **Migrate**: Alembic migration runner — applies `setup/migrations/versions/0001-0020` against MySQL on startup.
 - **Test MySQL**: Separate MySQL instance (port 3307, `test_alfr3d_db`) for pytest fixtures to avoid interfering with production data.
 - **Service Daemon**: Core orchestration service handling voice commands, Google integrations, a registry-based situational-awareness engine (time/events/travel/gathering-music/focus/email/rain-advisory/weather/mood cards), event-based travel planning with fuel-cost estimation, weather + forecast scheduling, gathering detection and music cards, context-aware scheduled tune playback, music recommendation rebuilds, and message routing.
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
@@ -65,7 +65,7 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
 - **Service API**: FastAPI REST API gateway with native WebSocket support, providing endpoints for users, devices, containers, routines, personality, IoT metrics, music/Spotify, health, system, and camera streaming, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard (Nexus), device/domain management (Domain), and automation/control hub (Matrix).
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
-- **IoT Integration**: Unified IoT layer supporting Home Assistant and SmartThings with automatic device syncing and blueprint visualization.
+- **IoT Integration**: Unified IoT layer supporting Home Assistant, SmartThings, and ESPHome with automatic device syncing and blueprint visualization.
 
 ## Quick Start
 
@@ -249,7 +249,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 ### Database Setup
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
-- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0019`):
+- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0020`):
   - `001_calendar_cleanup.sql` / `002_iot.sql` / `003_routines.sql`
   - `004_personality.sql` / `005_indexes.sql` / `006_personality_context.sql`
   - `007_device_types_expansion.sql` / `008_iot_device_link.sql`
@@ -258,15 +258,16 @@ The `setup/` directory contains scripts for database initialization, maintenance
   - `013_listening_history.sql` / `014_speaker_groups.sql`
   - `015_environment_timezone.sql` / `016_iot_device_cleanup.sql` / `017_iot_dedupe.sql`
   - `018_weather_forecast.sql` (forecast rain probability / temp / conditions snapshot)
+  - `019_esphome.sql` (ESPHome per-entity ID column + `esphome_nodes` table)
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
 
 ### IoT Integration
 
-ALFR3D supports integration with Home Assistant and SmartThings for unified smart home control:
+ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for unified smart home control. HA and SmartThings share a single "default provider" selector; ESPHome is local-only (mDNS discovery + Noise-encrypted native API, no cloud account or URL/token) and runs always-on in parallel regardless of that selection.
 
 #### Features
-- **Unified Device Management**: View and control HA and ST devices from a single interface
-- **Automatic Sync**: Devices sync automatically every 15 minutes via the daemon service
+- **Unified Device Management**: View and control HA, ST, and ESPHome devices from a single interface
+- **Automatic Sync**: HA/ST/ESPHome devices sync automatically every 15 minutes via the daemon service; ESPHome nodes are additionally rediscovered over mDNS every hour
 - **Real-Time States**: IoT device states stream over WebSocket (30s refresh) — no HTTP polling
 - **Blueprint Visualization**: Linked IoT devices appear on the floorplan with proper device type icons
 - **Manual Device Linking**: Link IoT devices to alfr3d devices via Domain → Devices → SMARTHOME DEVICES section
@@ -275,6 +276,7 @@ ALFR3D supports integration with Home Assistant and SmartThings for unified smar
 - **Sensor Display**: View sensor readings (temperature, humidity, battery) in ControlBlade
 - **Linked Status**: Linked devices show "LINKED" in blue, unlinked show warning icon
 - **FK Relationship**: smarthome_devices.device_id links to device table for type and position
+- **ESPHome Manual Accept**: Discovered ESPHome nodes require an explicit accept step (with an optional PSK) before ALFR3D connects — mDNS discovery isn't account-scoped like HA/ST, so nodes never auto-link
 
 #### Configuration
 1. Configure Home Assistant via the Integrations page:
@@ -285,6 +287,11 @@ ALFR3D supports integration with Home Assistant and SmartThings for unified smar
    - Personal Access Token (PAT)
 
 3. Set default provider in IoT settings
+
+4. Configure ESPHome via the Integrations page:
+   - Click "Scan for ESPHome devices" to run an mDNS discovery pass (~8s)
+   - Accept each discovered node individually, with an optional PSK if the node has Noise-protocol encryption enabled
+   - No default-provider selection needed — accepted nodes sync alongside HA/ST automatically
 
 #### Linking Devices
 1. Go to Domain → Devices tab
@@ -498,10 +505,10 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
   - `GET /api/personality/presets`, `POST /api/personality/apply-preset`
   - `GET/PUT /api/personality/context`
   - `GET/PUT /api/personality/llm-config`
-- **IoT (Home Assistant/SmartThings)**:
-  - `GET /api/iot/status`: Get connection status for HA and ST
-  - `GET /api/iot/providers`: List available IoT providers
-  - `PUT /api/iot/provider`: Set default IoT provider
+- **IoT (Home Assistant/SmartThings/ESPHome)**:
+  - `GET /api/iot/status`: Get connection status for HA, ST, and ESPHome
+  - `GET /api/iot/providers`: List available IoT providers (HA/ST only — ESPHome runs always-on in parallel, not selected here)
+  - `PUT /api/iot/provider`: Set default IoT provider (HA or ST)
   - `GET /api/iot/ha/status`: Home Assistant connection status
   - `GET /api/iot/ha/devices`: Get HA devices
   - `POST /api/iot/ha/devices/<entity_id>/control`: Control HA device
@@ -512,8 +519,16 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
   - `POST /api/iot/st/devices/<device_id>/control`: Control ST device
   - `PUT /api/iot/st/config`: Configure ST (PAT)
   - `POST /api/iot/st/sync`: Trigger ST device sync
-  - `GET /api/iot/devices`: Get all IoT devices (optionally `?linked=true`)
-  - `POST /api/iot/devices/<device_id>/control`: Control IoT device
+  - `GET /api/iot/esphome/status`: ESPHome enabled state + accepted node count
+  - `GET /api/iot/esphome/nodes`: List discovered/accepted ESPHome nodes (optionally `?accepted=true`)
+  - `POST /api/iot/esphome/discover`: Run an mDNS discovery scan (~8s, backgrounded off the request thread)
+  - `POST /api/iot/esphome/nodes/<hostname>/accept`: Accept a discovered node (optional PSK)
+  - `DELETE /api/iot/esphome/nodes/<hostname>`: Remove a node and its synced entities
+  - `POST /api/iot/esphome/entities/<hostname>/<key>/control`: Control an ESPHome entity
+  - `POST /api/iot/esphome/sync`: Trigger ESPHome entity sync for accepted nodes
+  - `PUT /api/iot/esphome/config`: Enable/disable ESPHome
+  - `GET /api/iot/devices`: Get all IoT devices from every source (optionally `?linked=true`)
+  - `POST /api/iot/devices/<device_id>/control`: Control IoT device (HA or ESPHome)
   - `PUT /api/iot/devices/<device_id>/link`: Link/unlink IoT device to local device
 - **Routines**:
   - `GET /api/routines`: List all routines for current environment
@@ -573,13 +588,13 @@ The project includes Kubernetes manifests for Minikube/production deployment, co
    # Build all service images using the provided script
    ./setup/build_images.sh
    eval $(minikube docker-env)
-   docker tag alfr3d/service-frontend:v0.1.8 alfr3d/service-frontend:latest
-   docker tag alfr3d/service-api:v0.1.8 alfr3d/service-api:latest
-   docker tag alfr3d/service-daemon:v0.1.8 alfr3d/service-daemon:latest
-   docker tag alfr3d/service-device:v0.1.8 alfr3d/service-device:latest
-   docker tag alfr3d/service-environment:v0.1.8 alfr3d/service-environment:latest
-   docker tag alfr3d/service-user:v0.1.8 alfr3d/service-user:latest
-   docker tag alfr3d/service-speak:v0.1.8 alfr3d/service-speak:latest
+   docker tag alfr3d/service-frontend:v0.2.0 alfr3d/service-frontend:latest
+   docker tag alfr3d/service-api:v0.2.0 alfr3d/service-api:latest
+   docker tag alfr3d/service-daemon:v0.2.0 alfr3d/service-daemon:latest
+   docker tag alfr3d/service-device:v0.2.0 alfr3d/service-device:latest
+   docker tag alfr3d/service-environment:v0.2.0 alfr3d/service-environment:latest
+   docker tag alfr3d/service-user:v0.2.0 alfr3d/service-user:latest
+   docker tag alfr3d/service-speak:v0.2.0 alfr3d/service-speak:latest
    ```
 
 3. **Deploy to Kubernetes**:

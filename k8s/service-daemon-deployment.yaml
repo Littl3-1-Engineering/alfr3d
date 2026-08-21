@@ -18,7 +18,7 @@ spec:
         command: ['sh', '-c', 'until nc -z kafka 9092; do echo waiting for kafka; sleep 2; done;']
       containers:
       - name: service-daemon
-        image: alfr3d/service-daemon:v0.1.8
+        image: alfr3d/service-daemon:v0.2.0
         imagePullPolicy: Never
         envFrom:
         - configMapRef:

@@ -43,7 +43,15 @@ import threading
 import pymysql
 import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
-from utils import gmail_utils, maps_utils, calendar_utils, spotify_utils, mood_utils, focus_utils, now_playing_monitor
+from utils import (
+    gmail_utils,
+    maps_utils,
+    calendar_utils,
+    spotify_utils,
+    mood_utils,
+    focus_utils,
+    now_playing_monitor,
+)
 from kafka.errors import KafkaError
 from kafka import KafkaConsumer  # user to write messages to Kafka
 
@@ -487,7 +495,8 @@ class MyDaemon:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -495,7 +504,8 @@ class MyDaemon:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """)
+                """
+            )
             row = cursor.fetchone()
             guest_count = row[0] if row and row[0] else 0
             total_count = row[1] if row and row[1] else 0
@@ -897,6 +907,21 @@ def sync_iot_devices():
     if p:
         p.send("device", orjson.dumps({"action": "iot_ha_sync"}))
         p.send("device", orjson.dumps({"action": "iot_st_sync"}))
+        p.send("device", orjson.dumps({"action": "iot_esphome_sync"}))
+
+
+def discover_esphome_devices():
+    """
+    Description:
+            Send an ESPHome mDNS discovery scan message to the device topic every hour.
+            Separate cadence from sync_iot_devices()'s 15-minute entity sync: discovery is a
+            blocking LAN scan (see esphome_utils.discover_esphome_nodes) and only needs to run
+            often enough to catch newly-added nodes, not on every entity-state sync.
+    """
+    logger.info("Scheduled ESPHome discovery")
+    p = get_producer()
+    if p:
+        p.send("device", orjson.dumps({"action": "iot_esphome_discover"}))
 
 
 def play_tune_scheduled():
@@ -974,6 +999,7 @@ def init_daemon():
         schedule.every(4).hours.do(check_weather_routine)
         schedule.every(1).hours.do(check_forecast_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
+        schedule.every(60).minutes.do(discover_esphome_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)

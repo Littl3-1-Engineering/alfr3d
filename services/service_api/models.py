@@ -1,7 +1,7 @@
 """Pydantic models for ALFR3D API."""
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class UserCreate(BaseModel):
@@ -18,12 +18,21 @@ class UserUpdate(BaseModel):
     type: Optional[str] = None
 
 
+def _validate_stream_url(v: Optional[str]) -> Optional[str]:
+    if v and not v.startswith(("rtsp://", "rtsps://")):
+        raise ValueError("stream_url must start with rtsp:// or rtsps://")
+    return v
+
+
 class DeviceCreate(BaseModel):
     name: str
     type: str
     ip: Optional[str] = "10.0.0.125"
     mac: Optional[str] = "00:00:00:00:00:00"
     user: Optional[str] = None
+    stream_url: Optional[str] = None
+
+    _validate_stream_url = field_validator("stream_url")(_validate_stream_url)
 
 
 class DeviceUpdate(BaseModel):
@@ -33,6 +42,9 @@ class DeviceUpdate(BaseModel):
     type: Optional[str] = None
     user: Optional[str] = None
     position: Optional[Dict[str, float]] = None
+    stream_url: Optional[str] = None
+
+    _validate_stream_url = field_validator("stream_url")(_validate_stream_url)
 
 
 class QuipCreate(BaseModel):
@@ -138,6 +150,20 @@ class LinkDevice(BaseModel):
 class IOTDeviceControl(BaseModel):
     command: str
     params: Dict[str, Any] = {}
+
+
+class ESPHomeAccept(BaseModel):
+    psk: Optional[str] = None
+    name: Optional[str] = None
+
+
+class ESPHomeControl(BaseModel):
+    command: str
+    params: Dict[str, Any] = {}
+
+
+class ESPHomeConfig(BaseModel):
+    enabled: bool
 
 
 class PresetApply(BaseModel):

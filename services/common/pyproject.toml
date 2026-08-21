@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alfr3d-common"
-version = "1.0.0"
+version = "0.2.0"
 description = "Shared utilities for ALFR3D microservices"
 requires-python = ">=3.11"
 dependencies = [
