@@ -14,7 +14,7 @@ spec:
     spec:
        containers:
        - name: service-user
-         image: alfr3d/service-user:v0.1.8
+         image: alfr3d/service-user:v0.2.0
          imagePullPolicy: Never
          envFrom:
          - configMapRef:

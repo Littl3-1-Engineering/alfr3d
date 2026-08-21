@@ -588,13 +588,13 @@ The project includes Kubernetes manifests for Minikube/production deployment, co
    # Build all service images using the provided script
    ./setup/build_images.sh
    eval $(minikube docker-env)
-   docker tag alfr3d/service-frontend:v0.1.8 alfr3d/service-frontend:latest
-   docker tag alfr3d/service-api:v0.1.8 alfr3d/service-api:latest
-   docker tag alfr3d/service-daemon:v0.1.8 alfr3d/service-daemon:latest
-   docker tag alfr3d/service-device:v0.1.8 alfr3d/service-device:latest
-   docker tag alfr3d/service-environment:v0.1.8 alfr3d/service-environment:latest
-   docker tag alfr3d/service-user:v0.1.8 alfr3d/service-user:latest
-   docker tag alfr3d/service-speak:v0.1.8 alfr3d/service-speak:latest
+   docker tag alfr3d/service-frontend:v0.2.0 alfr3d/service-frontend:latest
+   docker tag alfr3d/service-api:v0.2.0 alfr3d/service-api:latest
+   docker tag alfr3d/service-daemon:v0.2.0 alfr3d/service-daemon:latest
+   docker tag alfr3d/service-device:v0.2.0 alfr3d/service-device:latest
+   docker tag alfr3d/service-environment:v0.2.0 alfr3d/service-environment:latest
+   docker tag alfr3d/service-user:v0.2.0 alfr3d/service-user:latest
+   docker tag alfr3d/service-speak:v0.2.0 alfr3d/service-speak:latest
    ```
 
 3. **Deploy to Kubernetes**:
