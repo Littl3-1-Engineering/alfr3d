@@ -1,183 +1,71 @@
 import asyncio
 import logging
-import os
 import re
 import subprocess
 from pathlib import Path
 
+import pymysql
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from starlette.responses import StreamingResponse
+from starlette.responses import Response
+
+from dependencies import db_connection
 
 logger = logging.getLogger("ApiLog")
 
 router = APIRouter(prefix="/api/stream")
 
-CAMERA_URL = os.environ.get("STREAM_CAMERA_URL") or os.environ.get("CAMERA_URL")
-if not CAMERA_URL:
-    logger.warning(
-        "STREAM_CAMERA_URL/CAMERA_URL not set — camera streaming endpoints will return 503"
-    )
-
 HLS_ROOT = Path("/tmp/hls")
-HLS_CAMERA_ID = "camera"
 HLS_SEGMENT_TIME = 2
 HLS_LIST_SIZE = 4
 
-_hls_state = {"process": None, "camera_id": None}
+# Single-active-stream: only one camera transcodes at a time. Starting a new one
+# stops whichever device_id was previously active.
+_hls_state: dict[int, dict] = {}
+_active_device_id: int | None = None
 _hls_lock = asyncio.Lock()
 _SEGMENT_RE = re.compile(r"^seg_\d+\.ts$")
 
-STREAM_CONFIG = {
-    "url": CAMERA_URL,
-    "status": "configured" if CAMERA_URL else "unconfigured",
-    "protocol": "rtsp",
-}
 
-
-@router.get("/camera")
-async def stream_camera():
-    if not CAMERA_URL:
+def _get_camera(device_id: int) -> dict:
+    """Look up a camera-type device's stream_url, or raise the appropriate HTTPException."""
+    with db_connection() as db:
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            """
+            SELECT d.id, d.name, d.stream_url
+            FROM device d
+            JOIN device_types dt ON d.device_type = dt.id
+            WHERE d.id = %s AND dt.type = 'camera'
+            """,
+            (device_id,),
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Camera device not found")
+    if not row["stream_url"]:
         raise HTTPException(status_code=503, detail="Camera not configured")
-    try:
-        subprocess.run(
-            ["ffmpeg", "-version"],
-            capture_output=True,
-            timeout=5,
+    return row
+
+
+@router.get("/cameras")
+async def list_cameras():
+    with db_connection() as db:
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(
+            """
+            SELECT d.id, d.name
+            FROM device d
+            JOIN device_types dt ON d.device_type = dt.id
+            WHERE dt.type = 'camera' AND d.stream_url IS NOT NULL
+            ORDER BY d.name
+            """
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        raise HTTPException(status_code=503, detail="ffmpeg not available on server")
-
-    async def generate():
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            CAMERA_URL,
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "5",
-            "-r",
-            "15",
-            "pipe:1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        boundary = b"frame"
-        buf = b""
-        frames = 0
-        try:
-
-            async def log_stderr():
-                while True:
-                    line = await process.stderr.readline()
-                    if not line:
-                        break
-                    logger.warning(f"ffmpeg: {line.decode(errors='replace').strip()}")
-
-            stderr_task = asyncio.create_task(log_stderr())
-            try:
-                while True:
-                    chunk = await process.stdout.read(65536)
-                    if not chunk:
-                        break
-                    buf += chunk
-                    while True:
-                        start = buf.find(b"\xff\xd8")
-                        if start == -1:
-                            break
-                        end = buf.find(b"\xff\xd9", start + 2)
-                        if end == -1:
-                            break
-                        frame = buf[start : end + 2]
-                        buf = buf[end + 2 :]
-                        yield b"--" + boundary + b"\r\n"
-                        yield b"Content-Type: image/jpeg\r\n"
-                        yield b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
-                        yield b"\r\n"
-                        yield frame
-                        yield b"\r\n"
-                        frames += 1
-                logger.warning(f"ffmpeg stream ended after {frames} frames")
-            finally:
-                stderr_task.cancel()
-                try:
-                    await stderr_task
-                except asyncio.CancelledError:
-                    pass
-        except asyncio.CancelledError:
-            logger.warning(f"ffmpeg stream cancelled after {frames} frames")
-        finally:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            try:
-                rc = await asyncio.wait_for(process.wait(), timeout=5)
-                logger.warning(f"ffmpeg exited with code {rc} after {frames} frames")
-            except (asyncio.TimeoutError, ProcessLookupError):
-                try:
-                    process.terminate()
-                except ProcessLookupError:
-                    pass
-
-    return StreamingResponse(
-        generate(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.get("/camera/config")
-async def camera_config():
-    return STREAM_CONFIG
-
-
-@router.get("/camera/snapshot")
-async def camera_snapshot():
-    if not CAMERA_URL:
-        raise HTTPException(status_code=503, detail="Camera not configured")
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-rtsp_transport",
-                "tcp",
-                "-i",
-                CAMERA_URL,
-                "-vframes",
-                "1",
-                "-f",
-                "image2pipe",
-                "-vcodec",
-                "mjpeg",
-                "-q:v",
-                "3",
-                "pipe:1",
-            ],
-            capture_output=True,
-            timeout=15,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        raise HTTPException(status_code=503, detail="ffmpeg not available on server")
-    if result.returncode != 0 or not result.stdout:
-        raise HTTPException(status_code=502, detail="failed to capture snapshot")
-    from starlette.responses import Response
-
-    return Response(
-        content=result.stdout,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache"},
-    )
+        rows = cursor.fetchall()
+    return [
+        {"id": row["id"], "name": row["name"], "running": row["id"] == _active_device_id}
+        for row in rows
+    ]
 
 
 async def _ffmpeg_available() -> bool:
@@ -194,22 +82,56 @@ async def _ffmpeg_available() -> bool:
         return False
 
 
-def _hls_dir() -> Path:
-    return HLS_ROOT / HLS_CAMERA_ID
+def _hls_dir(device_id: int) -> Path:
+    return HLS_ROOT / str(device_id)
 
 
-async def start_hls():
-    if not CAMERA_URL:
-        raise HTTPException(status_code=503, detail="Camera not configured")
+async def _stop_hls_locked(device_id: int):
+    """Stop the ffmpeg process for device_id. Caller must hold _hls_lock."""
+    global _active_device_id
+    state = _hls_state.pop(device_id, None)
+    if _active_device_id == device_id:
+        _active_device_id = None
+    if state is None:
+        return
+    stderr_task = state.get("stderr_task")
+    if stderr_task:
+        stderr_task.cancel()
+    proc = state.get("process")
+    if proc and proc.returncode is None:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+    out_dir = _hls_dir(device_id)
+    if out_dir.exists():
+        for f in out_dir.glob("*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+async def start_hls(device_id: int):
+    global _active_device_id
+    camera = _get_camera(device_id)
     async with _hls_lock:
-        proc = _hls_state.get("process")
-        if proc and proc.returncode is None:
-            return {"running": True, "camera_id": HLS_CAMERA_ID}
+        state = _hls_state.get(device_id)
+        if state and state["process"].returncode is None:
+            return {"running": True, "camera_id": device_id}
+
+        if _active_device_id is not None and _active_device_id != device_id:
+            await _stop_hls_locked(_active_device_id)
 
         if not await _ffmpeg_available():
             raise HTTPException(status_code=503, detail="ffmpeg not available on server")
 
-        out_dir = _hls_dir()
+        out_dir = _hls_dir(device_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*"):
             f.unlink()
@@ -222,7 +144,7 @@ async def start_hls():
             "-rtsp_transport",
             "tcp",
             "-i",
-            CAMERA_URL,
+            camera["stream_url"],
             "-c:v",
             "copy",
             "-c:a",
@@ -243,17 +165,17 @@ async def start_hls():
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _hls_state["process"] = proc
-        _hls_state["camera_id"] = HLS_CAMERA_ID
 
         async def log_stderr():
             while True:
                 line = await proc.stderr.readline()
                 if not line:
                     break
-                logger.warning(f"ffmpeg hls: {line.decode(errors='replace').strip()}")
+                logger.warning(f"ffmpeg hls[{device_id}]: {line.decode(errors='replace').strip()}")
 
-        _hls_state["stderr_task"] = asyncio.create_task(log_stderr())
+        stderr_task = asyncio.create_task(log_stderr())
+        _hls_state[device_id] = {"process": proc, "stderr_task": stderr_task}
+        _active_device_id = device_id
 
         playlist = out_dir / "index.m3u8"
         for _ in range(40):
@@ -263,87 +185,58 @@ async def start_hls():
                 break
             await asyncio.sleep(0.25)
         if not playlist.exists():
-            stderr_task = _hls_state.pop("stderr_task", None)
-            if stderr_task:
-                stderr_task.cancel()
-            _hls_state["process"] = None
-            if proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    proc.kill()
+            await _stop_hls_locked(device_id)
             raise HTTPException(
                 status_code=502,
                 detail="failed to start HLS stream (no playlist produced)",
             )
-        return {"running": True, "camera_id": HLS_CAMERA_ID}
+        return {"running": True, "camera_id": device_id}
 
 
-async def stop_hls():
+async def stop_hls(device_id: int):
     async with _hls_lock:
-        proc = _hls_state.get("process")
-        _hls_state["process"] = None
-        stderr_task = _hls_state.pop("stderr_task", None)
-        if stderr_task:
-            stderr_task.cancel()
-        if proc and proc.returncode is None:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                proc.kill()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    pass
-        out_dir = _hls_dir()
-        if out_dir.exists():
-            for f in out_dir.glob("*"):
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
+        await _stop_hls_locked(device_id)
     return {"running": False}
 
 
-async def hls_status():
-    proc = _hls_state.get("process")
+async def hls_status(device_id: int):
+    state = _hls_state.get(device_id)
+    proc = state.get("process") if state else None
     running = proc is not None and proc.returncode is None
-    out_dir = _hls_dir()
+    out_dir = _hls_dir(device_id)
     playlist = out_dir / "index.m3u8"
     playlist_exists = playlist.exists() and playlist.stat().st_size > 0
     segments = sorted(out_dir.glob("seg_*.ts")) if out_dir.exists() else []
     return {
         "running": running,
-        "camera_id": HLS_CAMERA_ID,
+        "camera_id": device_id,
         "playlist_exists": playlist_exists,
         "segment_count": len(segments),
         "last_segment": segments[-1].name if segments else None,
     }
 
 
-@router.post("/hls/start")
-async def hls_start():
-    return await start_hls()
+@router.post("/hls/{device_id}/start")
+async def hls_start(device_id: int):
+    return await start_hls(device_id)
 
 
-@router.post("/hls/stop")
-async def hls_stop():
-    return await stop_hls()
+@router.post("/hls/{device_id}/stop")
+async def hls_stop(device_id: int):
+    return await stop_hls(device_id)
 
 
-@router.get("/hls/status")
-async def hls_get_status():
-    return await hls_status()
+@router.get("/hls/{device_id}/status")
+async def hls_get_status(device_id: int):
+    return await hls_status(device_id)
 
 
-@router.get("/hls/index.m3u8")
-async def hls_playlist():
-    status = await hls_status()
+@router.get("/hls/{device_id}/index.m3u8")
+async def hls_playlist(device_id: int):
+    status = await hls_status(device_id)
     if not status["running"] or not status["playlist_exists"]:
         raise HTTPException(status_code=503, detail="HLS stream not active")
-    playlist = _hls_dir() / "index.m3u8"
+    playlist = _hls_dir(device_id) / "index.m3u8"
     return FileResponse(
         playlist,
         media_type="application/vnd.apple.mpegurl",
@@ -351,15 +244,51 @@ async def hls_playlist():
     )
 
 
-@router.get("/hls/{filename}")
-async def hls_segment(filename: str):
+@router.get("/hls/{device_id}/{filename}")
+async def hls_segment(device_id: int, filename: str):
     if not _SEGMENT_RE.match(filename):
         raise HTTPException(status_code=400, detail="invalid segment name")
-    segment = _hls_dir() / filename
+    segment = _hls_dir(device_id) / filename
     if not segment.exists():
         raise HTTPException(status_code=404, detail="segment not found")
     return FileResponse(
         segment,
         media_type="video/mp2t",
         headers={"Cache-Control": "no-cache, max-age=2"},
+    )
+
+
+@router.get("/camera/{device_id}/snapshot")
+async def camera_snapshot(device_id: int):
+    camera = _get_camera(device_id)
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                camera["stream_url"],
+                "-vframes",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-q:v",
+                "3",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        raise HTTPException(status_code=503, detail="ffmpeg not available on server")
+    if result.returncode != 0 or not result.stdout:
+        raise HTTPException(status_code=502, detail="failed to capture snapshot")
+
+    return Response(
+        content=result.stdout,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache"},
     )
