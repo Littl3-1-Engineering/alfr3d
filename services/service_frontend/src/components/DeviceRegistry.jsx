@@ -8,7 +8,10 @@ import { sortByOnlineState } from '../utils/sortUtils';
 const USER_DEVICE_TYPES = ['HW', 'guest', 'resident'];
 
 const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
-  const [editDevice, setEditDevice] = useState({ ...device });
+  // stream_url is write-only (holds RTSP credentials) -- never pre-filled from the device
+  // list, so it starts blank even for an already-configured camera. Left blank on save,
+  // the existing value is left untouched; typing a new value overwrites it.
+  const [editDevice, setEditDevice] = useState({ ...device, stream_url: '' });
   const [isEditing, setIsEditing] = useState(false);
 
   const isUserDevice = device.user && device.user !== 'alfr3d';
@@ -31,7 +34,7 @@ const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
   };
 
   const handleCancel = () => {
-    setEditDevice({ ...device });
+    setEditDevice({ ...device, stream_url: '' });
     setIsEditing(false);
   };
 
@@ -79,6 +82,24 @@ const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
               ))}
             </select>
           </div>
+          {editDevice.type === 'camera' && (
+            <div>
+              <label className="text-xs text-text-tertiary block mb-1">
+                Stream URL {device.has_stream && <span className="text-success">(configured)</span>}
+              </label>
+              <input
+                type="text"
+                value={editDevice.stream_url}
+                onChange={(e) => setEditDevice((prev) => ({ ...prev, stream_url: e.target.value }))}
+                placeholder={
+                  device.has_stream
+                    ? 'Leave blank to keep existing URL'
+                    : 'rtsp://user:pass@192.168.x.x:554/stream1' // pragma: allowlist secret
+                }
+                className="w-full p-2 bg-card rounded text-text-primary text-sm"
+              />
+            </div>
+          )}
           <div className="flex space-x-2 pt-2">
             <button
               onClick={handleSave}
@@ -114,6 +135,14 @@ const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
         <p className="text-xs text-text-tertiary">
           Assigned: {device.user || 'None'}
         </p>
+        {device.type === 'camera' && (
+          <p className="text-xs text-text-tertiary">
+            Stream:{' '}
+            <span className={device.has_stream ? 'text-success' : 'text-yellow-500'}>
+              {device.has_stream ? 'configured' : 'not configured'}
+            </span>
+          </p>
+        )}
         <p className="text-xs text-text-tertiary">
           State:{' '}
           <span className={device.state === 'online' ? 'text-success' : ''}>
@@ -211,6 +240,11 @@ const DeviceRegistry = () => {
         type: updatedDevice.type,
         user: userValue,
       };
+      // stream_url is write-only in the UI (never pre-filled) -- only send it when the
+      // user actually typed a new value, so an untouched blank field never clears it.
+      if (updatedDevice.stream_url) {
+        payload.stream_url = updatedDevice.stream_url;
+      }
 
       await fetch(`${API_BASE_URL}/api/devices/${updatedDevice.id}`, {
         method: 'PUT',

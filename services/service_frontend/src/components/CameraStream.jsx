@@ -3,21 +3,28 @@ import { Camera, RefreshCw, AlertTriangle, Image } from 'lucide-react';
 import Hls from 'hls.js';
 import { API_BASE_URL } from '../config';
 
-const HLS_BASE = `${API_BASE_URL}/api/stream/hls`;
-const PLAYLIST_URL = `${HLS_BASE}/index.m3u8`;
-const SNAPSHOT_URL = `${API_BASE_URL}/api/stream/camera/snapshot`;
+const STREAM_BASE = `${API_BASE_URL}/api/stream`;
+const hlsBase = (id) => `${STREAM_BASE}/hls/${id}`;
+const playlistUrl = (id) => `${hlsBase(id)}/index.m3u8`;
+const snapshotUrl = (id) => `${STREAM_BASE}/camera/${id}/snapshot`;
 
 const CameraStream = () => {
+  const [cameras, setCameras] = useState(null);
+  const [selectedCameraId, setSelectedCameraId] = useState(null);
   const [status, setStatus] = useState('loading');
   const [showStream, setShowStream] = useState(true);
-  const [snapshotUrl, setSnapshotUrl] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
-  const statusRef = useRef('loading');
 
-  const setStatusBoth = useCallback((next) => {
-    statusRef.current = next;
-    setStatus(next);
+  useEffect(() => {
+    fetch(`${STREAM_BASE}/cameras`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        setCameras(list);
+        setSelectedCameraId((prev) => prev ?? list[0]?.id ?? null);
+      })
+      .catch(() => setCameras([]));
   }, []);
 
   const destroyHls = useCallback(() => {
@@ -32,91 +39,107 @@ const CameraStream = () => {
     }
   }, []);
 
-  const startBackend = useCallback(async () => {
+  const startBackend = useCallback(async (id) => {
     try {
-      const res = await fetch(`${HLS_BASE}/start`, { method: 'POST' });
+      const res = await fetch(`${hlsBase(id)}/start`, { method: 'POST' });
       return res.ok;
     } catch {
       return false;
     }
   }, []);
 
-  const stopBackend = useCallback(async () => {
+  const stopBackend = useCallback(async (id) => {
     try {
-      await fetch(`${HLS_BASE}/stop`, { method: 'POST' });
+      await fetch(`${hlsBase(id)}/stop`, { method: 'POST' });
     } catch {
       // ignore
     }
   }, []);
 
-  const attach = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    destroyHls();
-    if (Hls.isSupported()) {
-      const hls = new Hls({ liveDurationInfinity: true });
-      hlsRef.current = hls;
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setStatusBoth('connected');
-        video.play().catch(() => {});
-      });
-      hls.on(Hls.Events.ERROR, (_evt, data) => {
-        if (data.fatal) {
-          setStatusBoth('error');
-          destroyHls();
-        }
-      });
-      hls.loadSource(PLAYLIST_URL);
-      hls.attachMedia(video);
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = PLAYLIST_URL;
-      video.addEventListener('loadedmetadata', () => {
-        setStatusBoth('connected');
-        video.play().catch(() => {});
-      });
-    } else {
-      setStatusBoth('error');
-    }
-  }, [destroyHls, setStatusBoth]);
+  const attach = useCallback(
+    (id) => {
+      const video = videoRef.current;
+      if (!video) return;
+      destroyHls();
+      if (Hls.isSupported()) {
+        const hls = new Hls({ liveDurationInfinity: true });
+        hlsRef.current = hls;
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setStatus('connected');
+          video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          if (data.fatal) {
+            setStatus('error');
+            destroyHls();
+          }
+        });
+        hls.loadSource(playlistUrl(id));
+        hls.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = playlistUrl(id);
+        video.addEventListener('loadedmetadata', () => {
+          setStatus('connected');
+          video.play().catch(() => {});
+        });
+      } else {
+        setStatus('error');
+      }
+    },
+    [destroyHls]
+  );
 
-  const connect = useCallback(async () => {
-    setStatusBoth('loading');
-    destroyHls();
-    const ok = await startBackend();
-    if (!ok) {
-      setStatusBoth('error');
-      return;
-    }
-    attach();
-  }, [attach, destroyHls, setStatusBoth, startBackend]);
+  const connect = useCallback(
+    async (id) => {
+      if (!id) return;
+      setStatus('loading');
+      destroyHls();
+      const ok = await startBackend(id);
+      if (!ok) {
+        setStatus('error');
+        return;
+      }
+      attach(id);
+    },
+    [attach, destroyHls, startBackend]
+  );
 
   useEffect(() => {
-    connect();
+    if (!selectedCameraId) return;
+    connect(selectedCameraId);
     return () => {
       destroyHls();
-      stopBackend();
+      stopBackend(selectedCameraId);
     };
-  }, [connect, destroyHls, stopBackend]);
+  }, [selectedCameraId, connect, destroyHls, stopBackend]);
 
   const reconnect = useCallback(() => {
-    connect();
-  }, [connect]);
+    if (selectedCameraId) connect(selectedCameraId);
+  }, [connect, selectedCameraId]);
+
+  const selectCamera = (id) => {
+    if (id === selectedCameraId) return;
+    setSelectedCameraId(id);
+  };
 
   const captureSnapshot = async () => {
+    if (!selectedCameraId) return;
     try {
-      const res = await fetch(SNAPSHOT_URL);
+      const res = await fetch(snapshotUrl(selectedCameraId));
       if (!res.ok) return;
       const blob = await res.blob();
-      setSnapshotUrl(URL.createObjectURL(blob));
+      setSnapshot(URL.createObjectURL(blob));
     } catch {
       return;
     }
   };
 
   const clearSnapshot = () => {
-    if (snapshotUrl) URL.revokeObjectURL(snapshotUrl);
-    setSnapshotUrl(null);
+    if (snapshot) URL.revokeObjectURL(snapshot);
+    setSnapshot(null);
   };
+
+  const noCameras = cameras !== null && cameras.length === 0;
 
   return (
     <div className="space-y-3">
@@ -124,47 +147,71 @@ const CameraStream = () => {
         <div className="flex items-center gap-2">
           <Camera size={14} className="text-fui-accent" />
           <span className="font-tech text-xs uppercase text-fui-text">CAM3RA F33D</span>
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-            status === 'connected' ? 'bg-green-500' :
-            status === 'loading' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-          }`} />
-          <span className="text-[10px] font-mono uppercase text-fui-text/60">
-            {status === 'connected' ? 'LIV3' :
-             status === 'loading' ? 'CNCT1NG...' : '3RR0R'}
-          </span>
+          {!noCameras && (
+            <>
+              <span
+                className={`inline-block w-1.5 h-1.5 rounded-full ${
+                  status === 'connected'
+                    ? 'bg-green-500'
+                    : status === 'loading'
+                      ? 'bg-yellow-500 animate-pulse'
+                      : 'bg-red-500'
+                }`}
+              />
+              <span className="text-[10px] font-mono uppercase text-fui-text/60">
+                {status === 'connected' ? 'LIV3' : status === 'loading' ? 'CNCT1NG...' : '3RR0R'}
+              </span>
+            </>
+          )}
         </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setShowStream(s => !s)}
-            className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
-            title={showStream ? 'Hide stream' : 'Show stream'}
-          >
-            {showStream ? 'H1D3' : 'SH0W'}
-          </button>
-          <button
-            onClick={captureSnapshot}
-            className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
-            title="Capture snapshot"
-          >
-            <Image size={11} />
-          </button>
-          <button
-            onClick={reconnect}
-            className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
-            title="Reconnect"
-          >
-            <RefreshCw size={11} />
-          </button>
-        </div>
+        {!noCameras && (
+          <div className="flex gap-1">
+            <button
+              onClick={() => setShowStream((s) => !s)}
+              className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
+              title={showStream ? 'Hide stream' : 'Show stream'}
+            >
+              {showStream ? 'H1D3' : 'SH0W'}
+            </button>
+            <button
+              onClick={captureSnapshot}
+              className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
+              title="Capture snapshot"
+            >
+              <Image size={11} />
+            </button>
+            <button
+              onClick={reconnect}
+              className="px-1.5 py-0.5 border border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent transition-colors"
+              title="Reconnect"
+            >
+              <RefreshCw size={11} />
+            </button>
+          </div>
+        )}
       </div>
 
-      {snapshotUrl && (
+      {cameras && cameras.length > 1 && (
+        <div className="flex flex-wrap gap-1">
+          {cameras.map((cam) => (
+            <button
+              key={cam.id}
+              onClick={() => selectCamera(cam.id)}
+              className={`px-2 py-0.5 border font-mono text-[10px] uppercase transition-colors ${
+                cam.id === selectedCameraId
+                  ? 'border-fui-accent text-fui-accent bg-fui-accent/10'
+                  : 'border-fui-border text-fui-text/60 hover:text-fui-accent hover:border-fui-accent'
+              }`}
+            >
+              {cam.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {snapshot && (
         <div className="relative">
-          <img
-            src={snapshotUrl}
-            alt="Camera snapshot"
-            className="w-full border border-fui-border"
-          />
+          <img src={snapshot} alt="Camera snapshot" className="w-full border border-fui-border" />
           <button
             onClick={clearSnapshot}
             className="absolute top-1 right-1 px-1.5 py-0.5 bg-black/70 border border-fui-border text-fui-text text-[10px] hover:text-fui-accent"
@@ -174,7 +221,12 @@ const CameraStream = () => {
         </div>
       )}
 
-      {showStream ? (
+      {noCameras ? (
+        <div className="flex flex-col items-center justify-center py-8 border border-fui-border bg-black/20">
+          <Camera size={24} className="text-fui-text/30 mb-2" />
+          <p className="font-mono text-xs text-fui-text/60">N0 C4M3R4S C0NF1GUR3D</p>
+        </div>
+      ) : showStream ? (
         status === 'error' ? (
           <div className="flex flex-col items-center justify-center py-8 border border-fui-border bg-black/20">
             <AlertTriangle size={24} className="text-red-500 mb-2" />

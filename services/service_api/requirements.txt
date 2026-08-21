@@ -7,6 +7,8 @@ docker==7.0.0
 cryptography==50.0.0
 requests==2.33.0
 orjson==3.11.9
+aioesphomeapi==45.12.1
+zeroconf==0.150.0
 pydantic>=2.0.0
 websockets
 anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability

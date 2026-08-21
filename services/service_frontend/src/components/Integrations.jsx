@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, Settings, RefreshCw, X } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { CheckCircle, AlertTriangle, Settings, RefreshCw, X, Radar, Trash2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 
 const integrationsList = [
@@ -14,13 +14,81 @@ const integrationsList = [
   { id: 8, name: 'IFTTT', integrationType: null, logo: '/assets/logos/ifttt.svg', description: 'Applet automation', configurable: false },
   { id: 9, name: 'Google Maps', integrationType: null, logo: '/assets/logos/googlemaps.svg', description: 'Travel time and directions for events', configurable: false },
   { id: 10, name: 'Google Calendar', integrationType: 'google', logo: '/assets/logos/googlecalendar.svg', description: 'Upcoming events and scheduling', configurable: false },
+  { id: 11, name: 'ESPHome', integrationType: 'iot_esphome', logo: '/assets/logos/esphome.svg', description: 'Local ESP device control (mDNS, no cloud)', configurable: true },
 ];
+
+const ESPHOME_ID = 11;
 
 const Integrations = () => {
   const [integrations, setIntegrations] = useState(integrationsList);
   const [syncing, setSyncing] = useState({});
   const [configModal, setConfigModal] = useState(null);
   const [configForm, setConfigForm] = useState({});
+  const [espNodes, setEspNodes] = useState([]);
+  const [espLoading, setEspLoading] = useState(false);
+  const [espScanning, setEspScanning] = useState(false);
+  const [espAcceptForm, setEspAcceptForm] = useState({});
+
+  const fetchEspNodes = useCallback(async () => {
+    setEspLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/nodes`);
+      if (response.ok) {
+        setEspNodes(await response.json());
+      }
+    } catch (error) {
+      console.error('Error fetching ESPHome nodes:', error);
+    } finally {
+      setEspLoading(false);
+    }
+  }, []);
+
+  const handleEspDiscover = async () => {
+    setEspScanning(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/discover`, { method: 'POST' });
+      if (!response.ok) alert('ESPHome discovery failed');
+      await fetchEspNodes();
+    } catch (error) {
+      alert(`Error running ESPHome discovery: ${error.message}`);
+    } finally {
+      setEspScanning(false);
+    }
+  };
+
+  const handleEspAccept = async (hostname) => {
+    const form = espAcceptForm[hostname] || {};
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ psk: form.psk || null, name: form.name || null }),
+      });
+      if (response.ok) {
+        await fetchEspNodes();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        alert(`Failed to accept node: ${data.detail || response.statusText}`);
+      }
+    } catch (error) {
+      alert(`Error accepting node: ${error.message}`);
+    }
+  };
+
+  const handleEspRemove = async (hostname) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        await fetchEspNodes();
+      } else {
+        alert('Failed to remove node');
+      }
+    } catch (error) {
+      alert(`Error removing node: ${error.message}`);
+    }
+  };
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -44,6 +112,9 @@ const Integrations = () => {
           }
           if (integration.id === 2 && iotStatus.st) {
             return { ...integration, status: iotStatus.st.connected ? 'connected' : 'not_connected' };
+          }
+          if (integration.id === ESPHOME_ID && iotStatus.esphome) {
+            return { ...integration, status: iotStatus.esphome.connected ? 'connected' : 'not_connected' };
           }
           if (integration.integrationType === 'openweather') {
             return { ...integration, status: status.openweather ? 'connected' : 'not_connected' };
@@ -74,6 +145,8 @@ const Integrations = () => {
         endpoint = '/api/iot/ha/sync';
       } else if (integration.id === 2) {
         endpoint = '/api/iot/st/sync';
+      } else if (integration.id === ESPHOME_ID) {
+        endpoint = '/api/iot/esphome/sync';
       } else if (integration.name === 'Google Gmail' || integration.name === 'Google') {
         endpoint = '/api/integrations/gmail/sync';
       } else if (integration.name === 'Google Calendar') {
@@ -165,6 +238,9 @@ const Integrations = () => {
   const openConfig = (integration) => {
     setConfigModal(integration.id);
     setConfigForm({});
+    if (integration.id === ESPHOME_ID) {
+      fetchEspNodes();
+    }
   };
 
   return (
@@ -173,7 +249,7 @@ const Integrations = () => {
 
       {configModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setConfigModal(null)}>
-          <div className="glass p-6 rounded-2xl w-96" onClick={(e) => e.stopPropagation()}>
+          <div className={`glass p-6 rounded-2xl ${configModal === ESPHOME_ID ? 'w-[32rem] max-h-[80vh] overflow-y-auto' : 'w-96'}`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold text-primary">
                 {integrations.find(i => i.id === configModal)?.name} Configuration
@@ -275,18 +351,96 @@ const Integrations = () => {
               </>
             )}
 
+            {configModal === ESPHOME_ID && (
+              <div className="mb-4">
+                <p className="text-xs text-text-tertiary mb-4">
+                  ESPHome nodes are discovered locally over mDNS — no cloud account or URL/token to enter.
+                  Newly discovered nodes need to be explicitly accepted before ALFR3D connects to them
+                  (a node broadcasting on your LAN isn&apos;t necessarily one you intended to onboard).
+                  PSK is optional and only needed if the node has Noise-protocol encryption enabled.
+                </p>
+
+                <button
+                  onClick={handleEspDiscover}
+                  disabled={espScanning}
+                  className="w-full flex items-center justify-center gap-2 py-2 mb-4 bg-primary text-white rounded-lg hover:bg-primary/80 disabled:opacity-50"
+                >
+                  <Radar className={`w-4 h-4 ${espScanning ? 'animate-spin' : ''}`} />
+                  {espScanning ? 'Scanning (~8s)...' : 'Scan for ESPHome devices'}
+                </button>
+
+                {espLoading && <p className="text-sm text-text-tertiary">Loading nodes...</p>}
+
+                {!espLoading && espNodes.filter(n => !n.accepted).length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-sm font-semibold text-text-secondary mb-2">Discovered (not yet accepted)</h4>
+                    {espNodes.filter(n => !n.accepted).map((node) => (
+                      <div key={node.hostname} className="bg-card/50 rounded-lg p-3 mb-2">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-text-primary font-mono">{node.name || node.hostname}</span>
+                          <span className="text-xs text-text-tertiary">{node.ip_address}</span>
+                        </div>
+                        <input
+                          type="password"
+                          placeholder="PSK (optional)"
+                          className="w-full bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary mb-2"
+                          onChange={(e) => setEspAcceptForm({
+                            ...espAcceptForm,
+                            [node.hostname]: { ...espAcceptForm[node.hostname], psk: e.target.value },
+                          })}
+                        />
+                        <button
+                          onClick={() => handleEspAccept(node.hostname)}
+                          className="w-full py-1.5 bg-success/20 text-success rounded-lg text-xs hover:bg-success/30"
+                        >
+                          Accept
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!espLoading && espNodes.filter(n => n.accepted).length > 0 && (
+                  <div className="mb-2">
+                    <h4 className="text-sm font-semibold text-text-secondary mb-2">Accepted</h4>
+                    {espNodes.filter(n => n.accepted).map((node) => (
+                      <div key={node.hostname} className="flex items-center justify-between bg-card/50 rounded-lg p-3 mb-2">
+                        <div>
+                          <span className="text-sm text-text-primary font-mono block">{node.name || node.hostname}</span>
+                          <span className="text-xs text-text-tertiary">{node.ip_address}</span>
+                        </div>
+                        <button
+                          onClick={() => handleEspRemove(node.hostname)}
+                          className="p-1.5 text-error hover:bg-error/10 rounded-lg"
+                          title="Remove node"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!espLoading && espNodes.length === 0 && (
+                  <p className="text-sm text-text-tertiary">No nodes yet — run a scan to discover ESPHome devices on the LAN.</p>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-4">
-              <button
-                onClick={handleConfigSave}
-                className="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/80"
-              >
-                Save
-              </button>
+              {configModal !== ESPHOME_ID && (
+                <button
+                  onClick={handleConfigSave}
+                  className="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/80"
+                >
+                  Save
+                </button>
+              )}
               <button
                 onClick={() => setConfigModal(null)}
                 className="flex-1 py-2 bg-card text-text-secondary rounded-lg hover:bg-card-hover"
               >
-                Cancel
+                {configModal === ESPHOME_ID ? 'Close' : 'Cancel'}
               </button>
             </div>
           </div>
@@ -328,7 +482,7 @@ const Integrations = () => {
                   <Settings className="w-3.5 h-3.5" /> Configure
                 </button>
               )}
-              {integration.id === 1 || integration.id === 2 || integration.integrationType === 'google' ? (
+              {integration.id === 1 || integration.id === 2 || integration.id === ESPHOME_ID || integration.integrationType === 'google' ? (
                 <button
                   onClick={(e) => { e.stopPropagation(); if (integration.status === 'connected') handleSync(integration); }}
                   className="flex items-center gap-1 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-text-secondary hover:bg-card-hover/50 hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

@@ -47,6 +47,7 @@ CREATE TABLE `device` (
   `user_id` INTEGER NULL DEFAULT NULL, -- ID of the user associated with the device (foreign key to user.id)
   `position_x` FLOAT NULL DEFAULT NULL, -- X position on the blueprint (relative to SVG viewBox)
   `position_y` FLOAT NULL DEFAULT NULL, -- Y position on the blueprint (relative to SVG viewBox)
+  `stream_url` VARCHAR(512) NULL DEFAULT NULL, -- RTSP stream URL for camera-type devices
   PRIMARY KEY (`id`)
 );
 
