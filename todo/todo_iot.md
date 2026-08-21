@@ -207,27 +207,12 @@ Add ESPHome as a first-class local IoT provider, independent of Home Assistant. 
 users run it standalone (no HA), and ESPHome devices are fully local/no-cloud by design — a
 direct fit for ALFR3D's local-first/privacy operating principle, not just an HA passthrough.
 
-### Tasks
-- Create `services/common/esphome_utils.py` (mirrors `ha_utils.py` / `st_utils.py` pattern)
-- Discovery: mDNS/zeroconf scan for `_esphomelib._tcp.local.` nodes on the LAN
-- Client: native API via `aioesphomeapi` (Noise-encrypted native protocol, port 6053 default) to
-  read entity states and send commands — no cloud, no OAuth
-- Per-device encryption key (PSK) storage — ESPHome's native API supports an optional pre-shared
-  key; needs secure at-rest storage, not a plaintext config column
-- Extend `smarthome_devices.source` enum with `esphome` (schema already supports arbitrary
-  device types from migration 007 — climate/lock/fan/cover/media_player/sensor/binary_sensor
-  cover most ESPHome entity domains without new migrations)
-- API endpoints, matching existing shape:
-  - `GET /api/iot/esphome/status`
-  - `GET /api/iot/esphome/devices`
-  - `POST /api/iot/esphome/devices/<node_id>/control`
-  - `POST /api/iot/esphome/sync`
-- Frontend: ESPHome section in `Integrations.jsx` — discovered-node list with accept/link,
-  optional PSK field per device (no token/OAuth flow needed, unlike HA/ST)
-- Open design question: HA and ST use a single "default provider" selector (`iot_provider`
-  config); ESPHome discovery is inherently parallel/local and shouldn't be gated behind that
-  selector the same way — decide whether ESPHome runs as an always-on discovery layer alongside
-  whichever provider is set as default
+Fully scoped in `todo/todo_esphome.md` (added 2026-08-21) — that doc has the verified current-code
+grounding (including a found blocker: `/api/iot/devices` is single-provider-exclusive today, see
+its Design §5), full design (discovery, the sync-vs-async client mismatch, schema, API routes,
+frontend), phased rollout, and open questions for the user. See that file for details; this
+section is kept short as a pointer, matching how Phase 15 (RTSP camera) points to
+`todo_camera_streaming.md`.
 
 ---
 

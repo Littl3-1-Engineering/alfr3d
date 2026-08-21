@@ -1,4 +1,4 @@
-"""IoT integration routes (Home Assistant + SmartThings)."""
+"""IoT integration routes (Home Assistant + SmartThings + ESPHome)."""
 
 import asyncio
 import logging
@@ -15,6 +15,9 @@ from models import (
     IoTProvider,
     LinkDevice,
     IOTDeviceControl,
+    ESPHomeAccept,
+    ESPHomeControl,
+    ESPHomeConfig,
 )
 
 logger = logging.getLogger("ApiLog")
@@ -22,35 +25,37 @@ router = APIRouter(prefix="/api", tags=["iot"])
 
 
 def fetch_iot_devices_data(linked_only=False):
+    """Returns devices from every configured/synced source (HA, SmartThings, ESPHome) --
+    not filtered by the `iot_provider` config value. That value now only selects the *default*
+    provider for actions that need a single one (see set_iot_provider below); it used to also
+    gate which sources this endpoint returned at all, which meant HA and SmartThings could never
+    both appear, and would have hidden ESPHome devices entirely. ESPHome runs as an always-on
+    parallel source by design -- see todo/todo_esphome.md Design section 5."""
     try:
         with db_connection() as db:
             cursor = db.cursor()
-            cursor.execute("SELECT value FROM config WHERE name = 'iot_provider'")
-            row = cursor.fetchone()
-            provider = row[0] if row else "homeassistant"
-
             cursor.execute(
                 """
                 SELECT sd.id, sd.name, sd.source, sd.ha_entity_id, sd.st_device_id,
-                       sd.device_type, sd.room, sd.capabilities, sd.online, sd.last_state,
-                       sd.mac_address, sd.device_id as linked_device_id,
+                       sd.esp_entity_id, sd.device_type, sd.room, sd.capabilities, sd.online,
+                       sd.last_state, sd.mac_address, sd.device_id as linked_device_id,
                        d.IP, d.position_x, d.position_y, dt.type as linked_device_type
                 FROM smarthome_devices sd
                 JOIN (
                     SELECT MAX(id) AS id
                     FROM smarthome_devices
-                    GROUP BY source, COALESCE(ha_entity_id, st_device_id)
+                    GROUP BY source, COALESCE(ha_entity_id, st_device_id, esp_entity_id)
                 ) latest ON latest.id = sd.id
                 LEFT JOIN device d ON sd.device_id = d.id
                 LEFT JOIN device_types dt ON d.device_type = dt.id
-                WHERE sd.source = %s AND (%s = FALSE OR sd.device_id IS NOT NULL)
+                WHERE (%s = FALSE OR sd.device_id IS NOT NULL)
             """,
-                (provider, 1 if linked_only else 0),
+                (1 if linked_only else 0,),
             )
 
             devices = []
             for row in cursor.fetchall():
-                linked_device_id = row[11]
+                linked_device_id = row[12]
                 devices.append(
                     {
                         "id": row[0],
@@ -58,20 +63,21 @@ def fetch_iot_devices_data(linked_only=False):
                         "source": row[2],
                         "ha_entity_id": row[3],
                         "st_device_id": row[4],
-                        "device_type": row[5],
-                        "room": row[6],
-                        "capabilities": orjson.loads(row[7]) if row[7] else [],
-                        "online": bool(row[8]),
-                        "last_state": orjson.loads(row[9]) if row[9] else {},
-                        "mac_address": row[10],
+                        "esp_entity_id": row[5],
+                        "device_type": row[6],
+                        "room": row[7],
+                        "capabilities": orjson.loads(row[8]) if row[8] else [],
+                        "online": bool(row[9]),
+                        "last_state": orjson.loads(row[10]) if row[10] else {},
+                        "mac_address": row[11],
                         "linked": linked_device_id is not None,
                         "local_device": (
                             {
                                 "id": linked_device_id,
-                                "IP": row[12],
-                                "position_x": row[13],
-                                "position_y": row[14],
-                                "device_type": row[15],
+                                "IP": row[13],
+                                "position_x": row[14],
+                                "position_y": row[15],
+                                "device_type": row[16],
                             }
                             if linked_device_id
                             else None
@@ -244,18 +250,170 @@ async def trigger_st_sync():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- ESPHome ---
+# Unlike HA/ST, ESPHome has no single URL/token to configure -- each node is discovered over
+# mDNS and accepted individually (see todo/todo_esphome.md Design section 1 for why discovered
+# nodes require an explicit accept step rather than auto-linking like HA/ST sync does).
+
+
+@router.get("/iot/esphome/status")
+async def get_esphome_status():
+    try:
+        from common import esphome_utils
+
+        enabled = esphome_utils.is_esphome_enabled()
+        accepted = esphome_utils.get_esphome_nodes(accepted=True)
+        return {"enabled": enabled, "accepted_nodes": len(accepted), "nodes": accepted}
+    except Exception as e:
+        logger.error(f"Error checking ESPHome status: {str(e)}")
+        return {"enabled": False, "error": str(e)}
+
+
+@router.put("/iot/esphome/config")
+async def save_esphome_config(data: ESPHomeConfig):
+    try:
+        from common import esphome_utils
+
+        esphome_utils.save_esphome_enabled(data.enabled)
+        return {"message": "Configuration saved"}
+    except Exception as e:
+        logger.error(f"Error saving ESPHome config: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/iot/esphome/nodes")
+async def get_esphome_nodes(accepted: bool | None = None):
+    try:
+        from common import esphome_utils
+
+        return esphome_utils.get_esphome_nodes(accepted=accepted)
+    except Exception as e:
+        logger.error(f"Error fetching ESPHome nodes: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/esphome/discover")
+async def trigger_esphome_discovery():
+    """Runs a blocking ~8s mDNS scan, so it's offloaded to a worker thread rather than run
+    directly in this coroutine (unlike HA/ST's sub-second calls, this would otherwise stall
+    every other request being served by this event loop for the scan's duration)."""
+    try:
+        from common import esphome_utils
+
+        nodes = await asyncio.get_event_loop().run_in_executor(
+            None, esphome_utils.discover_esphome_nodes
+        )
+        return {"message": f"Discovery found {len(nodes)} node(s)", "nodes": nodes}
+    except Exception as e:
+        logger.error(f"Error running ESPHome discovery: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/esphome/nodes/{hostname}/accept")
+async def accept_esphome_node(hostname: str, data: ESPHomeAccept):
+    try:
+        from common import esphome_utils
+
+        success, message, _device_info = await esphome_utils.accept_esphome_node_async(
+            hostname, psk=data.psk, name=data.name
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail=message)
+
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        return {"message": message, "hostname": hostname}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error accepting ESPHome node {hostname}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/iot/esphome/nodes/{hostname}")
+async def remove_esphome_node(hostname: str):
+    try:
+        from common import esphome_utils
+
+        esphome_utils.remove_esphome_node(hostname)
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        return {"message": "Node removed", "hostname": hostname}
+    except Exception as e:
+        logger.error(f"Error removing ESPHome node {hostname}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/esphome/entities/{hostname}/{key}/control")
+async def control_esphome_entity(hostname: str, key: int, data: ESPHomeControl):
+    try:
+        from common import esphome_utils
+
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT device_type FROM smarthome_devices WHERE source = 'esphome' "
+                "AND esp_entity_id = %s",
+                (f"{hostname}:{key}",),
+            )
+            row = cursor.fetchone()
+        domain = row[0] if row else None
+        if not domain:
+            raise HTTPException(status_code=404, detail="Entity not found")
+
+        success, message = await esphome_utils.control_esphome_device_async(
+            hostname, key, domain, data.command, data.params
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail=message)
+
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        return {"message": message, "hostname": hostname, "key": key, "command": data.command}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error controlling ESPHome entity {hostname}:{key}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/esphome/sync")
+async def trigger_esphome_sync():
+    try:
+        producer = get_producer()
+        if producer:
+            producer.send("device", {"action": "iot_esphome_sync"})
+            producer.flush()
+            logger.info("ESPHome sync triggered")
+            return {"message": "Sync triggered"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to connect to Kafka")
+    except Exception as e:
+        logger.error(f"Error triggering ESPHome sync: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Unified IoT ---
 
 
 @router.get("/iot/status")
 async def get_iot_status():
     try:
-        from common import ha_utils
+        from common import ha_utils, esphome_utils
 
         ha_connected, ha_message = ha_utils.test_ha_connection()
+        esphome_enabled = esphome_utils.is_esphome_enabled()
+        esphome_nodes = esphome_utils.get_esphome_nodes(accepted=True)
+        esphome_message = (
+            f"{len(esphome_nodes)} node(s) accepted" if esphome_enabled else "Disabled"
+        )
         return {
             "ha": {"connected": ha_connected, "message": ha_message},
             "st": {"connected": False, "message": "Not configured"},
+            "esphome": {
+                "connected": esphome_enabled and len(esphome_nodes) > 0,
+                "message": esphome_message,
+            },
         }
     except Exception as e:
         logger.error(f"Error checking IoT status: {str(e)}")
@@ -280,7 +438,8 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
         with db_connection() as db:
             cursor = db.cursor()
             cursor.execute(
-                "SELECT source, ha_entity_id, device_type FROM smarthome_devices WHERE id = %s",
+                "SELECT source, ha_entity_id, device_type, esp_entity_id "
+                "FROM smarthome_devices WHERE id = %s",
                 (device_id,),
             )
             row = cursor.fetchone()
@@ -288,7 +447,7 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
 
-        source, ha_entity_id, device_type = row[0], row[1], row[2]
+        source, ha_entity_id, device_type, esp_entity_id = row[0], row[1], row[2], row[3]
         command = data.command
 
         if source == "homeassistant" and ha_entity_id:
@@ -331,6 +490,26 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
 
             params = data.params or {}
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
+            if success:
+                devices = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_iot_devices_data
+                )
+                await manager.broadcast("iot_devices", devices)
+                return {
+                    "message": message,
+                    "device_id": device_id,
+                    "command": command,
+                    "device_type": device_type,
+                }
+            else:
+                raise HTTPException(status_code=500, detail=message)
+        elif source == "esphome" and esp_entity_id:
+            from common import esphome_utils
+
+            hostname, _, key = esp_entity_id.rpartition(":")
+            success, message = await esphome_utils.control_esphome_device_async(
+                hostname, int(key), device_type, command, data.params or {}
+            )
             if success:
                 devices = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_iot_devices_data
@@ -402,6 +581,9 @@ async def link_iot_device(device_id: int, data: LinkDevice):
 
 @router.get("/iot/providers")
 async def get_iot_providers():
+    """HA/SmartThings are listed here because `iot_provider` (below) picks a single default
+    between them. ESPHome isn't -- it runs always-on in parallel regardless of that selection
+    (todo/todo_esphome.md Design section 5), so it's surfaced via /iot/esphome/status instead."""
     return [
         {"id": "homeassistant", "name": "Home Assistant", "status": "configured"},
         {"id": "smartthings", "name": "SmartThings", "status": "not_configured"},

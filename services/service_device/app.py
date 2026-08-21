@@ -19,7 +19,7 @@ import pymysql  # Changed from MySQLdb  # noqa: E402
 from kafka import KafkaConsumer  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import get_producer, get_kafka_url, ha_utils, st_utils  # noqa: E402
+from common import get_producer, get_kafka_url, ha_utils, st_utils, esphome_utils  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -504,6 +504,10 @@ if __name__ == "__main__":
                         ha_utils.sync_ha_devices()
                     elif action == "iot_st_sync":
                         st_utils.sync_st_devices()
+                    elif action == "iot_esphome_sync":
+                        esphome_utils.sync_esphome_devices()
+                    elif action == "iot_esphome_discover":
+                        esphome_utils.discover_esphome_nodes()
                 except orjson.JSONDecodeError:
                     logger.warning("Received non-JSON message, ignoring")
                 except Exception as e:
