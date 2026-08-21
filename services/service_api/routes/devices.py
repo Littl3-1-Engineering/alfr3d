@@ -190,9 +190,19 @@ async def create_device(data: DeviceCreate):
                 if user_row:
                     user_id = user_row[0]
             cursor.execute(
-                "INSERT INTO device (name, IP, MAC, state, device_type, user_id, environment_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (data.name, data.ip, data.mac, state_id, type_id, user_id, env_id),
+                "INSERT INTO device "
+                "(name, IP, MAC, state, device_type, user_id, environment_id, stream_url) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    data.name,
+                    data.ip,
+                    data.mac,
+                    state_id,
+                    type_id,
+                    user_id,
+                    env_id,
+                    data.stream_url or None,
+                ),
             )
             db.commit()
             new_id = cursor.lastrowid
@@ -234,6 +244,12 @@ async def update_device(device_id: int, data: DeviceUpdate):
                         params.append(user_row[0])
                 else:
                     updates.append("user_id = NULL")
+            if data.stream_url is not None:
+                if data.stream_url:
+                    updates.append("stream_url = %s")
+                    params.append(data.stream_url)
+                else:
+                    updates.append("stream_url = NULL")
             if data.position is not None:
                 if "x" in data.position and "y" in data.position:
                     updates.append("position_x = %s")

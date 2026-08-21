@@ -234,7 +234,7 @@ def _fetch_devices():
         cursor.execute(
             """
             SELECT d.id, d.name, d.IP, d.MAC, s.state, dt.type, u.username, d.last_online,
-                   d.position_x, d.position_y
+                   d.position_x, d.position_y, d.stream_url
             FROM device d
             JOIN states s ON d.state = s.id
             JOIN device_types dt ON d.device_type = dt.id
@@ -259,6 +259,9 @@ def _fetch_devices():
                     if row[8] is not None and row[9] is not None
                     else None
                 ),
+                # Never expose the raw RTSP URL (embedded credentials) via this endpoint --
+                # it's broadcast to every connected websocket client, not just the requester.
+                "has_stream": row[10] is not None,
             }
             for row in cursor.fetchall()
         ]

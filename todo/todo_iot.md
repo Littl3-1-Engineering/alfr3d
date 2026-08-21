@@ -171,13 +171,25 @@ Implement WebSocket for real-time device state changes instead of polling.
 ## Phase 15: RTSP Camera as Smart Device ✓
 
 ### Goal
-Register the RTSP camera (`c200`) as a `camera`-type device in the device registry so it appears on the Blueprint with a camera icon and links to its RTSP stream.
+Register RTSP cameras as `camera`-type devices in the device registry, with each device's own
+`stream_url`, so they appear on the Blueprint with a camera icon and the Nexus panel can select
+between them.
 
 ### Completed
-- Camera already registered in DB as device ID 79 ("C200", type HW, IP `192.168.2.226`) via LAN scan — no `/etc/hosts` entry needed
-- `services/service_api/routes/stream.py` implements RTSP → MJPEG proxy (`GET /api/stream/camera` + `/api/stream/camera/config`)
-- `CameraStream.jsx` side panel with MJPEG display, snapshot, reconnect (integrated in Nexus)
-- See `todo/todo_camera_streaming.md` for details and future WebRTC/HLS options
+- `device.stream_url` column (migration 0021) holds each camera's RTSP URL, write-only via the
+  API (never echoed back through `GET /api/devices`/its websocket broadcast — see
+  `todo/todo_camera_streaming.md`)
+- `services/service_api/routes/stream.py` looks up `stream_url` per `device_id` (device must be
+  `device_type = 'camera'`) instead of a single global env var; `GET /api/stream/cameras` lists
+  all configured camera devices
+- `CameraStream.jsx` side panel lists/selects between configured cameras, HLS playback via
+  hls.js, snapshot, reconnect (integrated in Nexus)
+- `DeviceRegistry.jsx` exposes the `stream_url` field and a configured/not-configured badge
+  when editing a `camera`-type device
+- C200 (device ID 79, IP `192.168.2.226`, discovered via LAN scan) still needs its `device_type`
+  changed from `HW` to `camera` and its `stream_url` filled in via Domain > Devices — that's a
+  live data edit, not a migration (see `todo/todo_camera_streaming.md`)
+- See `todo/todo_camera_streaming.md` for details and future WebRTC/HLS/multi-stream options
 
 ---
 

@@ -95,6 +95,7 @@ def test_api_get_devices(mock_db_connection, api_client):
                 None,
                 None,
                 None,
+                None,
             ),
             (
                 2,
@@ -107,6 +108,7 @@ def test_api_get_devices(mock_db_connection, api_client):
                 None,
                 None,
                 None,
+                "rtsp://user:pass@10.0.0.5:554/stream1",  # pragma: allowlist secret
             ),
         ],
     )
@@ -117,6 +119,9 @@ def test_api_get_devices(mock_db_connection, api_client):
     assert isinstance(data, list)
     assert len(data) == 2
     assert data[0]["name"] == "device1"
+    assert data[0]["has_stream"] is False
+    assert data[1]["has_stream"] is True
+    assert "stream_url" not in data[1]
 
 
 def test_api_get_events(api_client):
