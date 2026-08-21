@@ -34,6 +34,18 @@ Core phases implemented including context tracking for repeat detection. Both pr
 
 ---
 
+## 🔲 Open Tasks
+
+### 3. Personality ticks should not fire on every speak action
+
+**Issue:** Personality "ticks" (quips/mood flourishes layered onto TTS output) currently apply to every speak action. They should be probabilistic/occasional instead, so the assistant doesn't feel like it's performing a bit every single time it talks.
+
+- [ ] Decide trigger mechanism (e.g. random chance per speak, cooldown since last tick, or context-based like the existing `repeat_count` mood offset).
+- [ ] Apply in `services/service_speak/personality.py` wherever ticks are currently selected/injected.
+- [ ] Verify normal speak flow still sounds natural without a tick most of the time.
+
+---
+
 ## Overview
 
 The personality matrix adds dynamic, configurable personalities to ALFR3D with:
