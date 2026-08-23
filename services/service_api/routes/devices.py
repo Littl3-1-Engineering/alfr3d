@@ -1,7 +1,7 @@
 """Device management routes."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import pymysql
 
 from dependencies import (
@@ -13,6 +13,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import DeviceCreate, DeviceUpdate
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["devices"])
@@ -164,7 +165,7 @@ async def get_states():
 
 
 @router.post("/devices", status_code=201)
-async def create_device(data: DeviceCreate):
+async def create_device(data: DeviceCreate, _perm=Depends(require_permission("devices", "create"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -214,7 +215,9 @@ async def create_device(data: DeviceCreate):
 
 
 @router.put("/devices/{device_id}")
-async def update_device(device_id: int, data: DeviceUpdate):
+async def update_device(
+    device_id: int, data: DeviceUpdate, _perm=Depends(require_permission("devices", "update"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -271,7 +274,7 @@ async def update_device(device_id: int, data: DeviceUpdate):
 
 
 @router.delete("/devices/{device_id}")
-async def delete_device(device_id: int):
+async def delete_device(device_id: int, _perm=Depends(require_permission("devices", "delete"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()

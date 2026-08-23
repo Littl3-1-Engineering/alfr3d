@@ -18,8 +18,8 @@ echo "Linting service_api..."
 # shared dependencies/models, and all route modules, with max line length 100.
 # Use black to check if the checked files are properly formatted.
 cd ../service_api || exit 1
-flake8 app.py dependencies.py models.py tree_of_alfr3d.py routes/ --max-line-length=100 --ignore=$FLAKE8_IGNORE || exit 1
-black --check --diff --line-length=100 app.py dependencies.py models.py tree_of_alfr3d.py routes/ || exit 1
+flake8 app.py dependencies.py models.py tree_of_alfr3d.py routes/ auth/ --max-line-length=100 --ignore=$FLAKE8_IGNORE || exit 1
+black --check --diff --line-length=100 app.py dependencies.py models.py tree_of_alfr3d.py routes/ auth/ || exit 1
 
 # Daemon service
 echo "Linting service_daemon..."

@@ -16,6 +16,7 @@ import requests
 import pymysql
 
 from .db_pool import get_connection
+from . import secrets_utils
 
 logger = logging.getLogger("SpotifyLog")
 
@@ -49,6 +50,10 @@ def get_spotify_config():
     except pymysql.Error as e:
         logger.error(f"Database error fetching Spotify config: {e}")
         config = {}
+    if config.get("spotify_client_secret"):
+        config["spotify_client_secret"] = secrets_utils.decrypt_or_plaintext(
+            config["spotify_client_secret"]
+        )
     # Fall back to environment variables
     config.setdefault("spotify_client_id", os.environ.get("SPOTIFY_CLIENT_ID", ""))
     config.setdefault("spotify_client_secret", os.environ.get("SPOTIFY_CLIENT_SECRET", ""))
@@ -70,13 +75,14 @@ def save_spotify_credentials(client_id, client_secret, redirect_uri=""):
             "INSERT INTO config (name, value) VALUES ('spotify_client_id', %s)",
             (client_id,),
         )
+    encrypted_secret = secrets_utils.encrypt(client_secret)
     cursor.execute(
-        "UPDATE config SET value = %s WHERE name = 'spotify_client_secret'", (client_secret,)
+        "UPDATE config SET value = %s WHERE name = 'spotify_client_secret'", (encrypted_secret,)
     )
     if cursor.rowcount == 0:
         cursor.execute(
             "INSERT INTO config (name, value) VALUES ('spotify_client_secret', %s)",
-            (client_secret,),
+            (encrypted_secret,),
         )
     if redirect_uri:
         cursor.execute(

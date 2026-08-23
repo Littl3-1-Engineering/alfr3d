@@ -1,7 +1,7 @@
 """Routine management routes."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import orjson
 import pymysql
 
@@ -14,6 +14,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import RoutineCreate, RoutineUpdate
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["routines"])
@@ -32,7 +33,9 @@ async def get_routines():
 
 
 @router.post("/routines", status_code=201)
-async def create_routine(data: RoutineCreate):
+async def create_routine(
+    data: RoutineCreate, _perm=Depends(require_permission("routines", "create"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -74,7 +77,9 @@ async def create_routine(data: RoutineCreate):
 
 
 @router.put("/routines/{routine_id}")
-async def update_routine(routine_id: int, data: RoutineUpdate):
+async def update_routine(
+    routine_id: int, data: RoutineUpdate, _perm=Depends(require_permission("routines", "update"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -118,7 +123,7 @@ async def update_routine(routine_id: int, data: RoutineUpdate):
 
 
 @router.delete("/routines/{routine_id}")
-async def delete_routine(routine_id: int):
+async def delete_routine(routine_id: int, _perm=Depends(require_permission("routines", "delete"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -133,7 +138,7 @@ async def delete_routine(routine_id: int):
 
 
 @router.post("/routines/{routine_id}/run")
-async def run_routine(routine_id: int):
+async def run_routine(routine_id: int, _perm=Depends(require_permission("routines", "run"))):
     try:
         with db_connection() as db:
             cursor = db.cursor(pymysql.cursors.DictCursor)

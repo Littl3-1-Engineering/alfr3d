@@ -1,18 +1,21 @@
 """Integration sync routes (Calendar, Gmail)."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import pymysql
 from kafka.errors import KafkaError
 
 from dependencies import db_connection, get_producer
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["integrations"])
 
 
 @router.put("/integrations/openweather/config")
-async def save_openweather_config(data: dict):
+async def save_openweather_config(
+    data: dict, _perm=Depends(require_permission("integrations", "openweather_config"))
+):
     api_key = (data.get("api_key") or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="api_key is required")
@@ -44,7 +47,9 @@ def _invalidate_environment_cache():
 
 
 @router.post("/integrations/calendar/sync")
-async def trigger_calendar_sync():
+async def trigger_calendar_sync(
+    _perm=Depends(require_permission("integrations", "calendar_sync")),
+):
     try:
         message = {"type": "calendar", "action": "sync"}
         producer = get_producer()
@@ -61,7 +66,7 @@ async def trigger_calendar_sync():
 
 
 @router.post("/integrations/gmail/sync")
-async def trigger_gmail_sync():
+async def trigger_gmail_sync(_perm=Depends(require_permission("integrations", "gmail_sync"))):
     try:
         message = {"type": "gmail", "action": "sync"}
         producer = get_producer()

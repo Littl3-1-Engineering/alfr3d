@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import orjson
 import pymysql
 
@@ -19,6 +19,7 @@ from models import (
     ESPHomeControl,
     ESPHomeConfig,
 )
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["iot"])
@@ -128,7 +129,9 @@ async def get_ha_devices():
 
 
 @router.post("/iot/ha/devices/{entity_id}/control")
-async def control_ha_device(entity_id: str, data: HAControl):
+async def control_ha_device(
+    entity_id: str, data: HAControl, _perm=Depends(require_permission("iot", "control"))
+):
     service_map = {
         "turn_on": "turn_on",
         "turn_off": "turn_off",
@@ -151,7 +154,7 @@ async def control_ha_device(entity_id: str, data: HAControl):
 
 
 @router.put("/iot/ha/config")
-async def save_ha_config(data: HAConfig):
+async def save_ha_config(data: HAConfig, _perm=Depends(require_permission("iot", "ha_config"))):
     try:
         from common import ha_utils
 
@@ -163,7 +166,7 @@ async def save_ha_config(data: HAConfig):
 
 
 @router.post("/iot/ha/sync")
-async def trigger_ha_sync():
+async def trigger_ha_sync(_perm=Depends(require_permission("iot", "ha_sync"))):
     try:
         producer = get_producer()
         if producer:
@@ -206,7 +209,9 @@ async def get_st_devices():
 
 
 @router.post("/iot/st/devices/{device_id}/control")
-async def control_st_device(device_id: str, data: STControl):
+async def control_st_device(
+    device_id: str, data: STControl, _perm=Depends(require_permission("iot", "control"))
+):
     try:
         from common import st_utils
 
@@ -223,7 +228,7 @@ async def control_st_device(device_id: str, data: STControl):
 
 
 @router.put("/iot/st/config")
-async def save_st_config(data: STConfig):
+async def save_st_config(data: STConfig, _perm=Depends(require_permission("iot", "st_config"))):
     try:
         from common import st_utils
 
@@ -235,7 +240,7 @@ async def save_st_config(data: STConfig):
 
 
 @router.post("/iot/st/sync")
-async def trigger_st_sync():
+async def trigger_st_sync(_perm=Depends(require_permission("iot", "st_sync"))):
     try:
         producer = get_producer()
         if producer:
@@ -270,7 +275,9 @@ async def get_esphome_status():
 
 
 @router.put("/iot/esphome/config")
-async def save_esphome_config(data: ESPHomeConfig):
+async def save_esphome_config(
+    data: ESPHomeConfig, _perm=Depends(require_permission("iot", "esphome_config"))
+):
     try:
         from common import esphome_utils
 
@@ -293,7 +300,9 @@ async def get_esphome_nodes(accepted: bool | None = None):
 
 
 @router.post("/iot/esphome/discover")
-async def trigger_esphome_discovery():
+async def trigger_esphome_discovery(
+    _perm=Depends(require_permission("iot", "esphome_discover")),
+):
     """Runs a blocking ~8s mDNS scan, so it's offloaded to a worker thread rather than run
     directly in this coroutine (unlike HA/ST's sub-second calls, this would otherwise stall
     every other request being served by this event loop for the scan's duration)."""
@@ -310,7 +319,11 @@ async def trigger_esphome_discovery():
 
 
 @router.post("/iot/esphome/nodes/{hostname}/accept")
-async def accept_esphome_node(hostname: str, data: ESPHomeAccept):
+async def accept_esphome_node(
+    hostname: str,
+    data: ESPHomeAccept,
+    _perm=Depends(require_permission("iot", "esphome_accept")),
+):
     try:
         from common import esphome_utils
 
@@ -331,7 +344,9 @@ async def accept_esphome_node(hostname: str, data: ESPHomeAccept):
 
 
 @router.delete("/iot/esphome/nodes/{hostname}")
-async def remove_esphome_node(hostname: str):
+async def remove_esphome_node(
+    hostname: str, _perm=Depends(require_permission("iot", "esphome_remove"))
+):
     try:
         from common import esphome_utils
 
@@ -345,7 +360,12 @@ async def remove_esphome_node(hostname: str):
 
 
 @router.post("/iot/esphome/entities/{hostname}/{key}/control")
-async def control_esphome_entity(hostname: str, key: int, data: ESPHomeControl):
+async def control_esphome_entity(
+    hostname: str,
+    key: int,
+    data: ESPHomeControl,
+    _perm=Depends(require_permission("iot", "control")),
+):
     try:
         from common import esphome_utils
 
@@ -378,7 +398,7 @@ async def control_esphome_entity(hostname: str, key: int, data: ESPHomeControl):
 
 
 @router.post("/iot/esphome/sync")
-async def trigger_esphome_sync():
+async def trigger_esphome_sync(_perm=Depends(require_permission("iot", "esphome_sync"))):
     try:
         producer = get_producer()
         if producer:
@@ -433,7 +453,9 @@ async def get_iot_devices(linked: bool = False):
 
 
 @router.post("/iot/devices/{device_id}/control")
-async def control_iot_device(device_id: int, data: IOTDeviceControl):
+async def control_iot_device(
+    device_id: int, data: IOTDeviceControl, _perm=Depends(require_permission("iot", "control"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -533,7 +555,9 @@ async def control_iot_device(device_id: int, data: IOTDeviceControl):
 
 
 @router.put("/iot/devices/{device_id}/link")
-async def link_iot_device(device_id: int, data: LinkDevice):
+async def link_iot_device(
+    device_id: int, data: LinkDevice, _perm=Depends(require_permission("iot", "link"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -591,7 +615,9 @@ async def get_iot_providers():
 
 
 @router.put("/iot/provider")
-async def set_iot_provider(data: IoTProvider):
+async def set_iot_provider(
+    data: IoTProvider, _perm=Depends(require_permission("iot", "set_provider"))
+):
     if data.provider not in ["homeassistant", "smartthings"]:
         raise HTTPException(status_code=400, detail="Invalid provider")
 

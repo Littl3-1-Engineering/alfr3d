@@ -5,7 +5,7 @@ import logging
 import os
 import socket
 import subprocess
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import (
     db_connection,
@@ -16,6 +16,7 @@ from dependencies import (
     MYSQL_PSWD,
     MYSQL_DB,
 )
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["system"])
@@ -88,7 +89,7 @@ async def get_database():
 
 
 @router.post("/system/database/backup")
-async def backup_database():
+async def backup_database(_perm=Depends(require_permission("system", "backup"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -149,7 +150,7 @@ async def get_config():
 
 
 @router.put("/system/config")
-async def save_config(data: dict):
+async def save_config(data: dict, _perm=Depends(require_permission("system", "update_config"))):
     try:
         content = data.get("content")
         if content is None:
@@ -201,7 +202,9 @@ async def get_services():
 
 
 @router.post("/system/services/{service_name}/restart")
-async def restart_service(service_name: str):
+async def restart_service(
+    service_name: str, _perm=Depends(require_permission("system", "restart_service"))
+):
     try:
         if not docker_available:
             return {"message": f"Restart requested for {service_name} (docker unavailable)"}
