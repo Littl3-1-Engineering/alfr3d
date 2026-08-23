@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
 
 export const useRoutines = () => {
   return useQuery({
@@ -16,7 +17,7 @@ export const useCreateRoutine = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (routine) => {
-      const response = await fetch(`${API_BASE_URL}/api/routines`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/routines`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(routine)
@@ -34,7 +35,7 @@ export const useUpdateRoutine = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...routine }) => {
-      const response = await fetch(`${API_BASE_URL}/api/routines/${id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/routines/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(routine)
@@ -52,7 +53,7 @@ export const useDeleteRoutine = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id) => {
-      const response = await fetch(`${API_BASE_URL}/api/routines/${id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/routines/${id}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete routine');
@@ -133,7 +134,7 @@ export const useUpdatePersonality = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (personality) => {
-      const response = await fetch(`${API_BASE_URL}/api/personality`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/personality`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(personality)
@@ -162,7 +163,7 @@ export const useCreateQuip = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (quip) => {
-      const response = await fetch(`${API_BASE_URL}/api/quips`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/quips`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quip)
@@ -180,7 +181,7 @@ export const useUpdateQuip = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...quip }) => {
-      const response = await fetch(`${API_BASE_URL}/api/quips/${id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/quips/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(quip)
@@ -198,7 +199,7 @@ export const useDeleteQuip = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id) => {
-      const response = await fetch(`${API_BASE_URL}/api/quips/${id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/quips/${id}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete quip');

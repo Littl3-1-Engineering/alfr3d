@@ -3,6 +3,8 @@ import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import { User, Monitor, Plus } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 import UserModal from './UserModal';
 import DeviceHistoryModal from './DeviceHistoryModal';
 import { sortByOnlineState } from '../utils/sortUtils';
@@ -58,6 +60,7 @@ DeviceCard.propTypes = {
 
 const PersonnelRoster = ({ initialUserId }) => {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '' });
@@ -124,7 +127,7 @@ const PersonnelRoster = ({ initialUserId }) => {
 
   const handleAddUser = () => {
     if (!newUser.name || !newUser.type) return;
-    fetch(API_BASE_URL + '/api/users', {
+    apiFetch(API_BASE_URL + '/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newUser),
@@ -146,7 +149,7 @@ const PersonnelRoster = ({ initialUserId }) => {
   };
 
   const handleModalSaveUser = (updatedUser) => {
-    fetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
+    apiFetch(API_BASE_URL + '/api/users/' + updatedUser.id, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedUser),
@@ -169,7 +172,7 @@ const PersonnelRoster = ({ initialUserId }) => {
 
   const handleDeleteUser = (id) => {
     if (window.confirm('Are you sure you want to delete this user?')) {
-      fetch(API_BASE_URL + '/api/users/' + id, { method: 'DELETE' })
+      apiFetch(API_BASE_URL + '/api/users/' + id, { method: 'DELETE' })
         .then(res => {
           if (res.ok) {
             return fetch(API_BASE_URL + '/api/users-with-devices');
@@ -188,7 +191,7 @@ const PersonnelRoster = ({ initialUserId }) => {
   };
 
   const handleModalSaveDevice = (updatedDevice) => {
-    fetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
+    apiFetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedDevice),
@@ -211,7 +214,7 @@ const PersonnelRoster = ({ initialUserId }) => {
 
   const handleDeleteDevice = (id) => {
     if (window.confirm('Are you sure you want to delete this device?')) {
-      fetch(API_BASE_URL + '/api/devices/' + id, { method: 'DELETE' })
+      apiFetch(API_BASE_URL + '/api/devices/' + id, { method: 'DELETE' })
         .then(res => {
           if (res.ok) {
             return fetch(API_BASE_URL + '/api/users-with-devices');
@@ -243,7 +246,8 @@ const PersonnelRoster = ({ initialUserId }) => {
           <h2 className="text-2xl font-bold text-primary">Users</h2>
           <button
             onClick={() => setShowAddUser(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
+            disabled={!isAuthenticated}
+            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             <span>Add User</span>

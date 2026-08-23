@@ -7,6 +7,9 @@ import {
   Music4, Volume2, Pause, SkipForward, SkipBack, Cast,
 } from 'lucide-react';
 import { useTheme } from '../utils/useTheme';
+import { useAuth } from '../utils/useAuth';
+import { apiFetch } from '../utils/apiClient';
+import { API_BASE_URL } from '../config';
 import {
   useRoutines, useCreateRoutine, useUpdateRoutine, useDeleteRoutine,
   useIotDevices, useDevices, useUsers,
@@ -73,6 +76,7 @@ const emptyForm = () => ({
 
 const Routines = () => {
   useTheme();
+  const { isAuthenticated } = useAuth();
   const { data: routines = [], isLoading, error } = useRoutines();
   const createRoutine = useCreateRoutine();
   const updateRoutine = useUpdateRoutine();
@@ -112,7 +116,7 @@ const Routines = () => {
 
   const handleRun = async (id) => {
     try {
-      await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/routines/${id}/run`, { method: 'POST' });
+      await apiFetch(`${API_BASE_URL}/api/routines/${id}/run`, { method: 'POST' });
     } catch (error) {
       console.error('Failed to run routine:', error);
     }
@@ -218,7 +222,8 @@ const Routines = () => {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => { resetForm(); setShowForm(true); }}
-          className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
+          disabled={!isAuthenticated}
+          className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus className="w-5 h-5" />
           <span>New Routine</span>
@@ -268,13 +273,15 @@ const Routines = () => {
                     <div className="flex gap-1">
                       <button
                         onClick={(e) => { e.stopPropagation(); handleRun(routine.id); }}
-                        className="p-1.5 rounded hover:bg-success/20 text-success"
+                        disabled={!isAuthenticated}
+                        className="p-1.5 rounded hover:bg-success/20 text-success disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Play className="w-4 h-4" />
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDelete(routine.id); }}
-                        className="p-1.5 rounded hover:bg-error/20 text-error"
+                        disabled={!isAuthenticated}
+                        className="p-1.5 rounded hover:bg-error/20 text-error disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -727,7 +734,7 @@ const Routines = () => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={handleSave}
-                  disabled={!formData.name}
+                  disabled={!formData.name || !isAuthenticated}
                   className="flex items-center gap-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30 disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />

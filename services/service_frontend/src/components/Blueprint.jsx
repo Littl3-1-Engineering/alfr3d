@@ -5,6 +5,7 @@ import PropTypes from 'prop-types';
 import BlueprintSVG from './cassiopeia_blueprint.svg?react';
 import ControlBlade from './ControlBlade';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
 import { getGravatarUrl } from '../utils/gravatarUtils';
 import socket from '../utils/socket';
 
@@ -244,7 +245,7 @@ const Blueprint = ({ onDeviceSelect }) => {
 
   const updateDevicePosition = useCallback(async (deviceId, position) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/devices/${deviceId}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/devices/${deviceId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ position }),
