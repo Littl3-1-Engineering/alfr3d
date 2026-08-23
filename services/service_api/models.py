@@ -168,3 +168,21 @@ class ESPHomeConfig(BaseModel):
 
 class PresetApply(BaseModel):
     preset: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+class ClaimAccountRequest(BaseModel):
+    username: str
+    password: str

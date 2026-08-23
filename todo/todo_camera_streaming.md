@@ -89,3 +89,19 @@
   (`-c:v libx264 -preset veryfast -tune zerolatency -c:a aac`)
 - FFmpeg must be installed inside the service_api image for transcoding
 - `todo_iot.md` Phase 15 covers device registration — this builds on top of that
+
+### Fixed 2026-08-22: stalled stream served frozen video indefinitely
+The NUC's camera feed froze for ~27h showing a single stale frame. Root cause: ffmpeg
+blocked on a stalled RTSP TCP read has no default timeout, so it hung forever without
+exiting or logging anything (`-loglevel error` suppressed even a warning) — `proc.returncode`
+stayed `None`, so `hls_status()` kept reporting `running: true` and serving the last-written
+(frozen) segments/playlist as valid. Since `start_hls()` short-circuited on an already-alive
+process, nothing ever restarted it — not even reselecting the camera in the UI.
+Fix in `stream.py`:
+- Added `-timeout 15000000` (µs; this ffmpeg build's rtsp demuxer uses `-timeout`, **not**
+  `-rw_timeout` — the latter errors with "Option not found" on ffmpeg 7.1.5's rtsp demuxer)
+  so a stalled read now makes ffmpeg exit instead of hanging.
+- Added `_stream_is_stale()` (no new `seg_*.ts` file in `> HLS_SEGMENT_TIME * HLS_LIST_SIZE + 10`
+  seconds) as defense in depth. `hls_status()` now auto-restarts a stale-but-still-"running"
+  stream (self-heals within one `/index.m3u8` poll cycle, no user action needed); `start_hls()`
+  also re-checks staleness instead of trusting a live-but-frozen process.

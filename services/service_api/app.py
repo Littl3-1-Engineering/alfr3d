@@ -42,6 +42,7 @@ from routes.stream import router as stream_router  # noqa: E402
 from routes.health import router as health_router  # noqa: E402
 from routes.system import router as system_router  # noqa: E402
 from routes.music import router as music_router  # noqa: E402
+from auth.routes import router as auth_router  # noqa: E402
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -197,6 +198,7 @@ app.add_middleware(
 
 
 app.include_router(project_tree_router)
+app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(devices_router)
 app.include_router(quips_router)

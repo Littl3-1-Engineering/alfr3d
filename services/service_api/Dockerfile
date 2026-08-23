@@ -21,6 +21,7 @@ COPY service_api/models.py .
 COPY service_api/dependencies.py .
 COPY service_api/tree_of_alfr3d.py .
 COPY service_api/routes/ ./routes/
+COPY service_api/auth/ ./auth/
 COPY common/ ./common/
 
 RUN chown -R alfr3d:alfr3d /app

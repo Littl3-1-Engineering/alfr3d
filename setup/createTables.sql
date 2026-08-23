@@ -169,7 +169,7 @@ DROP TABLE IF EXISTS `config`;
 CREATE TABLE `config` (
   `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key, unique identifier for config entry
   `name` VARCHAR(45) NULL DEFAULT NULL, -- Name of the configuration setting
-  `value` VARCHAR(512) NULL DEFAULT NULL -- Value of the configuration setting (512 for API keys)
+  `value` TEXT NULL DEFAULT NULL -- Value of the configuration setting (TEXT: holds Fernet-encrypted secrets, see secrets_utils.py)
 );
 
 -- ---
@@ -217,6 +217,25 @@ CREATE TABLE `integrations_tokens` (
   UNIQUE KEY `unique_integration` (`integration_type`) -- Ensure one token per integration type
 );
 
+-- ---
+-- Table 'refresh_tokens'
+--
+-- Opaque JWT refresh tokens (auth's short-lived access tokens are stateless and never stored).
+-- Only a SHA-256 hash of the token is stored, never the raw value, so a DB read alone can't be
+-- replayed. See todo/todo_auth_rbac.md.
+-- ---
+
+CREATE TABLE `refresh_tokens` (
+  `id` INTEGER UNIQUE AUTO_INCREMENT, -- Primary key
+  `user_id` INTEGER NOT NULL, -- Owning user (foreign key to user.id)
+  `token_hash` VARCHAR(64) NOT NULL, -- SHA-256 hex digest of the opaque refresh token
+  `issued_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- When this token was issued
+  `expires_at` DATETIME NOT NULL, -- When this token stops being redeemable
+  `revoked_at` DATETIME NULL DEFAULT NULL, -- Set on logout/rotation; NULL means still valid
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_token_hash` (`token_hash`)
+);
+
 
 -- ---
 -- Foreign Keys
@@ -244,6 +263,8 @@ ALTER TABLE `device_history` ADD FOREIGN KEY (device_id) REFERENCES `device` (`i
 ALTER TABLE `device_history` ADD FOREIGN KEY (environment_id) REFERENCES `environment` (`id`);
 -- Device history entry links to the user at the time
 ALTER TABLE `device_history` ADD FOREIGN KEY (user_id) REFERENCES `user` (`id`);
+-- Refresh token belongs to a user
+ALTER TABLE `refresh_tokens` ADD FOREIGN KEY (user_id) REFERENCES `user` (`id`);
 
 -- ---
 -- Triggers
@@ -305,7 +326,7 @@ INSERT INTO `device_types` (`id`, `type`) VALUES ('3', 'guest');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('4', 'light');
 INSERT INTO `device_types` (`id`, `type`) VALUES ('5', 'resident');
 
-INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', '\'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf\'', '', '1000-01-01 00:00:00', NOW(), 1, 1, 1);
+INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('1', 'athos', 'athos@littl31.com', 'pbkdf2:sha256:260000$EVLamhqzR2ib572V$29ecaf8e9ef809496eebf2cc1dafc1c865e0efa0184a89dcca63492ced5290bf', '', '1000-01-01 00:00:00', NOW(), 1, 1, 1);
 INSERT INTO `user` (`id`, `username`, `email`, `password_hash`, `about_me`, `last_online`, `created_at`, `state`, `type`, `environment_id`) VALUES ('2', 'unknown', '', '', '', '1000-01-01 00:00:00', NOW(), 1, 3, 1);
 INSERT INTO `environment` (`name`) VALUES ('test');
 

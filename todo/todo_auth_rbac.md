@@ -1,6 +1,36 @@
 # Plan: Authentication + RBAC for ALFR3D backend
 
-## Status: 🔲 TODO (not started — planning only)
+## Status: 🟡 Phases 0-2 shipped 2026-08-22 (backend auth/RBAC complete: password login, JWT
+access + revocable refresh tokens, permission middleware wrapping all 56 write routes). **Phases
+3-5 remain**: webapp login UI, Nexus Launcher login UI (tracked as a companion `alfr3d_deck`
+todo, not yet created), and hardening (rate-limiting, password-reset flow, username-enumeration
+protection). The API itself is no longer open — this already resolves the Kit/Relay blocker
+described below, but the SPA and launcher clients don't have login screens yet, so in practice
+today's webapp/launcher users hit 401s on any write action until Phase 3/4 ship.
+
+### What shipped (Phases 0-2)
+- `POST /api/auth/login`, `/refresh`, `/logout`, and a Phase-0 bootstrap `POST /api/auth/claim`
+  (`services/service_api/auth/routes.py`) — claim only succeeds for a user whose
+  `password_hash` is still NULL/empty, so it can't take over an already-claimed account.
+- Passwords hashed with `werkzeug.security` (pbkdf2:sha256), not bcrypt/argon2 as originally
+  sketched — chosen because user id=1's seed row already had a hash in exactly this format
+  (`setup/createTables.sql`); a data bug in that seeded value (literal quote characters baked
+  into the string from a copy-paste) was also fixed, in both `createTables.sql` and migration
+  `0023`'s data-fix step.
+- `refresh_tokens` table (migration `0023`) — opaque tokens, only a SHA-256 hash stored,
+  rotated on every `/refresh` call.
+- `services/service_api/auth/permissions.py` — the code-defined `{resource: {action:
+  {allowed_roles}}}` matrix designed in this doc's §3, now implemented and enforced via
+  `require_permission()` on every write route.
+- **Correction to this doc's original role list**: `user_types` actually has 5 seeded rows, not
+  3 (`owner`=4, `alfr3d`=5 also exist, found during implementation). `owner` aliases to
+  `technoking` (legacy concept still referenced in routine trigger-condition logic, just not
+  assignable through any current UI); `alfr3d` (the system's own identity) gets no write grants
+  at all.
+- Tests: `tests/test_auth.py` (44 unit tests covering password/JWT/permissions/tokens/
+  dependencies/routes) + 4 end-to-end `TestClient` tests in `tests/test_api_service.py` proving
+  the dependency chain actually blocks unauthenticated/wrong-role requests over real HTTP calls,
+  not just in isolated function tests.
 
 ## Goal
 Unauthenticated clients (webapp and Nexus Launcher alike) get **read-only** access. Authenticated users get **write access gated by an ACL/role check** per resource/action. This is a prerequisite for launching ALFR3D as a multi-user/hosted product (see the monetization plan's Path C — ALFR3D Cloud — which currently just says "accounts/auth" as an unscoped Phase 3 line item; this doc is that design).
@@ -39,7 +69,7 @@ Both clients (React SPA webapp *and* the Nexus Launcher Android app) talk to the
 ### 3. ACL model — start simple, leave room to grow
 Given this is currently a solo-household system (not yet a hosted multi-tenant product), recommend starting with a **code-defined permission matrix** keyed off role, rather than a fully dynamic DB-driven permissions engine — less to build, still correct, and it's a natural stepping stone to a DB-driven version later if ALFR3D Cloud needs per-device sharing grants.
 
-- Promote `user_types` from decorative to enforced: `technoking` (full admin — user management, integrations, system config), `resident` (read/write on household resources: devices, routines, calendar, music — not user management or integrations), `guest` (read-only, same as unauthenticated, or a narrow allowlist like "can trigger routines but not edit them" — worth confirming with the user before assuming).
+- Promote `user_types` from decorative to enforced: `technoking` (full admin — user management, integrations, system config), `resident` (read/write on household resources: devices, routines, calendar, music — not user management or integrations), `guest` (**decided 2026-08-22: read-only, identical to an unauthenticated caller** — no special-cased write allowlist for v1; simplest matrix, no guest-specific branches needed anywhere in `require_permission`).
 - Define the matrix once, e.g. `services/service_api/auth/permissions.py`: `{resource: {action: {allowed_roles}}}` for resources `devices`, `routines`, `integrations`, `users`, `calendar`, `music`, etc.
 - **Escape hatch for later**: if/when per-resource sharing is needed (e.g. "guest can control only the living room lights"), migrate to real `roles`/`permissions`/`role_permissions`/`user_roles` tables — the `require_permission` dependency's *interface* shouldn't need to change, only its implementation, so this isn't a rewrite later.
 
@@ -48,15 +78,20 @@ Given this is currently a solo-household system (not yet a hosted multi-tenant p
 - **Nexus Launcher (Android, `alfr3d_deck`)**: add a login screen; store tokens in Android Keystore-backed encrypted storage (same pattern the launcher already uses for Play Billing entitlement state, per [[project-alfr3d-monetization-plan]]); attach `Authorization: Bearer <token>` to all mutating calls; when logged out, the launcher's ALFR3D cards/controls should render in a view-only state rather than erroring — this needs a companion todo in `alfr3d_deck/todo/` once this plan is accepted, per [[project-alfr3d-deck-companion]]'s cross-repo convention.
 
 ### 5. Rollout phasing
-- **Phase 0 — migration prep**: since no `user` row has a password today, ship a one-time "claim your account" flow (e.g. a CLI script or an admin-only unauthenticated-but-locked-down bootstrap endpoint) so existing household members can set a password before write routes start requiring auth. Decide the default role for existing rows (likely `resident`, with the household owner promoted to `technoking` manually).
-- **Phase 1 — auth infra**: `user` password wiring, JWT issuance, `refresh_tokens` table, login/refresh/logout endpoints.
-- **Phase 2 — permission middleware**: `require_permission` dependency + the code-defined matrix; apply to all write routes across `services/service_api/routes/*`. This is the biggest-surface-area phase — every existing write route needs the dependency added and its resource/action classified.
-- **Phase 3 — webapp**: login UI, token handling, view-only mode for anonymous/under-permissioned users.
-- **Phase 4 — launcher**: login screen, token storage, view-only mode (tracked as a companion `alfr3d_deck` todo).
-- **Phase 5 — hardening**: login rate-limiting, no username-enumeration on failed login, password reset flow, audit that no write route was missed (grep for all `@router.post|put|patch|delete` and confirm each has `require_permission`).
+- ✅ **Phase 0 — migration prep** (shipped 2026-08-22): `POST /api/auth/claim` bootstrap
+  endpoint, guarded to only work on a still-unclaimed (NULL/empty password_hash) user. Existing
+  rows keep their current `type` (no bulk role reassignment was needed/done).
+- ✅ **Phase 1 — auth infra** (shipped 2026-08-22): password wiring via `werkzeug.security`, JWT
+  access tokens, `refresh_tokens` table, login/refresh/logout endpoints.
+- ✅ **Phase 2 — permission middleware** (shipped 2026-08-22): `require_permission` dependency +
+  the code-defined matrix (`services/service_api/auth/permissions.py`), applied to all 56 write
+  routes across `services/service_api/routes/*`. Grep-audit confirmed 56/56 have it.
+- 🔲 **Phase 3 — webapp**: login UI, token handling, view-only mode for anonymous/under-permissioned users.
+- 🔲 **Phase 4 — launcher**: login screen, token storage, view-only mode (tracked as a companion `alfr3d_deck` todo).
+- 🔲 **Phase 5 — hardening**: login rate-limiting, no username-enumeration on failed login, password reset flow. (The route-coverage audit itself was pulled forward into Phase 2's completion check rather than left for Phase 5.)
 
-### 6. Open question: user model — add `gender`?
-No `gender` column exists today, and nothing in the codebase (personality engine, TTS, etc.) currently references gender or pronouns. Worth deciding *why* before adding it — the likely use case here is personalization (e.g. TTS voice selection per user, or the personality/LLM layer addressing a user correctly), not demographic data collection. If pursued: make it optional/nullable, free-text or a small open enum rather than a fixed binary set, and treat it as a per-user preference the user sets for themselves (not something an admin sets for other household members). This is independent of the RBAC work above but touches the same `user` table/API models, so it's a natural companion change to bundle into the Phase 1 migration if the user decides to move forward — flagged here rather than actioned.
+### 6. Deferred: user model `gender` field
+**Decided 2026-08-22: deferred, not part of this work.** No `gender` column exists today, and nothing in the codebase (personality engine, TTS, etc.) currently references gender or pronouns. It's independent of RBAC's actual goal (authn/authz) — revisit only if/when the personality or TTS layer has a concrete personalization use case that needs it, not bundled into the Phase 1 migration just because it touches the same table.
 
 ## Related
 - [[project-alfr3d-monetization-plan]] — ALFR3D Cloud (Path C) Phase 3 currently just lists "accounts/auth" unscoped; this doc is the scoping.

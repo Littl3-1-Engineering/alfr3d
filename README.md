@@ -327,12 +327,65 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 - On sync: looks up MAC in device table, sets device_id FK (no auto-creation for unmatched devices)
 - Frontend uses FK join for position data
 
+### Secrets at Rest
+
+Integration credentials (Home Assistant long-lived token, SmartThings PAT, Spotify client
+secret, ESPHome node PSKs) are encrypted at rest using Fernet symmetric encryption
+(`services/common/secrets_utils.py`), so a database dump or backup leak doesn't hand out live
+credentials directly.
+
+- **Zero-config key provisioning**: the encryption key (`ALFR3D_SECRETS_KEY`) is auto-generated
+  on first boot and persisted to the `secrets_data` Docker volume — no setup step required.
+- **⚠️ Back up the `secrets_data` volume.** If it's lost, every stored integration credential
+  becomes permanently unrecoverable and must be re-entered from the Integrations page. There is
+  no key-rotation or recovery mechanism in v1.
+- Existing plaintext values (from before this feature shipped) keep working — the read path
+  tries to decrypt and falls back to the raw value on failure, so the database self-heals to
+  fully-encrypted as each credential gets naturally rewritten (e.g. the next OAuth refresh).
+- To manage the key yourself instead (e.g. Kubernetes secret injection), set `ALFR3D_SECRETS_KEY`
+  directly in the environment — it takes precedence over the generated file.
+
+### Authentication & RBAC
+
+Every write action (POST/PUT/DELETE) on the API requires a bearer token and a role with the
+right grant; `GET` routes stay open/read-only for anonymous callers by design — this is what
+lets the API be safely exposed on hardware (Alfr3d Kit) or through a relay (Butler) without
+handing out full control to anyone who can reach it.
+
+- **Claim your account**: existing household member rows don't have a password until you set
+  one — `POST /api/auth/claim` with `{"username", "password"}` (only works once per account; a
+  password already set means it's already claimed).
+- **Login**: `POST /api/auth/login` with `{"username", "password"}` returns a short-lived JWT
+  access token (~15 min) and a longer-lived, revocable refresh token. `POST /api/auth/refresh`
+  trades a valid refresh token for a new pair (rotated on every use); `POST /api/auth/logout`
+  revokes it.
+- **Roles**: `technoking` (full admin — users, integrations, system config, everything),
+  `resident` (everyday household actions — devices, routines, music playback, quips, IoT device
+  control), `guest` (read-only, identical to an unauthenticated caller). The full matrix is in
+  `services/service_api/auth/permissions.py`.
+- **Not yet shipped**: the React webapp and Nexus Launcher don't have login screens yet (that's
+  tracked separately — see `todo/todo_auth_rbac.md` Phases 3-4), so today they'll get 401s on
+  write actions until a token is supplied out-of-band (e.g. via the API directly).
+
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
 - **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
 - **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
 
 Run these scripts as needed for database maintenance, backups, and integration configuration.
+
+### Autostart on Boot
+
+All services in `docker-compose.yml` run with `restart: unless-stopped`, so once containers exist they come back automatically whenever the Docker daemon restarts — as long as `docker.service` itself is enabled at boot (`sudo systemctl enable docker`). For an explicit, host-independent boot path (first-ever start on a fresh device, or after a `docker-compose.yml` change), install the provided systemd unit instead of relying on that implicitly:
+
+```bash
+sudo cp setup/alfr3d.service /etc/systemd/system/alfr3d.service
+sudo sed -i "s#/opt/alfr3d#$(pwd)#" /etc/systemd/system/alfr3d.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now alfr3d.service
+```
+
+This runs `docker compose up -d` after `docker.service` and the network are up, and brings the stack down cleanly on shutdown/`systemctl stop alfr3d`. Startup ordering between services (DB/Kafka ready before dependents) is handled by `depends_on` + `healthcheck` in `docker-compose.yml`, not by the unit itself. Check status with `systemctl status alfr3d` / `journalctl -u alfr3d`.
 
 ## Linting
 

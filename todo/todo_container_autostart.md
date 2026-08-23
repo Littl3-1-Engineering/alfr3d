@@ -1,14 +1,21 @@
 # Todo: Init Scripts for Container Autostart on Device Boot
 
-## Status: 🔲 Not started
+## Status: 🟡 Shipped on the NUC — pending an actual reboot test
 
 ## Goal
 Add init scripts so all ALFR3D containers (Kafka, MySQL, Redis, service_api, service_daemon, service_speak, service_frontend, etc.) start automatically when the host device boots, without a manual `docker compose up`.
 
 ## Notes / Approach
-- [ ] Decide mechanism: systemd unit calling `docker compose up -d` in the project directory vs. Docker's own `restart: unless-stopped`/`restart: always` policies in `docker-compose.yml` vs. `docker compose` as a systemd-managed service.
-- [ ] Confirm current `docker-compose.yml` restart policies (if any) — likely need `restart: unless-stopped` added per service as a baseline regardless of the boot mechanism chosen.
-- [ ] If systemd: write a `.service` unit (e.g. `alfr3d.service`) that runs `docker compose -f <path>/docker-compose.yml up -d`, enable it, and document install steps in the README.
-- [ ] Handle startup ordering/dependencies (DB/Kafka ready before dependent services) — check whether `depends_on` + healthchecks in `docker-compose.yml` are sufficient or whether a wait-for script is needed.
-- [ ] Test on the actual target device (reboot and confirm all containers come up healthy with no manual intervention).
-- [ ] Document the autostart setup in the README's Deployment section.
+- [x] Decide mechanism: systemd unit (`alfr3d.service`, see `setup/alfr3d.service`) calling `docker compose up -d` on top of Docker's own `restart: unless-stopped` policies as the baseline — explicit and works even on a fresh device where containers don't exist yet.
+- [x] Confirm current `docker-compose.yml` restart policies — `zookeeper`, `kafka`, `redis`, and `mysql` were all missing `restart: unless-stopped` (every app-level service already had it); added 2026-08-22.
+- [x] Systemd unit written: `setup/alfr3d.service`, template `WorkingDirectory=/opt/alfr3d` — edit to the actual repo path before installing (see README's new "Autostart on Boot" section for install steps).
+- [x] Startup ordering: existing `depends_on` + `healthcheck` in `docker-compose.yml` already sequences DB/Kafka readiness before dependents — no separate wait-for script needed.
+- [x] Installed and enabled on the NUC (`alfr3d@192.168.2.200`, repo at `/home/alfr3d/alfr3d`) 2026-08-22: `/etc/systemd/system/alfr3d.service` with `WorkingDirectory=/home/alfr3d/alfr3d`, `systemctl enable --now`'d. `docker.service` was already enabled at boot there.
+- [ ] Test with an actual reboot of the NUC to confirm the full stack comes up unattended — not done yet (didn't want to reboot a live home-automation box without asking first; do this next time a reboot is convenient).
+- [x] Document the autostart setup in the README (`### Autostart on Boot` under Setup and Maintenance).
+
+## Side finding while applying this on the NUC (2026-08-22)
+Applying the restart-policy fix surfaced pre-existing container/volume drift on the NUC, unrelated to this todo but now cleaned up:
+- `zookeeper` and `redis` containers had anomalous raw-container-ID-prefixed names (e.g. `8f46eadb3934_alfr3d-zookeeper-1`) instead of the normal Compose naming — leftover from some earlier interrupted `docker compose up`. This blocked Compose from recreating them. Fixed by removing and letting Compose recreate cleanly under standard names.
+- Kafka's `/var/lib/kafka/data` has no named volume (by design — topics are ephemeral, recreated via `KAFKA_CREATE_TOPICS` on boot) but was sitting on an orphaned *anonymous* volume that Compose kept reusing across recreates, carrying a stale internal cluster ID. After zookeeper got a fresh cluster ID, Kafka refused to start (`InconsistentClusterIdException`) until that anonymous volume was removed (`docker rm -v`) and Kafka got a truly fresh one.
+- `docker volume ls` on the NUC shows several other unlabeled hash-named volumes (plus `pgdata`/`pgodindata`, which look unrelated to alfr3d — likely a different project on the same host). Didn't touch these; worth a separate look sometime with `docker system df`/`docker volume ls` to see what's actually orphaned vs. in use, but out of scope here.
