@@ -1,7 +1,7 @@
 """User management routes."""
 
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 import pymysql
 
 from dependencies import (
@@ -12,6 +12,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import UserCreate, UserUpdate
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["users"])
@@ -76,7 +77,7 @@ async def get_users(online: bool = Query(False)):
 
 
 @router.post("/users", status_code=201)
-async def create_user(data: UserCreate):
+async def create_user(data: UserCreate, _perm=Depends(require_permission("users", "create"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -111,7 +112,9 @@ async def create_user(data: UserCreate):
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: int, data: UserUpdate):
+async def update_user(
+    user_id: int, data: UserUpdate, _perm=Depends(require_permission("users", "update"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -144,7 +147,7 @@ async def update_user(user_id: int, data: UserUpdate):
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int):
+async def delete_user(user_id: int, _perm=Depends(require_permission("users", "delete"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()

@@ -1,6 +1,20 @@
 # Plan: Encrypt Integration Secrets at Rest
 
-## Status: 🔲 TODO (not started — planning only)
+## Status: ✅ Shipped 2026-08-22
+
+`services/common/secrets_utils.py` implements the design below as scoped, wired into
+`ha_utils.py`/`st_utils.py`/`spotify_utils.py`/`esphome_utils.py`. Corrections found during
+implementation: the ESPHome PSK lives in `esphome_nodes.psk`, not `smarthome_devices` as this
+doc originally said; `config.value` (`VARCHAR(512)`) and `esphome_nodes.psk` (`VARCHAR(255)`)
+were widened (to `TEXT` and `VARCHAR(512)` respectively, migration `0022`) since Fernet
+ciphertext overhead could push a long HA token close to the old 512-char cap. The generated key
+file is 0644, not 0600 -- `service-device` runs as root (needs raw network access for
+arp-scan) while `service-api`/`service-daemon` run as uid 1000, and a 0600 file created by
+whichever process wins the first-boot race would lock the other uid out; the shared Docker
+volume mount is the real access-control boundary here, not the in-container file mode.
+`service-api`'s `entrypoint.sh` also chowns the volume to uid 1000 on every boot (same existing
+pattern it already used for `/tmp/audio`), which is what actually prevents cross-uid permission
+failures in practice. Tests: `tests/test_secrets_utils.py` + `tests/test_secrets_wiring.py`.
 
 ## Goal
 Every integration credential ALFR3D stores today (`ha_token`, `st_pat`, Spotify client secret,
@@ -25,22 +39,25 @@ tracked as its own scoped item rather than solved piecemeal one field at a time.
 - No env-var-backed secret-key infrastructure exists anywhere in the codebase today — this would
   be new.
 
-## Design (sketch — needs real scoping before implementation)
-- Likely mechanism: Fernet (symmetric, from `cryptography.fernet`) with a key loaded from an env
-  var (e.g. `ALFR3D_SECRETS_KEY`), never committed — consistent with `AGENTS.md`'s "never modify
-  `.env`, never commit secrets" rules and `.env.example`'s role as the template.
-- Needs a `services/common/secrets_utils.py` (or similar) with `encrypt(value) -> str` /
-  `decrypt(value) -> str`, called from every `save_*_config`/`get_*_config` pair across
-  `ha_utils.py`, `st_utils.py`, `spotify_utils.py`, and (once shipped) `esphome_utils.py`.
-- **Migration problem, not just a new-write problem**: existing live databases already have
-  plaintext `ha_token`/`st_pat`/`spotify_client_secret` values in `config`. A schema/data migration
-  needs to either encrypt existing rows in place (needs the key available at migration time) or
-  the read path needs to tolerate both plaintext and encrypted values during a transition window
-  (e.g. try-decrypt-else-treat-as-plaintext) — this is real design work, not a one-line change.
-- **Key management is the actual hard part**: what generates `ALFR3D_SECRETS_KEY` initially, what
-  happens if it's lost (every stored credential becomes permanently unrecoverable — needs
-  re-entering every integration's token from the UI), whether it's per-deployment or has a rotation
-  story at all for v1. None of this is decided yet.
+## Design (scoped 2026-08-22 — open questions resolved, ready for implementation)
+- Mechanism: Fernet (symmetric, from `cryptography.fernet`) via a new
+  `services/common/secrets_utils.py` with `encrypt(value) -> str` / `decrypt(value) -> str`, called
+  from every `save_*_config`/`get_*_config` pair across `ha_utils.py`, `st_utils.py`,
+  `spotify_utils.py`, and (once shipped) `esphome_utils.py`.
+- **Key provisioning (decided)**: auto-generate `ALFR3D_SECRETS_KEY` on first boot if unset, and
+  persist it to a file inside a Docker volume (not `.env` — `.env` stays a human-edited template
+  per `AGENTS.md`, and the app itself, not this coding session, owns writing the generated key at
+  runtime). Chosen over a fail-fast/manual-setup flow specifically so a non-technical Kit buyer
+  gets a working device with zero setup steps. Tradeoff accepted explicitly: losing that volume
+  means every stored integration credential becomes permanently unrecoverable and needs
+  re-entering from the UI — document this prominently (README + first-boot log line) rather than
+  hide it. No rotation story for v1; out of scope until there's a concrete need.
+- **Migration path (decided)**: dual-read fallback, not a one-time migration script. The read path
+  tries `decrypt()` first and falls back to treating the value as plaintext if that fails; every
+  write always encrypts going forward. Zero-downtime, no explicit migration step, and the DB
+  self-heals to fully-encrypted as each credential gets naturally rewritten (e.g. next OAuth
+  refresh). Accepted tradeoff: some rows may stay plaintext indefinitely if never rewritten — fine
+  for v1 given the threat model is "DB dump leak," not "every row must be encrypted by date X."
 
 ## Explicitly out of scope for `todo_esphome.md`
 The ESPHome integration ships with `esp_psk` plaintext in `smarthome_devices`, matching the

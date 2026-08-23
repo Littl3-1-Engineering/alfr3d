@@ -3,6 +3,7 @@ import requests
 import pymysql
 
 from .db_pool import get_connection
+from . import secrets_utils
 
 logger = logging.getLogger("STLog")
 
@@ -18,6 +19,8 @@ def get_st_config():
         cursor.execute("SELECT name, value FROM config WHERE name = 'st_pat'")
         for row in cursor.fetchall():
             config[row[0]] = row[1]
+        if config.get("st_pat"):
+            config["st_pat"] = secrets_utils.decrypt_or_plaintext(config["st_pat"])
         return config
     except pymysql.Error as e:
         logger.error(f"Database error fetching ST config: {e}")
@@ -199,7 +202,10 @@ def sync_st_devices():
 def save_st_config(st_pat):
     db = get_connection()
     cursor = db.cursor()
-    cursor.execute("UPDATE config SET value = %s WHERE name = 'st_pat'", (st_pat,))
+    cursor.execute(
+        "UPDATE config SET value = %s WHERE name = 'st_pat'",
+        (secrets_utils.encrypt(st_pat),),
+    )
     db.commit()
     db.close()
     return True

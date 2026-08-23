@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Edit, Trash2, Plus, Save, X, User, Sparkles, Settings, RefreshCw } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 import socket from '../utils/socket';
 
 const usePersonality = () => {
@@ -92,7 +94,7 @@ const usePersonality = () => {
   const savePersonality = async () => {
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/personality`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/personality`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(personality),
@@ -111,7 +113,7 @@ const usePersonality = () => {
     if (!preset) return;
     setPersonality(preset);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/personality/apply-preset`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/personality/apply-preset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preset: presetName }),
@@ -126,7 +128,7 @@ const usePersonality = () => {
 
   const saveLlmConfig = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/personality/llm-config`, {
+      await apiFetch(`${API_BASE_URL}/api/personality/llm-config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(llmConfig),
@@ -198,7 +200,7 @@ const useEditQuip = (onSave) => {
 
   const handleSave = async () => {
     try {
-      const response = await fetch(API_BASE_URL + '/api/quips/' + editingId, {
+      const response = await apiFetch(API_BASE_URL + '/api/quips/' + editingId, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: editType, quips: editText, category: editCategory }),
@@ -224,7 +226,7 @@ const useAddQuip = (onSave) => {
   const handleAdd = async () => {
     if (!newType || !newText) return;
     try {
-      const response = await fetch(API_BASE_URL + '/api/quips', {
+      const response = await apiFetch(API_BASE_URL + '/api/quips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: newType, quips: newText, category: newCategory }),
@@ -275,6 +277,7 @@ TraitSlider.propTypes = {
 };
 
 const Personality = () => {
+  const { isAuthenticated } = useAuth();
   const { personality, setPersonality, presets, llmConfig, setLlmConfig, llmCallsToday, currentMood, loading, saving, savePersonality, applyPreset, saveLlmConfig, refresh } = usePersonality();
   const { quips, loading: quipsLoading, fetchQuips, categoryFilter, setCategoryFilter } = useQuips();
   const { editingId, editType, editCategory, editText, setEditType, setEditCategory, setEditText, handleEdit, handleSave, setEditingId } = useEditQuip(fetchQuips);
@@ -283,7 +286,7 @@ const Personality = () => {
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this quip?')) {
       try {
-        const response = await fetch(API_BASE_URL + '/api/quips/' + id, {
+        const response = await apiFetch(API_BASE_URL + '/api/quips/' + id, {
           method: 'DELETE',
         });
         if (response.ok) {
@@ -329,7 +332,8 @@ const Personality = () => {
             <select
               value={personality.name}
               onChange={handlePresetChange}
-              className="w-full p-2 bg-fui-dim border border-fui-border rounded text-text-primary"
+              disabled={!isAuthenticated}
+              className="w-full p-2 bg-fui-dim border border-fui-border rounded text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {presets.map((preset) => (
                 <option key={preset.name} value={preset.name}>
@@ -409,7 +413,7 @@ const Personality = () => {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={savePersonality}
-            disabled={saving}
+            disabled={saving || !isAuthenticated}
             className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-fui-accent/20 border border-fui-accent rounded-lg text-fui-accent hover:bg-fui-accent/30 transition-colors"
           >
             <Save className="w-4 h-4" />
@@ -508,7 +512,8 @@ const Personality = () => {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={saveLlmConfig}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-fui-accent/20 border border-fui-accent rounded-lg text-fui-accent hover:bg-fui-accent/30 transition-colors"
+              disabled={!isAuthenticated}
+              className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-fui-accent/20 border border-fui-accent rounded-lg text-fui-accent hover:bg-fui-accent/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save className="w-4 h-4" />
               <span>Save LLM Settings</span>
@@ -589,7 +594,8 @@ const Personality = () => {
                     <>
                       <button
                         onClick={handleSave}
-                        className="p-2 text-success hover:bg-success/20 rounded"
+                        disabled={!isAuthenticated}
+                        className="p-2 text-success hover:bg-success/20 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Save className="w-4 h-4" />
                       </button>
@@ -610,7 +616,8 @@ const Personality = () => {
                   )}
                   <button
                     onClick={() => handleDelete(quip.id)}
-                    className="p-2 text-error hover:bg-error/20 rounded"
+                    disabled={!isAuthenticated}
+                    className="p-2 text-error hover:bg-error/20 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -655,7 +662,8 @@ const Personality = () => {
               <div className="flex space-x-2">
                 <button
                   onClick={handleAdd}
-                  className="px-4 py-2 bg-success/20 border border-success rounded text-success hover:bg-success/30"
+                  disabled={!isAuthenticated}
+                  className="px-4 py-2 bg-success/20 border border-success rounded text-success hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Add
                 </button>

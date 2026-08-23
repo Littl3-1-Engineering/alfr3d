@@ -4,6 +4,7 @@ import requests
 import pymysql
 
 from .db_pool import get_connection
+from . import secrets_utils
 
 logger = logging.getLogger("HALog")
 
@@ -17,6 +18,8 @@ def get_ha_config():
         cursor.execute("SELECT name, value FROM config WHERE name IN ('ha_url', 'ha_token')")
         for row in cursor.fetchall():
             config[row[0]] = row[1]
+        if config.get("ha_token"):
+            config["ha_token"] = secrets_utils.decrypt_or_plaintext(config["ha_token"])
         return config
     except pymysql.Error as e:
         logger.error(f"Database error fetching HA config: {e}")
@@ -269,7 +272,10 @@ def save_ha_config(ha_url, ha_token):
     cursor = db.cursor()
 
     cursor.execute("UPDATE config SET value = %s WHERE name = 'ha_url'", (ha_url,))
-    cursor.execute("UPDATE config SET value = %s WHERE name = 'ha_token'", (ha_token,))
+    cursor.execute(
+        "UPDATE config SET value = %s WHERE name = 'ha_token'",
+        (secrets_utils.encrypt(ha_token),),
+    )
 
     db.commit()
     db.close()

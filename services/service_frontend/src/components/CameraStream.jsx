@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Camera, RefreshCw, AlertTriangle, Image } from 'lucide-react';
 import Hls from 'hls.js';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
 
 const STREAM_BASE = `${API_BASE_URL}/api/stream`;
 const hlsBase = (id) => `${STREAM_BASE}/hls/${id}`;
@@ -41,7 +42,7 @@ const CameraStream = () => {
 
   const startBackend = useCallback(async (id) => {
     try {
-      const res = await fetch(`${hlsBase(id)}/start`, { method: 'POST' });
+      const res = await apiFetch(`${hlsBase(id)}/start`, { method: 'POST' });
       return res.ok;
     } catch {
       return false;
@@ -50,7 +51,7 @@ const CameraStream = () => {
 
   const stopBackend = useCallback(async (id) => {
     try {
-      await fetch(`${hlsBase(id)}/stop`, { method: 'POST' });
+      await apiFetch(`${hlsBase(id)}/stop`, { method: 'POST' });
     } catch {
       // ignore
     }

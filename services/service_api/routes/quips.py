@@ -1,7 +1,7 @@
 """Quips management routes."""
 
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 import pymysql
 
 from dependencies import (
@@ -11,6 +11,7 @@ from dependencies import (
     _invalidate_cache_pattern,
 )
 from models import QuipCreate, QuipUpdate
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["quips"])
@@ -35,7 +36,7 @@ async def get_quips(category: str | None = Query(default=None)):
 
 
 @router.post("/quips", status_code=201)
-async def create_quip(data: QuipCreate):
+async def create_quip(data: QuipCreate, _perm=Depends(require_permission("quips", "create"))):
     try:
         category = data.category or "custom"
         if category not in VALID_CATEGORIES:
@@ -59,7 +60,9 @@ async def create_quip(data: QuipCreate):
 
 
 @router.put("/quips/{quip_id}")
-async def update_quip(quip_id: int, data: QuipUpdate):
+async def update_quip(
+    quip_id: int, data: QuipUpdate, _perm=Depends(require_permission("quips", "update"))
+):
     try:
         category = data.category or "custom"
         if category not in VALID_CATEGORIES:
@@ -82,7 +85,7 @@ async def update_quip(quip_id: int, data: QuipUpdate):
 
 
 @router.delete("/quips/{quip_id}")
-async def delete_quip(quip_id: int):
+async def delete_quip(quip_id: int, _perm=Depends(require_permission("quips", "delete"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()

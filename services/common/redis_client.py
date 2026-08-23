@@ -91,6 +91,23 @@ def redis_delete(key: str) -> bool:
         return False
 
 
+def redis_incr_with_ttl(key: str, ttl: int) -> Optional[int]:
+    """Atomically increments `key` and returns the new count, expiring it after `ttl` seconds if
+    this increment created the key (so a rate-limit window doesn't keep sliding on every attempt).
+    Returns None if Redis is unavailable -- callers should fail open (see auth/rate_limit.py)."""
+    r = get_redis()
+    if r is None:
+        return None
+    try:
+        count = r.incr(key)
+        if count == 1:
+            r.expire(key, ttl)
+        return count
+    except Exception as e:
+        logger.warning(f"Redis INCR error for {key}: {e}")
+        return None
+
+
 def redis_delete_pattern(pattern: str) -> int:
     """Delete all keys matching a pattern. Returns count of deleted keys."""
     r = get_redis()

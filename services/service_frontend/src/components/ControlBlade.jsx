@@ -3,8 +3,11 @@ import { X, Settings, RefreshCw, Thermometer, Lock, Unlock, Fan, Blinds, Play, P
 import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 
 const ControlBlade = ({ device, onClose, style }) => {
+  const { isAuthenticated } = useAuth();
   const [power, setPower] = useState(false);
   const [brightness, setBrightness] = useState(75);
   const [targetTemp, setTargetTemp] = useState(70);
@@ -67,7 +70,7 @@ const ControlBlade = ({ device, onClose, style }) => {
 
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/iot/devices/${device.id}/control`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/devices/${device.id}/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, ...params })
@@ -135,6 +138,7 @@ const ControlBlade = ({ device, onClose, style }) => {
   }, [sendCommand]);
 
   const isSmartHomeDevice = device?.source !== undefined;
+  const canControl = isSmartHomeDevice && isAuthenticated;
   const deviceType = device?.device_type || device?.deviceType;
 
   const renderLightControls = () => (
@@ -147,10 +151,10 @@ const ControlBlade = ({ device, onClose, style }) => {
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handlePowerToggle}
-          disabled={loading || !isSmartHomeDevice}
+          disabled={loading || !canControl}
           className={`w-12 h-6 rounded-full p-1 transition-colors ${
             power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <motion.div
             animate={{ x: power ? 18 : 0 }}
@@ -170,9 +174,9 @@ const ControlBlade = ({ device, onClose, style }) => {
           max="100"
           value={brightness}
           onChange={(e) => handleBrightnessChange(e.target.value)}
-          disabled={!isSmartHomeDevice || loading || !power}
+          disabled={!canControl || loading || !power}
           className={`w-full h-2 bg-border-secondary rounded-lg appearance-none cursor-pointer slider ${
-            (!isSmartHomeDevice || !power) ? 'opacity-50 cursor-not-allowed' : ''
+            (!canControl || !power) ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         />
       </div>
@@ -200,14 +204,14 @@ const ControlBlade = ({ device, onClose, style }) => {
         <div className="flex space-x-2">
           <button
             onClick={() => handleTemperatureChange(Math.max(50, targetTemp - 1))}
-            disabled={!isSmartHomeDevice || loading}
+            disabled={!canControl || loading}
             className="flex-1 py-2 bg-card rounded-lg text-text-secondary hover:bg-card-hover transition-colors disabled:opacity-50"
           >
             -
           </button>
           <button
             onClick={() => handleTemperatureChange(Math.min(90, targetTemp + 1))}
-            disabled={!isSmartHomeDevice || loading}
+            disabled={!canControl || loading}
             className="flex-1 py-2 bg-card rounded-lg text-text-secondary hover:bg-card-hover transition-colors disabled:opacity-50"
           >
             +
@@ -233,12 +237,12 @@ const ControlBlade = ({ device, onClose, style }) => {
       <motion.button
         whileTap={{ scale: 0.95 }}
         onClick={handleLockToggle}
-        disabled={loading || !isSmartHomeDevice}
+        disabled={loading || !canControl}
         className={`px-4 py-2 rounded-lg transition-colors ${
           lockState === 'locked'
             ? 'bg-red-600 text-white'
             : 'bg-green-600 text-white'
-        } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+        } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         {lockState === 'locked' ? 'Unlock' : 'Lock'}
       </motion.button>
@@ -256,10 +260,10 @@ const ControlBlade = ({ device, onClose, style }) => {
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handlePowerToggle}
-          disabled={loading || !isSmartHomeDevice}
+          disabled={loading || !canControl}
           className={`w-12 h-6 rounded-full p-1 transition-colors ${
             power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <motion.div
             animate={{ x: power ? 18 : 0 }}
@@ -278,7 +282,7 @@ const ControlBlade = ({ device, onClose, style }) => {
             <button
               key={speed}
               onClick={() => handleFanSpeedChange(speed)}
-              disabled={!isSmartHomeDevice || loading}
+              disabled={!canControl || loading}
               className={`flex-1 py-2 rounded-lg text-xs transition-colors ${
                 fanSpeed === speed
                   ? 'bg-primary text-white'
@@ -314,9 +318,9 @@ const ControlBlade = ({ device, onClose, style }) => {
           max="100"
           value={coverPosition}
           onChange={(e) => handleCoverPositionChange(parseInt(e.target.value, 10))}
-          disabled={!isSmartHomeDevice || loading}
+          disabled={!canControl || loading}
           className={`w-full h-2 bg-border-secondary rounded-lg appearance-none cursor-pointer slider ${
-            (!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''
+            (!canControl) ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         />
       </div>
@@ -324,14 +328,14 @@ const ControlBlade = ({ device, onClose, style }) => {
       <div className="flex space-x-2">
         <button
           onClick={() => handleCoverPositionChange(0)}
-          disabled={!isSmartHomeDevice || loading}
+          disabled={!canControl || loading}
           className="flex-1 py-2 bg-card rounded-lg text-text-secondary hover:bg-card-hover transition-colors disabled:opacity-50"
         >
           Close
         </button>
         <button
           onClick={() => handleCoverPositionChange(100)}
-          disabled={!isSmartHomeDevice || loading}
+          disabled={!canControl || loading}
           className="flex-1 py-2 bg-card rounded-lg text-text-secondary hover:bg-card-hover transition-colors disabled:opacity-50"
         >
           Open
@@ -346,10 +350,10 @@ const ControlBlade = ({ device, onClose, style }) => {
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handleMediaToggle}
-          disabled={loading || !isSmartHomeDevice}
+          disabled={loading || !canControl}
           className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors ${
             power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           {power ? (
             <Pause className="w-8 h-8 text-white" />
@@ -373,9 +377,9 @@ const ControlBlade = ({ device, onClose, style }) => {
           max="100"
           value={volume}
           onChange={(e) => handleVolumeChange(e.target.value)}
-          disabled={!isSmartHomeDevice || loading}
+          disabled={!canControl || loading}
           className={`w-full h-2 bg-border-secondary rounded-lg appearance-none cursor-pointer slider ${
-            (!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''
+            (!canControl) ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         />
       </div>
@@ -394,10 +398,10 @@ const ControlBlade = ({ device, onClose, style }) => {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handlePowerToggle}
-              disabled={loading || !isSmartHomeDevice}
+              disabled={loading || !canControl}
               className={`w-12 h-6 rounded-full p-1 transition-colors ${
                 power ? 'bg-primary' : 'bg-border-secondary'
-              } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <motion.div
                 animate={{ x: power ? 18 : 0 }}
@@ -442,10 +446,10 @@ const ControlBlade = ({ device, onClose, style }) => {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handlePowerToggle}
-              disabled={loading || !isSmartHomeDevice}
+              disabled={loading || !canControl}
               className={`w-12 h-6 rounded-full p-1 transition-colors ${
                 power ? 'bg-primary' : 'bg-border-secondary'
-              } ${(!isSmartHomeDevice) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <motion.div
                 animate={{ x: power ? 18 : 0 }}

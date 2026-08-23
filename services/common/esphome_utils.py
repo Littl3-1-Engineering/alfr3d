@@ -24,6 +24,7 @@ from aioesphomeapi import APIClient, FanSpeed, LockCommand, MediaPlayerCommand
 from zeroconf import ServiceBrowser, Zeroconf
 
 from .db_pool import get_connection
+from . import secrets_utils
 
 logger = logging.getLogger("ESPHomeLog")
 
@@ -267,7 +268,7 @@ async def accept_esphome_node_async(hostname, psk=None, name=None):
         SET accepted = TRUE, psk = %s, name = COALESCE(%s, name), accepted_at = CURRENT_TIMESTAMP
         WHERE hostname = %s
         """,
-        (psk, name, hostname),
+        (secrets_utils.encrypt(psk) if psk else psk, name, hostname),
     )
     db.commit()
     db.close()
@@ -304,6 +305,7 @@ async def control_esphome_device_async(hostname, key, domain, command, params=No
         return False, "Node not found or not accepted"
 
     ip_address, port, psk = row
+    psk = secrets_utils.decrypt_or_plaintext(psk) if psk else psk
     host = ip_address or hostname
     client = APIClient(host, port, password=None, noise_psk=psk or None)
 
@@ -447,6 +449,7 @@ async def sync_esphome_devices_async():
             psk_row = cursor.fetchone()
             db.close()
             psk = psk_row[0] if psk_row else None
+            psk = secrets_utils.decrypt_or_plaintext(psk) if psk else psk
 
             device_info, entities, states = await _fetch_node_snapshot(host, node["port"], psk)
             total += _upsert_node_entities(node["hostname"], device_info, entities, states)

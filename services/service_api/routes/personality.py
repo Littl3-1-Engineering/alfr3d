@@ -1,7 +1,7 @@
 """Personality management routes."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import pymysql
 
 from dependencies import (
@@ -12,6 +12,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import PersonalityUpdate, ContextUpdate, LLMConfigUpdate, PresetApply
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["personality"])
@@ -34,7 +35,9 @@ async def get_personality():
 
 
 @router.put("/personality")
-async def update_personality(data: PersonalityUpdate):
+async def update_personality(
+    data: PersonalityUpdate, _perm=Depends(require_permission("personality", "update"))
+):
     try:
         env_id = get_environment_id()
         with db_connection() as db:
@@ -79,7 +82,9 @@ async def get_personality_presets():
 
 
 @router.post("/personality/apply-preset")
-async def apply_personality_preset(data: PresetApply):
+async def apply_personality_preset(
+    data: PresetApply, _perm=Depends(require_permission("personality", "apply_preset"))
+):
     try:
         env_id = get_environment_id()
         with db_connection() as db:
@@ -137,7 +142,9 @@ async def get_personality_context():
 
 
 @router.put("/personality/context")
-async def update_personality_context(data: ContextUpdate):
+async def update_personality_context(
+    data: ContextUpdate, _perm=Depends(require_permission("personality", "update_context"))
+):
     try:
         env_id = get_environment_id()
         with db_connection() as db:
@@ -176,7 +183,9 @@ async def get_llm_config():
 
 
 @router.put("/personality/llm-config")
-async def update_llm_config(data: LLMConfigUpdate):
+async def update_llm_config(
+    data: LLMConfigUpdate, _perm=Depends(require_permission("personality", "update_llm_config"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()

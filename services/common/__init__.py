@@ -9,8 +9,10 @@ from .redis_client import (
     redis_set,
     redis_delete,
     redis_delete_pattern,
+    redis_incr_with_ttl,
 )
 from . import db_utils
+from . import secrets_utils
 from . import ha_utils
 from . import st_utils
 from . import spotify_utils
@@ -35,7 +37,9 @@ __all__ = [
     "redis_set",
     "redis_delete",
     "redis_delete_pattern",
+    "redis_incr_with_ttl",
     "db_utils",
+    "secrets_utils",
     "ha_utils",
     "st_utils",
     "spotify_utils",
