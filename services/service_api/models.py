@@ -186,3 +186,13 @@ class LogoutRequest(BaseModel):
 class ClaimAccountRequest(BaseModel):
     username: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminResetPasswordRequest(BaseModel):
+    user_id: int
+    new_password: str
