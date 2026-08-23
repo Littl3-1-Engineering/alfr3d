@@ -1,12 +1,44 @@
 # Plan: Authentication + RBAC for ALFR3D backend
 
-## Status: 🟡 Phases 0-3 shipped (Phase 3: 2026-08-23; Phases 0-2: 2026-08-22). Backend auth/RBAC
-complete (password login, JWT access + revocable refresh tokens, permission middleware wrapping
-all 56 write routes) and the React webapp now has a working login UI + token handling. **Phases
-4-5 remain**: Nexus Launcher login UI (scoped in `alfr3d_deck/todo/todo_auth_rbac.md`, not yet
-implemented) and hardening (rate-limiting, password-reset flow, username-enumeration protection).
-The launcher client still has no login screen, so Nexus Launcher users hit 401s on any write
-action until Phase 4 ships.
+## Status: 🟢 Phases 0-5 all shipped or implemented (Phase 5: 2026-08-23; Phase 4: 2026-08-23, in
+`alfr3d_deck`, builds clean but not yet on-device verified; Phase 3: 2026-08-23; Phases 0-2:
+2026-08-22). Backend auth/RBAC complete (password login, JWT access + revocable refresh tokens,
+permission middleware wrapping all 56 write routes, rate limiting, no username-enumeration on
+login or claim, self-service + admin password change/reset), the React webapp has a working login
+UI + token handling with route-level gating, and the Nexus Launcher has sign-in inside Settings
+(device control, resident CRUD, and manual routine run/edit all require it; everything else in the
+launcher, ALFR3D-related reads included, works fully signed out).
+
+### What shipped (Phase 5, hardening — 2026-08-23)
+`services/common/redis_client.py` gained `redis_incr_with_ttl` (atomic `INCR`+`EXPIRE`, fails soft
+to `None` like every other Redis helper here). New `services/service_api/auth/rate_limit.py` —
+`check_rate_limit(key, max_attempts, window_seconds)`, fails **open** if Redis is unavailable (a
+deliberate tradeoff for a self-hosted household app, not a public multi-tenant target — documented
+in the module's own doc). Wired into `auth/routes.py`'s `login` (5 attempts/15min, keyed by
+IP+username so one person's typos can't lock out the whole household) and `claim` (10
+attempts/15min, keyed by IP) — both 429 with a generic "Too many attempts" detail on trip.
+
+**Enumeration audit**: `login` already returned a uniform 401 for unknown-user vs. wrong-password
+(no code change needed there, just confirmed via the existing test pair). `claim` did leak —
+404 "User not found" vs. 409 "Account already claimed" — now unified into a single generic 400
+"Unable to claim this account" for both cases.
+
+**Password change/reset** (no email/SMTP capability exists anywhere in this codebase — grepped,
+zero hits — so a traditional emailed-reset-link flow was out of scope; matches the household trust
+model already used elsewhere instead): `POST /api/auth/change-password` (self-service, any
+authenticated user, current-password-verified, revokes all other sessions and returns a fresh
+token pair so the caller's own session keeps working) and `POST /api/auth/admin-reset-password`
+(technoking-only via the existing `users`/`"*"` permission grant — no new permissions-matrix entry
+needed, it would've just duplicated the same role set), both via new `ChangePasswordRequest`/
+`AdminResetPasswordRequest` models and a shared `_validate_new_password` 8-char-minimum helper.
+New `auth/tokens.py` function: `revoke_all_refresh_tokens(user_id)`.
+
+Tests: 22 new cases in `tests/test_auth.py` (rate-limit unit tests, claim's unified error on both
+paths, change-password wrong-password/success, admin-reset-password unknown-user/success) — all
+existing `login`/`claim_account` call sites updated for the new `request` parameter and an autouse
+fixture bypassing rate-limiting by default so it doesn't need patching in every unrelated test.
+Full suite (243 passed, 9 pre-existing skips for unavailable local MySQL) + `./lint.sh` (flake8 +
+black + ESLint across every service) both clean.
 
 ### What shipped (Phase 3, webapp — 2026-08-23)
 `services/service_frontend`: `src/utils/authStore.js` (plain-module token store; access token
@@ -118,9 +150,14 @@ Given this is currently a solo-household system (not yet a hosted multi-tenant p
   routes across `services/service_api/routes/*`. Grep-audit confirmed 56/56 have it.
 - ✅ **Phase 3 — webapp** (shipped 2026-08-23): login UI, token handling, view-only mode for
   anonymous/under-permissioned users.
-- 🔲 **Phase 4 — launcher**: login screen, token storage, view-only mode (scoped in
-  `alfr3d_deck/todo/todo_auth_rbac.md`, created 2026-08-22 — not yet started).
-- 🔲 **Phase 5 — hardening**: login rate-limiting, no username-enumeration on failed login, password reset flow. (The route-coverage audit itself was pulled forward into Phase 2's completion check rather than left for Phase 5.)
+- 🟡 **Phase 4 — launcher** (implemented 2026-08-23 in `alfr3d_deck/todo/todo_auth_rbac.md`):
+  login screen (in Settings, not an overlay/window), Keystore-backed token storage, write-affordance
+  gating. Builds clean; on-device verification still pending (no connected device that session).
+- ✅ **Phase 5 — hardening** (shipped 2026-08-23): login/claim rate-limiting, no
+  username-enumeration on failed login or claim, self-service + admin-assisted password
+  change/reset (no email-based flow — no SMTP capability exists in this codebase). (The
+  route-coverage audit itself was pulled forward into Phase 2's completion check rather than left
+  for Phase 5.)
 
 ### 6. Deferred: user model `gender` field
 **Decided 2026-08-22: deferred, not part of this work.** No `gender` column exists today, and nothing in the codebase (personality engine, TTS, etc.) currently references gender or pronouns. It's independent of RBAC's actual goal (authn/authz) — revisit only if/when the personality or TTS layer has a concrete personalization use case that needs it, not bundled into the Phase 1 migration just because it touches the same table.

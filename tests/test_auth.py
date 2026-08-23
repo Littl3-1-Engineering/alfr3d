@@ -26,8 +26,36 @@ os.environ.setdefault(
     "8pS1sOe6r8kM2v3z1Q5X0jz3n5aQ6l1V9j0k3m0zQeM=",  # pragma: allowlist secret
 )  # fixed test-only Fernet key, not a real credential
 
-from auth import dependencies, jwt_utils, password_utils, permissions, routes, tokens  # noqa: E402
-from models import ClaimAccountRequest, LoginRequest, LogoutRequest, RefreshRequest  # noqa: E402
+from auth import (
+    dependencies,
+    jwt_utils,
+    password_utils,
+    permissions,
+    rate_limit,
+    routes,
+    tokens,
+)  # noqa: E402
+from models import (  # noqa: E402
+    AdminResetPasswordRequest,
+    ChangePasswordRequest,
+    ClaimAccountRequest,
+    LoginRequest,
+    LogoutRequest,
+    RefreshRequest,
+)
+
+
+def _mock_request(ip="127.0.0.1"):
+    req = MagicMock()
+    req.client.host = ip
+    return req
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit(monkeypatch):
+    """Every test gets an un-throttled login/claim by default -- the dedicated rate-limit tests
+    below override this within their own `with patch.object(...)` block."""
+    monkeypatch.setattr(routes, "check_rate_limit", lambda *a, **k: True)
 
 
 # --- password_utils --------------------------------------------------------------------------
@@ -216,20 +244,57 @@ def test_claim_account_rejects_already_claimed_user():
                 routes.claim_account(
                     ClaimAccountRequest(
                         username="athos", password="newpassword"  # pragma: allowlist secret
-                    )
+                    ),
+                    _mock_request(),
                 )
             )
-    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unable to claim this account"
+
+
+def test_claim_account_rejects_unknown_user_with_same_generic_error():
+    """Same status/detail as the already-claimed case above -- proves the two aren't
+    distinguishable from the response, i.e. no username-enumeration channel on this endpoint."""
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.return_value = None
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.claim_account(
+                    ClaimAccountRequest(
+                        username="ghost", password="newpassword123"  # pragma: allowlist secret
+                    ),
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unable to claim this account"
 
 
 def test_claim_account_rejects_short_password():
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(
             routes.claim_account(
-                ClaimAccountRequest(username="athos", password="short")  # pragma: allowlist secret
+                ClaimAccountRequest(username="athos", password="short"),  # pragma: allowlist secret
+                _mock_request(),
             )
         )
     assert exc_info.value.status_code == 400
+
+
+def test_claim_account_rejects_when_rate_limited():
+    with patch.object(routes, "check_rate_limit", return_value=False):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.claim_account(
+                    ClaimAccountRequest(
+                        username="athos", password="newpassword123"  # pragma: allowlist secret
+                    ),
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 429
 
 
 def test_claim_account_sets_password_and_issues_tokens_for_unclaimed_user():
@@ -242,7 +307,8 @@ def test_claim_account_sets_password_and_issues_tokens_for_unclaimed_user():
                 routes.claim_account(
                     ClaimAccountRequest(
                         username="unknown", password="newpassword123"  # pragma: allowlist secret
-                    )
+                    ),
+                    _mock_request(),
                 )
             )
     assert result["refresh_token"] == "refresh-token-value"
@@ -264,7 +330,8 @@ def test_login_rejects_wrong_password():
                 routes.login(
                     LoginRequest(
                         username="athos", password="wrong-guess"  # pragma: allowlist secret
-                    )
+                    ),
+                    _mock_request(),
                 )
             )
     assert exc_info.value.status_code == 401
@@ -278,10 +345,23 @@ def test_login_rejects_unknown_user():
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(
                 routes.login(
-                    LoginRequest(username="ghost", password="anything")  # pragma: allowlist secret
+                    LoginRequest(username="ghost", password="anything"),  # pragma: allowlist secret
+                    _mock_request(),
                 )
             )
     assert exc_info.value.status_code == 401
+
+
+def test_login_rejects_when_rate_limited():
+    with patch.object(routes, "check_rate_limit", return_value=False):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.login(
+                    LoginRequest(username="athos", password="anything"),  # pragma: allowlist secret
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 429
 
 
 def test_login_succeeds_and_issues_tokens_for_correct_password():
@@ -295,7 +375,8 @@ def test_login_succeeds_and_issues_tokens_for_correct_password():
                 routes.login(
                     LoginRequest(
                         username="athos", password="the-real-password"  # pragma: allowlist secret
-                    )
+                    ),
+                    _mock_request(),
                 )
             )
     assert result["refresh_token"] == "refresh-token-value"
@@ -332,3 +413,142 @@ def test_refresh_rotates_token_and_issues_new_access_token():
     payload = jwt_utils.decode_access_token(result["access_token"])
     assert payload["sub"] == "9"
     assert payload["type"] == "resident"
+
+
+# --- rate_limit --------------------------------------------------------------------------------
+
+
+def test_check_rate_limit_allows_within_budget():
+    with patch.object(rate_limit, "redis_incr_with_ttl", return_value=3):
+        assert rate_limit.check_rate_limit("k", max_attempts=5, window_seconds=60) is True
+
+
+def test_check_rate_limit_blocks_after_max_attempts():
+    with patch.object(rate_limit, "redis_incr_with_ttl", return_value=6):
+        assert rate_limit.check_rate_limit("k", max_attempts=5, window_seconds=60) is False
+
+
+def test_check_rate_limit_fails_open_when_redis_unavailable():
+    with patch.object(rate_limit, "redis_incr_with_ttl", return_value=None):
+        assert rate_limit.check_rate_limit("k", max_attempts=5, window_seconds=60) is True
+
+
+# --- routes: /auth/change-password --------------------------------------------------------------
+
+
+def test_change_password_rejects_short_new_password():
+    user = dependencies.CurrentUser(id=1, type="resident")
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            routes.change_password(
+                ChangePasswordRequest(
+                    current_password="whatever", new_password="short"  # pragma: allowlist secret
+                ),
+                user=user,
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+
+def test_change_password_rejects_wrong_current_password():
+    mock_db = MagicMock()
+    seeded_hash = password_utils.hash_password("the-real-password")
+    mock_db.cursor.return_value.fetchone.return_value = (seeded_hash,)
+    user = dependencies.CurrentUser(id=1, type="resident")
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.change_password(
+                    ChangePasswordRequest(
+                        current_password="wrong-guess",  # pragma: allowlist secret
+                        new_password="brand-new-password",  # pragma: allowlist secret
+                    ),
+                    user=user,
+                )
+            )
+    assert exc_info.value.status_code == 401
+
+
+def test_change_password_succeeds_and_revokes_other_sessions():
+    mock_db = MagicMock()
+    seeded_hash = password_utils.hash_password("the-real-password")
+    mock_db.cursor.return_value.fetchone.return_value = (seeded_hash,)
+    user = dependencies.CurrentUser(id=1, type="technoking")
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with patch.object(tokens, "revoke_all_refresh_tokens") as mock_revoke_all:
+            with patch.object(tokens, "issue_refresh_token", return_value="fresh-refresh"):
+                result = asyncio.run(
+                    routes.change_password(
+                        ChangePasswordRequest(
+                            current_password="the-real-password",  # pragma: allowlist secret
+                            new_password="brand-new-password",  # pragma: allowlist secret
+                        ),
+                        user=user,
+                    )
+                )
+    mock_revoke_all.assert_called_once_with(1)
+    assert result["refresh_token"] == "fresh-refresh"
+    payload = jwt_utils.decode_access_token(result["access_token"])
+    assert payload["sub"] == "1"
+    assert payload["type"] == "technoking"
+    update_call = [
+        c for c in mock_db.cursor.return_value.execute.call_args_list if "UPDATE user" in c.args[0]
+    ][0]
+    assert update_call.args[1][1] == 1  # user_id
+
+
+# --- routes: /auth/admin-reset-password ----------------------------------------------------------
+
+
+def test_admin_reset_password_rejects_short_password():
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            routes.admin_reset_password(
+                AdminResetPasswordRequest(
+                    user_id=2, new_password="short"
+                ),  # pragma: allowlist secret
+                _perm=dependencies.CurrentUser(id=1, type="technoking"),
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+
+def test_admin_reset_password_rejects_unknown_user():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.return_value = None
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.admin_reset_password(
+                    AdminResetPasswordRequest(
+                        user_id=999, new_password="brand-new-password"  # pragma: allowlist secret
+                    ),
+                    _perm=dependencies.CurrentUser(id=1, type="technoking"),
+                )
+            )
+    assert exc_info.value.status_code == 404
+
+
+def test_admin_reset_password_sets_new_hash_and_revokes_target_sessions():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.return_value = (2,)
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with patch.object(tokens, "revoke_all_refresh_tokens") as mock_revoke_all:
+            result = asyncio.run(
+                routes.admin_reset_password(
+                    AdminResetPasswordRequest(
+                        user_id=2, new_password="brand-new-password"  # pragma: allowlist secret
+                    ),
+                    _perm=dependencies.CurrentUser(id=1, type="technoking"),
+                )
+            )
+    mock_revoke_all.assert_called_once_with(2)
+    assert result == {"success": True}
+    update_call = [
+        c for c in mock_db.cursor.return_value.execute.call_args_list if "UPDATE user" in c.args[0]
+    ][0]
+    assert update_call.args[1][1] == 2  # user_id

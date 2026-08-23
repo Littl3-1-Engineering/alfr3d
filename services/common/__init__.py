@@ -9,6 +9,7 @@ from .redis_client import (
     redis_set,
     redis_delete,
     redis_delete_pattern,
+    redis_incr_with_ttl,
 )
 from . import db_utils
 from . import secrets_utils
@@ -36,6 +37,7 @@ __all__ = [
     "redis_set",
     "redis_delete",
     "redis_delete_pattern",
+    "redis_incr_with_ttl",
     "db_utils",
     "secrets_utils",
     "ha_utils",

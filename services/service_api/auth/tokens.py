@@ -54,3 +54,17 @@ def revoke_refresh_token(raw_token):
             (_hash(raw_token),),
         )
         db.commit()
+
+
+def revoke_all_refresh_tokens(user_id):
+    """Revokes every still-active refresh token for a user -- used after a password change/reset
+    so every other session is forced to re-login, the expected security property when a password
+    was just changed (deliberately, or because it may have been compromised)."""
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute(
+            "UPDATE refresh_tokens SET revoked_at = UTC_TIMESTAMP() "
+            "WHERE user_id = %s AND revoked_at IS NULL",
+            (user_id,),
+        )
+        db.commit()
