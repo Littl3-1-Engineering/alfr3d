@@ -76,6 +76,17 @@ def test_password_verify_rejects_empty_or_none_hash():
     assert password_utils.verify_password("anything", None) is False
 
 
+def test_password_hash_fits_the_password_hash_column_and_uses_pbkdf2():
+    """Regression test: werkzeug 3.1.6 (the version actually pinned in requirements.txt)
+    defaults generate_password_hash() to `scrypt`, whose output doesn't fit `user.password_hash`
+    (VARCHAR(128)) and would fail the UPDATE/INSERT outright -- found by exercising the real
+    claim/change-password/admin-reset-password paths against a live deployment. hash_password
+    must keep pinning `method="pbkdf2:sha256"` explicitly, not rely on werkzeug's default."""
+    hashed = password_utils.hash_password("some-reasonable-password")
+    assert hashed.startswith("pbkdf2:sha256:")
+    assert len(hashed) <= 128
+
+
 def test_password_verify_accepts_pre_existing_werkzeug_hash():
     """user id=1's seeded hash format -- confirms we didn't silently pick an incompatible
     hashing scheme (see setup/createTables.sql's seed row and migration_022's data fix)."""

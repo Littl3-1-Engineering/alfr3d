@@ -1,13 +1,22 @@
 # Plan: Authentication + RBAC for ALFR3D backend
 
-## Status: 🟢 Phases 0-5 all shipped or implemented (Phase 5: 2026-08-23; Phase 4: 2026-08-23, in
-`alfr3d_deck`, builds clean but not yet on-device verified; Phase 3: 2026-08-23; Phases 0-2:
-2026-08-22). Backend auth/RBAC complete (password login, JWT access + revocable refresh tokens,
-permission middleware wrapping all 56 write routes, rate limiting, no username-enumeration on
-login or claim, self-service + admin password change/reset), the React webapp has a working login
-UI + token handling with route-level gating, and the Nexus Launcher has sign-in inside Settings
-(device control, resident CRUD, and manual routine run/edit all require it; everything else in the
-launcher, ALFR3D-related reads included, works fully signed out).
+## Status: 🟢 Phases 0-5 all shipped and on-device verified (Phase 4 on-device verification:
+2026-08-23, same day as everything else). Backend auth/RBAC complete (password login, JWT access +
+revocable refresh tokens, permission middleware wrapping all 56 write routes, rate limiting, no
+username-enumeration on login or claim, self-service + admin password change/reset), the React
+webapp has a working login UI + token handling with route-level gating, and the Nexus Launcher has
+sign-in inside Settings (device control, resident CRUD, and manual routine run/edit all require it;
+everything else in the launcher, ALFR3D-related reads included, works fully signed out) — confirmed
+end-to-end on a real device against a locally-deployed backend instance.
+
+**Real bug found and fixed during that on-device verification**: werkzeug 3.1.6 (the version
+actually pinned in `services/service_api/requirements.txt`) changed `generate_password_hash()`'s
+default method to `scrypt`, whose output (~200+ chars) doesn't fit `user.password_hash`'s
+`VARCHAR(128)` column — every claim/change-password/admin-reset-password call would have failed
+with a raw MySQL `DataError` in production, not just on this test deployment. `auth/password_utils.py`
+now pins `method="pbkdf2:sha256"` explicitly rather than relying on werkzeug's default; a
+regression test (`test_password_hash_fits_the_password_hash_column_and_uses_pbkdf2`) was added to
+`tests/test_auth.py` to catch a future werkzeug default change before it reaches prod again.
 
 ### What shipped (Phase 5, hardening — 2026-08-23)
 `services/common/redis_client.py` gained `redis_incr_with_ttl` (atomic `INCR`+`EXPIRE`, fails soft
@@ -150,9 +159,10 @@ Given this is currently a solo-household system (not yet a hosted multi-tenant p
   routes across `services/service_api/routes/*`. Grep-audit confirmed 56/56 have it.
 - ✅ **Phase 3 — webapp** (shipped 2026-08-23): login UI, token handling, view-only mode for
   anonymous/under-permissioned users.
-- 🟡 **Phase 4 — launcher** (implemented 2026-08-23 in `alfr3d_deck/todo/todo_auth_rbac.md`):
-  login screen (in Settings, not an overlay/window), Keystore-backed token storage, write-affordance
-  gating. Builds clean; on-device verification still pending (no connected device that session).
+- ✅ **Phase 4 — launcher** (shipped and on-device verified 2026-08-23, see
+  `alfr3d_deck/todo/todo_auth_rbac.md`): login screen (in Settings, not an overlay/window),
+  Keystore-backed token storage, write-affordance gating. Confirmed end-to-end on a real device
+  against a live local backend instance.
 - ✅ **Phase 5 — hardening** (shipped 2026-08-23): login/claim rate-limiting, no
   username-enumeration on failed login or claim, self-service + admin-assisted password
   change/reset (no email-based flow — no SMTP capability exists in this codebase). (The
