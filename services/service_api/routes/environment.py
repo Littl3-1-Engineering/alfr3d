@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import pymysql
 
 from dependencies import (
@@ -14,6 +14,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import EnvironmentUpdate
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["environment"])
@@ -50,7 +51,9 @@ async def get_environment():
 
 
 @router.put("/environment")
-async def update_environment(data: EnvironmentUpdate):
+async def update_environment(
+    data: EnvironmentUpdate, _perm=Depends(require_permission("environment", "update"))
+):
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -129,7 +132,7 @@ async def get_calendar_events():
 
 
 @router.post("/environment/reset")
-async def reset_environment():
+async def reset_environment(_perm=Depends(require_permission("environment", "reset"))):
     try:
         with db_connection() as db:
             cursor = db.cursor()

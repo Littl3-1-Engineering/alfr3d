@@ -3,6 +3,7 @@
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
       ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
@@ -11,6 +12,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
+    restart: unless-stopped
     # Kafka depends on Zookeeper for cluster coordination and metadata management
     depends_on:
       - zookeeper
@@ -34,6 +36,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -46,6 +49,7 @@ services:
 
   mysql:
     image: mysql:8.0
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_NAME}
@@ -110,6 +114,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - audio_data:/tmp/audio
+      - secrets_data:/secrets
       - .:/project:ro
     privileged: true
     env_file: .env
@@ -128,6 +133,8 @@ services:
     # Host network mode and root required for ARP scanning
     network_mode: host
     restart: unless-stopped
+    volumes:
+      - secrets_data:/secrets
     env_file: .env
     environment:
       - MYSQL_DATABASE=localhost
@@ -236,3 +243,4 @@ volumes:
   mysql_data:
   audio_data:
   redis_data:
+  secrets_data:

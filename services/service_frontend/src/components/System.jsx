@@ -3,6 +3,8 @@ import { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { Terminal, ChevronRight, Network, Database, FileCode2, RefreshCw, Download, Save, Power, Server } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 import socket from '../utils/socket';
 
 const Section = ({ icon: Icon, title, children, defaultOpen = false }) => {
@@ -32,6 +34,7 @@ Section.propTypes = {
 };
 
 const System = () => {
+  const { isAuthenticated } = useAuth();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -88,7 +91,7 @@ const System = () => {
   const handleBackup = async () => {
     setDbBackingUp(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/system/database/backup`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE_URL}/api/system/database/backup`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         alert(`Backup completed: ${(data.databases || []).join(', ')}`);
@@ -105,7 +108,7 @@ const System = () => {
   const handleConfigSave = async () => {
     setConfigSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/system/config`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/system/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: config }),
@@ -128,7 +131,7 @@ const System = () => {
     if (!window.confirm(`Restart ${name}?`)) return;
     setRestarting(prev => ({ ...prev, [name]: true }));
     try {
-      const res = await fetch(`${API_BASE_URL}/api/system/services/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE_URL}/api/system/services/${encodeURIComponent(name)}/restart`, { method: 'POST' });
       if (res.ok) {
         alert(`Restart triggered: ${name}`);
         setTimeout(fetchServices, 4000);
@@ -309,7 +312,7 @@ const System = () => {
                 </div>
                 <button
                   onClick={handleBackup}
-                  disabled={dbBackingUp || !database.connected}
+                  disabled={dbBackingUp || !database.connected || !isAuthenticated}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-fui-text hover:bg-card-hover/50 hover:text-primary transition-colors disabled:opacity-50"
                 >
                   <Download className={`w-3.5 h-3.5 ${dbBackingUp ? 'animate-pulse' : ''}`} />
@@ -340,7 +343,7 @@ const System = () => {
               </span>
               <button
                 onClick={handleConfigSave}
-                disabled={!configDirty || configSaving}
+                disabled={!configDirty || configSaving || !isAuthenticated}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/20 border border-primary rounded-lg text-xs text-primary hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -369,7 +372,7 @@ const System = () => {
                 </div>
                 <button
                   onClick={() => handleRestart(service.name)}
-                  disabled={restarting[service.name]}
+                  disabled={restarting[service.name] || !isAuthenticated}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-fui-text hover:bg-card-hover/50 hover:text-primary transition-colors disabled:opacity-50 ml-2"
                 >
                   <Power className={`w-3.5 h-3.5 ${restarting[service.name] ? 'animate-spin' : ''}`} />

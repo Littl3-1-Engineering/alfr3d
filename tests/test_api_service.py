@@ -14,6 +14,10 @@ os.environ.setdefault("MYSQL_PSWD", "testrootpassword")
 os.environ.setdefault("MYSQL_NAME", "test_alfr3d_db")
 os.environ.setdefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 os.environ.setdefault("ALFR3D_ENV_NAME", "test")
+os.environ.setdefault(
+    "ALFR3D_SECRETS_KEY",
+    "8pS1sOe6r8kM2v3z1Q5X0jz3n5aQ6l1V9j0k3m0zQeM=",  # pragma: allowlist secret
+)  # fixed test-only Fernet key, not a real credential
 
 
 @pytest.fixture(scope="session")
@@ -173,3 +177,60 @@ def test_api_get_now_playing_defaults_when_nothing_persisted(mock_db_connection,
         "is_playing": False,
         "updated_at": None,
     }
+
+
+# --- Auth/RBAC wiring: every write route requires a token + the right role (todo_auth_rbac.md) --
+
+
+def _bearer(user_id, user_type):
+    from auth import jwt_utils
+
+    token = jwt_utils.create_access_token(user_id, user_type)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_write_route_rejects_unauthenticated_request(api_client):
+    """A resident-allowed write route (POST /api/devices) with no Authorization header at
+    all -- proves require_permission's dependency chain runs before the route body, not just
+    that individual functions behave correctly in isolation (see test_auth.py for those)."""
+    response = api_client.post("/api/devices", json={"name": "lamp", "type": "light"})
+    assert response.status_code == 401
+
+
+def test_write_route_rejects_guest_role_token(api_client):
+    """guest == unauthenticated by design -- must 403, not silently succeed."""
+    response = api_client.post(
+        "/api/devices",
+        json={"name": "lamp", "type": "light"},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+def test_technoking_only_route_rejects_resident_token(api_client):
+    """PUT /api/system/config is technoking-only -- a resident token must 403, proving the
+    per-resource role split (not just "any authenticated user passes")."""
+    response = api_client.put(
+        "/api/system/config", json={"key": "x"}, headers=_bearer(2, "resident")
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.devices.db_connection")
+def test_write_route_succeeds_for_permitted_resident_token(mock_db_connection, api_client):
+    """A resident token on a resident-allowed resource makes it all the way through
+    require_permission into the actual route body."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [(1,), (1,), (1,)]  # state, type, environment lookups
+    mock_cursor.lastrowid = 42
+
+    response = api_client.post(
+        "/api/devices",
+        json={"name": "lamp", "type": "light"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 201
+    assert response.json()["id"] == 42

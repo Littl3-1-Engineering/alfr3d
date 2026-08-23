@@ -3,10 +3,11 @@
 import logging
 
 import orjson
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from common import spotify_utils, db_connection, db_utils
 from dependencies import ALFR3D_ENV_NAME
+from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["music"])
@@ -111,7 +112,7 @@ async def get_auth():
 
 
 @router.post("/music/spotify/auth")
-async def save_credentials(data: dict):
+async def save_credentials(data: dict, _perm=Depends(require_permission("music", "auth"))):
     """Store Spotify client credentials (client_id, client_secret, redirect_uri)."""
     try:
         client_id = (data.get("client_id") or "").strip()
@@ -148,7 +149,7 @@ async def auth_callback(code: str = Query(default=""), error: str = Query(defaul
 
 
 @router.post("/music/spotify/play")
-async def play(data: dict = None):
+async def play(data: dict = None, _perm=Depends(require_permission("music", "play"))):
     try:
         data = data or {}
         ok, err = spotify_utils.play(
@@ -182,7 +183,7 @@ async def get_track_analysis(track_id: str):
 
 
 @router.post("/music/spotify/pause")
-async def pause():
+async def pause(_perm=Depends(require_permission("music", "pause"))):
     try:
         ok, err = spotify_utils.pause()
         if not ok:
@@ -194,7 +195,7 @@ async def pause():
 
 
 @router.post("/music/spotify/next")
-async def next_track():
+async def next_track(_perm=Depends(require_permission("music", "next"))):
     try:
         ok, err = spotify_utils.next_track()
         if not ok:
@@ -206,7 +207,7 @@ async def next_track():
 
 
 @router.post("/music/spotify/previous")
-async def previous_track():
+async def previous_track(_perm=Depends(require_permission("music", "previous"))):
     try:
         ok, err = spotify_utils.previous_track()
         if not ok:
@@ -218,7 +219,7 @@ async def previous_track():
 
 
 @router.post("/music/spotify/seek")
-async def seek(data: dict):
+async def seek(data: dict, _perm=Depends(require_permission("music", "seek"))):
     try:
         position_ms = int(data.get("position_ms", 0))
         ok, err = spotify_utils.seek(position_ms, data.get("device_id"))
@@ -233,7 +234,7 @@ async def seek(data: dict):
 
 
 @router.post("/music/spotify/volume")
-async def volume(data: dict):
+async def volume(data: dict, _perm=Depends(require_permission("music", "volume"))):
     try:
         percent = int(data.get("volume_percent", 0))
         ok, err = spotify_utils.set_volume(percent, data.get("device_id"))
@@ -260,7 +261,7 @@ async def queue():
 
 
 @router.post("/music/spotify/queue/add")
-async def add_to_queue(data: dict):
+async def add_to_queue(data: dict, _perm=Depends(require_permission("music", "queue_add"))):
     try:
         uri = data.get("uri")
         if not uri:
@@ -289,7 +290,7 @@ async def devices():
 
 
 @router.post("/music/spotify/device")
-async def transfer(data: dict):
+async def transfer(data: dict, _perm=Depends(require_permission("music", "transfer"))):
     try:
         device_id = data.get("device_id")
         if not device_id:
@@ -411,7 +412,7 @@ async def refresh_recommendations():
 
 
 @router.post("/music/history")
-async def record_history(data: dict):
+async def record_history(data: dict, _perm=Depends(require_permission("music", "record_history"))):
     """Record a played track so the recommender can learn preferences."""
     try:
         from common import recommender_engine
@@ -449,7 +450,7 @@ async def get_speakers():
 
 
 @router.post("/music/cast")
-async def cast(data: dict):
+async def cast(data: dict, _perm=Depends(require_permission("music", "cast"))):
     """Cast current playback to a speaker or group."""
     try:
         from common import audio_cast
@@ -475,7 +476,7 @@ async def cast(data: dict):
 
 
 @router.post("/music/cast/stop")
-async def stop_cast():
+async def stop_cast(_perm=Depends(require_permission("music", "cast_stop"))):
     try:
         from common import audio_cast
 
@@ -489,7 +490,7 @@ async def stop_cast():
 
 
 @router.post("/music/speakers/groups")
-async def manage_groups(data: dict):
+async def manage_groups(data: dict, _perm=Depends(require_permission("music", "manage_groups"))):
     """Create/replace a speaker group."""
     try:
         from common import audio_cast
@@ -509,7 +510,7 @@ async def manage_groups(data: dict):
 
 
 @router.post("/music/cast/volume")
-async def cast_volume(data: dict):
+async def cast_volume(data: dict, _perm=Depends(require_permission("music", "cast_volume"))):
     """Set volume on a speaker or a group."""
     try:
         from common import audio_cast

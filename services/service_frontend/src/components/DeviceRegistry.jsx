@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Monitor, AlertTriangle, Link2, Unlink, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 import socket from '../utils/socket';
 import { sortByOnlineState } from '../utils/sortUtils';
 
 const USER_DEVICE_TYPES = ['HW', 'guest', 'resident'];
 
 const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
+  const { isAuthenticated } = useAuth();
   // stream_url is write-only (holds RTSP credentials) -- never pre-filled from the device
   // list, so it starts blank even for an already-configured camera. Left blank on save,
   // the existing value is left untouched; typing a new value overwrites it.
@@ -103,7 +106,8 @@ const EditableDeviceCard = ({ device, users, deviceTypes, onSave }) => {
           <div className="flex space-x-2 pt-2">
             <button
               onClick={handleSave}
-              className="flex-1 px-3 py-1.5 bg-success/20 border border-success rounded text-success text-sm hover:bg-success/30"
+              disabled={!isAuthenticated}
+              className="flex-1 px-3 py-1.5 bg-success/20 border border-success rounded text-success text-sm hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save
             </button>
@@ -162,6 +166,7 @@ EditableDeviceCard.propTypes = {
 };
 
 const DeviceRegistry = () => {
+  const { isAuthenticated } = useAuth();
   const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
   const [deviceTypes, setDeviceTypes] = useState([]);
@@ -246,7 +251,7 @@ const DeviceRegistry = () => {
         payload.stream_url = updatedDevice.stream_url;
       }
 
-      await fetch(`${API_BASE_URL}/api/devices/${updatedDevice.id}`, {
+      await apiFetch(`${API_BASE_URL}/api/devices/${updatedDevice.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -260,7 +265,7 @@ const DeviceRegistry = () => {
 
   const handleLinkDevice = async (iotDeviceId, targetDeviceId) => {
     try {
-      await fetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
+      await apiFetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: targetDeviceId }),
@@ -274,7 +279,7 @@ const DeviceRegistry = () => {
 
   const handleUnlinkDevice = async (iotDeviceId) => {
     try {
-      await fetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
+      await apiFetch(`${API_BASE_URL}/api/iot/devices/${iotDeviceId}/link`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: null }),
@@ -382,7 +387,8 @@ const DeviceRegistry = () => {
                   {device.linked ? (
                     <button
                       onClick={() => handleUnlinkDevice(device.id)}
-                      className="p-1.5 hover:bg-card-hover rounded text-text-tertiary hover:text-error"
+                      disabled={!isAuthenticated}
+                      className="p-1.5 hover:bg-card-hover rounded text-text-tertiary hover:text-error disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Unlink"
                     >
                       <Unlink className="w-4 h-4" />
@@ -443,7 +449,8 @@ const DeviceRegistry = () => {
                 <button
                   key={device.id}
                   onClick={() => handleLinkDevice(linkModalDevice.id, device.id)}
-                  className="w-full p-3 bg-card hover:bg-card-hover rounded-lg text-left transition-colors"
+                  disabled={!isAuthenticated}
+                  className="w-full p-3 bg-card hover:bg-card-hover rounded-lg text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="font-medium text-text-primary">{device.name}</div>
                   <div className="text-sm text-text-tertiary">{device.type} | IP: {device.ip}</div>
