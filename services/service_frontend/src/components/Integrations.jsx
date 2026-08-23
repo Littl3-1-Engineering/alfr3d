@@ -2,6 +2,8 @@ import { motion } from 'framer-motion';
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, AlertTriangle, Settings, RefreshCw, X, Radar, Trash2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 
 const integrationsList = [
   { id: 1, name: 'Home Assistant', integrationType: 'iot_ha', logo: '/assets/logos/homeassistant.svg', description: 'Local smart home control', configurable: true },
@@ -20,6 +22,7 @@ const integrationsList = [
 const ESPHOME_ID = 11;
 
 const Integrations = () => {
+  const { isAuthenticated } = useAuth();
   const [integrations, setIntegrations] = useState(integrationsList);
   const [syncing, setSyncing] = useState({});
   const [configModal, setConfigModal] = useState(null);
@@ -46,7 +49,7 @@ const Integrations = () => {
   const handleEspDiscover = async () => {
     setEspScanning(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/discover`, { method: 'POST' });
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/esphome/discover`, { method: 'POST' });
       if (!response.ok) alert('ESPHome discovery failed');
       await fetchEspNodes();
     } catch (error) {
@@ -59,7 +62,7 @@ const Integrations = () => {
   const handleEspAccept = async (hostname) => {
     const form = espAcceptForm[hostname] || {};
     try {
-      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}/accept`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ psk: form.psk || null, name: form.name || null }),
@@ -77,7 +80,7 @@ const Integrations = () => {
 
   const handleEspRemove = async (hostname) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/esphome/nodes/${encodeURIComponent(hostname)}`, {
         method: 'DELETE',
       });
       if (response.ok) {
@@ -155,7 +158,7 @@ const Integrations = () => {
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: 'POST' });
+      const response = await apiFetch(`${API_BASE_URL}${endpoint}`, { method: 'POST' });
       if (response.ok) {
         alert(`${integration.name} sync triggered successfully`);
       } else {
@@ -185,7 +188,7 @@ const Integrations = () => {
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await apiFetch(`${API_BASE_URL}${endpoint}`, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(configForm)
@@ -362,7 +365,7 @@ const Integrations = () => {
 
                 <button
                   onClick={handleEspDiscover}
-                  disabled={espScanning}
+                  disabled={espScanning || !isAuthenticated}
                   className="w-full flex items-center justify-center gap-2 py-2 mb-4 bg-primary text-white rounded-lg hover:bg-primary/80 disabled:opacity-50"
                 >
                   <Radar className={`w-4 h-4 ${espScanning ? 'animate-spin' : ''}`} />
@@ -391,7 +394,8 @@ const Integrations = () => {
                         />
                         <button
                           onClick={() => handleEspAccept(node.hostname)}
-                          className="w-full py-1.5 bg-success/20 text-success rounded-lg text-xs hover:bg-success/30"
+                          disabled={!isAuthenticated}
+                          className="w-full py-1.5 bg-success/20 text-success rounded-lg text-xs hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Accept
                         </button>
@@ -411,7 +415,8 @@ const Integrations = () => {
                         </div>
                         <button
                           onClick={() => handleEspRemove(node.hostname)}
-                          className="p-1.5 text-error hover:bg-error/10 rounded-lg"
+                          disabled={!isAuthenticated}
+                          className="p-1.5 text-error hover:bg-error/10 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Remove node"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -431,7 +436,8 @@ const Integrations = () => {
               {configModal !== ESPHOME_ID && (
                 <button
                   onClick={handleConfigSave}
-                  className="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/80"
+                  disabled={!isAuthenticated}
+                  className="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save
                 </button>
@@ -486,7 +492,7 @@ const Integrations = () => {
                 <button
                   onClick={(e) => { e.stopPropagation(); if (integration.status === 'connected') handleSync(integration); }}
                   className="flex items-center gap-1 px-3 py-1.5 bg-card/50 rounded-lg text-xs text-text-secondary hover:bg-card-hover/50 hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={syncing[integration.id] || integration.status !== 'connected'}
+                  disabled={syncing[integration.id] || integration.status !== 'connected' || !isAuthenticated}
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${syncing[integration.id] ? 'animate-spin' : ''}`} />
                   {syncing[integration.id] ? 'Syncing' : 'Sync'}

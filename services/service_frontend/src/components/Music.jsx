@@ -7,6 +7,8 @@ import {
   Cast, Save, Trash2,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 import AudioVisualizer from './AudioVisualizer';
 
 const Section = ({ icon: Icon, title, children, defaultOpen = true, right }) => {
@@ -56,7 +58,9 @@ const formatMs = (ms) => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
-const SpotifySetup = ({ onSaved }) => {  const [clientId, setClientId] = useState('');
+const SpotifySetup = ({ onSaved }) => {
+  const { isAuthenticated } = useAuth();
+  const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [redirectUri, setRedirectUri] = useState('');
   const [saving, setSaving] = useState(false);
@@ -66,7 +70,7 @@ const SpotifySetup = ({ onSaved }) => {  const [clientId, setClientId] = useStat
     setSaving(true);
     setMessage(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/music/spotify/auth`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/music/spotify/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri }),
@@ -128,7 +132,7 @@ const SpotifySetup = ({ onSaved }) => {  const [clientId, setClientId] = useStat
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
-          disabled={saving || !clientId || !clientSecret}
+          disabled={saving || !clientId || !clientSecret || !isAuthenticated}
           className="flex items-center gap-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30 disabled:opacity-50"
         >
           <Settings className="w-4 h-4" />
@@ -144,6 +148,7 @@ SpotifySetup.propTypes = {
 };
 
 const Music = () => {
+  const { isAuthenticated } = useAuth();
   const [auth, setAuth] = useState(null);
   const [state, setState] = useState(null);
   const [devices, setDevices] = useState([]);
@@ -221,7 +226,7 @@ const Music = () => {
     if (!item?.id || item.id === lastTrackIdRef.current) return;
     lastTrackIdRef.current = item.id;
     const context = new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'day' : new Date().getHours() < 22 ? 'evening' : 'night';
-    fetch(`${API_BASE_URL}/api/music/history`, {
+    apiFetch(`${API_BASE_URL}/api/music/history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -236,7 +241,7 @@ const Music = () => {
 
   const control = async (endpoint, method = 'POST', body = null) => {
     try {
-      await fetch(`${API_BASE_URL}/api/music/spotify/${endpoint}`, {
+      await apiFetch(`${API_BASE_URL}/api/music/spotify/${endpoint}`, {
         method,
         headers: body ? { 'Content-Type': 'application/json' } : undefined,
         body: body ? JSON.stringify(body) : undefined,
@@ -271,7 +276,7 @@ const Music = () => {
 
   const castFetch = async (endpoint, body) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/music/${endpoint}`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/music/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -425,7 +430,7 @@ const Music = () => {
                     max={item?.duration_ms || 0}
                     value={state?.progress_ms || 0}
                     onChange={handleSeek}
-                    disabled={!item}
+                    disabled={!item || !isAuthenticated}
                     className="w-full accent-fui-accent disabled:opacity-40"
                   />
                   <div className="flex justify-between text-xs text-text-tertiary font-mono">
@@ -439,7 +444,7 @@ const Music = () => {
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => control('previous')}
-                    disabled={!item}
+                    disabled={!item || !isAuthenticated}
                     className="p-3 rounded-full border border-white/20 text-text-primary hover:text-fui-accent hover:border-fui-accent disabled:opacity-40"
                     title="Previous"
                   >
@@ -449,7 +454,7 @@ const Music = () => {
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => control(isPlaying ? 'pause' : 'play')}
-                    disabled={!activeDevice}
+                    disabled={!activeDevice || !isAuthenticated}
                     className="p-4 rounded-full bg-primary/20 border border-primary text-primary hover:bg-primary/30 disabled:opacity-40"
                     title={isPlaying ? 'Pause' : 'Play'}
                   >
@@ -459,7 +464,7 @@ const Music = () => {
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => control('next')}
-                    disabled={!item}
+                    disabled={!item || !isAuthenticated}
                     className="p-3 rounded-full border border-white/20 text-text-primary hover:text-fui-accent hover:border-fui-accent disabled:opacity-40"
                     title="Next"
                   >

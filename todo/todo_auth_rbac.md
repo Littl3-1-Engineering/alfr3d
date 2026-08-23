@@ -1,12 +1,33 @@
 # Plan: Authentication + RBAC for ALFR3D backend
 
-## Status: 🟡 Phases 0-2 shipped 2026-08-22 (backend auth/RBAC complete: password login, JWT
-access + revocable refresh tokens, permission middleware wrapping all 56 write routes). **Phases
-3-5 remain**: webapp login UI, Nexus Launcher login UI (tracked as a companion `alfr3d_deck`
-todo, not yet created), and hardening (rate-limiting, password-reset flow, username-enumeration
-protection). The API itself is no longer open — this already resolves the Kit/Relay blocker
-described below, but the SPA and launcher clients don't have login screens yet, so in practice
-today's webapp/launcher users hit 401s on any write action until Phase 3/4 ship.
+## Status: 🟡 Phases 0-3 shipped (Phase 3: 2026-08-23; Phases 0-2: 2026-08-22). Backend auth/RBAC
+complete (password login, JWT access + revocable refresh tokens, permission middleware wrapping
+all 56 write routes) and the React webapp now has a working login UI + token handling. **Phases
+4-5 remain**: Nexus Launcher login UI (scoped in `alfr3d_deck/todo/todo_auth_rbac.md`, not yet
+implemented) and hardening (rate-limiting, password-reset flow, username-enumeration protection).
+The launcher client still has no login screen, so Nexus Launcher users hit 401s on any write
+action until Phase 4 ships.
+
+### What shipped (Phase 3, webapp — 2026-08-23)
+`services/service_frontend`: `src/utils/authStore.js` (plain-module token store; access token
+in-memory only, refresh token in `sessionStorage` — the backend returns the refresh token in the
+JSON body, not an httpOnly cookie, so this is the client's job), `src/utils/apiClient.js`
+(`apiFetch` — injects the bearer token, retries once through a silent refresh on a 401),
+`src/utils/AuthContext.jsx` + `src/utils/useAuth.js` (React state layer, mirrors the existing
+`ThemeContext`/`useTheme` pattern, attempts a silent session resume on mount from the stored
+refresh token), `src/components/LoginModal.jsx` (reuses the existing `react-modal` pattern from
+`UserModal.jsx`), and a Sign In/Sign Out control in `App.jsx`'s nav bar. All ~12 files performing
+write `fetch()` calls (`useApi.js` plus `ControlBlade`, `EnvironmentSettings`, `Blueprint`,
+`Music`, `PersonnelRoster`, `System`, `Personality`, `Integrations`, `CameraStream`,
+`DeviceRegistry`, `Routines`) migrated from raw `fetch` to `apiFetch`; write-triggering buttons
+gated with a coarse `!isAuthenticated` check alongside each site's existing `disabled` condition
+(per-resource role mirroring, e.g. hiding technoking-only controls from a resident, deliberately
+deferred as a documented follow-up, not bundled into this pass). GET routes were left on plain
+`fetch` since the backend keeps reads open to unauthenticated callers by design. New tests:
+`authStore.test.js`, `apiClient.test.js`, `LoginModal.test.jsx` (15 new cases); full suite (72
+tests) and lint pass. **Not yet done**: manual end-to-end verification against a live backend
+instance (docker-compose stack wasn't spun up this session) — recommended before considering
+Phase 3 fully closed out.
 
 ### What shipped (Phases 0-2)
 - `POST /api/auth/login`, `/refresh`, `/logout`, and a Phase-0 bootstrap `POST /api/auth/claim`
@@ -75,7 +96,16 @@ Given this is currently a solo-household system (not yet a hosted multi-tenant p
 
 ### 4. Client integration
 - **Webapp (React SPA)**: add a login page/form; store the access token in memory (not localStorage, to reduce XSS token-theft surface) and use the refresh token via an httpOnly cookie or silent-refresh flow; hide/disable write UI (edit buttons, forms, delete actions) when unauthenticated, matching the backend's enforcement so the UI isn't lying about what it can do.
-- **Nexus Launcher (Android, `alfr3d_deck`)**: add a login screen; store tokens in Android Keystore-backed encrypted storage (same pattern the launcher already uses for Play Billing entitlement state, per [[project-alfr3d-monetization-plan]]); attach `Authorization: Bearer <token>` to all mutating calls; when logged out, the launcher's ALFR3D cards/controls should render in a view-only state rather than erroring — this needs a companion todo in `alfr3d_deck/todo/` once this plan is accepted, per [[project-alfr3d-deck-companion]]'s cross-repo convention.
+- **Nexus Launcher (Android, `alfr3d_deck`)**: add a login screen; store tokens in net-new
+  Android Keystore-backed encrypted storage (e.g. `androidx.security:security-crypto`'s
+  `EncryptedSharedPreferences`) — **correction, verified 2026-08-22**: the Play Billing entitlement
+  cache (`ProEntitlementStore.kt`) is *not* Keystore-backed as previously assumed here; it's plain
+  unencrypted DataStore Preferences, and no `androidx.security:security-crypto` dependency exists
+  in the launcher repo at all yet, so this is a net-new storage tier, not a reused pattern; attach
+  `Authorization: Bearer <token>` to all mutating calls; when logged out, the launcher's ALFR3D
+  cards/controls should render in a view-only state rather than erroring — now scoped in
+  `alfr3d_deck/todo/todo_auth_rbac.md` (companion doc created 2026-08-22), per
+  [[project-alfr3d-deck-companion]]'s cross-repo convention.
 
 ### 5. Rollout phasing
 - ✅ **Phase 0 — migration prep** (shipped 2026-08-22): `POST /api/auth/claim` bootstrap
@@ -86,8 +116,10 @@ Given this is currently a solo-household system (not yet a hosted multi-tenant p
 - ✅ **Phase 2 — permission middleware** (shipped 2026-08-22): `require_permission` dependency +
   the code-defined matrix (`services/service_api/auth/permissions.py`), applied to all 56 write
   routes across `services/service_api/routes/*`. Grep-audit confirmed 56/56 have it.
-- 🔲 **Phase 3 — webapp**: login UI, token handling, view-only mode for anonymous/under-permissioned users.
-- 🔲 **Phase 4 — launcher**: login screen, token storage, view-only mode (tracked as a companion `alfr3d_deck` todo).
+- ✅ **Phase 3 — webapp** (shipped 2026-08-23): login UI, token handling, view-only mode for
+  anonymous/under-permissioned users.
+- 🔲 **Phase 4 — launcher**: login screen, token storage, view-only mode (scoped in
+  `alfr3d_deck/todo/todo_auth_rbac.md`, created 2026-08-22 — not yet started).
 - 🔲 **Phase 5 — hardening**: login rate-limiting, no username-enumeration on failed login, password reset flow. (The route-coverage audit itself was pulled forward into Phase 2's completion check rather than left for Phase 5.)
 
 ### 6. Deferred: user model `gender` field

@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Save, RotateCcw, ToggleLeft, ToggleRight } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { apiFetch } from '../utils/apiClient';
+import { useAuth } from '../utils/useAuth';
 
 const EnvironmentSettings = () => {
+  const { isAuthenticated } = useAuth();
   const [environment, setEnvironment] = useState({
     city: '',
     state: '',
@@ -44,7 +47,7 @@ const EnvironmentSettings = () => {
         latitude: environment.latitude,
         longitude: environment.longitude,
       };
-      const response = await fetch(API_BASE_URL + '/api/environment', {
+      const response = await apiFetch(API_BASE_URL + '/api/environment', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(dataToSend),
@@ -62,7 +65,7 @@ const EnvironmentSettings = () => {
   const handleReset = async () => {
     if (window.confirm('Reset to auto-detect environment? This will overwrite manual settings.')) {
       try {
-        const response = await fetch(API_BASE_URL + '/api/environment/reset', {
+        const response = await apiFetch(API_BASE_URL + '/api/environment/reset', {
           method: 'POST',
         });
         if (response.ok) {
@@ -213,7 +216,7 @@ const EnvironmentSettings = () => {
        <div className="flex space-x-4">
         <button
           onClick={handleSave}
-          disabled={!environment.manual_location_override || saving}
+          disabled={!environment.manual_location_override || saving || !isAuthenticated}
           className="flex items-center space-x-2 px-4 py-2 bg-success/20 border border-success rounded-lg text-success hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Save className="w-4 h-4" />
@@ -221,7 +224,8 @@ const EnvironmentSettings = () => {
         </button>
         <button
           onClick={handleReset}
-          className="flex items-center space-x-2 px-4 py-2 bg-warning/20 border border-warning rounded-lg text-warning hover:bg-warning/30"
+          disabled={!isAuthenticated}
+          className="flex items-center space-x-2 px-4 py-2 bg-warning/20 border border-warning rounded-lg text-warning hover:bg-warning/30 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RotateCcw className="w-4 h-4" />
           <span>Reset to Auto</span>
