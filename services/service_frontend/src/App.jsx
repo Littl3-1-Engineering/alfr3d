@@ -48,8 +48,12 @@ function AppContent() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex space-x-6">
             <Link to="/" className="text-primary hover:text-primary-hover transition-colors">Nexus</Link>
-            <Link to="/domain" className="text-primary hover:text-primary-hover transition-colors">Domain</Link>
-            <Link to="/matrix" className="text-primary hover:text-primary-hover transition-colors">Matrix</Link>
+            {isAuthenticated && (
+              <>
+                <Link to="/domain" className="text-primary hover:text-primary-hover transition-colors">Domain</Link>
+                <Link to="/matrix" className="text-primary hover:text-primary-hover transition-colors">Matrix</Link>
+              </>
+            )}
           </div>
           {isAuthenticated ? (
             <div className="flex items-center space-x-3">
