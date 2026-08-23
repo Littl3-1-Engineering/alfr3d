@@ -35,4 +35,11 @@ describe('App', () => {
     renderApp()
     expect(screen.getByText('Sign In Required')).toBeInTheDocument()
   })
+
+  it('hides the Domain/Matrix nav links when unauthenticated', () => {
+    renderApp()
+    expect(screen.getByRole('link', { name: 'Nexus' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Domain' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Matrix' })).not.toBeInTheDocument()
+  })
 })
