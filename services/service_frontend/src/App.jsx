@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LogIn, LogOut } from 'lucide-react';
 import AudioPlayer from './components/AudioPlayer';
 import LoginModal from './components/LoginModal';
+import SignInRequired from './components/SignInRequired';
 import socket from './utils/socket';
 import { useAuth } from './utils/useAuth';
 import Nexus from './pages/Nexus';
@@ -29,8 +30,14 @@ function AppContent() {
 
   const getComponent = () => {
     switch (location.pathname) {
-      case '/domain': return <Domain />;
-      case '/matrix': return <Matrix />;
+      case '/domain':
+        return isAuthenticated
+          ? <Domain />
+          : <SignInRequired pageName="Domain" onSignIn={() => setLoginModalOpen(true)} />;
+      case '/matrix':
+        return isAuthenticated
+          ? <Matrix />
+          : <SignInRequired pageName="Matrix" onSignIn={() => setLoginModalOpen(true)} />;
       default: return <Nexus />;
     }
   };
