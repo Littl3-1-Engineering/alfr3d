@@ -14,7 +14,245 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
 
 ## Database Architecture
 
-![Database Architecture](db_arch.png)
+MySQL, 21 tables. Exported from the live schema and regenerated as a Mermaid diagram (2026-08-24) — re-run whenever a migration meaningfully changes the schema, per `todo/todo_db_schema_diagram.md`.
+
+```mermaid
+erDiagram
+    ENVIRONMENT ||--o{ DEVICE : "located in"
+    ENVIRONMENT ||--o{ USER : "member of"
+    ENVIRONMENT ||--o{ ROUTINES : "scoped to"
+    ENVIRONMENT ||--o{ SMARTHOME_DEVICES : "located in"
+    ENVIRONMENT ||--o{ DEVICE_HISTORY : "located in"
+    STATES ||--o{ DEVICE : "current state"
+    STATES ||--o{ USER : "current state"
+    DEVICE_TYPES ||--o{ DEVICE : "categorized as"
+    USER_TYPES ||--o{ USER : "categorized as"
+    USER ||--o{ DEVICE : "owns"
+    USER ||--o{ DEVICE_HISTORY : "acted as"
+    USER ||--o{ REFRESH_TOKENS : "issued to"
+    DEVICE ||--o{ DEVICE_HISTORY : "audit trail"
+    DEVICE ||--o{ SMARTHOME_DEVICES : "linked to"
+    SMARTHOME_DEVICES ||--o{ DEVICE_COMMAND_HISTORY : "logs"
+
+    ENVIRONMENT {
+        int id PK
+        string name
+        decimal latitude
+        decimal longitude
+        string city
+        string state
+        string country
+        string IP
+        int low
+        int high
+        float temperature
+        float wind
+        string wind_dir
+        string description
+        datetime sunrise
+        datetime sunset
+        int pressure
+        string pressure_trend
+        int humidity
+        boolean manual_override
+        boolean manual_location_override
+        string subjective_feel
+        float forecast_rain_probability
+        float forecast_temp
+        string forecast_conditions
+        datetime forecast_updated_at
+        int timezone
+    }
+    DEVICE {
+        int id PK
+        string name
+        string IP
+        string MAC
+        int state FK
+        datetime last_online
+        int environment_id FK
+        int device_type FK
+        int user_id FK
+        float position_x
+        float position_y
+        string stream_url
+    }
+    DEVICE_HISTORY {
+        int device_id FK
+        string name
+        datetime timestamp
+        string IP
+        string MAC
+        int state
+        datetime last_online
+        int environment_id FK
+        int device_type
+        int user_id FK
+        float position_x
+        float position_y
+    }
+    DEVICE_TYPES {
+        int id PK
+        string type
+    }
+    STATES {
+        int id PK
+        string state
+    }
+    USER {
+        int id PK
+        string username
+        string email
+        string password_hash
+        string about_me
+        int state FK
+        datetime last_online
+        int environment_id FK
+        int type FK
+        datetime created_at
+    }
+    USER_TYPES {
+        int id PK
+        string type
+    }
+    REFRESH_TOKENS {
+        int id PK
+        int user_id FK
+        string token_hash
+        datetime issued_at
+        datetime expires_at
+        datetime revoked_at
+    }
+    ROUTINES {
+        int id PK
+        string name
+        string time
+        boolean enabled
+        enum recurrence
+        json actions
+        json triggers
+        json conditions
+        datetime last_run
+        boolean triggered
+        int environment_id FK
+    }
+    SMARTHOME_DEVICES {
+        int id PK
+        string name
+        string source
+        string mac_address
+        string ha_entity_id
+        string st_device_id
+        string st_location_id
+        string device_type
+        string room
+        json capabilities
+        boolean online
+        json last_state
+        int environment_id FK
+        datetime created_at
+        int device_id FK
+        string esp_entity_id
+    }
+    DEVICE_COMMAND_HISTORY {
+        int id PK
+        int smarthome_device_id FK
+        string command
+        json params
+        string result
+        datetime timestamp
+    }
+
+    ALEMBIC_VERSION {
+        string version_num PK
+    }
+    CALENDAR_EVENTS {
+        int id PK
+        string title
+        datetime start_time
+        datetime end_time
+        string address
+        text notes
+        datetime created_at
+    }
+    CONFIG {
+        int id PK
+        string name
+        text value
+    }
+    CONTEXT {
+        int id PK
+        int environment_id
+        int repeat_count
+        int hour
+        string weather
+        string mood
+        int last_error_count
+        int llm_calls_today
+        datetime updated_at
+        string last_text
+        datetime last_spoke_time
+    }
+    ESPHOME_NODES {
+        int id PK
+        string hostname
+        string ip_address
+        int port
+        string name
+        string psk
+        boolean accepted
+        datetime last_seen
+        datetime accepted_at
+        datetime created_at
+    }
+    INTEGRATIONS_TOKENS {
+        int id PK
+        string integration_type
+        text access_token
+        text refresh_token
+        datetime expires_at
+        datetime created_at
+    }
+    LISTENING_HISTORY {
+        bigint id PK
+        string track_id
+        string track_name
+        string album
+        string artist
+        datetime played_at
+        string context
+        string source
+    }
+    PERSONALITY {
+        int id PK
+        string name
+        enum type
+        int environment_id
+        float sarcasm
+        float formality
+        float warmth
+        float patience
+        string linguistic_style
+        string forbidden_words
+        string verbal_tics
+        datetime created_at
+        datetime updated_at
+    }
+    QUIPS {
+        int id PK
+        string type
+        string category
+        string quips
+    }
+    SPEAKER_GROUPS {
+        int id PK
+        string name
+        json entities
+        datetime created_at
+    }
+```
+
+`CONTEXT` and `PERSONALITY` carry an `environment_id` column but no formal FK constraint in the live schema (shown unconnected above, matching the export). `ALEMBIC_VERSION`, `CALENDAR_EVENTS`, `CONFIG`, `ESPHOME_NODES`, `INTEGRATIONS_TOKENS`, `LISTENING_HISTORY`, and `SPEAKER_GROUPS` are standalone tables with no foreign keys.
 
 ## Features
 
@@ -43,8 +281,9 @@ Licensed under the [Functional Source License, Version 1.1, ALv2 Future License]
   - Alembic migration chain (versions 0001-0020) wrapping all raw SQL migrations
   - Slow-query MySQL config with targeted indexes
   - Multi-stage frontend build and BuildKit pip cache
+- **Authentication & RBAC**: JWT access + revocable refresh tokens, a role-based permission matrix (`technoking`/`resident`/`guest`) enforced on all write routes, login/claim rate limiting, no username-enumeration, and self-service/admin-assisted password change and reset. Both the React webapp and the Nexus Launcher (Keystore-backed on Android) have full sign-in UI. See [Authentication & RBAC](#authentication--rbac) below.
 - **Database**: MySQL with optimized, secure queries and comprehensive schema.
-- **Security**: Parameterized SQL queries to prevent injection; password hashing; secure API endpoints.
+- **Security**: Parameterized SQL queries to prevent injection; password hashing (pbkdf2:sha256); secrets-at-rest encryption for integration credentials; secure API endpoints.
 - **Modern UI**: Dark tactical theme with professional styling, responsive design, and intuitive navigation.
 - **Testing**: Comprehensive unit tests, integration tests, API endpoint testing, and frontend tests (Vitest + React Testing Library).
 - **Containerization**: Docker Compose for local development; Kubernetes manifests for production deployment.
@@ -362,10 +601,21 @@ handing out full control to anyone who can reach it.
 - **Roles**: `technoking` (full admin — users, integrations, system config, everything),
   `resident` (everyday household actions — devices, routines, music playback, quips, IoT device
   control), `guest` (read-only, identical to an unauthenticated caller). The full matrix is in
-  `services/service_api/auth/permissions.py`.
-- **Not yet shipped**: the React webapp and Nexus Launcher don't have login screens yet (that's
-  tracked separately — see `todo/todo_auth_rbac.md` Phases 3-4), so today they'll get 401s on
-  write actions until a token is supplied out-of-band (e.g. via the API directly).
+  `services/service_api/auth/permissions.py`. (`owner` exists in the `user_types` seed data as a
+  distinct, currently-unassignable role, aliased to `technoking` in the matrix today — see
+  `todo/todo_user_management.md` for the plan to make it a real assignable admin role separate
+  from the `technoking` backdoor, which is reserved for the system's original account only.)
+- **Shipped**: both clients have full login UI — the React webapp (Sign In/Sign Out in the nav
+  bar, route-level view-only gating for unauthenticated visitors) and the Nexus Launcher (a
+  Keystore-backed sign-in inside Settings, gating device control/resident CRUD/manual routine
+  run-or-edit while leaving every read surface usable signed out). Also shipped: login/claim rate
+  limiting, no username-enumeration on failed login or claim, and self-service +
+  admin-assisted password change/reset (`POST /api/auth/change-password`,
+  `POST /api/auth/admin-reset-password`) — see `todo/todo_auth_rbac.md` for full history.
+- **Not yet shipped**: there's no detection of "nobody has claimed an account yet" and no guided
+  onboarding flow for a fresh install — see `todo/todo_onboarding_first_user.md`. There's also no
+  self-service profile editing (a user editing their own name/email/bio) — CRUD on the `user` table
+  is currently technoking-only in both directions; see `todo/todo_user_management.md`.
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
@@ -583,6 +833,11 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
   - `GET /api/iot/devices`: Get all IoT devices from every source (optionally `?linked=true`)
   - `POST /api/iot/devices/<device_id>/control`: Control IoT device (HA or ESPHome)
   - `PUT /api/iot/devices/<device_id>/link`: Link/unlink IoT device to local device
+- **Authentication**: See the [Authentication & RBAC](#authentication--rbac) section
+  - `POST /api/auth/claim`: Bootstrap a password for an unclaimed seed user
+  - `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`
+  - `POST /api/auth/change-password`: Self-service password change (revokes other sessions)
+  - `POST /api/auth/admin-reset-password`: Admin-assisted reset (technoking only)
 - **Routines**:
   - `GET /api/routines`: List all routines for current environment
   - `POST /api/routines`: Create a new routine

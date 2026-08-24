@@ -419,9 +419,10 @@ async def trigger_esphome_sync(_perm=Depends(require_permission("iot", "esphome_
 @router.get("/iot/status")
 async def get_iot_status():
     try:
-        from common import ha_utils, esphome_utils
+        from common import ha_utils, st_utils, esphome_utils
 
         ha_connected, ha_message = ha_utils.test_ha_connection()
+        st_connected, st_message = st_utils.test_st_connection()
         esphome_enabled = esphome_utils.is_esphome_enabled()
         esphome_nodes = esphome_utils.get_esphome_nodes(accepted=True)
         esphome_message = (
@@ -429,7 +430,7 @@ async def get_iot_status():
         )
         return {
             "ha": {"connected": ha_connected, "message": ha_message},
-            "st": {"connected": False, "message": "Not configured"},
+            "st": {"connected": st_connected, "message": st_message},
             "esphome": {
                 "connected": esphome_enabled and len(esphome_nodes) > 0,
                 "message": esphome_message,
@@ -460,7 +461,7 @@ async def control_iot_device(
         with db_connection() as db:
             cursor = db.cursor()
             cursor.execute(
-                "SELECT source, ha_entity_id, device_type, esp_entity_id "
+                "SELECT source, ha_entity_id, device_type, esp_entity_id, st_device_id "
                 "FROM smarthome_devices WHERE id = %s",
                 (device_id,),
             )
@@ -469,7 +470,13 @@ async def control_iot_device(
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
 
-        source, ha_entity_id, device_type, esp_entity_id = row[0], row[1], row[2], row[3]
+        source, ha_entity_id, device_type, esp_entity_id, st_device_id = (
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+        )
         command = data.command
 
         if source == "homeassistant" and ha_entity_id:
@@ -510,7 +517,7 @@ async def control_iot_device(
             else:
                 service = command
 
-            params = data.params or {}
+            params = ha_utils.translate_generic_control_params(command, data.params)
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
                 devices = await asyncio.get_event_loop().run_in_executor(
@@ -531,6 +538,32 @@ async def control_iot_device(
             hostname, _, key = esp_entity_id.rpartition(":")
             success, message = await esphome_utils.control_esphome_device_async(
                 hostname, int(key), device_type, command, data.params or {}
+            )
+            if success:
+                devices = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_iot_devices_data
+                )
+                await manager.broadcast("iot_devices", devices)
+                return {
+                    "message": message,
+                    "device_id": device_id,
+                    "command": command,
+                    "device_type": device_type,
+                }
+            else:
+                raise HTTPException(status_code=500, detail=message)
+        elif source == "smartthings" and st_device_id:
+            from common import st_utils
+
+            mapped = st_utils.translate_generic_control_params(device_type, command, data.params)
+            if mapped is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported command '{command}' for device type '{device_type}'",
+                )
+            capability, st_command, args = mapped
+            success, message = st_utils.st_control_device(
+                st_device_id, capability, st_command, args
             )
             if success:
                 devices = await asyncio.get_event_loop().run_in_executor(

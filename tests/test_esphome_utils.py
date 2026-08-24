@@ -7,7 +7,7 @@ connection and the aioesphomeapi client directly. The riskiest logic here is pur
 live device or database to verify.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioesphomeapi import FanSpeed
@@ -100,6 +100,60 @@ def test_remove_esphome_node_deletes_node_and_its_entities():
     assert any("DELETE FROM smarthome_devices" in c for c in calls)
     assert any("DELETE FROM esphome_nodes" in c for c in calls)
     mock_db.commit.assert_called_once()
+
+
+# --- Generic control command param scaling -----------------------------------------------
+# ControlBlade.jsx's brightness/volume sliders send 0-100 (percent) -- aioesphomeapi's
+# light_command/media_player_command take normalized 0.0-1.0 floats, matching the pattern
+# cover_command's `position` already used. A prior version of this code divided brightness by
+# 255 (HA's raw-brightness convention) and left volume unscaled entirely, so both silently sent
+# the wrong value to real devices.
+
+
+def _mock_accepted_node_db():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.return_value = ("192.168.1.50", 6053, None)
+    return mock_db
+
+
+def test_control_esphome_device_async_scales_brightness_percent_to_normalized_float():
+    import asyncio
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
+
+    with patch.object(
+        esphome_utils, "get_connection", return_value=_mock_accepted_node_db()
+    ), patch.object(esphome_utils, "APIClient", return_value=mock_client):
+        success, message = asyncio.run(
+            esphome_utils.control_esphome_device_async(
+                "livingroom.local", 1, "light", "set_brightness", {"brightness": 75}
+            )
+        )
+
+    assert success is True
+    mock_client.light_command.assert_called_once_with(key=1, state=True, brightness=0.75)
+
+
+def test_control_esphome_device_async_scales_volume_percent_to_normalized_float():
+    import asyncio
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
+
+    with patch.object(
+        esphome_utils, "get_connection", return_value=_mock_accepted_node_db()
+    ), patch.object(esphome_utils, "APIClient", return_value=mock_client):
+        success, message = asyncio.run(
+            esphome_utils.control_esphome_device_async(
+                "livingroom.local", 2, "media_player", "volume_set", {"volume": 40}
+            )
+        )
+
+    assert success is True
+    mock_client.media_player_command.assert_called_once_with(key=2, volume=0.4)
 
 
 def test_accept_esphome_node_async_fails_fast_when_node_unknown():

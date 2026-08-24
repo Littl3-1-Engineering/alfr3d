@@ -1,21 +1,31 @@
 # Todo: Bring All 3 Project Repos to the Same Tooling Standard
 
-## Status: 🔲 Not started
+## Status: 🟡 alfr3d_deck + littl31 tooling done, alfr3d CI re-enabled 2026-08-24, alfr3d_deck ktlint/detekt added + tooling checklist documented 2026-08-24; only Aikido (blocked, needs paid plan) remains
 
 ## Scope
 Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. This continues the existing effort to keep the three repos consistent (see `AGENTS.md`/`CLAUDE.md` structure, which was already standardized across all three).
 
-## Current state (as of writing)
-- `alfr3d` already has `.pre-commit-config.yaml` and `.github/dependabot.yml`.
-- `alfr3d_deck` and `littl31` — status unconfirmed, likely missing one or both.
-- Aikido (security scanning) — not yet set up in any of the three repos.
+## Current state (as of 2026-08-24)
+- `alfr3d`: has `.pre-commit-config.yaml` and `.github/dependabot.yml`. **CI re-enabled**: `.github/workflows/ci.yml.disabled` → `.github/workflows/ci.yml`. Root-caused why it was broken rather than just flipping the name back:
+  - `setup/migrations/versions/0021_camera_stream_url.py` and `0023_refresh_tokens.py` both unconditionally ran `ALTER TABLE ADD COLUMN` / `CREATE TABLE` for `device.stream_url` and `refresh_tokens` — but `setup/createTables.sql` (the baseline `0001` migration runs against a fresh DB) had since been updated to already include both, so a clean install hit `Duplicate column name 'stream_url'` then `Table 'refresh_tokens' already exists` partway through `alembic upgrade head`. This is exactly the migrations CI job's scenario (fresh DB each run). Fixed both migrations to guard on `column_exists`/`table_exists` (helpers already existed in `setup/migrations/run_sql.py`, just unused by these two) — same idiom migration `0012` already used. Verified clean `alembic upgrade head` against a fresh throwaway MySQL container.
+  - `tests/conftest.py`'s `apply_database_schema` fixture (used by integration tests) resets state by dropping a hardcoded table list and re-running `createTables.sql` — that list was missing `refresh_tokens` (added when the baseline picked it up), so integration tests hit the same "already exists" error on their own DB reset. Added it to the drop list. Verified fixed with `MYSQL_TEST_*` env vars against a throwaway MySQL.
+  - The `kafka` service block in the CI workflow itself was missing `CLUSTER_ID`, which the `confluentinc/cp-kafka:7.4.0` image *requires* in KRaft mode — without it the service container fails to start at all (confirmed by reproducing locally: `CLUSTER_ID is required. Command [/usr/local/bin/dub ensure CLUSTER_ID] FAILED`). Added a fixed `CLUSTER_ID` to the workflow's kafka service env.
+  - Verified locally (outside the two DB/Kafka-service CI jobs, which need a clean runner — see below): frontend job (`npm test -- --run` + `npm run build`) passes as-is (75 tests); backend unit job (`pytest tests/ -m "not integration"`) passes as-is (242 tests).
+  - Could not fully reproduce the `migrations` and `backend-integration` CI jobs end-to-end locally: this machine already runs the live ALFR3D stack with MySQL bound to host port 3306, and `services/common/db_pool.py` hardcodes port 3306 (no `MYSQL_PORT` support) — so app-code DB connections in a locally-isolated test always hit the live production DB's port instead of a throwaway one, unlike Alembic's `env.py` and `tests/conftest.py` which do respect a port override. Not a CI bug (GitHub Actions runners have no competing server on 3306), just a local-testing limitation; the actual jobs will validate on their own next push/PR.
+  - Also noted in passing: `KAFKA_CREATE_TOPICS` doesn't actually create topics on this image in KRaft mode (confirmed empty topic list after startup) — but `auto.create.topics.enable` defaults to `true`, so topics get created lazily on first produce anyway; left as-is, not a blocker.
+- `alfr3d_deck`: pre-commit + Dependabot added (previous pass). **ktlint/detekt added 2026-08-24**: `org.jlleitschuh.gradle.ktlint` 12.2.0 + `io.gitlab.arturbosch.detekt` 1.23.7 applied to `:app`, both wired into `.github/workflows/build.yml` (`ktlintCheck`, `detekt`, alongside the existing `lintDebug`). Deliberately did *not* run `ktlintFormat` across the existing 112-file codebase first — that reformatted 99 files (~11.7k line diff) against ktlint's default style, way too invasive to land as a "tooling addition." Used `ktlintGenerateBaseline`/`detektBaseline` instead (same idiom as detekt's own baseline support) to grandfather all pre-existing findings into `config/{ktlint,detekt}/baseline.xml` — CI only fails on new/changed code going forward. Verified full local sequence (`lintDebug` + `ktlintCheck` + `detekt` + `assembleDebug`) passes clean. Baselines aren't pushed/observed on an actual GitHub Actions run yet.
+- `littl31`: done. Added `.pre-commit-config.yaml` (generic pre-commit-hooks + detect-secrets — no black/flake8/ktlint, it's a plain Node/Pug/Stylus static site) and `.github/dependabot.yml` (`npm` + `github-actions`, it already had `.github/workflows/deploy.yml`). `.secrets.baseline` generated via throwaway venv (same broken local `detect-secrets` CLI as the other two repos) — zero findings. `pre-commit run --all-files` auto-fixed 3 trivial trailing-whitespace/EOF files.
+- Aikido (security scanning): still not set up in any of the three repos — needs a paid plan (hosted issues feed 400s for the Littl3-1-Engineering workspace on the free tier, confirmed in a prior session), not something to be done unattended.
 
 ## Tasks
-- [ ] Audit each repo for: pre-commit hooks, Dependabot config, Aikido security scanning, and any other baseline tooling (CI lint/test/build workflow, license file, etc.).
-- [ ] Bring `alfr3d`'s `.pre-commit-config.yaml` and `.github/dependabot.yml` to `alfr3d_deck` and `littl31`, adapted per-language (Kotlin/Gradle for `alfr3d_deck`, whatever `littl31`'s stack is).
-- [ ] Set up Aikido across all three repos.
-- [ ] Confirm each repo has a CI workflow (alfr3d already has `.github/workflows/ci.yml` per `todo/optimizations_v2.md`) — add to the other two if missing.
-- [ ] Document the standard tooling checklist somewhere durable (README or AGENTS.md Core Rules) so future new repos start from the same baseline.
+- [x] Audit each repo for: pre-commit hooks, Dependabot config, Aikido security scanning, and any other baseline tooling (CI lint/test/build workflow, license file, etc.).
+- [x] Bring `alfr3d`'s `.pre-commit-config.yaml` and `.github/dependabot.yml` to `alfr3d_deck`, adapted per-language.
+- [x] Same for `littl31`.
+- [ ] Set up Aikido across all three repos (blocked — needs a paid plan).
+- [x] Figure out why `alfr3d`'s own CI workflow is `.disabled` and either fix or remove it. Fixed and re-enabled; not yet pushed/observed on an actual GitHub Actions run.
+- [x] Consider ktlint/detekt for `alfr3d_deck` as a separate, scoped pass. Done 2026-08-24 — see above.
+- [x] Document the standard tooling checklist somewhere durable (README or AGENTS.md Core Rules) so future new repos start from the same baseline. Done 2026-08-24 — new "Repo Tooling Standard" section in `AGENTS.md`.
 
 ## Related
-- Companion file: none yet in `alfr3d_deck`/`littl31` `todo/` — this file is the canonical tracker; add pointer stubs there if work gets close to repo-specific enough to split.
+- Companion file: `alfr3d_deck/todo/todo_repo_standardization.md` — pointer stub, unchanged.
+- `littl31/todo/todo_repo_standardization.md` — pointer stub, updated with littl31-specific detail.

@@ -234,3 +234,99 @@ def test_write_route_succeeds_for_permitted_resident_token(mock_db_connection, a
     )
     assert response.status_code == 201
     assert response.json()["id"] == 42
+
+
+# --- PUT /api/users/{id}: self-service profile editing (todo_user_management.md) --
+
+
+def test_put_user_rejects_unauthenticated_request(api_client):
+    response = api_client.put("/api/users/2", json={"name": "New Name"})
+    assert response.status_code == 401
+
+
+def test_put_user_rejects_editing_someone_elses_row(api_client):
+    """A resident (no `users` write grant) editing a different user's id must 403 -- there is
+    no admin grant and it isn't their own row."""
+    response = api_client.put(
+        "/api/users/99", json={"name": "New Name"}, headers=_bearer(2, "resident")
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.users.db_connection")
+def test_put_user_self_service_edit_succeeds(mock_db_connection, api_client):
+    """A resident editing their own row (id matches the token's sub) goes through even though
+    they have no `users` write grant -- this is the self-service bypass."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.put(
+        "/api/users/2", json={"name": "New Name"}, headers=_bearer(2, "resident")
+    )
+    assert response.status_code == 200
+    mock_cursor.execute.assert_called_once_with(
+        "UPDATE user SET username = %s WHERE id = %s", ["New Name", 2]
+    )
+
+
+@patch("routes.users.db_connection")
+def test_put_user_self_service_edit_ignores_type_field(mock_db_connection, api_client):
+    """A user including `type` in a self-edit payload must have it silently dropped, not
+    applied -- self-service can never change your own role, even to a lesser one, so there's no
+    privilege-escalation path through this route. No `user_types` lookup should even run."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.put(
+        "/api/users/2",
+        json={"name": "New Name", "type": "owner"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 200
+    mock_cursor.execute.assert_called_once_with(
+        "UPDATE user SET username = %s WHERE id = %s", ["New Name", 2]
+    )
+
+
+@patch("routes.users.db_connection")
+def test_put_user_admin_editing_own_row_also_drops_type(mock_db_connection, api_client):
+    """Even an owner/technoking editing their *own* row via this route can't change their own
+    `type` -- that must go through the explicit admin-on-someone-else path instead."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.put(
+        "/api/users/1",
+        json={"name": "New Name", "type": "resident"},
+        headers=_bearer(1, "owner"),
+    )
+    assert response.status_code == 200
+    mock_cursor.execute.assert_called_once_with(
+        "UPDATE user SET username = %s WHERE id = %s", ["New Name", 1]
+    )
+
+
+@patch("routes.users.db_connection")
+def test_put_user_admin_editing_someone_else_can_change_type(mock_db_connection, api_client):
+    """Owner/technoking editing a *different* user's row is the one path that can still change
+    `type` -- this is the real admin CRUD surface, unaffected by the self-service restriction."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (3,)  # user_types lookup for "guest"
+
+    response = api_client.put(
+        "/api/users/2",
+        json={"type": "guest"},
+        headers=_bearer(1, "owner"),
+    )
+    assert response.status_code == 200
+    mock_cursor.execute.assert_any_call("SELECT id FROM user_types WHERE type = %s", ("guest",))
+    mock_cursor.execute.assert_any_call("UPDATE user SET type = %s WHERE id = %s", [3, 2])
