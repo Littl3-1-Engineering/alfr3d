@@ -1,6 +1,6 @@
 # Todo: Bring All 3 Project Repos to the Same Tooling Standard
 
-## Status: 🟡 alfr3d_deck + littl31 tooling done, alfr3d CI re-enabled 2026-08-24; only Aikido (blocked) and ktlint/detekt remain
+## Status: 🟡 alfr3d_deck + littl31 tooling done, alfr3d CI re-enabled 2026-08-24, alfr3d_deck ktlint/detekt added + tooling checklist documented 2026-08-24; only Aikido (blocked, needs paid plan) remains
 
 ## Scope
 Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. This continues the existing effort to keep the three repos consistent (see `AGENTS.md`/`CLAUDE.md` structure, which was already standardized across all three).
@@ -13,7 +13,7 @@ Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. 
   - Verified locally (outside the two DB/Kafka-service CI jobs, which need a clean runner — see below): frontend job (`npm test -- --run` + `npm run build`) passes as-is (75 tests); backend unit job (`pytest tests/ -m "not integration"`) passes as-is (242 tests).
   - Could not fully reproduce the `migrations` and `backend-integration` CI jobs end-to-end locally: this machine already runs the live ALFR3D stack with MySQL bound to host port 3306, and `services/common/db_pool.py` hardcodes port 3306 (no `MYSQL_PORT` support) — so app-code DB connections in a locally-isolated test always hit the live production DB's port instead of a throwaway one, unlike Alembic's `env.py` and `tests/conftest.py` which do respect a port override. Not a CI bug (GitHub Actions runners have no competing server on 3306), just a local-testing limitation; the actual jobs will validate on their own next push/PR.
   - Also noted in passing: `KAFKA_CREATE_TOPICS` doesn't actually create topics on this image in KRaft mode (confirmed empty topic list after startup) — but `auto.create.topics.enable` defaults to `true`, so topics get created lazily on first produce anyway; left as-is, not a blocker.
-- `alfr3d_deck`: done (previous pass) — pre-commit + Dependabot added, no ktlint/detekt yet.
+- `alfr3d_deck`: pre-commit + Dependabot added (previous pass). **ktlint/detekt added 2026-08-24**: `org.jlleitschuh.gradle.ktlint` 12.2.0 + `io.gitlab.arturbosch.detekt` 1.23.7 applied to `:app`, both wired into `.github/workflows/build.yml` (`ktlintCheck`, `detekt`, alongside the existing `lintDebug`). Deliberately did *not* run `ktlintFormat` across the existing 112-file codebase first — that reformatted 99 files (~11.7k line diff) against ktlint's default style, way too invasive to land as a "tooling addition." Used `ktlintGenerateBaseline`/`detektBaseline` instead (same idiom as detekt's own baseline support) to grandfather all pre-existing findings into `config/{ktlint,detekt}/baseline.xml` — CI only fails on new/changed code going forward. Verified full local sequence (`lintDebug` + `ktlintCheck` + `detekt` + `assembleDebug`) passes clean. Baselines aren't pushed/observed on an actual GitHub Actions run yet.
 - `littl31`: done. Added `.pre-commit-config.yaml` (generic pre-commit-hooks + detect-secrets — no black/flake8/ktlint, it's a plain Node/Pug/Stylus static site) and `.github/dependabot.yml` (`npm` + `github-actions`, it already had `.github/workflows/deploy.yml`). `.secrets.baseline` generated via throwaway venv (same broken local `detect-secrets` CLI as the other two repos) — zero findings. `pre-commit run --all-files` auto-fixed 3 trivial trailing-whitespace/EOF files.
 - Aikido (security scanning): still not set up in any of the three repos — needs a paid plan (hosted issues feed 400s for the Littl3-1-Engineering workspace on the free tier, confirmed in a prior session), not something to be done unattended.
 
@@ -23,8 +23,8 @@ Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. 
 - [x] Same for `littl31`.
 - [ ] Set up Aikido across all three repos (blocked — needs a paid plan).
 - [x] Figure out why `alfr3d`'s own CI workflow is `.disabled` and either fix or remove it. Fixed and re-enabled; not yet pushed/observed on an actual GitHub Actions run.
-- [ ] Consider ktlint/detekt for `alfr3d_deck` as a separate, scoped pass.
-- [ ] Document the standard tooling checklist somewhere durable (README or AGENTS.md Core Rules) so future new repos start from the same baseline.
+- [x] Consider ktlint/detekt for `alfr3d_deck` as a separate, scoped pass. Done 2026-08-24 — see above.
+- [x] Document the standard tooling checklist somewhere durable (README or AGENTS.md Core Rules) so future new repos start from the same baseline. Done 2026-08-24 — new "Repo Tooling Standard" section in `AGENTS.md`.
 
 ## Related
 - Companion file: `alfr3d_deck/todo/todo_repo_standardization.md` — pointer stub, unchanged.
