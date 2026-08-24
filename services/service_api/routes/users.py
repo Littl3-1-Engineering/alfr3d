@@ -12,7 +12,8 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import UserCreate, UserUpdate
-from auth.dependencies import require_permission
+from auth import permissions
+from auth.dependencies import CurrentUser, require_auth, require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["users"])
@@ -112,9 +113,17 @@ async def create_user(data: UserCreate, _perm=Depends(require_permission("users"
 
 
 @router.put("/users/{user_id}")
-async def update_user(
-    user_id: int, data: UserUpdate, _perm=Depends(require_permission("users", "update"))
-):
+async def update_user(user_id: int, data: UserUpdate, user: CurrentUser = Depends(require_auth)):
+    """Owner/technoking can edit any user (full field set, including `type`). Any authenticated
+    user can also edit their *own* row this same way -- but never `type`, even if they're also an
+    owner/technoking: self-promotion/demotion must go through the explicit admin-on-someone-else
+    path, never slip in on a profile edit. See todo/todo_user_management.md's locked decision."""
+    is_self = user.id == user_id
+    is_admin = permissions.is_allowed("users", "update", user.type)
+    if not is_self and not is_admin:
+        raise HTTPException(status_code=403, detail="Not permitted")
+    requested_type = data.type if (is_admin and not is_self) else None
+
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -129,8 +138,8 @@ async def update_user(
             if data.about_me is not None:
                 updates.append("about_me = %s")
                 params.append(data.about_me)
-            if data.type is not None:
-                cursor.execute("SELECT id FROM user_types WHERE type = %s", (data.type,))
+            if requested_type is not None:
+                cursor.execute("SELECT id FROM user_types WHERE type = %s", (requested_type,))
                 type_id = cursor.fetchone()
                 if type_id:
                     updates.append("type = %s")

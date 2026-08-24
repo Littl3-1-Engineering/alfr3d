@@ -189,10 +189,15 @@ async def update_llm_config(
     try:
         with db_connection() as db:
             cursor = db.cursor()
-            if data.api_key is not None:
+            # Falsy (None or "") means "leave the stored key alone" -- the GET side never
+            # returns the real key (see dependencies._fetch_llm_config), so the frontend always
+            # round-trips an empty api_key unless the user actually typed a new one.
+            if data.api_key:
+                from common import secrets_utils
+
                 cursor.execute(
                     "UPDATE config SET value = %s WHERE name = 'llm_api_key'",
-                    (data.api_key,),
+                    (secrets_utils.encrypt(data.api_key),),
                 )
             if data.usage_limit is not None:
                 cursor.execute(

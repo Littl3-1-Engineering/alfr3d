@@ -5,12 +5,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LogIn, LogOut } from 'lucide-react';
 import AudioPlayer from './components/AudioPlayer';
 import LoginModal from './components/LoginModal';
+import OnboardingModal from './components/OnboardingModal';
 import SignInRequired from './components/SignInRequired';
 import socket from './utils/socket';
+import { getSetupStatus } from './utils/authStore';
 import { useAuth } from './utils/useAuth';
 import Nexus from './pages/Nexus';
 import Domain from './pages/Domain';
 import Matrix from './pages/Matrix';
+import Profile from './pages/Profile';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,17 +30,43 @@ function AppContent() {
   const location = useLocation();
   const { user, isAuthenticated, logout } = useAuth();
   const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [onboardingModalOpen, setOnboardingModalOpen] = useState(false);
+  const [setupStatus, setSetupStatus] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSetupStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setSetupStatus(status);
+        if (status.state !== 'claimed') setOnboardingModalOpen(true);
+      })
+      .catch(() => {
+        // Best-effort -- if the check itself fails, fall back to the normal sign-in flow; a
+        // real onboarding need will surface again on the next load.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const needsOnboarding = setupStatus?.state && setupStatus.state !== 'claimed';
+  const openSignIn = () => (needsOnboarding ? setOnboardingModalOpen(true) : setLoginModalOpen(true));
 
   const getComponent = () => {
     switch (location.pathname) {
       case '/domain':
         return isAuthenticated
           ? <Domain />
-          : <SignInRequired pageName="Domain" onSignIn={() => setLoginModalOpen(true)} />;
+          : <SignInRequired pageName="Domain" onSignIn={openSignIn} />;
       case '/matrix':
         return isAuthenticated
           ? <Matrix />
-          : <SignInRequired pageName="Matrix" onSignIn={() => setLoginModalOpen(true)} />;
+          : <SignInRequired pageName="Matrix" onSignIn={openSignIn} />;
+      case '/profile':
+        return isAuthenticated
+          ? <Profile />
+          : <SignInRequired pageName="Profile" onSignIn={openSignIn} />;
       default: return <Nexus />;
     }
   };
@@ -57,9 +86,12 @@ function AppContent() {
           </div>
           {isAuthenticated ? (
             <div className="flex items-center space-x-3">
-              <span className="text-sm text-text-secondary">
+              <Link
+                to="/profile"
+                className="text-sm text-text-secondary hover:text-primary transition-colors"
+              >
                 {user.id} <span className="text-primary uppercase">{user.role}</span>
-              </span>
+              </Link>
               <button
                 onClick={logout}
                 className="flex items-center space-x-1 text-sm text-text-secondary hover:text-primary transition-colors"
@@ -71,7 +103,7 @@ function AppContent() {
             </div>
           ) : (
             <button
-              onClick={() => setLoginModalOpen(true)}
+              onClick={openSignIn}
               className="flex items-center space-x-1 text-sm text-primary hover:text-primary-hover transition-colors"
             >
               <LogIn className="w-4 h-4" />
@@ -81,6 +113,12 @@ function AppContent() {
         </div>
       </nav>
       <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
+      <OnboardingModal
+        isOpen={onboardingModalOpen}
+        onClose={() => setOnboardingModalOpen(false)}
+        setupStatus={setupStatus}
+        onSetupComplete={() => setSetupStatus((prev) => (prev ? { ...prev, state: 'claimed' } : prev))}
+      />
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

@@ -4,7 +4,7 @@ import logging
 import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
-from common import get_connection
+from common import get_connection, secrets_utils
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,9 @@ def get_claude_config():
         )
         for row in cursor.fetchall():
             config[row[0]] = row[1]
+        api_key = config.get("llm_api_key", "")
         return {
-            "api_key": config.get("llm_api_key", ""),
+            "api_key": secrets_utils.decrypt_or_plaintext(api_key) if api_key else "",
             "usage_limit": int(config.get("llm_usage_limit", 10)),
             "model": config.get("llm_model") or DEFAULT_LLM_MODEL,
         }
@@ -46,7 +47,7 @@ def save_claude_config(api_key=None, usage_limit=None, model=None):
     cursor = db.cursor()
     try:
         for name, value in (
-            ("llm_api_key", api_key),
+            ("llm_api_key", secrets_utils.encrypt(api_key) if api_key else api_key),
             ("llm_usage_limit", usage_limit),
             ("llm_model", model),
         ):

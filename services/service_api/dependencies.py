@@ -387,6 +387,11 @@ def _fetch_context():
 
 
 def _fetch_llm_config():
+    """Backs the unauthenticated GET /personality/llm-config route (GETs stay public per the
+    read-only-for-anonymous convention -- see auth/dependencies.py). Never returns the actual
+    key: only whether one is configured, so the Anthropic API key can't be read off the network
+    by anyone who can reach the API. The real value is only ever read server-side by
+    service_speak/llm_client.py's get_claude_config()."""
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -396,7 +401,7 @@ def _fetch_llm_config():
         rows = cursor.fetchall()
         config = {row[0]: row[1] for row in rows}
         return {
-            "api_key": config.get("llm_api_key", ""),
+            "api_key_set": bool(config.get("llm_api_key")),
             "usage_limit": int(config.get("llm_usage_limit", 10)),
             "model": config.get("llm_model") or "claude-haiku-4-5-20251001",
         }

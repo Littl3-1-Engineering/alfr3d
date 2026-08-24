@@ -321,7 +321,9 @@ async def control_esphome_device_async(hostname, key, domain, command, params=No
             else:
                 client.fan_command(key=key, state=state)
         elif domain == "light" and command == "set_brightness":
-            brightness = float(params.get("brightness", 255)) / 255
+            # ControlBlade's slider sends 0-100 (percent), matching HA's brightness_pct
+            # convention -- not aioesphomeapi's raw 0-255 brightness field, hence /100 not /255.
+            brightness = float(params.get("brightness", 100)) / 100
             client.light_command(key=key, state=True, brightness=brightness)
         elif domain == "lock" and command in ("lock", "unlock"):
             client.lock_command(
@@ -339,7 +341,9 @@ async def control_esphome_device_async(hostname, key, domain, command, params=No
             )
             client.media_player_command(key=key, command=mp_command)
         elif domain == "media_player" and command == "volume_set":
-            client.media_player_command(key=key, volume=float(params.get("volume", 0)))
+            # Same 0-100 percent -> 0.0-1.0 normalization as brightness/position above; this was
+            # previously passing ControlBlade's raw 0-100 slider value straight through.
+            client.media_player_command(key=key, volume=float(params.get("volume", 0)) / 100)
         else:
             return False, f"Unsupported command '{command}' for domain '{domain}'"
 

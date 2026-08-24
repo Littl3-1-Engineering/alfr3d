@@ -156,6 +156,7 @@ def apply_database_schema(mysql_config):
         "context",
         "listening_history",
         "speaker_groups",
+        "refresh_tokens",
         "alembic_version",
     ):
         cursor.execute(f"DROP TABLE IF EXISTS `{table}`")
