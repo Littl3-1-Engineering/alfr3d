@@ -1,6 +1,18 @@
 # Plan: Encrypt Integration Secrets at Rest
 
-## Status: ✅ Shipped 2026-08-22
+## Status: ✅ Shipped 2026-08-22 (llm_api_key gap closed 2026-08-24)
+
+**2026-08-24 follow-up**: found via an Aikido-assisted security pass that `llm_api_key`
+(the Anthropic key powering `service_speak`'s Claude calls) was never wired into this module --
+it was stored plaintext in `config` and, worse, `GET /api/personality/llm-config` returned it
+unauthenticated (any caller reaching the API got the raw key back, no login required). Fixed:
+`dependencies._fetch_llm_config()` now returns `api_key_set: bool` instead of the raw value;
+`routes/personality.py`'s `PUT` encrypts via `secrets_utils.encrypt()` and only overwrites the
+stored key when a non-empty value is submitted (empty means "leave it alone", since GET no
+longer round-trips the real key to the frontend); `service_speak/llm_client.py`'s
+`get_claude_config()`/`save_claude_config()` decrypt/encrypt to match. Frontend
+(`Personality.jsx`) now shows the API key field blank with an "already configured" placeholder
+instead of pre-filling the live key.
 
 `services/common/secrets_utils.py` implements the design below as scoped, wired into
 `ha_utils.py`/`st_utils.py`/`spotify_utils.py`/`esphome_utils.py`. Corrections found during
