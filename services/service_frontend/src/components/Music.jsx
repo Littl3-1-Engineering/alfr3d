@@ -147,6 +147,155 @@ SpotifySetup.propTypes = {
   onSaved: PropTypes.func.isRequired,
 };
 
+// Speaker volume/cast control has nothing to do with Spotify (it targets HA media_player
+// entities directly) so it's rendered regardless of Spotify configuration/authorization state,
+// not just inside the fully-authorized view. See todo_iot_central_control.md.
+const CastToSpeakers = ({
+  castData, castError, castSelection, setCastSelection, castTo, setCastVolume,
+  deleteGroup, newGroupName, setNewGroupName, saveGroup, stopCast,
+}) => (
+  <Section icon={Cast} title="Cast to Speakers">
+    {castError && (
+      <p className="text-xs text-error mb-3">{castError}</p>
+    )}
+    {castData.speakers.length === 0 ? (
+      <p className="text-text-tertiary text-sm">
+        No Home Assistant speakers found. Enable the HA integration to cast playback.
+      </p>
+    ) : (
+      <div className="space-y-2">
+        {castData.speakers.map((s) => {
+          const active = (castData.active_casts || []).includes(s.entity_id);
+          const vol = s.volume_level != null ? Math.round(s.volume_level * 100) : 100;
+          return (
+            <div
+              key={s.entity_id}
+              className={`p-2 rounded-lg border ${active ? 'bg-primary/10 border-primary/40' : 'bg-white/5 border-white/10'}`}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={castSelection.includes(s.entity_id)}
+                  onChange={(e) =>
+                    setCastSelection((prev) =>
+                      e.target.checked
+                        ? [...prev, s.entity_id]
+                        : prev.filter((id) => id !== s.entity_id)
+                    )
+                  }
+                  className="accent-fui-accent shrink-0"
+                  title="Select for group"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-text-primary text-sm truncate">{s.name}</p>
+                  <p className={`text-xs truncate ${active ? 'text-success' : 'text-text-tertiary'}`}>
+                    {active ? 'Casting' : s.state || 'off'}
+                    {s.media_title ? ` · ${s.media_title}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={() => castTo(s)}
+                  className="p-1.5 rounded hover:bg-primary/20 text-primary shrink-0"
+                  title={`Cast to ${s.name}`}
+                >
+                  <Cast className="w-4 h-4" />
+                </button>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={vol}
+                onChange={(e) => setCastVolume(s, Number(e.target.value))}
+                className="w-full mt-1 accent-fui-accent"
+                title={`${s.name} volume`}
+              />
+            </div>
+          );
+        })}
+      </div>
+    )}
+
+    {castData.groups?.length > 0 && (
+      <div className="mt-4">
+        <p className="text-xs uppercase tracking-wide text-text-tertiary mb-2">Groups</p>
+        <div className="space-y-2">
+          {castData.groups.map((g) => (
+            <div key={g.id} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
+              <div className="flex-1 min-w-0">
+                <p className="text-text-primary text-sm truncate">{g.name}</p>
+                <p className="text-text-tertiary text-xs truncate">{(g.entities || []).join(', ')}</p>
+              </div>
+              <button
+                onClick={() => castTo({ name: g.name })}
+                className="p-1.5 rounded hover:bg-primary/20 text-primary shrink-0"
+                title={`Cast to ${g.name}`}
+              >
+                <Cast className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => deleteGroup(g)}
+                className="p-1.5 rounded hover:bg-error/20 text-error shrink-0"
+                title="Delete group"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div className="mt-4">
+      <p className="text-xs uppercase tracking-wide text-text-tertiary mb-2">Create Group</p>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          placeholder="e.g. Living Room"
+          className="flex-1 px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-text-primary text-sm"
+        />
+        <button
+          onClick={saveGroup}
+          disabled={!newGroupName.trim() || castSelection.length === 0}
+          className="flex items-center gap-1 px-3 py-2 bg-secondary/20 border border-secondary rounded-lg text-xs text-secondary hover:bg-secondary/30 disabled:opacity-50"
+          title="Save selected speakers as a group"
+        >
+          <Save className="w-3.5 h-3.5" /> Save
+        </button>
+      </div>
+    </div>
+
+    {castData.active_casts?.length > 0 && (
+      <button
+        onClick={stopCast}
+        className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-error text-error text-sm hover:bg-error/10"
+      >
+        Stop Casting
+      </button>
+    )}
+  </Section>
+);
+
+CastToSpeakers.propTypes = {
+  castData: PropTypes.shape({
+    speakers: PropTypes.array,
+    groups: PropTypes.array,
+    active_casts: PropTypes.array,
+  }).isRequired,
+  castError: PropTypes.string,
+  castSelection: PropTypes.arrayOf(PropTypes.string).isRequired,
+  setCastSelection: PropTypes.func.isRequired,
+  castTo: PropTypes.func.isRequired,
+  setCastVolume: PropTypes.func.isRequired,
+  deleteGroup: PropTypes.func.isRequired,
+  newGroupName: PropTypes.string.isRequired,
+  setNewGroupName: PropTypes.func.isRequired,
+  saveGroup: PropTypes.func.isRequired,
+  stopCast: PropTypes.func.isRequired,
+};
+
 const Music = () => {
   const { isAuthenticated } = useAuth();
   const [auth, setAuth] = useState(null);
@@ -330,6 +479,19 @@ const Music = () => {
         <Section icon={Settings} title="Spotify Setup">
           <SpotifySetup onSaved={() => { fetchAuth(); fetchAll(); }} />
         </Section>
+        <CastToSpeakers
+          castData={castData}
+          castError={castError}
+          castSelection={castSelection}
+          setCastSelection={setCastSelection}
+          castTo={castTo}
+          setCastVolume={setCastVolume}
+          deleteGroup={deleteGroup}
+          newGroupName={newGroupName}
+          setNewGroupName={setNewGroupName}
+          saveGroup={saveGroup}
+          stopCast={stopCast}
+        />
       </div>
     );
   }
@@ -370,6 +532,19 @@ const Music = () => {
             {showSetup && <SpotifySetup onSaved={refresh} />}
           </div>
         </Section>
+        <CastToSpeakers
+          castData={castData}
+          castError={castError}
+          castSelection={castSelection}
+          setCastSelection={setCastSelection}
+          castTo={castTo}
+          setCastVolume={setCastVolume}
+          deleteGroup={deleteGroup}
+          newGroupName={newGroupName}
+          setNewGroupName={setNewGroupName}
+          saveGroup={saveGroup}
+          stopCast={stopCast}
+        />
       </div>
     );
   }
@@ -682,128 +857,19 @@ const Music = () => {
           </Section>
 
           {/* Cast to Speakers */}
-          <Section icon={Cast} title="Cast to Speakers">
-            {castError && (
-              <p className="text-xs text-error mb-3">{castError}</p>
-            )}
-            {castData.speakers.length === 0 ? (
-              <p className="text-text-tertiary text-sm">
-                No Home Assistant speakers found. Enable the HA integration to cast playback.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {castData.speakers.map((s) => {
-                  const active = (castData.active_casts || []).includes(s.entity_id);
-                  const vol = s.volume_level != null ? Math.round(s.volume_level * 100) : 100;
-                  return (
-                    <div
-                      key={s.entity_id}
-                      className={`p-2 rounded-lg border ${active ? 'bg-primary/10 border-primary/40' : 'bg-white/5 border-white/10'}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={castSelection.includes(s.entity_id)}
-                          onChange={(e) =>
-                            setCastSelection((prev) =>
-                              e.target.checked
-                                ? [...prev, s.entity_id]
-                                : prev.filter((id) => id !== s.entity_id)
-                            )
-                          }
-                          className="accent-fui-accent shrink-0"
-                          title="Select for group"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-text-primary text-sm truncate">{s.name}</p>
-                          <p className={`text-xs truncate ${active ? 'text-success' : 'text-text-tertiary'}`}>
-                            {active ? 'Casting' : s.state || 'off'}
-                            {s.media_title ? ` · ${s.media_title}` : ''}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => castTo(s)}
-                          className="p-1.5 rounded hover:bg-primary/20 text-primary shrink-0"
-                          title={`Cast to ${s.name}`}
-                        >
-                          <Cast className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={vol}
-                        onChange={(e) => setCastVolume(s, Number(e.target.value))}
-                        className="w-full mt-1 accent-fui-accent"
-                        title={`${s.name} volume`}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {castData.groups?.length > 0 && (
-              <div className="mt-4">
-                <p className="text-xs uppercase tracking-wide text-text-tertiary mb-2">Groups</p>
-                <div className="space-y-2">
-                  {castData.groups.map((g) => (
-                    <div key={g.id} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-text-primary text-sm truncate">{g.name}</p>
-                        <p className="text-text-tertiary text-xs truncate">{(g.entities || []).join(', ')}</p>
-                      </div>
-                      <button
-                        onClick={() => castTo({ name: g.name })}
-                        className="p-1.5 rounded hover:bg-primary/20 text-primary shrink-0"
-                        title={`Cast to ${g.name}`}
-                      >
-                        <Cast className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => deleteGroup(g)}
-                        className="p-1.5 rounded hover:bg-error/20 text-error shrink-0"
-                        title="Delete group"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-4">
-              <p className="text-xs uppercase tracking-wide text-text-tertiary mb-2">Create Group</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder="e.g. Living Room"
-                  className="flex-1 px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-text-primary text-sm"
-                />
-                <button
-                  onClick={saveGroup}
-                  disabled={!newGroupName.trim() || castSelection.length === 0}
-                  className="flex items-center gap-1 px-3 py-2 bg-secondary/20 border border-secondary rounded-lg text-xs text-secondary hover:bg-secondary/30 disabled:opacity-50"
-                  title="Save selected speakers as a group"
-                >
-                  <Save className="w-3.5 h-3.5" /> Save
-                </button>
-              </div>
-            </div>
-
-            {castData.active_casts?.length > 0 && (
-              <button
-                onClick={stopCast}
-                className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-error text-error text-sm hover:bg-error/10"
-              >
-                Stop Casting
-              </button>
-            )}
-          </Section>
+          <CastToSpeakers
+            castData={castData}
+            castError={castError}
+            castSelection={castSelection}
+            setCastSelection={setCastSelection}
+            castTo={castTo}
+            setCastVolume={setCastVolume}
+            deleteGroup={deleteGroup}
+            newGroupName={newGroupName}
+            setNewGroupName={setNewGroupName}
+            saveGroup={saveGroup}
+            stopCast={stopCast}
+          />
         </div>
       </div>
     </div>
