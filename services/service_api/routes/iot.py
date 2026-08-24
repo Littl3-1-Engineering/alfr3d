@@ -510,7 +510,7 @@ async def control_iot_device(
             else:
                 service = command
 
-            params = data.params or {}
+            params = ha_utils.translate_generic_control_params(command, data.params)
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
                 devices = await asyncio.get_event_loop().run_in_executor(

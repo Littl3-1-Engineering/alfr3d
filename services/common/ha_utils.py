@@ -153,6 +153,27 @@ def get_ha_device_state(entity_id):
         return None
 
 
+def translate_generic_control_params(command, params):
+    """Map ControlBlade.jsx's provider-agnostic command vocabulary (turn_on/turn_off,
+    set_brightness, set_speed, volume_set, ...) onto the service-call `data` HA's actual REST
+    API expects for that command. HA's bare `brightness` field is raw 0-255, `volume_level` is a
+    0.0-1.0 float, and `fan.set_percentage` takes a numeric `percentage` -- none of which match
+    what ControlBlade's sliders/buttons send (0-100 percents and named fan speeds), so passing
+    params straight through silently sends the wrong value (or a payload HA rejects outright).
+    See todo/todo_iot_central_control.md."""
+    params = dict(params or {})
+    if command == "set_brightness" and "brightness" in params:
+        return {"brightness_pct": params["brightness"]}
+    if command == "volume_set" and "volume" in params:
+        return {"volume_level": params["volume"] / 100.0}
+    if command == "set_speed" and "speed" in params:
+        percentage = {"off": 0, "low": 33, "medium": 66, "high": 100}.get(
+            str(params["speed"]).lower(), 0
+        )
+        return {"percentage": percentage}
+    return params
+
+
 def ha_control_device(entity_id, service, data=None):
     config = get_ha_config()
     ha_url = config.get("ha_url", "").rstrip("/")

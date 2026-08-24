@@ -54,6 +54,11 @@
 
 ## Phase 5: Unified IoT Layer ✓
 
+**Correction (2026-08-24):** `POST /api/iot/devices/<id>/control` was found to only actually
+handle `source == "homeassistant"` and `"esphome"` — SmartThings devices 400 on every command
+today, despite this phase's "unified" framing below. See `todo_smartthings_generic_control.md`,
+split out during the `todo_iot_central_control.md` audit.
+
 ### Completed
 - Unified API endpoints in service_api/app.py:
   - GET /api/iot/status
