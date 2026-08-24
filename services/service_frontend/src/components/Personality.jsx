@@ -19,7 +19,7 @@ const usePersonality = () => {
     verbal_tics: '',
   });
   const [presets, setPresets] = useState([]);
-  const [llmConfig, setLlmConfig] = useState({ api_key: '', usage_limit: 10 });
+  const [llmConfig, setLlmConfig] = useState({ api_key: '', api_key_set: false, usage_limit: 10 });
   const [llmCallsToday, setLlmCallsToday] = useState(null);
   const [currentMood, setCurrentMood] = useState('neutral');
   const [loading, setLoading] = useState(true);
@@ -54,7 +54,10 @@ const usePersonality = () => {
       const response = await fetch(`${API_BASE_URL}/api/personality/llm-config`);
       if (response.ok) {
         const data = await response.json();
-        setLlmConfig(data);
+        // The API never returns the actual key (it's a secret) -- only whether one is
+        // configured. api_key stays '' so the field starts blank; saveLlmConfig only sends
+        // a new key when the user actually typed one.
+        setLlmConfig({ ...data, api_key: '' });
       }
     } catch (error) {
       console.error('Error fetching LLM config:', error);
@@ -458,7 +461,7 @@ const Personality = () => {
                 value={llmConfig.api_key}
                 onChange={(e) => setLlmConfig({ ...llmConfig, api_key: e.target.value })}
                 className="w-full p-2 bg-fui-dim border border-fui-border rounded text-text-primary"
-                placeholder="sk-ant-..."
+                placeholder={llmConfig.api_key_set ? '••••••••  (already configured — leave blank to keep)' : 'sk-ant-...'}
               />
             </div>
 
