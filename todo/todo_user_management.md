@@ -1,6 +1,46 @@
 # User Management: Owner CRUD on Other Users + Self-Service Profile Editing
 
-## Status: 📋 Not started
+## Status: 🟡 Backend + web frontend done 2026-08-24; Launcher (alfr3d_deck) profile screen still open, scoped out of this pass deliberately
+
+## What shipped (2026-08-24)
+
+- **Backend** (`services/service_api/routes/users.py`): `PUT /api/users/{user_id}` now accepts
+  either an owner/technoking caller (any user, full field set including `type`) or the caller
+  editing their own row (`caller.id == user_id`, restricted field set). `type` is excluded from
+  the self-service path unconditionally -- even an owner/technoking editing their *own* row
+  through this route can't change their own `type`; that always requires the explicit
+  admin-on-someone-else path. Uses `require_auth` + `auth.permissions.is_allowed()` directly
+  rather than `require_permission`, since the route now has two different authorization
+  outcomes depending on whose row is being edited.
+- The `owner`-as-distinct-admin-role prerequisite this todo originally called out as blocking
+  turned out to already be shipped: `auth/permissions.py`'s `_ROLE_ALIASES = {"owner":
+  "technoking"}` (added in the first-run onboarding work) already makes `owner` get every
+  `technoking` grant, including `users`'s. No matrix change was needed.
+- 6 new tests in `tests/test_api_service.py` covering: unauthenticated rejection, cross-user
+  edit rejection for a non-admin, self-service edit success, `type` silently dropped on a
+  self-edit, `type` silently dropped even for an admin editing their own row, and an admin
+  successfully changing someone *else's* `type`. Full backend suite 286/286 passing.
+- **Frontend**: new `pages/Profile.jsx` -- a "My Profile" page (name/email/about_me only, role
+  shown read-only, `type` never sent) reachable by clicking your own name/role in the nav bar
+  (`App.jsx`), routed at `/profile`. Reuses `AuthContext`'s `deriveUser()`-sourced `user.id`
+  the same way `auth/change-password` does server-side -- there's no way to pass someone else's
+  id from this form. `PersonnelRoster.jsx`/`UserModal.jsx` (admin CRUD on other users) were left
+  as-is; the backend's existing role gate already covered admin-editing-others correctly, this
+  todo only added the missing self-service path. 2 new tests in `pages/Profile.test.jsx`. Full
+  frontend suite 82/82 passing, lint clean (0 errors; pre-existing unrelated warnings only),
+  `npm run build` succeeds.
+
+## Explicitly deferred (not done in this pass)
+
+- **Launcher (`alfr3d_deck`)**: design sketch item 5 (net-new Settings profile-editing screen) --
+  scoped out of this pass on purpose (different codebase/language, sized separately). Still
+  needed for parity; nothing in `alfr3d_deck` consumes the new self-service endpoint yet.
+- Self-service `DELETE` ("delete my own account") -- sketch item 2, explicitly out of scope,
+  session/token-revocation implications not addressed here.
+- The three "Open Questions" below the sketch (other-users' profile visibility, email
+  re-verification on change, admin-editing-someone-else's `about_me`) -- untouched, still open.
+
+---
 
 ## Overview
 

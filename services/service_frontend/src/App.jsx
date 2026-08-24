@@ -13,6 +13,7 @@ import { useAuth } from './utils/useAuth';
 import Nexus from './pages/Nexus';
 import Domain from './pages/Domain';
 import Matrix from './pages/Matrix';
+import Profile from './pages/Profile';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -62,6 +63,10 @@ function AppContent() {
         return isAuthenticated
           ? <Matrix />
           : <SignInRequired pageName="Matrix" onSignIn={openSignIn} />;
+      case '/profile':
+        return isAuthenticated
+          ? <Profile />
+          : <SignInRequired pageName="Profile" onSignIn={openSignIn} />;
       default: return <Nexus />;
     }
   };
@@ -81,9 +86,12 @@ function AppContent() {
           </div>
           {isAuthenticated ? (
             <div className="flex items-center space-x-3">
-              <span className="text-sm text-text-secondary">
+              <Link
+                to="/profile"
+                className="text-sm text-text-secondary hover:text-primary transition-colors"
+              >
                 {user.id} <span className="text-primary uppercase">{user.role}</span>
-              </span>
+              </Link>
               <button
                 onClick={logout}
                 className="flex items-center space-x-1 text-sm text-text-secondary hover:text-primary transition-colors"
