@@ -11,11 +11,14 @@ design (see todo/todo_auth_rbac.md's locked decision), so it's simply never list
 allowed-roles set below rather than special-cased.
 
 `user_types` has two more legacy rows beyond technoking/resident/guest: "owner" (id=4) and
-"alfr3d" (id=5). Neither is assignable through any current UI (PersonnelRoster.jsx/UserModal.jsx
-only offer the three above), but "owner" is a real (if currently unreachable) concept used in
-routine trigger-condition logic ("only when 'owner' is at home") -- treated as a technoking-
-equivalent alias below. "alfr3d" is the system's own identity, not a login-capable human account,
-and gets no grants -- it fails closed to the same place an unrecognized role would.
+"alfr3d" (id=5). "owner" is the real assignable admin role going forward -- not yet offered by
+PersonnelRoster.jsx/UserModal.jsx (todo/todo_user_management.md), but reachable today via
+POST /api/auth/bootstrap's first-run onboarding flow (todo/todo_onboarding_first_user.md), which
+deliberately creates "owner" accounts rather than "technoking" ones since technoking is an
+Athos-only backdoor never assignable via any UI -- treated as a technoking-equivalent alias below
+so an owner account gets full admin grants without literally being the backdoor role. "alfr3d" is
+the system's own identity, not a login-capable human account, and gets no grants -- it fails
+closed to the same place an unrecognized role would.
 
 A missing resource or action key resolves to an empty allowed-roles set (fail closed): nobody
 gets write access to something this matrix doesn't explicitly grant.

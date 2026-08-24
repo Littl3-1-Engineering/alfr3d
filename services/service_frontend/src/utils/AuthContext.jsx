@@ -29,6 +29,10 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback((username, password) => authStore.login({ username, password }), []);
   const claim = useCallback((username, password) => authStore.claim({ username, password }), []);
+  const bootstrap = useCallback(
+    (username, password) => authStore.bootstrap({ username, password }),
+    []
+  );
   const logout = useCallback(() => authStore.logout(), []);
 
   const value = {
@@ -36,6 +40,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: user !== null,
     login,
     claim,
+    bootstrap,
     logout,
   };
 
