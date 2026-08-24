@@ -1,6 +1,6 @@
 # First-Run Onboarding: Detect No Password-Set User, Generate or Claim the First Account
 
-## Status: 🚧 In progress -- backend + webapp shipped 2026-08-24, launcher UI and email OTP remain
+## Status: 🚧 In progress -- backend + webapp + launcher UI shipped 2026-08-24, email OTP remains
 
 ## Overview
 
@@ -27,12 +27,13 @@ existing seeded resident claim their row.
   `setup-status` reports non-`claimed`, offering claim-existing or create-new (calls `bootstrap`)
   paths; wired into `App.jsx`/`AuthContext.jsx`/`authStore.js`. Test coverage in
   `OnboardingModal.test.jsx`.
-- Launcher (`alfr3d_deck`): has a login screen in Settings (`SettingsWindowContent.kt`'s
-  `AuthSection()`, line 404, calling `Alfr3d.login()`) but **still no claim/bootstrap flow** —
-  confirmed by grep, `/api/auth/claim` is only mentioned in a doc-comment in
-  `alfr3d/model/Alfr3dModels.kt:32`; there is no `claim()`/`bootstrap()` method on
-  `Alfr3dClient`/`HttpAlfr3dClient`/`Alfr3d` and no onboarding UI anywhere in `settings/`. **This
-  is the largest remaining piece of this todo.**
+- Launcher (`alfr3d_deck`): **shipped 2026-08-24** — `Alfr3dClient`/`HttpAlfr3dClient` gained
+  `getSetupStatus`/`claim`/`bootstrap` (mirroring the webapp's `authStore.js`), `Alfr3d` object
+  gained matching `claim`/`bootstrap`/`checkSetupStatus` wrappers that persist tokens the same way
+  `login` does, and a new `OnboardingSection.kt` composable renders the claim/create card. Settings
+  hoists the `setup-status` check into a new `Alfr3dAccountSection` wrapper so the onboarding card
+  and the normal `AuthSection` sign-in form are mutually exclusive (never both shown at once,
+  matching the webapp's `LoginModal`/`OnboardingModal` split) rather than stacked.
 - Email OTP follow-up: still blocked on `todo_email_service.md` (no SMTP/email-sending capability
   exists anywhere in this codebase yet) -- not started, not scoped for this pass.
 
