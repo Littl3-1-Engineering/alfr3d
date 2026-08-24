@@ -1,6 +1,6 @@
 # Centralize Home Appliance Control on the Domain/Blueprint Page
 
-## Status: 🟡 Items 1-3 done 2026-08-24; one new follow-up scoped out (SmartThings generic control)
+## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`
 
 Fixed the actual bug (2026-08-24, earlier pass): `Music.jsx`'s "Cast to Speakers" section was
 extracted into its own `CastToSpeakers` component and is now rendered in all three Music-tab

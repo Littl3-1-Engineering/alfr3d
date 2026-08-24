@@ -57,7 +57,10 @@
 **Correction (2026-08-24):** `POST /api/iot/devices/<id>/control` was found to only actually
 handle `source == "homeassistant"` and `"esphome"` — SmartThings devices 400 on every command
 today, despite this phase's "unified" framing below. See `todo_smartthings_generic_control.md`,
-split out during the `todo_iot_central_control.md` audit.
+split out during the `todo_iot_central_control.md` audit. **Fixed 2026-08-24** — SmartThings is
+now a third branch in `control_iot_device()`, and `sync_st_devices()` derives a normalized
+device_type from ST's capability list instead of storing the raw label; see that todo file for
+detail and the untested-against-a-live-account caveat.
 
 ### Completed
 - Unified API endpoints in service_api/app.py:

@@ -1,6 +1,34 @@
 # Todo: Wire SmartThings into the Generic IoT Control Endpoint
 
-## Status: 🔲 Not started (found 2026-08-24 during the IoT central-control audit, split out from `todo_iot_central_control.md`)
+## Status: 🟡 Fixed 2026-08-24 (found the same day during the IoT central-control audit, split out from `todo_iot_central_control.md`) — needs live SmartThings device verification
+
+Both parts of the suggested approach below are implemented:
+- `control_iot_device()` (`routes/iot.py`) now has a `source == "smartthings"` branch, using a
+  new `st_utils.translate_generic_control_params(device_type, command, params)` that mirrors
+  `ha_utils.translate_generic_control_params()`'s role for HA — maps ControlBlade's generic
+  vocabulary to an ST (capability, command, args) triple per device_type. Returns `None` for an
+  unmapped command, which the route turns into a 400 rather than silently no-op'ing.
+- `sync_st_devices()` now derives `device_type` via a new `st_utils.normalize_st_device_type()`
+  from the device's capability list (switch/switchLevel/colorControl/lock/thermostatMode/
+  fanSpeed/windowShade/mediaPlayback/... -> light/switch/lock/climate/fan/cover/media_player/
+  sensor/binary_sensor), instead of storing ST's raw `deviceTypeName`/`typeName` label. Confirmed
+  nothing else in the codebase read the raw label.
+- Also fixed `GET /api/iot/status` (`routes/iot.py`), found while touching this code: it
+  hardcoded `"st": {"connected": False, "message": "Not configured"}` regardless of actual ST
+  config/connectivity, unlike the HA branch right next to it which calls
+  `ha_utils.test_ha_connection()`. Now calls `st_utils.test_st_connection()` the same way.
+- 20 new unit tests in `tests/test_st_utils.py` (pattern: `tests/test_ha_utils.py`). Full suite
+  280/280 passing; black/flake8 (`--line-length=100`) clean on all three changed/added files.
+
+**Still open:** item 3 below (real ST device/account testing) — no live SmartThings account was
+available to verify this against in this environment. The capability->command mapping is written
+from the SmartThings public capability reference, not exercised against a real device response.
+Treat it as best-effort until it's checked against a real ST account, the same caveat
+`todo_esphome.md` and `todo_music_spotify.md` carry for their own not-yet-verified-live items.
+
+---
+
+## Original scoping (kept for context)
 
 ## Goal
 
