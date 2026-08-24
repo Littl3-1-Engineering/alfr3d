@@ -1,15 +1,19 @@
-"""Auth routes: login, refresh, logout, the Phase-0 account-claim bootstrap, and Phase-5
-password change/reset.
+"""Auth routes: login, refresh, logout, the Phase-0 account-claim bootstrap, Phase-5 password
+change/reset, and first-run onboarding (setup-status/bootstrap, todo/todo_onboarding_first_user.md).
 
 POST /api/auth/claim exists because no existing `user` row had a password before this feature
 shipped (per todo/todo_auth_rbac.md's Phase 0) -- it's unauthenticated but narrowly scoped: it
 only ever sets a password for a user whose password_hash is currently NULL/empty, so it can't be
-used to take over an already-claimed account.
+used to take over an already-claimed account. GET /api/auth/setup-status and POST
+/api/auth/bootstrap extend this for the first-run case: setup-status tells a client whether to show
+onboarding at all, and bootstrap is claim's counterpart for creating a brand-new admin account
+instead of reusing a seeded row -- both refuse to do anything once any user is already claimed.
 
-Rate limiting (Phase 5): `login` and `claim` are throttled via auth/rate_limit.py, which fails
-open if Redis is unavailable -- see that module's own doc for why. `refresh`/`logout` aren't
-throttled: a refresh token is itself a high-entropy secret (not a guessable username/password
-pair), and logout is idempotent/self-limiting by nature.
+Rate limiting (Phase 5): `login`, `claim`, and `bootstrap` are throttled via auth/rate_limit.py,
+which fails open if Redis is unavailable -- see that module's own doc for why. `refresh`/`logout`
+aren't throttled: a refresh token is itself a high-entropy secret (not a guessable username/password
+pair), and logout is idempotent/self-limiting by nature. `setup-status` isn't throttled either --
+it's a read-only system-state check, not a guessable-credential surface.
 """
 
 import logging
@@ -17,9 +21,10 @@ import logging
 import pymysql
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from dependencies import db_connection
+from dependencies import ALFR3D_ENV_NAME, db_connection
 from models import (
     AdminResetPasswordRequest,
+    BootstrapRequest,
     ChangePasswordRequest,
     ClaimAccountRequest,
     LoginRequest,
@@ -37,6 +42,8 @@ LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
 CLAIM_MAX_ATTEMPTS = 10
 CLAIM_WINDOW_SECONDS = 15 * 60
+BOOTSTRAP_MAX_ATTEMPTS = 10
+BOOTSTRAP_WINDOW_SECONDS = 15 * 60
 
 
 def _client_ip(request: Request) -> str:
@@ -67,6 +74,13 @@ def _issue_tokens(user_id, user_type):
         "refresh_token": tokens.issue_refresh_token(user_id),
         "token_type": "bearer",
     }
+
+
+def _claimed_user_count(cursor) -> int:
+    cursor.execute(
+        "SELECT COUNT(*) FROM user WHERE password_hash IS NOT NULL AND password_hash != ''"
+    )
+    return cursor.fetchone()[0]
 
 
 @router.post("/login")
@@ -147,6 +161,89 @@ async def claim_account(data: ClaimAccountRequest, request: Request):
         db.commit()
 
     return _issue_tokens(user_id, user_type)
+
+
+@router.get("/setup-status")
+async def setup_status():
+    """Unauthenticated system-state check the webapp/launcher use to decide whether to show
+    normal login or first-run onboarding. Deliberately not rate-limited -- it reveals no
+    per-username info except when the system is genuinely unclaimed, in which case listing the
+    unclaimed usernames is the entire point (see claimable_users below), not a leak."""
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute("SELECT COUNT(*) FROM user")
+        total_users = cursor.fetchone()[0]
+
+        if total_users == 0:
+            return {"state": "empty", "claimable_users": []}
+
+        if _claimed_user_count(cursor) > 0:
+            return {"state": "claimed", "claimable_users": []}
+
+        cursor.execute(
+            "SELECT u.id, u.username, ut.type FROM user u "
+            "JOIN user_types ut ON u.type = ut.id "
+            "WHERE u.password_hash IS NULL OR u.password_hash = ''"
+        )
+        claimable_users = [
+            {"id": row[0], "username": row[1], "type": row[2]} for row in cursor.fetchall()
+        ]
+        return {"state": "unclaimed", "claimable_users": claimable_users}
+
+
+@router.post("/bootstrap")
+async def bootstrap(data: BootstrapRequest, request: Request):
+    """Creates a brand-new owner user and claims it in one call -- the alternative to `claim`
+    for households that don't want to reuse a pre-seeded row. Always hardcodes the owner role
+    server-side (never trusts a client-supplied type) since this endpoint is unauthenticated and
+    creating an admin account is a high-privilege action. Deliberately `owner`, not `technoking`:
+    per the role model, technoking is an Athos-only backdoor never assignable via any UI, and
+    owner is the real assignable admin role (see todo/todo_user_management.md)."""
+    rate_key = f"ratelimit:bootstrap:{_client_ip(request)}"
+    if not check_rate_limit(rate_key, BOOTSTRAP_MAX_ATTEMPTS, BOOTSTRAP_WINDOW_SECONDS):
+        raise _rate_limited()
+
+    _validate_new_password(data.password)
+
+    unable_to_create = HTTPException(status_code=400, detail="Unable to create account")
+
+    with db_connection() as db:
+        cursor = db.cursor()
+
+        if _claimed_user_count(cursor) > 0:
+            raise HTTPException(status_code=400, detail="Setup already completed")
+
+        cursor.execute("SELECT id FROM user WHERE username = %s", (data.username,))
+        if cursor.fetchone():
+            raise unable_to_create
+
+        cursor.execute("SELECT id FROM states WHERE state = 'offline'")
+        state_row = cursor.fetchone()
+        if not state_row:
+            raise HTTPException(status_code=500, detail="Offline state not found")
+        state_id = state_row[0]
+
+        cursor.execute("SELECT id FROM user_types WHERE type = 'owner'")
+        type_row = cursor.fetchone()
+        if not type_row:
+            raise HTTPException(status_code=500, detail="Owner user type not found")
+        type_id = type_row[0]
+
+        cursor.execute("SELECT id FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        env_row = cursor.fetchone()
+        if not env_row:
+            raise HTTPException(status_code=500, detail="Environment not found")
+        env_id = env_row[0]
+
+        cursor.execute(
+            "INSERT INTO user (username, password_hash, state, type, environment_id, "
+            "created_at) VALUES (%s, %s, %s, %s, %s, NOW())",
+            (data.username, password_utils.hash_password(data.password), state_id, type_id, env_id),
+        )
+        db.commit()
+        new_id = cursor.lastrowid
+
+    return _issue_tokens(new_id, "owner")
 
 
 @router.post("/change-password")

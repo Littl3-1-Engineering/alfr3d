@@ -99,6 +99,25 @@ export async function claim({ username, password }) {
   return data;
 }
 
+export async function bootstrap({ username, password }) {
+  const data = await postAuth('/api/auth/bootstrap', { username, password });
+  setTokens(data);
+  return data;
+}
+
+/** Unauthenticated system-state check -- tells the app whether to show first-run onboarding
+ * instead of the normal sign-in flow. See services/service_api/auth/routes.py's setup_status. */
+export async function getSetupStatus() {
+  const response = await fetch(`${API_BASE_URL}/api/auth/setup-status`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.detail || 'Request failed');
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
 /** Trade the current refresh token for a new access/refresh pair. Returns the new tokens on
  * success, or null (and clears stored state) on failure. */
 export async function refresh() {

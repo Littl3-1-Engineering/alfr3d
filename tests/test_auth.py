@@ -37,6 +37,7 @@ from auth import (
 )  # noqa: E402
 from models import (  # noqa: E402
     AdminResetPasswordRequest,
+    BootstrapRequest,
     ChangePasswordRequest,
     ClaimAccountRequest,
     LoginRequest,
@@ -328,6 +329,154 @@ def test_claim_account_sets_password_and_issues_tokens_for_unclaimed_user():
         c for c in mock_db.cursor.return_value.execute.call_args_list if "UPDATE user" in c.args[0]
     ][0]
     assert update_call.args[1][1] == 2  # user_id
+
+
+# --- setup_status / bootstrap (first-run onboarding) ------------------------------------------
+
+
+def test_setup_status_reports_empty():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [(0,)]
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        result = asyncio.run(routes.setup_status())
+    assert result == {"state": "empty", "claimable_users": []}
+
+
+def test_setup_status_reports_claimed_and_omits_list():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [(3,), (1,)]
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        result = asyncio.run(routes.setup_status())
+    assert result == {"state": "claimed", "claimable_users": []}
+
+
+def test_setup_status_reports_unclaimed_and_lists_claimable_users():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [(2,), (0,)]
+    mock_db.cursor.return_value.fetchall.return_value = [
+        (1, "athos", "technoking"),
+        (2, "unknown", "guest"),
+    ]
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        result = asyncio.run(routes.setup_status())
+    assert result == {
+        "state": "unclaimed",
+        "claimable_users": [
+            {"id": 1, "username": "athos", "type": "technoking"},
+            {"id": 2, "username": "unknown", "type": "guest"},
+        ],
+    }
+
+
+def test_bootstrap_rejects_short_password():
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            routes.bootstrap(
+                BootstrapRequest(username="newadmin", password="short"),  # pragma: allowlist secret
+                _mock_request(),
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+
+def test_bootstrap_rejects_when_rate_limited():
+    with patch.object(routes, "check_rate_limit", return_value=False):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.bootstrap(
+                    BootstrapRequest(
+                        username="newadmin", password="newpassword123"  # pragma: allowlist secret
+                    ),
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 429
+
+
+def test_bootstrap_rejects_when_a_claimed_user_already_exists():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [(1,)]
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.bootstrap(
+                    BootstrapRequest(
+                        username="newadmin", password="newpassword123"  # pragma: allowlist secret
+                    ),
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Setup already completed"
+
+
+def test_bootstrap_rejects_duplicate_username():
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [(0,), (5,)]
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                routes.bootstrap(
+                    BootstrapRequest(
+                        username="athos", password="newpassword123"  # pragma: allowlist secret
+                    ),
+                    _mock_request(),
+                )
+            )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unable to create account"
+
+
+def test_bootstrap_creates_owner_and_issues_tokens_and_ignores_client_supplied_type():
+    """Also proves an extra `type` field in the request body can't influence the created user's
+    role -- BootstrapRequest doesn't declare that field, so pydantic silently drops it, and the
+    route hardcodes the `user_types` lookup to 'owner' regardless. Deliberately 'owner', not
+    'technoking': technoking is an Athos-only backdoor never assignable via onboarding."""
+    mock_db = MagicMock()
+    mock_db.cursor.return_value.fetchone.side_effect = [
+        (0,),  # _claimed_user_count -> nobody claimed yet
+        None,  # username lookup -> no collision
+        (10,),  # states.id for 'offline'
+        (4,),  # user_types.id for 'owner'
+        (7,),  # environment.id
+    ]
+    mock_db.cursor.return_value.lastrowid = 99
+    data = BootstrapRequest.model_validate(
+        {
+            "username": "newadmin",
+            "password": "newpassword123",  # pragma: allowlist secret
+            "type": "guest",
+        }
+    )
+    with patch.object(routes, "db_connection") as mock_conn:
+        mock_conn.return_value.__enter__.return_value = mock_db
+        with patch.object(tokens, "issue_refresh_token", return_value="refresh-token-value"):
+            result = asyncio.run(routes.bootstrap(data, _mock_request()))
+
+    assert result["refresh_token"] == "refresh-token-value"
+    assert result["token_type"] == "bearer"
+
+    type_lookup_call = [
+        c
+        for c in mock_db.cursor.return_value.execute.call_args_list
+        if "user_types" in c.args[0] and "SELECT" in c.args[0]
+    ][0]
+    assert "'owner'" in type_lookup_call.args[0]
+
+    insert_call = [
+        c
+        for c in mock_db.cursor.return_value.execute.call_args_list
+        if "INSERT INTO user" in c.args[0]
+    ][0]
+    assert insert_call.args[1][0] == "newadmin"  # username
+    assert insert_call.args[1][2] == 10  # state_id
+    assert insert_call.args[1][3] == 4  # type_id (owner, not "guest")
+    assert insert_call.args[1][4] == 7  # environment_id
 
 
 def test_login_rejects_wrong_password():
