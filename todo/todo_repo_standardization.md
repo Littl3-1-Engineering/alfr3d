@@ -1,25 +1,31 @@
 # Todo: Bring All 3 Project Repos to the Same Tooling Standard
 
-## Status: 🟡 alfr3d_deck done 2026-08-24; littl31 and Aikido still open
+## Status: 🟡 alfr3d_deck + littl31 tooling done, alfr3d CI re-enabled 2026-08-24; only Aikido (blocked) and ktlint/detekt remain
 
 ## Scope
 Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. This continues the existing effort to keep the three repos consistent (see `AGENTS.md`/`CLAUDE.md` structure, which was already standardized across all three).
 
 ## Current state (as of 2026-08-24)
-- `alfr3d`: has `.pre-commit-config.yaml` and `.github/dependabot.yml`. **Correction**: this todo previously claimed `alfr3d` "already has `.github/workflows/ci.yml`" per `todo/optimizations_v2.md` — that file is actually `ci.yml.disabled`, i.e. not active. Not investigated/fixed this pass (out of scope for the alfr3d_deck work below); worth its own look at why it's disabled.
-- `alfr3d_deck`: **done**. Added `.pre-commit-config.yaml` (pre-commit-hooks generic set + detect-secrets, adapted from alfr3d's — dropped black/flake8 since there's no Python here) and `.github/dependabot.yml` (`gradle` + `github-actions` ecosystems, the latter not present in alfr3d's own dependabot config — a possible follow-up there too). Generated `.secrets.baseline` via a throwaway venv (repo's own `detect-secrets` CLI install was broken — `ModuleNotFoundError`). One flagged finding: `keystore.properties.sample`'s `changeme` placeholder values, expected/safe. Already had CI (`build.yml`, `release.yml`) — ahead of alfr3d on that front. Did **not** add ktlint/detekt (Kotlin lint) — would need Gradle build-file wiring and tuning against the existing codebase, more invasive than this pass's scope; left as a follow-up.
-- Running `pre-commit run --all-files` against `alfr3d_deck` also auto-fixed 7 pre-existing files missing a trailing newline (six `app/src/main/play/*` text files + `.gitignore` + `SearchPanel.kt`) — trivial single-line diffs, kept as part of adopting the hook rather than reverted.
-- `littl31`: not touched this pass.
-- Aikido (security scanning): not yet set up in any of the three repos — needs an external account signup, which isn't something that can be done unattended; still open for whoever has/creates the account.
+- `alfr3d`: has `.pre-commit-config.yaml` and `.github/dependabot.yml`. **CI re-enabled**: `.github/workflows/ci.yml.disabled` → `.github/workflows/ci.yml`. Root-caused why it was broken rather than just flipping the name back:
+  - `setup/migrations/versions/0021_camera_stream_url.py` and `0023_refresh_tokens.py` both unconditionally ran `ALTER TABLE ADD COLUMN` / `CREATE TABLE` for `device.stream_url` and `refresh_tokens` — but `setup/createTables.sql` (the baseline `0001` migration runs against a fresh DB) had since been updated to already include both, so a clean install hit `Duplicate column name 'stream_url'` then `Table 'refresh_tokens' already exists` partway through `alembic upgrade head`. This is exactly the migrations CI job's scenario (fresh DB each run). Fixed both migrations to guard on `column_exists`/`table_exists` (helpers already existed in `setup/migrations/run_sql.py`, just unused by these two) — same idiom migration `0012` already used. Verified clean `alembic upgrade head` against a fresh throwaway MySQL container.
+  - `tests/conftest.py`'s `apply_database_schema` fixture (used by integration tests) resets state by dropping a hardcoded table list and re-running `createTables.sql` — that list was missing `refresh_tokens` (added when the baseline picked it up), so integration tests hit the same "already exists" error on their own DB reset. Added it to the drop list. Verified fixed with `MYSQL_TEST_*` env vars against a throwaway MySQL.
+  - The `kafka` service block in the CI workflow itself was missing `CLUSTER_ID`, which the `confluentinc/cp-kafka:7.4.0` image *requires* in KRaft mode — without it the service container fails to start at all (confirmed by reproducing locally: `CLUSTER_ID is required. Command [/usr/local/bin/dub ensure CLUSTER_ID] FAILED`). Added a fixed `CLUSTER_ID` to the workflow's kafka service env.
+  - Verified locally (outside the two DB/Kafka-service CI jobs, which need a clean runner — see below): frontend job (`npm test -- --run` + `npm run build`) passes as-is (75 tests); backend unit job (`pytest tests/ -m "not integration"`) passes as-is (242 tests).
+  - Could not fully reproduce the `migrations` and `backend-integration` CI jobs end-to-end locally: this machine already runs the live ALFR3D stack with MySQL bound to host port 3306, and `services/common/db_pool.py` hardcodes port 3306 (no `MYSQL_PORT` support) — so app-code DB connections in a locally-isolated test always hit the live production DB's port instead of a throwaway one, unlike Alembic's `env.py` and `tests/conftest.py` which do respect a port override. Not a CI bug (GitHub Actions runners have no competing server on 3306), just a local-testing limitation; the actual jobs will validate on their own next push/PR.
+  - Also noted in passing: `KAFKA_CREATE_TOPICS` doesn't actually create topics on this image in KRaft mode (confirmed empty topic list after startup) — but `auto.create.topics.enable` defaults to `true`, so topics get created lazily on first produce anyway; left as-is, not a blocker.
+- `alfr3d_deck`: done (previous pass) — pre-commit + Dependabot added, no ktlint/detekt yet.
+- `littl31`: done. Added `.pre-commit-config.yaml` (generic pre-commit-hooks + detect-secrets — no black/flake8/ktlint, it's a plain Node/Pug/Stylus static site) and `.github/dependabot.yml` (`npm` + `github-actions`, it already had `.github/workflows/deploy.yml`). `.secrets.baseline` generated via throwaway venv (same broken local `detect-secrets` CLI as the other two repos) — zero findings. `pre-commit run --all-files` auto-fixed 3 trivial trailing-whitespace/EOF files.
+- Aikido (security scanning): still not set up in any of the three repos — needs a paid plan (hosted issues feed 400s for the Littl3-1-Engineering workspace on the free tier, confirmed in a prior session), not something to be done unattended.
 
 ## Tasks
 - [x] Audit each repo for: pre-commit hooks, Dependabot config, Aikido security scanning, and any other baseline tooling (CI lint/test/build workflow, license file, etc.).
 - [x] Bring `alfr3d`'s `.pre-commit-config.yaml` and `.github/dependabot.yml` to `alfr3d_deck`, adapted per-language.
-- [ ] Same for `littl31` (whatever its stack is).
-- [ ] Set up Aikido across all three repos (needs account signup first).
-- [ ] Figure out why `alfr3d`'s own CI workflow is `.disabled` and either fix or remove it.
+- [x] Same for `littl31`.
+- [ ] Set up Aikido across all three repos (blocked — needs a paid plan).
+- [x] Figure out why `alfr3d`'s own CI workflow is `.disabled` and either fix or remove it. Fixed and re-enabled; not yet pushed/observed on an actual GitHub Actions run.
 - [ ] Consider ktlint/detekt for `alfr3d_deck` as a separate, scoped pass.
 - [ ] Document the standard tooling checklist somewhere durable (README or AGENTS.md Core Rules) so future new repos start from the same baseline.
 
 ## Related
 - Companion file: `alfr3d_deck/todo/todo_repo_standardization.md` — pointer stub, unchanged.
+- `littl31/todo/todo_repo_standardization.md` — pointer stub, updated with littl31-specific detail.
