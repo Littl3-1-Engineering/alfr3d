@@ -5,11 +5,47 @@
 
 version: 2
 updates:
-  - package-ecosystem: "npm" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "npm"
+    directory: "/services/service_frontend"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "pip" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "pip"
+    directory: "/services/service_api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/service_daemon"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/service_device"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/service_environment"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/service_speak"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/service_user"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/common"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/setup/migrations"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/tests"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
       interval: "weekly"
