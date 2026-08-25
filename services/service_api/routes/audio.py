@@ -1,6 +1,7 @@
 """Audio file serving routes."""
 
 import os
+import re
 import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -8,16 +9,18 @@ from fastapi.responses import FileResponse
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["audio"])
 
+# Allowlist the filename outright rather than blocklisting "/" and ".." -- a single
+# path segment of safe characters plus a known extension, so there's nothing left
+# to sanitize between here and the filesystem join below.
+_AUDIO_FILENAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.(mp3|wav)$")
+
 
 @router.api_route("/audio/{filename}", methods=["GET", "HEAD"])
 async def get_audio(filename: str):
     logger.info(f"Audio request received for filename: {filename}")
 
-    if not (filename.endswith(".mp3") or filename.endswith(".wav")):
-        logger.error(f"Invalid file type for filename: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid file type")
-
-    if ".." in filename or "/" in filename:
+    if not _AUDIO_FILENAME_RE.match(filename):
+        logger.error(f"Invalid filename: {filename}")
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     audio_path = os.path.join("/tmp/audio", filename)
