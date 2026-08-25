@@ -18,7 +18,18 @@ const Domain = () => {
 
   const [activeView, setActiveView] = useState(tabParam === 'personnel' ? 'personnel' : tabParam === 'devices' ? 'devices' : 'blueprint');
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [selectedDeviceAnchor, setSelectedDeviceAnchor] = useState(null);
   const [initialUserId, setInitialUserId] = useState(userIdParam);
+
+  const handleDeviceSelect = (device, anchor) => {
+    setSelectedDevice(device);
+    setSelectedDeviceAnchor(anchor);
+  };
+
+  const closeControlBlade = () => {
+    setSelectedDevice(null);
+    setSelectedDeviceAnchor(null);
+  };
 
   useEffect(() => {
     if (userIdParam && !initialUserId) {
@@ -97,7 +108,7 @@ const Domain = () => {
           {activeView === 'blueprint' && (
             <Suspense fallback={<div className="text-center py-8 text-fui-text font-mono">[ LOADING BLUEPRINT... ]</div>}>
               <TacticalPanelVariant1 title="System Blueprint" showGrid={true}>
-                <Blueprint onDeviceSelect={setSelectedDevice} />
+                <Blueprint onDeviceSelect={handleDeviceSelect} />
               </TacticalPanelVariant1>
             </Suspense>
           )}
@@ -117,7 +128,7 @@ const Domain = () => {
              </TacticalPanelVariant3>
            )}
 
-          <ControlBlade device={selectedDevice} onClose={() => setSelectedDevice(null)} />
+          <ControlBlade device={selectedDevice} anchor={selectedDeviceAnchor} onClose={closeControlBlade} />
         </div>
       </div>
     </motion.div>

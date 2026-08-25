@@ -1,6 +1,45 @@
 # Centralize Home Appliance Control on the Domain/Blueprint Page
 
-## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`
+## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`; ControlBlade positioning bug fixed 2026-08-24 (see below)
+
+**ControlBlade positioning bug fixed (2026-08-24, later pass):** reported as "options spawn below
+the System Blueprint pane and beyond the scroll point, whether opened via the blueprint or the
+device list." Root cause: `Domain.jsx` mounted its own `ControlBlade` with no position at all
+(`ControlBlade device={selectedDevice} onClose={...}` — no `style` prop), while `Blueprint.jsx`
+*also* mounted a second, correctly-positioned `ControlBlade` internally, but only for devices with
+map coordinates (`selectedDevice.position` truthy). Every device click set state in both places, so:
+- Clicking a positioned map pin rendered Blueprint's correctly-placed copy *and* Domain's
+  unpositioned copy simultaneously — the latter, with `position: absolute` and no offsets, fell
+  into normal document flow directly after the (very tall) Blueprint panel, off-screen below the
+  fold.
+- Clicking a device via the LIST view or the sidebar's unpositioned-devices list only ever hit
+  Domain's unpositioned copy (Blueprint's internal one required `.position`, which list/sidebar
+  devices don't have) — so list-based selection never had a correctly-placed blade at all.
+
+Fix: removed Blueprint's internal `ControlBlade` and its local `selectedDevice` state entirely;
+`Blueprint` now forwards the originating click's viewport coordinates (`e.clientX/clientY`) via
+`onDeviceSelect(device, {x, y})` for every entry point (map pins, list view, sidebar list) through
+one unified `selectDevice` handler. `Domain.jsx` owns the single `ControlBlade` instance and passes
+those coordinates as a new `anchor` prop. `ControlBlade` itself now self-positions via
+`position: fixed` + a `useLayoutEffect` that measures its own rendered size and clamps left/top to
+stay fully within the viewport (16px margin), regardless of page scroll, zoom, or how tall the
+Blueprint's scrollable inner container is. `npm run lint` and `npm run build` both pass; not yet
+re-verified against a live browser session (see README's general "not yet visually verified"
+caveat for Blueprint/ControlBlade surfaces).
+
+Per-device-type control mapping (the other half of the report — "switch → power toggle, speaker →
+volume, TV → power and volume") was checked and is already implemented as described in
+`ControlBlade.jsx`'s `renderDeviceControls()`: `light` (power+brightness), `switch` (power),
+`climate` (target temp), `lock` (lock/unlock), `fan` (power+speed), `cover` (position+open/close),
+`media_player` (play/pause+volume — HA/ESPHome have no separate "TV" device type; TVs are
+`media_player` entities, and play/pause is the closest thing to a power toggle this component or
+the backend currently exposes for that domain). Not changed further: a literal separate on/off
+toggle for `media_player` would need a backend fix first (`routes/iot.py`'s HA `turn_on` branch
+falls through to an invalid HA service name for any domain outside light/switch/fan, a latent bug
+never hit today since nothing currently sends `turn_on` for those domains) and isn't fully possible
+for ESPHome-sourced media players at all (`aioesphomeapi`'s `media_player_command` has no on/off
+concept, only play/pause/stop/mute/volume) — flagging here in case a literal power toggle is still
+wanted after seeing the positioning fix.
 
 Fixed the actual bug (2026-08-24, earlier pass): `Music.jsx`'s "Cast to Speakers" section was
 extracted into its own `CastToSpeakers` component and is now rendered in all three Music-tab
