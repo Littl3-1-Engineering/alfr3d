@@ -2,13 +2,28 @@ import PropTypes from 'prop-types';
 import { useState } from 'react';
 import Modal from 'react-modal';
 import { motion } from 'framer-motion';
-import { User, Monitor, X, Edit, Save, RotateCcw, Trash2 } from 'lucide-react';
+import { User, Monitor, X, Edit, Save, RotateCcw, Trash2, KeyRound, Copy, Check } from 'lucide-react';
 
 Modal.setAppElement('#root');
 
-const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDelete }) => {
+// Unambiguous charset (no 0/O/1/l/I) so a copied-then-retyped password isn't misread.
+const PASSWORD_CHARS =
+  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
+
+function generatePassword(length = 16) {
+  const values = new Uint32Array(length);
+  crypto.getRandomValues(values);
+  return Array.from(values, (v) => PASSWORD_CHARS[v % PASSWORD_CHARS.length]).join('');
+}
+
+const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDelete, isAdmin, onResetPassword }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedUser, setEditedUser] = useState(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetPassword, setResetPassword] = useState(null);
+  const [resetError, setResetError] = useState(null);
+  const [resetting, setResetting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleEdit = () => {
     setIsEditing(true);
@@ -33,10 +48,44 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
   const handleInputChange = (field, value) => {
     setEditedUser(prev => ({ ...prev, [field]: value }));
   };
+
+  const resetPasswordState = () => {
+    setShowResetConfirm(false);
+    setResetPassword(null);
+    setResetError(null);
+    setResetting(false);
+    setCopied(false);
+  };
+
+  const handleClose = () => {
+    resetPasswordState();
+    onClose();
+  };
+
+  const handleConfirmReset = async () => {
+    setResetting(true);
+    setResetError(null);
+    const candidate = generatePassword();
+    const success = await onResetPassword(user.id, candidate);
+    setResetting(false);
+    if (success) {
+      setShowResetConfirm(false);
+      setResetPassword(candidate);
+    } else {
+      setResetError('Password reset failed -- please try again.');
+    }
+  };
+
+  const handleCopyPassword = () => {
+    navigator.clipboard.writeText(resetPassword).then(() => {
+      setCopied(true);
+    }).catch(() => setResetError('Could not copy automatically -- select and copy the password manually.'));
+  };
+
   return (
     <Modal
       isOpen={isOpen}
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
       className="modal-content"
       overlayClassName="modal-overlay"
       contentLabel="User Details"
@@ -65,6 +114,7 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
                     className="text-sm text-primary uppercase bg-transparent border border-primary/50 rounded px-2 py-1 focus:border-primary outline-none"
                   >
                     <option value="technoking">Technoking</option>
+                    <option value="owner">Owner</option>
                     <option value="resident">Resident</option>
                     <option value="guest">Guest</option>
                   </select>
@@ -80,20 +130,31 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
           <div className="flex items-center space-x-2">
             {!isEditing ? (
               <>
-                <button
-                  onClick={handleEdit}
-                  className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
-                  title="Edit User"
-                >
-                  <Edit className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => onDelete && onDelete(user?.id)}
-                  className="p-2 text-error hover:bg-error/20 rounded-lg transition-colors"
-                  title="Delete User"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                {isAdmin && (
+                  <>
+                    <button
+                      onClick={handleEdit}
+                      className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                      title="Edit User"
+                    >
+                      <Edit className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => setShowResetConfirm(true)}
+                      className="p-2 text-warning hover:bg-warning/20 rounded-lg transition-colors"
+                      title="Reset Password"
+                    >
+                      <KeyRound className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => onDelete && onDelete(user?.id)}
+                      className="p-2 text-error hover:bg-error/20 rounded-lg transition-colors"
+                      title="Delete User"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -114,7 +175,7 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
               </>
             )}
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="p-2 text-text-tertiary hover:text-primary transition-colors"
               title="Close Modal"
             >
@@ -122,6 +183,63 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
             </button>
           </div>
         </div>
+
+        {isAdmin && (showResetConfirm || resetPassword || resetError) && (
+          <div className="mb-6 glass rounded-xl p-4 border border-warning/40 bg-warning/5">
+            {resetPassword ? (
+              <div className="space-y-3">
+                <p className="text-sm text-text-secondary">
+                  New password for <span className="text-primary font-medium">{user?.name}</span> --
+                  share it with them directly, it can&apos;t be emailed yet. It won&apos;t be shown again.
+                </p>
+                <div className="flex items-center space-x-2">
+                  <code className="flex-1 px-3 py-2 bg-card/50 border border-primary/30 rounded text-text-primary select-all break-all">
+                    {resetPassword}
+                  </code>
+                  <button
+                    onClick={handleCopyPassword}
+                    className="p-2 text-primary hover:bg-primary/20 rounded-lg transition-colors shrink-0"
+                    title="Copy Password"
+                  >
+                    {copied ? <Check className="w-5 h-5 text-success" /> : <Copy className="w-5 h-5" />}
+                  </button>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  Their existing sessions have been signed out and will need to sign back in with this password.
+                </p>
+                <button
+                  onClick={resetPasswordState}
+                  className="px-3 py-1.5 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30 text-sm"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-text-secondary">
+                  Generate a new password for <span className="text-primary font-medium">{user?.name}</span>?
+                  This signs them out of every device -- they&apos;ll need the new password to sign back in.
+                </p>
+                {resetError && <p className="text-sm text-error">{resetError}</p>}
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleConfirmReset}
+                    disabled={resetting}
+                    className="px-4 py-1.5 bg-warning/20 border border-warning rounded text-warning hover:bg-warning/30 disabled:opacity-50 text-sm"
+                  >
+                    {resetting ? 'Resetting...' : 'Generate & Reset'}
+                  </button>
+                  <button
+                    onClick={resetPasswordState}
+                    className="px-4 py-1.5 bg-border/20 border border-border rounded text-text-tertiary hover:bg-border/30 text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* User Details */}
         <div className="mb-6 space-y-2">
@@ -222,6 +340,8 @@ UserModal.propTypes = {
   onDeviceClick: PropTypes.func.isRequired,
   onSave: PropTypes.func,
   onDelete: PropTypes.func,
+  isAdmin: PropTypes.bool,
+  onResetPassword: PropTypes.func,
 };
 
 export default UserModal;

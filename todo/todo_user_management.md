@@ -108,9 +108,9 @@ client.
 2. **Backend**: decide whether `DELETE` ever gets a self-service path ("delete my own account") —
    probably out of scope initially; deleting your own account while signed in has UX/session
    implications (revoke tokens, etc.) worth scoping separately if wanted at all.
-3. **Frontend — admin side**: `PersonnelRoster.jsx`/`UserModal.jsx` already cover technoking CRUD
-   on other users; likely just needs a role-gate double-check (hide the roster/edit entirely from
-   non-technoking users, matching the backend's real enforcement) rather than new admin UI.
+3. ~~Frontend — admin side: role-gate double-check~~ — done 2026-08-24 in
+   `todo_household_admin_ui.md` (`PersonnelRoster.jsx`/`UserModal.jsx` now hide Add/Edit/Delete/
+   Reset Password/`type` from non-owner/technoking viewers; roster stays visible read-only).
 4. **Frontend — self-service side**: net-new "My Profile" surface (nav entry or a section under
    the existing user menu) that reuses `UserModal.jsx`'s field set minus `type`, calling the same
    `PUT /api/users/{user_id}` with the caller's own id from `AuthContext`'s `deriveUser()`.
@@ -120,10 +120,9 @@ client.
 
 ## Open Questions
 
-- Should residents/guests get any visibility into *other* users' profiles (read-only), or does
-  self-service mean "can only ever touch your own row, full stop"? `GET /api/users` is already
-  wide open today, so read access to the roster already exists — this is really about how much of
-  the *write* surface residents get for their own row only.
+- ~~Should residents/guests get any visibility into *other* users' profiles (read-only)~~ —
+  resolved 2026-08-24 in `todo_household_admin_ui.md`: read-only. Non-admins see the roster cards,
+  just none of the write controls.
 - Whether email changes on your own profile should require re-verification once
   `todo_onboarding_first_user.md`'s email OTP capability exists, or whether that's overkill for a
   household-trust-model app.
