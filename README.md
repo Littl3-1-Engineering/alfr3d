@@ -598,24 +598,28 @@ handing out full control to anyone who can reach it.
   access token (~15 min) and a longer-lived, revocable refresh token. `POST /api/auth/refresh`
   trades a valid refresh token for a new pair (rotated on every use); `POST /api/auth/logout`
   revokes it.
-- **Roles**: `technoking` (full admin — users, integrations, system config, everything),
-  `resident` (everyday household actions — devices, routines, music playback, quips, IoT device
-  control), `guest` (read-only, identical to an unauthenticated caller). The full matrix is in
-  `services/service_api/auth/permissions.py`. (`owner` exists in the `user_types` seed data as a
-  distinct, currently-unassignable role, aliased to `technoking` in the matrix today — see
-  `todo/todo_user_management.md` for the plan to make it a real assignable admin role separate
-  from the `technoking` backdoor, which is reserved for the system's original account only.)
+- **Roles**: `technoking` (an Athos-only backdoor, never assignable via any UI), `owner` (the
+  real assignable admin role — full CRUD on other users, integrations, system config), `resident`
+  (everyday household actions — devices, routines, music playback, quips, IoT device control),
+  `guest` (read-only, identical to an unauthenticated caller). `owner` is aliased to `technoking`
+  in the permission matrix, so it gets identical admin grants without being the backdoor role. The
+  full matrix is in `services/service_api/auth/permissions.py`.
 - **Shipped**: both clients have full login UI — the React webapp (Sign In/Sign Out in the nav
   bar, route-level view-only gating for unauthenticated visitors) and the Nexus Launcher (a
   Keystore-backed sign-in inside Settings, gating device control/resident CRUD/manual routine
   run-or-edit while leaving every read surface usable signed out). Also shipped: login/claim rate
-  limiting, no username-enumeration on failed login or claim, and self-service +
-  admin-assisted password change/reset (`POST /api/auth/change-password`,
-  `POST /api/auth/admin-reset-password`) — see `todo/todo_auth_rbac.md` for full history.
-- **Not yet shipped**: there's no detection of "nobody has claimed an account yet" and no guided
-  onboarding flow for a fresh install — see `todo/todo_onboarding_first_user.md`. There's also no
-  self-service profile editing (a user editing their own name/email/bio) — CRUD on the `user` table
-  is currently technoking-only in both directions; see `todo/todo_user_management.md`.
+  limiting, no username-enumeration on failed login or claim, self-service + admin-assisted
+  password change/reset (`POST /api/auth/change-password`, `POST /api/auth/admin-reset-password`),
+  first-run onboarding (claim a seeded resident or generate a new `owner` account, in the webapp
+  and the launcher), self-service profile editing ("My Profile", never able to change your own
+  role), and full owner/technoking administration of other users through the web UI — add/edit/
+  delete, plus a generate-and-display password reset — with every mutating control hidden from
+  non-admins (the roster itself stays visible read-only). See `todo/todo_auth_rbac.md`,
+  `todo/todo_onboarding_first_user.md`, `todo/todo_user_management.md`, and
+  `todo/todo_household_admin_ui.md` for full history.
+- **Not yet shipped**: the onboarding flow's planned email-OTP step (no SMTP/email-sending
+  capability exists anywhere in this codebase yet — see `todo/todo_email_service.md`) and an
+  owner-administers-household surface on the Nexus Launcher (a v2 decision, not yet scoped).
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
