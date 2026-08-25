@@ -16,7 +16,7 @@ jobs:
       run:
         working-directory: services/service_frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -38,7 +38,7 @@ jobs:
     name: Backend unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -75,7 +75,7 @@ jobs:
       MYSQL_PSWD: testrootpassword
       MYSQL_NAME: test_alfr3d_db
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -149,7 +149,7 @@ jobs:
       MYSQL_NAME: test_alfr3d_db
       ALFR3D_ENV_NAME: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
