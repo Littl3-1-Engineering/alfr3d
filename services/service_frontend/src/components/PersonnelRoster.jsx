@@ -58,9 +58,12 @@ DeviceCard.propTypes = {
   onClick: PropTypes.func.isRequired,
 };
 
+const ADMIN_ROLES = ['owner', 'technoking'];
+
 const PersonnelRoster = ({ initialUserId }) => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user: authUser } = useAuth();
+  const isAdmin = isAuthenticated && ADMIN_ROLES.includes(authUser?.role);
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '' });
@@ -190,6 +193,19 @@ const PersonnelRoster = ({ initialUserId }) => {
     }
   };
 
+  const handleResetPassword = (userId, newPassword) => {
+    return apiFetch(API_BASE_URL + '/api/auth/admin-reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, new_password: newPassword }),
+    })
+      .then(res => res.ok)
+      .catch(err => {
+        console.error('Error resetting password:', err);
+        return false;
+      });
+  };
+
   const handleModalSaveDevice = (updatedDevice) => {
     apiFetch(API_BASE_URL + '/api/devices/' + updatedDevice.id, {
       method: 'PUT',
@@ -244,21 +260,22 @@ const PersonnelRoster = ({ initialUserId }) => {
       <div>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold text-primary">Users</h2>
-          <button
-            onClick={() => setShowAddUser(true)}
-            disabled={!isAuthenticated}
-            className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add User</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddUser(true)}
+              className="flex items-center space-x-2 px-4 py-2 bg-primary/20 border border-primary rounded-lg text-primary hover:bg-primary/30"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add User</span>
+            </button>
+          )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedUsers.map((user) => (
             <UserCard key={user.id} user={user} onClick={handleUserClick} />
           ))}
         </div>
-        {showAddUser && (
+        {isAdmin && showAddUser && (
           <div className="mt-4 glass rounded-2xl p-6 border border-primary/30 bg-card/20">
             <h3 className="text-lg font-semibold text-primary mb-4">Add New User</h3>
             <div className="space-y-3">
@@ -274,6 +291,7 @@ const PersonnelRoster = ({ initialUserId }) => {
                 className="w-full p-2 bg-card rounded text-text-primary"
               >
                 <option value="technoking">Technoking</option>
+                <option value="owner">Owner</option>
                 <option value="resident">Resident</option>
                 <option value="guest">Guest</option>
               </select>
@@ -326,6 +344,8 @@ const PersonnelRoster = ({ initialUserId }) => {
         onDeviceClick={handleDeviceHistoryClick}
         onSave={handleModalSaveUser}
         onDelete={handleDeleteUser}
+        isAdmin={isAdmin}
+        onResetPassword={handleResetPassword}
       />
 
       <DeviceHistoryModal
