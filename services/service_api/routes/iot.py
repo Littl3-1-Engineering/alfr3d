@@ -113,7 +113,7 @@ async def get_ha_status():
         return {"connected": connected, "message": message}
     except Exception as e:
         logger.error(f"Error checking HA status: {str(e)}")
-        return {"connected": False, "error": str(e)}
+        return {"connected": False, "error": "Failed to check status"}
 
 
 @router.get("/iot/ha/devices")
@@ -193,7 +193,7 @@ async def get_st_status():
         return {"connected": connected, "message": message}
     except Exception as e:
         logger.error(f"Error checking ST status: {str(e)}")
-        return {"connected": False, "error": str(e)}
+        return {"connected": False, "error": "Failed to check status"}
 
 
 @router.get("/iot/st/devices")
@@ -271,7 +271,7 @@ async def get_esphome_status():
         return {"enabled": enabled, "accepted_nodes": len(accepted), "nodes": accepted}
     except Exception as e:
         logger.error(f"Error checking ESPHome status: {str(e)}")
-        return {"enabled": False, "error": str(e)}
+        return {"enabled": False, "error": "Failed to check status"}
 
 
 @router.put("/iot/esphome/config")
@@ -438,7 +438,7 @@ async def get_iot_status():
         }
     except Exception as e:
         logger.error(f"Error checking IoT status: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to check IoT status")
 
 
 @router.get("/iot/devices")

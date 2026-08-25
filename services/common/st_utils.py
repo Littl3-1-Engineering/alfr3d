@@ -55,10 +55,11 @@ def test_st_connection():
         else:
             return False, f"HTTP {response.status_code}"
     except requests.RequestException as e:
-        return False, f"Request failed: {e}"
+        logger.error(f"ST connection request failed: {e}")
+        return False, "Request failed"
     except Exception as e:
         logger.error(f"Unexpected error testing ST connection: {e}")
-        return False, str(e)
+        return False, "Unexpected error"
 
 
 def get_st_devices():
@@ -252,7 +253,7 @@ def st_control_device(device_id, capability, command, args=None):
             return False, f"HTTP {response.status_code}: {response.text}"
     except Exception as e:
         logger.error(f"Error controlling ST device: {e}")
-        return False, str(e)
+        return False, "Failed to control device"
 
 
 def sync_st_devices():

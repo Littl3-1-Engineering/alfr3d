@@ -184,8 +184,8 @@ def update_db(new_data, existing_city, cursor, db, producer):
     logger.debug("City: " + str(city_new))
     logger.info("State/Prov: " + str(state_new))
     logger.info("Country: " + str(country_new))
-    logger.info("Longitude: " + str(long_new))
-    logger.info("Latitude: " + str(lat_new))
+    logger.debug("Longitude updated")
+    logger.debug("Latitude updated")
     if city_new == existing_city:
         logger.info("You are still in the same location")
         if producer:
