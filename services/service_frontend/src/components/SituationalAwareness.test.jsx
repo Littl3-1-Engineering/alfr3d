@@ -33,7 +33,7 @@ describe('SituationalAwareness', () => {
 
   it('renders the mood icon for the mood mode', async () => {
     await renderWithData(mockSaData('mood'))
-    expect(document.querySelector('.lucide-smile')).toBeTruthy()
+    expect(document.querySelector('.lucide-face-slightly-smiling')).toBeTruthy()
   })
 
   it('renders the focus_needed icon with the alert color', async () => {
