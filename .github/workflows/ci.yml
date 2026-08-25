@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   frontend:
     name: Frontend lint, test & build
@@ -90,7 +93,7 @@ jobs:
 
       - name: Verify version table
         working-directory: setup/migrations
-        run: alembic current | grep -E "0010"
+        run: alembic current | grep -E "0024"
 
   backend-integration:
     name: Backend integration tests (MySQL + Kafka)
