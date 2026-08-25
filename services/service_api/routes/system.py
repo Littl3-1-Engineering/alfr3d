@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import socket
 import subprocess
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,11 @@ from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["system"])
+
+# Docker container names accept a wider charset than we want to hand to the docker CLI;
+# restrict to the alfr3d-managed containers so a caller can't pass docker flags or target
+# unrelated containers on the host.
+SERVICE_NAME_RE = re.compile(r"^alfr3d[a-zA-Z0-9_.-]*$")
 
 
 def _run(command: list, env=None):
@@ -85,7 +91,12 @@ async def get_database():
         return {"connected": True, "version": version, "tables": tables}
     except Exception as e:
         logger.error(f"Error fetching database info: {str(e)}")
-        return {"connected": False, "version": "", "tables": [], "error": str(e)}
+        return {
+            "connected": False,
+            "version": "",
+            "tables": [],
+            "error": "Failed to fetch database info",
+        }
 
 
 @router.post("/system/database/backup")
@@ -205,6 +216,8 @@ async def get_services():
 async def restart_service(
     service_name: str, _perm=Depends(require_permission("system", "restart_service"))
 ):
+    if not SERVICE_NAME_RE.match(service_name):
+        raise HTTPException(status_code=400, detail="Invalid service name")
     try:
         if not docker_available:
             return {"message": f"Restart requested for {service_name} (docker unavailable)"}

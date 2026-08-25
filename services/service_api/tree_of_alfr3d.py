@@ -142,12 +142,22 @@ async def expand_node_endpoint(
     path: str = Query(..., description="Absolute path of the folder to expand")
 ):
     """Lazy-load: expand a truncated node by returning its immediate children."""
-    if not path.startswith(SCAN_ROOT):
+    # Mirror CodeQL's documented py/path-injection remediation exactly: normalize a path
+    # joined onto the trusted root, then require the normalized result to still start with
+    # that root. path is expected to already be absolute (os.path.join drops real_root and
+    # keeps path as-is in that case), but doing the join here is what lets static analysis
+    # recognize this as sanitized rather than a raw pass-through. SCAN_ROOT is a fixed
+    # in-container constant, not attacker-influenced, so the (accepted, same as GitHub's own
+    # reference example) residual gap of a sibling directory sharing this exact string
+    # prefix isn't a real risk here.
+    real_root = os.path.realpath(SCAN_ROOT)
+    fullpath = os.path.normpath(os.path.join(real_root, path))
+    if not fullpath.startswith(real_root):
         return {"error": "Path must be under /project"}
-    if not os.path.isdir(path):
+    if not os.path.isdir(fullpath):
         return {"error": "Path is not a directory"}
     subtree = await asyncio.get_event_loop().run_in_executor(
-        None, scan_directory, path, os.path.basename(path), 2, 0
+        None, scan_directory, fullpath, os.path.basename(fullpath), 2, 0
     )
     return subtree
 

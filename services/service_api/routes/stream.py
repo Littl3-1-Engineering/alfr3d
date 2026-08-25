@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 import subprocess
 import time
@@ -99,7 +100,10 @@ async def _ffmpeg_available() -> bool:
 
 
 def _hls_dir(device_id: int) -> Path:
-    return HLS_ROOT / str(device_id)
+    # basename() strips any path separators device_id could smuggle in even though it's
+    # already framework-typed as int -- CodeQL's path-injection query doesn't credit that
+    # typing, so this keeps the sink provably a single safe path component.
+    return HLS_ROOT / os.path.basename(str(device_id))
 
 
 async def _stop_hls_locked(device_id: int):
@@ -289,7 +293,9 @@ async def hls_playlist(device_id: int):
 async def hls_segment(device_id: int, filename: str):
     if not _SEGMENT_RE.match(filename):
         raise HTTPException(status_code=400, detail="invalid segment name")
-    segment = _hls_dir(device_id) / filename
+    # basename() is a no-op given the regex above already fully constrains filename, but
+    # keeps this sink provably a single safe path component for static analysis.
+    segment = _hls_dir(device_id) / os.path.basename(filename)
     if not segment.exists():
         raise HTTPException(status_code=404, detail="segment not found")
     return FileResponse(
