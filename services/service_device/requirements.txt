@@ -3,7 +3,7 @@ pymysql==1.1.2
 DBUtils==3.2.0
 cryptography==50.0.0
 google-auth
-requests==2.33.0
+requests==2.34.2
 orjson==3.11.9
 aioesphomeapi==45.13.1
 zeroconf==0.150.0
