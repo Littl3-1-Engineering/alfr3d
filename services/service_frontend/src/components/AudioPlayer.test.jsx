@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, act } from '@testing-library/react'
 import AudioPlayer from './AudioPlayer'
 
 let eventsHandler = null
@@ -68,7 +68,7 @@ describe('AudioPlayer', () => {
     render(<AudioPlayer />)
 
     fireEvent.click(document.body)
-    eventsHandler([{ type: 'audio', audio_url: '/audio/test.mp3' }])
+    act(() => eventsHandler([{ type: 'audio', audio_url: '/audio/test.mp3' }]))
 
     await playOne()
 
@@ -85,8 +85,8 @@ describe('AudioPlayer', () => {
     render(<AudioPlayer />)
     fireEvent.click(document.body)
 
-    eventsHandler([{ type: 'audio', audio_url: '/audio/dup.mp3' }])
-    eventsHandler([{ type: 'audio', audio_url: '/audio/dup.mp3' }])
+    act(() => eventsHandler([{ type: 'audio', audio_url: '/audio/dup.mp3' }]))
+    act(() => eventsHandler([{ type: 'audio', audio_url: '/audio/dup.mp3' }]))
 
     await playOne()
 
