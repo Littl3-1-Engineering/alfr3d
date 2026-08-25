@@ -7,4 +7,4 @@ requests==2.33.0
 orjson==3.11.9
 aioesphomeapi==45.13.1
 zeroconf==0.150.0
-redis[hiredis]>=5.0.0
+redis[hiredis]>=8.1.0
