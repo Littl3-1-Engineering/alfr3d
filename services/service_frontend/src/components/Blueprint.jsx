@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Lightbulb, Thermometer, Wifi, ZoomIn, ZoomOut, ChevronDown, ChevronUp, X, Droplets, Activity, Gauge, Camera, ImagePlus, Trash2, Search, List, Map } from 'lucide-react';
 import PropTypes from 'prop-types';
 import BlueprintSVG from './cassiopeia_blueprint.svg?react';
-import ControlBlade from './ControlBlade';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { getGravatarUrl } from '../utils/gravatarUtils';
@@ -62,7 +61,7 @@ DeviceIcon.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
-const DeviceListItem = memo(({ device, onDragEnd, onClick, onDeviceSelect }) => {
+const DeviceListItem = memo(({ device, onDragEnd, onSelect }) => {
   const Icon = useMemo(() => {
     if (device.type === 'iot') {
       switch (device.deviceType) {
@@ -88,7 +87,7 @@ const DeviceListItem = memo(({ device, onDragEnd, onClick, onDeviceSelect }) => 
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: 0, duration: 0.3 }}
       className="flex items-center p-2 bg-card/50 rounded-lg cursor-pointer hover:bg-card-hover/50"
-      onClick={() => { onClick(device); onDeviceSelect && onDeviceSelect(device); }}
+      onClick={(e) => onSelect(device, e)}
     >
       <div className="relative">
         <Icon className={`w-6 h-6 mr-3 ${device.state === 'online' ? 'text-primary' : 'text-text-tertiary'}`} />
@@ -106,8 +105,7 @@ DeviceListItem.displayName = 'DeviceListItem';
 DeviceListItem.propTypes = {
   device: PropTypes.object.isRequired,
   onDragEnd: PropTypes.func.isRequired,
-  onClick: PropTypes.func.isRequired,
-  onDeviceSelect: PropTypes.func,
+  onSelect: PropTypes.func.isRequired,
 };
 
 const mergeWithIot = (alfredDevs, iotDevs) => [
@@ -136,7 +134,6 @@ const Blueprint = ({ onDeviceSelect }) => {
   const [users, setUsers] = useState([]);
   const [zoom, setZoom] = useState(1);
   const [isListExpanded, setIsListExpanded] = useState(false);
-  const [selectedDevice, setSelectedDevice] = useState(null);
   const [view, setView] = useState('map');
   const [search, setSearch] = useState('');
   const [floorplan, setFloorplan] = useState(null);
@@ -277,13 +274,12 @@ const Blueprint = ({ onDeviceSelect }) => {
     updateDevicePosition(deviceId, null);
   }, [updateDevicePosition]);
 
-  const handleDeviceSelect = useCallback((device) => {
-    setSelectedDevice(device);
-  }, []);
-
-  const handleDeviceClick = useCallback((device) => {
-    setSelectedDevice(device);
-    onDeviceSelect && onDeviceSelect(device);
+  // Single selection path for both map pins and list items: forwards the click's viewport
+  // coordinates so the one ControlBlade (owned by the page, not this component) can float
+  // itself next to wherever the device was actually clicked, instead of being positioned
+  // relative to this scrollable/zoomable container.
+  const selectDevice = useCallback((device, e) => {
+    onDeviceSelect && onDeviceSelect(device, e ? { x: e.clientX, y: e.clientY } : null);
   }, [onDeviceSelect]);
 
   const filteredDevices = useMemo(() => {
@@ -377,8 +373,7 @@ const Blueprint = ({ onDeviceSelect }) => {
                     key={device.id}
                     device={device}
                     onDragEnd={handleDragEnd}
-                    onClick={handleDeviceSelect}
-                    onDeviceSelect={onDeviceSelect}
+                    onSelect={selectDevice}
                   />
                 ))}
               </div>
@@ -434,7 +429,7 @@ const Blueprint = ({ onDeviceSelect }) => {
                     zIndex: 10,
                   }}
                   className="cursor-pointer"
-                  onClick={() => handleDeviceClick(device)}
+                  onClick={(e) => selectDevice(device, e)}
                 >
                   <DeviceIcon
                     device={device}
@@ -442,18 +437,6 @@ const Blueprint = ({ onDeviceSelect }) => {
                   />
                 </motion.div>
               ))}
-              <AnimatePresence>
-                {selectedDevice && selectedDevice.position && (
-                  <ControlBlade
-                    device={selectedDevice}
-                    onClose={() => setSelectedDevice(null)}
-                    style={{
-                      left: selectedDevice.position.x * zoom + 50,
-                      top: selectedDevice.position.y * zoom - 150,
-                    }}
-                  />
-                )}
-              </AnimatePresence>
             </div>
           </div>
 
@@ -479,9 +462,7 @@ const Blueprint = ({ onDeviceSelect }) => {
                      key={device.id}
                      device={device}
                      onDragEnd={handleDragEnd}
-                     onClick={handleDeviceSelect}
-                     onSelect={setSelectedDevice}
-                     onDeviceSelect={onDeviceSelect}
+                     onSelect={selectDevice}
                    />
                  ))}
                </motion.div>
