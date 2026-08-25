@@ -4,7 +4,7 @@ DBUtils==3.2.0
 cryptography==50.0.0
 google-auth
 requests==2.34.2
-orjson==3.11.9
+orjson==3.12.0
 aioesphomeapi==45.13.1
 zeroconf==0.150.0
 redis[hiredis]>=8.1.0
