@@ -29,3 +29,6 @@ Applies to all three repos: `alfr3d` (this repo), `alfr3d_deck`, and `littl31`. 
 ## Related
 - Companion file: `alfr3d_deck/todo/todo_repo_standardization.md` — pointer stub, unchanged.
 - `littl31/todo/todo_repo_standardization.md` — pointer stub, updated with littl31-specific detail.
+- `todo_branch_naming_consistency.md` (this directory) — a branch-naming/CI-trigger consistency gap
+  found 2026-08-24 while doc-syncing after a session; same "tooling doesn't actually cover the real
+  branch" pattern as this todo's CI-`.disabled` fix, just a different mechanism.
