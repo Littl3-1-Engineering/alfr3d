@@ -8,7 +8,7 @@ requests
 googlemaps
 google-api-python-client
 google-auth-oauthlib
-orjson==3.11.9
+orjson==3.12.0
 redis[hiredis]>=8.1.0
 urllib3>=2.7.0 # not directly required, pinned by Snyk to avoid a vulnerability
 pyasn1>=0.6.3 # not directly required, pinned by Snyk to avoid a vulnerability
