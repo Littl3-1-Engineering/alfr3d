@@ -4,4 +4,4 @@ DBUtils==3.2.0
 cryptography==50.0.0
 requests==2.33.0
 orjson==3.11.9
-redis[hiredis]>=5.0.0
+redis[hiredis]>=8.1.0
