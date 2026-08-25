@@ -1,13 +1,15 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Settings, RefreshCw, Thermometer, Lock, Unlock, Fan, Blinds, Play, Pause, Volume2 } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
 
-const ControlBlade = ({ device, onClose, style }) => {
+const ControlBlade = ({ device, onClose, anchor }) => {
   const { isAuthenticated } = useAuth();
+  const panelRef = useRef(null);
+  const [panelStyle, setPanelStyle] = useState(null);
   const [power, setPower] = useState(false);
   const [brightness, setBrightness] = useState(75);
   const [targetTemp, setTargetTemp] = useState(70);
@@ -18,6 +20,30 @@ const ControlBlade = ({ device, onClose, style }) => {
   const [sensorValue, setSensorValue] = useState(null);
   const [sensorUnit, setSensorUnit] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Position as a viewport-fixed float anchored near the click point (map pin or list item),
+  // clamped so it always lands fully on-screen regardless of page scroll or where on the
+  // (possibly very tall) Blueprint the device was clicked.
+  useLayoutEffect(() => {
+    if (!device) {
+      setPanelStyle(null);
+      return;
+    }
+    const margin = 16;
+    const width = panelRef.current?.offsetWidth || 320;
+    const height = panelRef.current?.offsetHeight || 400;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const desiredLeft = anchor?.x != null ? anchor.x + 20 : (vw - width) / 2;
+    const desiredTop = anchor?.y != null ? anchor.y - height / 2 : (vh - height) / 2;
+
+    setPanelStyle({
+      position: 'fixed',
+      left: Math.min(Math.max(desiredLeft, margin), Math.max(margin, vw - width - margin)),
+      top: Math.min(Math.max(desiredTop, margin), Math.max(margin, vh - height - margin)),
+    });
+  }, [device, anchor]);
 
   useEffect(() => {
     if (!device?.last_state) return;
@@ -465,12 +491,13 @@ const ControlBlade = ({ device, onClose, style }) => {
     <AnimatePresence>
       {device && (
         <motion.div
+          ref={panelRef}
           initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
+          animate={{ opacity: panelStyle ? 1 : 0, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
           transition={{ duration: 0.2 }}
-          className="absolute w-80 glass z-50 p-6 rounded-2xl shadow-lg"
-          style={style}
+          className="w-80 glass z-50 p-6 rounded-2xl shadow-lg"
+          style={panelStyle || { position: 'fixed', left: -9999, top: -9999 }}
         >
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-primary drop-shadow-lg">{device.name}</h2>
@@ -506,9 +533,9 @@ const ControlBlade = ({ device, onClose, style }) => {
 };
 
 ControlBlade.propTypes = {
-  device: PropTypes.object.isRequired,
+  device: PropTypes.object,
   onClose: PropTypes.func.isRequired,
-  style: PropTypes.object,
+  anchor: PropTypes.shape({ x: PropTypes.number, y: PropTypes.number }),
 };
 
 export default ControlBlade;
