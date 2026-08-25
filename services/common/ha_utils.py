@@ -55,10 +55,11 @@ def test_ha_connection():
         else:
             return False, f"HTTP {response.status_code}"
     except requests.RequestException as e:
-        return False, f"Request failed: {e}"
+        logger.error(f"HA connection request failed: {e}")
+        return False, "Request failed"
     except Exception as e:
         logger.error(f"Unexpected error testing HA connection: {e}")
-        return False, str(e)
+        return False, "Unexpected error"
 
 
 def get_ha_states():
@@ -203,7 +204,7 @@ def ha_control_device(entity_id, service, data=None):
             return False, f"HTTP {response.status_code}: {response.text}"
     except Exception as e:
         logger.error(f"Error controlling HA device: {e}")
-        return False, str(e)
+        return False, "Failed to control device"
 
 
 def sync_ha_devices():
