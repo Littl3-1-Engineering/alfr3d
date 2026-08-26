@@ -1,6 +1,6 @@
 # Resolve ALFR3D's Music Pick into a Specific, Playable Spotify Playlist
 
-## Status: ✅ Implemented 2026-08-13 (unit-tested; not yet verified against a live Spotify-authorized deployment)
+## Status: ✅ Implemented 2026-08-13; backend live-verified 2026-08-25 against a real household Spotify session (see `todo_music_spotify.md`'s "Outstanding" section for the full chain check). On-device: confirmed there is no launcher surface showing this backend data at all -- see `todo_music_spotify.md`'s update for why (Media window is local-device-only by design, Ambient Brief only shows the recommendation card). User decided 2026-08-25 to leave as-is rather than scope new UI.
 
 ## Overview
 

@@ -689,7 +689,295 @@ pytest --cov=services/ tests/
 - Automatic service startup/teardown for integration tests
 - Pytest markers: `integration`, `fullstack`
 
-### Linting
+## Music & Spotify
+
+ALFR3D integrates Spotify for full music control and context-aware recommendations:
+
+### Features
+- **Spotify OAuth**: Credential setup and OAuth callback flow via the Music tab (`/api/music/spotify/auth`, `/api/music/spotify/callback`), with tokens stored in the database.
+- **Playback Control**: Play, pause, next, previous, seek, volume, queue browsing, and queue additions (`/api/music/spotify/*`).
+- **Device Management**: List available Spotify Connect devices and transfer playback (`/api/music/spotify/devices`, `/api/music/spotify/device`).
+- **Search & Playlists**: Search tracks and browse the household's saved playlists (`/api/music/spotify/search`, `/api/music/spotify/playlists`).
+- **Recommender Engine**: Collaborative-filtering recommendations via `/api/music/recommend` using the `listening_history` table (migration 013), with context (time-of-day/weekday), rediscovery, and explainable reasons. The daemon rebuilds the recommendation pool in the background (`rebuild_music_recommendations()`).
+- **Playlist Recommendation**: `/api/music/recommend/playlist` resolves current mood/genre/energy into one specific real Spotify playlist — the household's saved playlists are matched first by keyword, falling back to a global Spotify playlist search. Gathering-triggered situational-awareness cards (mode `music`) embed the resolved playlist name, URI, URL, and cover art.
+- **Speaker Casting**: Cast playback to Home Assistant media players or speaker groups with volume control (`/api/music/cast`, `/api/music/cast/stop`, `/api/music/cast/volume`, `/api/music/speakers`, `/api/music/speakers/groups`). Speaker groups are stored in the `speaker_groups` table (migration 014).
+- **Audio Visualizer**: Spotify doesn't stream audio to the browser (playback runs on a Connect device), so the now-playing visualizer is driven by `/audio-analysis` segment loudness (`/api/music/spotify/audio-analysis/{track_id}`), rendering 56 bars synced to playback position.
+- **Voice & Routine Actions**: Music actions (play, pause, next, previous, volume) and cast/stop-cast actions are available in routine automation and voice command routing.
+- **Music Tab**: The Matrix page's Music tab provides the player with now-playing display, visualizer, playlist browser, device selector, speaker casting UI, and credential/OAuth setup.
+- **Scheduled Playback**: The daemon plays context-aware tunes (people/time/weather) on schedule (e.g. mornings) via `play_tune()`.
+
+### Database Schema
+- **`listening_history`**: Logs played tracks (track, album, artist, played_at, context, source) to feed the recommender
+- **`speaker_groups`**: Named groups of HA media_player entity IDs for whole-home casting
+
+### API Endpoints
+- `GET /api/music/spotify/status`: Spotify connection status
+- `POST /api/music/spotify/auth`: Save Spotify credentials
+- `GET /api/music/spotify/auth`: OAuth authorization URL
+- `GET /api/music/spotify/callback`: OAuth callback handler
+- `POST /api/music/spotify/play|pause|next|previous|seek|volume`
+- `GET /api/music/spotify/queue`, `POST /api/music/spotify/queue/add`
+- `GET /api/music/spotify/devices`, `POST /api/music/spotify/device`: Device listing/transfer
+- `GET /api/music/spotify/search`: Track search
+- `GET /api/music/spotify/playlists`: Saved playlists
+- `GET /api/music/spotify/audio-analysis/{track_id}`: Segment loudness for the visualizer
+- `GET /api/music/recommend`: Recommender-engine suggestions
+- `GET /api/music/recommend/playlist`: Contextual playlist recommendation (library-first)
+- `GET /api/music/recommend/refresh`: Trigger recommendation pool rebuild
+- `POST /api/music/history`: Record listening history
+- `GET /api/music/speakers`: Available speakers
+- `POST /api/music/cast`, `/api/music/cast/stop`, `/api/music/cast/volume`: Speaker casting
+- `POST /api/music/speakers/groups`: Manage speaker groups
+
+## Camera Streaming
+
+RTSP security cameras can be viewed directly in the browser:
+
+### Features
+- **MJPEG Proxy**: `/api/camera` streams an RTSP source through an ffmpeg proxy as MJPEG frames.
+- **HLS Streaming**: `/api/hls/start`, `/api/hls/stop`, `/api/hls/status` manage a persistent ffmpeg RTSP→HLS remux pipeline; playlists and segments served from `/api/hls/`. Includes PCM/ALAW audio transcoding for HLS playback compatibility.
+- **hls.js Playback**: CameraStream panel uses hls.js with Safari native-HLS fallback, automatic reconnect, and snapshot capture.
+- **Configuration & Snapshot**: `/api/camera/config` returns the configured source; `/api/camera/snapshot` grabs a single frame.
+
+### API Endpoints
+- `GET /api/camera`: MJPEG stream proxy
+- `GET /api/camera/config`: Camera source configuration
+- `GET /api/camera/snapshot`: Single-frame snapshot
+- `POST /api/hls/start`, `POST /api/hls/stop`, `GET /api/hls/status`: HLS pipeline control
+- `GET /api/hls/index.m3u8`, `GET /api/hls/{filename}`: Playlist and segment serving
+
+## Routine Automation
+
+ALFR3D supports a full WHEN / IF / THEN recipe model:
+
+### Triggers (WHEN)
+- **Time**: Scheduled times with recurrence (once, daily, weekdays, weekly)
+- **Sunrise / Sunset**: Fires at local solar sunrise/sunset (environment timezone)
+- **Person arrives / leaves**: Occupancy events per user
+- **Device turns on / off**: Device state-change events
+Multiple triggers are OR-combined; a routine fires when any match.
+
+### Conditions (IF)
+All configured conditions must evaluate true:
+- **Person is home / away**
+- **Anyone home / Nobody home**
+- **Device is on / off**
+- **Temperature above / below**
+- **Mode is** (day/night/home/away)
+
+### Actions (THEN)
+- **Speak**: Text-to-speech messages via the speak service
+- **Device**: Control LAN/IoT devices
+- **Email**: Send email notifications
+- **Set thermostat**: Target temperature
+- **Lock / Unlock**: Door lock control
+- **Open / Close cover**: Blinds/cover control
+- **Music (Spotify)**: Play, pause, next, previous, set volume, cast to speaker, stop casting
+
+### Configuration
+1. Navigate to Matrix page → Routines tab
+2. Click "New Routine" to create a routine
+3. Add triggers, conditions, and actions
+4. Save and enable the routine
+5. Run routines on-demand with the play button
+
+### Database Schema
+- **`routines`**: Stores routine definitions with name, time, recurrence (once/daily/weekdays/weekly), triggers (JSON), conditions (JSON), actions (JSON), and last_run timestamp (migration 009)
+
+## Personality & Quips
+
+- **Personality Matrix**: Configure the daemon's persona (name, tone, energy) via `/api/personality`
+- **Presets**: Save/apply named personality presets (`/api/personality/presets`, `/api/personality/apply-preset`)
+- **Context**: Manage personality context inputs (`/api/personality/context`)
+- **LLM Config**: Optionally configure an LLM for generated responses in the speak service (`/api/personality/llm-config`)
+- **Quip Categories**: Quips are grouped into semantic categories — greeting, weather_joke, sarcasm, wisdom, goodbye, custom — filterable via `GET /api/quips?category=...` (migration 011)
+
+## Theme Customization
+
+- **Single Source of Truth**: `src/utils/themes.js` holds all color tokens; `themes.css` is auto-generated from it via `npm run generate:theme` (wired into predev/prebuild) so they can never drift apart
+- **Semantic Tailwind Classes**: `fui-*` utilities (fui-accent, fui-magenta, fui-env, fui-panel, etc.) derive from the active theme
+- **Built-in Themes**:
+  - Cyan / Navy (default) — deep navy substrate with glowing cyan accents
+  - Amber / Charcoal — ultra-deep charcoal with electric amber highlights
+  - Light / Teal — whites and grays with teal primary
+- **Live Picker**: Matrix → Customizations lets you switch themes instantly; changes persist across sessions
+- Components use only theme tokens — no hardcoded colors
+
+## System Management
+
+- **Health**: `GET /api/health` returns service uptime, container status, and the version from `services/service_api/VERSION`
+- **Network**: `GET /api/system/network` shows host/IP/interface info
+- **Database**: `GET /api/system/database` reports per-table row counts; `POST /api/system/database/backup` dumps the database
+- **Config**: `GET/PUT /api/system/config` reads/edits the environment configuration file
+- **Services**: `GET /api/system/services` lists running services; `POST /api/system/services/{name}/restart` restarts a service
+
+## Setup and Maintenance
+
+The `setup/` directory contains scripts for database initialization, maintenance, and integration setup:
+
+### Database Setup
+- **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
+- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0020`):
+  - `001_calendar_cleanup.sql` / `002_iot.sql` / `003_routines.sql`
+  - `004_personality.sql` / `005_indexes.sql` / `006_personality_context.sql`
+  - `007_device_types_expansion.sql` / `008_iot_device_link.sql`
+  - `009_routines_v2.sql` (triggers + conditions)
+  - `010_slow_query_indexes.sql` / `011_quip_categories.sql` / `012_weather_expansion.sql`
+  - `013_listening_history.sql` / `014_speaker_groups.sql`
+  - `015_environment_timezone.sql` / `016_iot_device_cleanup.sql` / `017_iot_dedupe.sql`
+  - `018_weather_forecast.sql` (forecast rain probability / temp / conditions snapshot)
+  - `019_esphome.sql` (ESPHome per-entity ID column + `esphome_nodes` table)
+- **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
+
+### IoT Integration
+
+ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for unified smart home control. HA and SmartThings share a single "default provider" selector; ESPHome is local-only (mDNS discovery + Noise-encrypted native API, no cloud account or URL/token) and runs always-on in parallel regardless of that selection.
+
+#### Features
+- **Unified Device Management**: View and control HA, ST, and ESPHome devices from a single interface
+- **Automatic Sync**: HA/ST/ESPHome devices sync automatically every 15 minutes via the daemon service; ESPHome nodes are additionally rediscovered over mDNS every hour
+- **Real-Time States**: IoT device states stream over WebSocket (30s refresh) — no HTTP polling
+- **Blueprint Visualization**: Linked IoT devices appear on the floorplan with proper device type icons
+- **Manual Device Linking**: Link IoT devices to alfr3d devices via Domain → Devices → SMARTHOME DEVICES section
+- **Linked-Only Filtering**: `GET /api/iot/devices?linked=true` shows only linked devices; sync no longer auto-creates device rows for unmatched devices
+- **Device Type Controls**: ControlBlade provides type-specific controls (lights, thermostats, locks, fans, covers, media players)
+- **Sensor Display**: View sensor readings (temperature, humidity, battery) in ControlBlade
+- **Linked Status**: Linked devices show "LINKED" in blue, unlinked show warning icon
+- **FK Relationship**: smarthome_devices.device_id links to device table for type and position
+- **ESPHome Manual Accept**: Discovered ESPHome nodes require an explicit accept step (with an optional PSK) before ALFR3D connects — mDNS discovery isn't account-scoped like HA/ST, so nodes never auto-link
+
+#### Configuration
+1. Configure Home Assistant via the Integrations page:
+   - HA URL (e.g., `http://192.168.1.x:8123`)
+   - Long-Lived Access Token
+
+2. Configure SmartThings via the Integrations page:
+   - Personal Access Token (PAT)
+
+3. Set default provider in IoT settings
+
+4. Configure ESPHome via the Integrations page:
+   - Click "Scan for ESPHome devices" to run an mDNS discovery pass (~8s)
+   - Accept each discovered node individually, with an optional PSK if the node has Noise-protocol encryption enabled
+   - No default-provider selection needed — accepted nodes sync alongside HA/ST automatically
+
+#### Linking Devices
+1. Go to Domain → Devices tab
+2. Scroll to "SMARTHOME DEVICES" section
+3. Click the Link button (chain icon) on an unlinked device
+4. Select an ALFR3D device to link to
+5. The device will now appear on the Blueprint with proper icon and controls
+
+#### Available Device Controls
+- **Lights**: Power toggle, brightness slider
+- **Switches**: Power toggle
+- **Climate**: Temperature up/down, current/target display
+- **Locks**: Lock/unlock toggle
+- **Fans**: Power toggle, speed selector
+- **Cover**: Position slider, open/close buttons
+- **Media Players**: Play/pause, volume slider
+- **Sensors**: Display readings (temperature, humidity, battery, etc.)
+
+#### Database Schema
+- **`smarthome_devices`**: Stores synced IoT devices with source (homeassistant/smartthings), entity IDs, MAC addresses, and device_id FK to device table. Migration 017 deduplicates stale rows and restores the unique key so syncs upsert in place.
+- **`device`**: Local device table stores linked devices with type from device_types
+- **`device_types`**: Expanded to include fan, climate, cover, lock, media_player, sensor, binary_sensor, camera
+- **`device_command_history`**: Tracks device control commands for audit logs
+
+#### API Endpoints (Additional)
+- `PUT /api/iot/devices/{id}/link`: Link/unlink IoT device to local device
+- `GET /api/iot/devices?linked=true`: Filter to linked devices
+
+#### Sync Mechanism
+- Daemon sends Kafka messages (`iot_ha_sync`, `iot_st_sync`) every 15 minutes
+- Device service fetches devices from HA/ST APIs and updates the database
+- MAC addresses extracted from HA entity connections for device auto-linking
+- On sync: looks up MAC in device table, sets device_id FK (no auto-creation for unmatched devices)
+- Frontend uses FK join for position data
+
+### Secrets at Rest
+
+Integration credentials (Home Assistant long-lived token, SmartThings PAT, Spotify client
+secret, ESPHome node PSKs) are encrypted at rest using Fernet symmetric encryption
+(`services/common/secrets_utils.py`), so a database dump or backup leak doesn't hand out live
+credentials directly.
+
+- **Zero-config key provisioning**: the encryption key (`ALFR3D_SECRETS_KEY`) is auto-generated
+  on first boot and persisted to the `secrets_data` Docker volume — no setup step required.
+- **⚠️ Back up the `secrets_data` volume.** If it's lost, every stored integration credential
+  becomes permanently unrecoverable and must be re-entered from the Integrations page. There is
+  no key-rotation or recovery mechanism in v1.
+- Existing plaintext values (from before this feature shipped) keep working — the read path
+  tries to decrypt and falls back to the raw value on failure, so the database self-heals to
+  fully-encrypted as each credential gets naturally rewritten (e.g. the next OAuth refresh).
+- To manage the key yourself instead (e.g. Kubernetes secret injection), set `ALFR3D_SECRETS_KEY`
+  directly in the environment — it takes precedence over the generated file.
+
+### Authentication & RBAC
+
+Every write action (POST/PUT/DELETE) on the API requires a bearer token and a role with the
+right grant; `GET` routes stay open/read-only for anonymous callers by design — this is what
+lets the API be safely exposed on hardware (Alfr3d Kit) or through a relay (Butler) without
+handing out full control to anyone who can reach it.
+
+- **Claim your account**: existing household member rows don't have a password until you set
+  one — `POST /api/auth/claim` with `{"username", "password"}` (only works once per account; a
+  password already set means it's already claimed).
+- **Login**: `POST /api/auth/login` with `{"username", "password"}` returns a short-lived JWT
+  access token (~15 min) and a longer-lived, revocable refresh token. `POST /api/auth/refresh`
+  trades a valid refresh token for a new pair (rotated on every use); `POST /api/auth/logout`
+  revokes it.
+- **Roles**: `technoking` (an Athos-only backdoor, never assignable via any UI), `owner` (the
+  real assignable admin role — full CRUD on other users, integrations, system config), `resident`
+  (everyday household actions — devices, routines, music playback, quips, IoT device control),
+  `guest` (read-only, identical to an unauthenticated caller). `owner` is aliased to `technoking`
+  in the permission matrix, so it gets identical admin grants without being the backdoor role. The
+  full matrix is in `services/service_api/auth/permissions.py`.
+- **Shipped**: both clients have full login UI — the React webapp (Sign In/Sign Out in the nav
+  bar, route-level view-only gating for unauthenticated visitors) and the Nexus Launcher (a
+  Keystore-backed sign-in inside Settings, gating device control/resident CRUD/manual routine
+  run-or-edit while leaving every read surface usable signed out). Also shipped: login/claim rate
+  limiting, no username-enumeration on failed login or claim, self-service + admin-assisted
+  password change/reset (`POST /api/auth/change-password`, `POST /api/auth/admin-reset-password`),
+  first-run onboarding (claim a seeded resident or generate a new `owner` account, in the webapp
+  and the launcher), self-service profile editing ("My Profile", never able to change your own
+  role), and full owner/technoking administration of other users through the web UI — add/edit/
+  delete, plus a generate-and-display password reset — with every mutating control hidden from
+  non-admins (the roster itself stays visible read-only). See `todo/todo_auth_rbac.md`,
+  `todo/todo_onboarding_first_user.md`, `todo/todo_user_management.md`, and
+  `todo/todo_household_admin_ui.md` for full history.
+- **Decided against**: an emailed onboarding-OTP step — `claim`/`bootstrap` already require
+  physical-device or local-network access, so an emailed code would add no real security there
+  (see `todo/todo_email_service.md`'s Decision section). Household units don't send email at all.
+- **Not yet shipped**: an owner-administers-household surface on the Nexus Launcher (a v2
+  decision, not yet scoped).
+- **Solo-owner lockout recovery**: `setup/reset_owner_password.py` resets any user's password
+  directly against the DB, bypassing the API entirely — for the one gap admin-assisted reset
+  doesn't cover (a solo-owner household with nobody else to run it). Gated on already having
+  shell/`docker compose exec` access to the Kit's own host, not on email.
+
+### Maintenance Scripts
+- **`backup_db.sh`**: Automated database backup script
+- **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
+- **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
+- **`reset_owner_password.py`**: Solo-owner lockout recovery — resets a user's password directly against the DB (`--list` to see usernames, `--username <name>` to reset)
+
+Run these scripts as needed for database maintenance, backups, and integration configuration.
+
+### Autostart on Boot
+
+All services in `docker-compose.yml` run with `restart: unless-stopped`, so once containers exist they come back automatically whenever the Docker daemon restarts — as long as `docker.service` itself is enabled at boot (`sudo systemctl enable docker`). For an explicit, host-independent boot path (first-ever start on a fresh device, or after a `docker-compose.yml` change), install the provided systemd unit instead of relying on that implicitly:
+
+```bash
+sudo cp setup/alfr3d.service /etc/systemd/system/alfr3d.service
+sudo sed -i "s#/opt/alfr3d#$(pwd)#" /etc/systemd/system/alfr3d.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now alfr3d.service
+```
+
+This runs `docker compose up -d` after `docker.service` and the network are up, and brings the stack down cleanly on shutdown/`systemctl stop alfr3d`. Startup ordering between services (DB/Kafka ready before dependents) is handled by `depends_on` + `healthcheck` in `docker-compose.yml`, not by the unit itself. Check status with `systemctl status alfr3d` / `journalctl -u alfr3d`.
+
+## Linting
 
 Run linting across all services:
 
