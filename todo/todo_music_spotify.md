@@ -31,7 +31,23 @@ Option A (launcher push, any app) stays a documented fast-follow — pick it up 
 - Added `GET /api/music/now-playing` (`services/service_api/routes/music.py`) — fast local read of the persisted `config` value, no live Spotify call. `GET /api/music/spotify/status` (pre-existing) is unchanged and still does the live proxy.
 
 ### Outstanding
-- **Live verification against a real Spotify-authorized deployment** — not yet done. Unit tests (`tests/test_daemon_service.py::TestCheckNowPlaying`, `tests/test_api_service.py`) cover the logic with mocked DB/Spotify calls, but nothing has exercised this against a live household Spotify session yet. Fold into the alfr3d_deck on-device verification pass (same "not yet verified live" gap as the playlist-recommendation plan).
+- **Live verification against a real Spotify-authorized deployment — done 2026-08-25.** With music
+  actually playing in the household, confirmed the full chain end to end against the live
+  production box: `GET /api/music/spotify/status` returned real live playback data (device
+  "Littl3.Zen", track "Home (feat. Conal McDonagh)"); `check_now_playing()` was firing every ~63s
+  per `service-daemon` logs with no errors; `GET /api/music/now-playing` initially returned a stale
+  ~5-hour-old track ("Call Me" by Skye) simply because nothing had played since then (correct
+  hold-last-known behavior, not a bug) and updated to the live track ("Drilling" by The Outside
+  Track) within one cycle once polled again, `updated_at` matching the live status exactly.
+  On-device (alfr3d_deck launcher) confirmation resolved differently than expected: there is **no
+  launcher UI wired to this backend endpoint at all**, by design/scope, not a bug. The launcher's
+  Media window (`NowPlayingController.kt`) reads Android's own local `MediaSessionManager` only --
+  whatever's playing on that specific phone -- with zero connection to the backend's Spotify
+  integration; `alfr3d_deck/todo/todo_music_playlist_recommendation.md` explicitly scopes this out
+  ("Anything in the separate Media window ... on-device now-playing via `NowPlayingController` --
+  unrelated data flow, no changes needed there"). Ambient Brief/Status only ever show the
+  *recommendation* card (suggest a playlist), never live "what's actually playing" state. User
+  decision 2026-08-25: leave as-is, not worth scoping new UI for right now.
 - Confirm the `schedule`-vs-60s-loop assumption doesn't need revisiting if "now playing" ever needs sub-60s freshness (not currently required).
 
 ## Files (Option B) — implemented

@@ -45,7 +45,15 @@ const DeviceIcon = memo(({ device, onRemove }) => {
     <div className="relative">
       <Icon className={`w-8 h-8 ${device.state === 'online' ? 'text-primary' : 'text-text-tertiary'}`} />
       <button
-        onClick={(e) => { e.stopPropagation(); onRemove(device.id); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Mirrors handleDragEnd's id resolution: a linked IoT pin's position lives on its
+          // local_device row, not the iot_${id}-prefixed smarthome_devices id.
+          const targetId = device.type === 'iot' && device.linked && device.local_device?.id
+            ? device.local_device.id
+            : device.id;
+          onRemove(targetId);
+        }}
         className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-white text-xs"
       >
         <X className="w-2 h-2" />
