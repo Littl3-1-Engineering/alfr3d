@@ -617,14 +617,21 @@ handing out full control to anyone who can reach it.
   non-admins (the roster itself stays visible read-only). See `todo/todo_auth_rbac.md`,
   `todo/todo_onboarding_first_user.md`, `todo/todo_user_management.md`, and
   `todo/todo_household_admin_ui.md` for full history.
-- **Not yet shipped**: the onboarding flow's planned email-OTP step (no SMTP/email-sending
-  capability exists anywhere in this codebase yet — see `todo/todo_email_service.md`) and an
-  owner-administers-household surface on the Nexus Launcher (a v2 decision, not yet scoped).
+- **Decided against**: an emailed onboarding-OTP step — `claim`/`bootstrap` already require
+  physical-device or local-network access, so an emailed code would add no real security there
+  (see `todo/todo_email_service.md`'s Decision section). Household units don't send email at all.
+- **Not yet shipped**: an owner-administers-household surface on the Nexus Launcher (a v2
+  decision, not yet scoped).
+- **Solo-owner lockout recovery**: `setup/reset_owner_password.py` resets any user's password
+  directly against the DB, bypassing the API entirely — for the one gap admin-assisted reset
+  doesn't cover (a solo-owner household with nobody else to run it). Gated on already having
+  shell/`docker compose exec` access to the Kit's own host, not on email.
 
 ### Maintenance Scripts
 - **`backup_db.sh`**: Automated database backup script
 - **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
 - **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
+- **`reset_owner_password.py`**: Solo-owner lockout recovery — resets a user's password directly against the DB (`--list` to see usernames, `--username <name>` to reset)
 
 Run these scripts as needed for database maintenance, backups, and integration configuration.
 
