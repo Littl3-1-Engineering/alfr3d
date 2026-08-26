@@ -43,9 +43,10 @@ const CameraStream = () => {
   const startBackend = useCallback(async (id) => {
     try {
       const res = await apiFetch(`${hlsBase(id)}/start`, { method: 'POST' });
-      return res.ok;
+      if (res.ok) return 'ok';
+      return res.status === 401 ? 'unauthorized' : 'error';
     } catch {
-      return false;
+      return 'error';
     }
   }, []);
 
@@ -95,9 +96,9 @@ const CameraStream = () => {
       if (!id) return;
       setStatus('loading');
       destroyHls();
-      const ok = await startBackend(id);
-      if (!ok) {
-        setStatus('error');
+      const result = await startBackend(id);
+      if (result !== 'ok') {
+        setStatus(result);
         return;
       }
       attach(id);
@@ -160,7 +161,13 @@ const CameraStream = () => {
                 }`}
               />
               <span className="text-[10px] font-mono uppercase text-fui-text/60">
-                {status === 'connected' ? 'LIV3' : status === 'loading' ? 'CNCT1NG...' : '3RR0R'}
+                {status === 'connected'
+                  ? 'LIV3'
+                  : status === 'loading'
+                    ? 'CNCT1NG...'
+                    : status === 'unauthorized'
+                      ? 'N0 4UTH'
+                      : '3RR0R'}
               </span>
             </>
           )}
@@ -228,16 +235,20 @@ const CameraStream = () => {
           <p className="font-mono text-xs text-fui-text/60">N0 C4M3R4S C0NF1GUR3D</p>
         </div>
       ) : showStream ? (
-        status === 'error' ? (
+        status === 'error' || status === 'unauthorized' ? (
           <div className="flex flex-col items-center justify-center py-8 border border-fui-border bg-black/20">
             <AlertTriangle size={24} className="text-red-500 mb-2" />
-            <p className="font-mono text-xs text-fui-text/60 mb-3">STR3AM UNR34CH4BL3</p>
-            <button
-              onClick={reconnect}
-              className="px-3 py-1 border border-fui-accent text-fui-accent font-mono text-xs uppercase hover:bg-fui-accent hover:text-black transition-colors"
-            >
-              R3TRY
-            </button>
+            <p className="font-mono text-xs text-fui-text/60 mb-3">
+              {status === 'unauthorized' ? 'L0G1N R3QU!RED' : 'STR3AM UNR34CH4BL3'}
+            </p>
+            {status === 'error' && (
+              <button
+                onClick={reconnect}
+                className="px-3 py-1 border border-fui-accent text-fui-accent font-mono text-xs uppercase hover:bg-fui-accent hover:text-black transition-colors"
+              >
+                R3TRY
+              </button>
+            )}
           </div>
         ) : (
           <div className="relative border border-fui-border bg-black/40">
