@@ -1,8 +1,48 @@
 # Plan: Transactional Email Service (noreply sending, TOTP/OTP codes, registration, purchases)
 
-## Status: 🔲 Not started
+## Status: 🔴 Decided against, 2026-08-26 — household units (`alfr3d`) will not send email. See
+"Decision" below. A full implementation (email_utils.py, otp_codes table, onboarding-OTP +
+password-reset routes) was built and live-tested against a real Resend account this same session,
+then deliberately reverted once the design questions below were actually talked through.
 
-## Overview
+## Decision (2026-08-26)
+
+Two separate realizations killed this, in order:
+
+1. **Wrong repo for receipts.** Use case 4 (purchase/billing receipts) can never have a real call
+   site in `alfr3d` — Kit purchases and Cloud subscriptions happen on `littl31.com`, before (or
+   entirely without) a customer ever running a household unit. That flow belongs in the `littl31`
+   repo's Cloudflare Pages Functions, next to the Stripe Checkout/webhook code, with a **centrally-
+   held** Resend key (Cloudflare secret) — not a per-household one. Not built there yet either:
+   Checkout itself isn't wired to a pricing-card CTA yet (see `todo_cloud_kit_commerce.md`), so
+   there's no purchase event to trigger a receipt from regardless of which repo it lives in. Build
+   it together with Checkout when that gets built, not ahead of it.
+2. **No real case for the rest, once actually examined.** Re-litigating the other four use cases
+   against "does the Launcher already cover this":
+   - **Welcome email** — the Launcher shows a new resident in the roster immediately; an email adds
+     nothing.
+   - **Onboarding OTP** — weaker than it first looked. `claim`/`bootstrap` already require either
+     physical device access or knowing the local network URL — you're inside the trust boundary
+     already, so an emailed code adds no real security at that moment. Its only value would be
+     confirming the email on file is reachable for *later* password reset, not onboarding itself.
+   - **Self-service password reset** — the one case with real teeth (a solo-owner household with
+     nobody else to run admin-assisted reset), but admin-assisted reset (Phase 5, no email needed)
+     already covers every *multi*-resident household. The remaining gap — solo-owner lockout — is
+     narrow enough to solve without asking every household to configure a Resend account: see
+     `setup/reset_owner_password.py`, added instead. It bypasses the API/DB directly, gated purely
+     on already having shell/`docker compose exec` access to the Kit's own host — the same
+     physical-access trust boundary `claim`/`bootstrap` already rely on, no email required.
+
+Also relevant: expecting a non-technical Kit buyer to sign up for a third-party email provider and
+paste in an API key contradicts `secrets_utils.py`'s own stated design goal (zero-config hardware
+SKU) — asking them to do exactly the kind of setup step that module exists to avoid.
+
+If a real self-service, no-local-access password recovery is ever wanted, the right shape is
+**ALFR3D Cloud** (`todo_cloud_relay.md`, not started) sending it through *ALFR3D's own* centrally-
+held key, gated behind Cloud registration — not a per-household Resend account. Not scoped further
+here; revisit only if Cloud actually ships and this becomes a real ask.
+
+## Overview (original ask, kept for history)
 
 No SMTP/email-sending capability exists anywhere in this codebase today (confirmed by grep during
 `todo_auth_rbac.md`'s Phase 5 and again in `todo_onboarding_first_user.md` — zero hits either time).
@@ -79,6 +119,10 @@ generic email-sending capability rather than solving it piecemeal inside each fe
 
 ## Related
 
+- `setup/reset_owner_password.py` — the solo-owner lockout recovery path built instead of
+  self-service emailed password reset. Direct-DB, physical/host-access-gated.
+- `todo_cloud_kit_commerce.md` (`littl31` repo) — where purchase/subscription receipt emails
+  actually belong (Phase B/C, built alongside Stripe Checkout itself, centrally-held key).
 - `todo_onboarding_first_user.md` (this directory) — its "Follow-up: email OTP" step is blocked on
   this todo; that doc's Open Questions explicitly deferred the OTP vendor/scope decision here.
 - `todo_auth_rbac.md` (this directory) — Phase 5's admin-assisted password reset was chosen
