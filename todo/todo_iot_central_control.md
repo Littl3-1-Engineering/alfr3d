@@ -1,6 +1,37 @@
 # Centralize Home Appliance Control on the Domain/Blueprint Page
 
-## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`; ControlBlade positioning bug fixed 2026-08-24 (see below)
+## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`; ControlBlade positioning bug fixed 2026-08-24 (see below); live-verified 2026-08-25 and found two real control-path bugs (see below), fixed in the working tree on `Neural-Blueprint`, not yet deployed
+
+**Live browser verification (2026-08-25):** positioning fix confirmed good — map pins (including
+one right at the bottom edge of the panel), the LIST view, all anchor the blade fully on-screen.
+Per-device-type mapping also confirmed: selecting the HA-sourced `Moonrise TV` (`media_player`)
+rendered play/pause + volume as designed. But exercising it live surfaced two real bugs neither
+unit tests nor the lint/build pass could catch, because both only manifest when `ControlBlade` is
+fed a real device object from `Blueprint.jsx`'s merged array:
+- **Every control action 422'd.** `Blueprint.jsx`'s `mergeWithIot()` prefixes IoT-sourced devices'
+  ids as `iot_${id}` (needed to avoid colliding with the local `device` table's own id sequence in
+  the merged array), but `ControlBlade.jsx`'s `sendCommand` passed `device.id` straight through to
+  `POST /api/iot/devices/{id}/control`, whose route declares `device_id: int` — FastAPI 422s on the
+  unparseable `"iot_60"` before the handler ever runs. Fixed: `sendCommand` now strips a leading
+  `iot_` prefix before building the URL. Since only IoT-sourced devices ever reach this call
+  (`sendCommand` early-returns without `device.source`, which only merged IoT devices have — see
+  `ControlBlade.jsx`'s early guard), and `ControlBlade` is only ever fed by `Blueprint.jsx`'s merged
+  array (its one mount point, in `Domain.jsx`), the prefix is unconditionally present whenever this
+  code path runs — no case where `device.id` reaches `sendCommand` already bare.
+- **The pin's "remove from blueprint" (red X) button had the same bug**, one level worse: unlike
+  `handleDragEnd`, which already correctly resolves a linked IoT pin's position to
+  `device.local_device.id` before calling `updateDevicePosition`, `DeviceIcon`'s remove button
+  called `onRemove(device.id)` directly with the raw prefixed id, hitting `PUT /api/devices/{id}`
+  (also `device_id: int`) and 422ing the same way. Fixed to mirror `handleDragEnd`'s existing
+  resolution. (Found this one by accident — an early mis-click on the pin's tiny red X badge while
+  hunting for its clickable hit-area triggered the same 422, which is what surfaced it.)
+
+Both fixes are in the working tree on `Neural-Blueprint` (`Blueprint.jsx`, `ControlBlade.jsx`);
+`npm run build`/`eslint` both clean. User wants to keep local for now, not deploy to the live host
+yet. Given these two bugs, treat the earlier "Item 1 ... done" unit-test verification below as
+necessary but not sufficient — it caught payload shape/scale bugs but not this id-prefix class of
+bug, since its tests constructed `device` stubs with bare ids rather than going through
+`mergeWithIot()`.
 
 **ControlBlade positioning bug fixed (2026-08-24, later pass):** reported as "options spawn below
 the System Blueprint pane and beyond the scroll point, whether opened via the blueprint or the

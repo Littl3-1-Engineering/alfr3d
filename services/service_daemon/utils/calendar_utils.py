@@ -157,14 +157,13 @@ def sync_calendar():
         calendars = {cal["summary"]: cal["id"] for cal in calendar_list.get("items", [])}
         logger.debug(f"Available calendars: {calendars}")
 
-        # Desired calendars: primary is special, others by name
-        desired_calendars = ["primary", "Family", "Cassiopeia "]
+        # Desired calendars by name (whitespace-trimmed to tolerate stray spaces in Google's naming)
+        desired_calendars = ["Armageddion Littl3.1", "Family", "Cassiopeia"]
+        trimmed_calendars = {name.strip(): cal_id for name, cal_id in calendars.items()}
         calendar_ids = []
         for name in desired_calendars:
-            if name == "primary":
-                calendar_ids.append("primary")
-            elif name in calendars:
-                calendar_ids.append(calendars[name])
+            if name in trimmed_calendars:
+                calendar_ids.append(trimmed_calendars[name])
             else:
                 logger.warning(f"Calendar '{name}' not found")
 
@@ -203,8 +202,10 @@ def sync_calendar():
             # Parse datetime strings, handle 'Z' suffix
             if start_str:
                 if "T" in start_str:
-                    start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(
-                        microsecond=0, tzinfo=None
+                    start = (
+                        datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                        .astimezone(timezone.utc)
+                        .replace(microsecond=0, tzinfo=None)
                     )
                 else:
                     # all-day event, start at beginning of day
@@ -215,8 +216,10 @@ def sync_calendar():
                 start = None
             if end_str:
                 if "T" in end_str:
-                    end = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(
-                        microsecond=0, tzinfo=None
+                    end = (
+                        datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                        .astimezone(timezone.utc)
+                        .replace(microsecond=0, tzinfo=None)
                     )
                 else:
                     # all-day event, end at beginning of next day

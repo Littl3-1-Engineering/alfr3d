@@ -1,6 +1,9 @@
 # First-Run Onboarding: Detect No Password-Set User, Generate or Claim the First Account
 
-## Status: 🚧 In progress -- backend + webapp + launcher UI shipped 2026-08-24, email OTP remains
+## Status: ✅ Complete -- backend + webapp + launcher UI shipped 2026-08-24. The planned email-OTP
+follow-up (item 3 below) was decided against 2026-08-26 -- see `todo_email_service.md`'s Decision
+section: `claim`/`bootstrap` already require physical-device or local-network access, so an
+emailed code adds no real security at that step. Nothing else in this doc is blocked by that.
 
 ## Overview
 
@@ -34,8 +37,10 @@ existing seeded resident claim their row.
   hoists the `setup-status` check into a new `Alfr3dAccountSection` wrapper so the onboarding card
   and the normal `AuthSection` sign-in form are mutually exclusive (never both shown at once,
   matching the webapp's `LoginModal`/`OnboardingModal` split) rather than stacked.
-- Email OTP follow-up: still blocked on `todo_email_service.md` (no SMTP/email-sending capability
-  exists anywhere in this codebase yet) -- not started, not scoped for this pass.
+- Email OTP follow-up: decided against 2026-08-26 (see `todo_email_service.md`'s Decision
+  section) -- not just deferred, not going to be built. Solo-owner lockout recovery (a real, if
+  narrow, gap the OTP idea was partly reaching for) is instead covered by
+  `setup/reset_owner_password.py`, a direct-DB script gated on host access rather than email.
 
 ## Design (sketch — needs scoping pass before implementation)
 
@@ -48,13 +53,13 @@ existing seeded resident claim their row.
    - Generate a brand-new first user (owner role, since someone must hold full admin -- deliberately
      `owner`, not `technoking`: per [[alfr3d-role-model]], technoking is an Athos-only backdoor
      never assignable via any UI) if the household prefers not to reuse a pre-seeded row.
-3. **Follow-up: email OTP.** User specifically wants this to be followed by an email one-time-code
-   step. Blocker: per `todo_auth_rbac.md`'s Phase 5 notes, **no SMTP/email-sending capability
-   exists anywhere in this codebase today** (grepped, zero hits) — that's why password reset there
-   went with an admin-assisted flow instead of emailed links. This todo's OTP step has the same
-   dependency: needs an SMTP/email-provider integration scoped and built first (or reused, if one
-   gets added for another reason first), it's not just a matter of adding a code-generation
-   function.
+3. **Follow-up: email OTP — decided against, 2026-08-26.** Originally scoped as blocked on
+   `todo_email_service.md`'s SMTP/email capability; once that capability actually got built and
+   examined against this exact use case, it turned out to add no real security here — `claim`/
+   `bootstrap` already require physical-device or local-network access, the same trust boundary an
+   emailed code would be trying to add on top of. See `todo_email_service.md`'s Decision section
+   for the full reasoning and what was built instead (`setup/reset_owner_password.py`, for the one
+   real gap: solo-owner lockout with no other admin to help).
 4. Where does the "does anyone have a password" check run? Likely both: webapp shows an onboarding
    screen instead of the normal login modal on first load if `setup-status` says nobody's claimed;
    launcher does the equivalent inside `AuthSection()`/a new onboarding surface in Settings.
@@ -69,10 +74,8 @@ existing seeded resident claim their row.
   exist but none are claimed" (normal post-`createTables.sql` seed state)? The onboarding copy
   probably differs ("welcome, let's create your account" vs. "residents are already set up, claim
   yours").
-- Scope and vendor choice for the email OTP step — needs its own design pass once an SMTP/email
-  capability decision is made; don't bundle that decision into this doc's initial implementation.
-  Tracked separately in `todo_email_service.md`, created 2026-08-24 at the user's request to cover
-  this and other email-sending use cases (registration, purchases, etc.) in one place.
+- ~~Scope and vendor choice for the email OTP step~~ — resolved 2026-08-26: not building it. See
+  `todo_email_service.md`.
 
 ## Related
 
@@ -81,5 +84,7 @@ existing seeded resident claim their row.
   reused here, not rebuilt.
 - `alfr3d_deck/todo/todo_auth_rbac.md` — launcher-side login already shipped; this doc's launcher
   work is net-new UI in the same area (Settings), not a rework of the existing login screen.
-- `todo_email_service.md` (this directory) — the SMTP/email-sending capability this doc's OTP
-  follow-up step depends on.
+- `todo_email_service.md` (this directory) — the email-OTP follow-up idea originally tracked
+  here was decided against there; see its Decision section for the reasoning.
+- `setup/reset_owner_password.py` — what actually covers the one real gap (solo-owner lockout)
+  the email-OTP idea was partly reaching for.
