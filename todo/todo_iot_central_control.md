@@ -1,6 +1,6 @@
 # Centralize Home Appliance Control on the Domain/Blueprint Page
 
-## Status: 🟡 Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`; ControlBlade positioning bug fixed 2026-08-24 (see below); live-verified 2026-08-25 and found two real control-path bugs (see below), fixed in the working tree on `Neural-Blueprint`, not yet deployed
+## Status: ✅ Items 1-3 done 2026-08-24; follow-up (SmartThings generic control) fixed 2026-08-24 in `todo_smartthings_generic_control.md`; ControlBlade positioning bug fixed 2026-08-24 (see below); live-verified 2026-08-25 and found two real control-path bugs (see below), fixed and merged to `main` via PR #152, deployed and live-verified 2026-08-26 — clicking `Moonrise TV` (device id 60) sent `POST /api/iot/devices/60/control` (no `iot_` prefix) and returned 200, play/pause icon flipped correctly. Remaining open item: SmartThings devices still aren't handled by the generic control endpoint (see "New finding" below) — that needs its own scoping pass.
 
 **Live browser verification (2026-08-25):** positioning fix confirmed good — map pins (including
 one right at the bottom edge of the panel), the LIST view, all anchor the blade fully on-screen.
