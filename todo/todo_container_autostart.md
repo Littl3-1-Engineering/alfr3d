@@ -1,6 +1,6 @@
 # Todo: Init Scripts for Container Autostart on Device Boot
 
-## Status: 🟡 Shipped on the NUC — pending an actual reboot test
+## Status: ✅ Shipped and reboot-tested 2026-08-25 — full stack confirmed autostarting unattended
 
 ## Goal
 Add init scripts so all ALFR3D containers (Kafka, MySQL, Redis, service_api, service_daemon, service_speak, service_frontend, etc.) start automatically when the host device boots, without a manual `docker compose up`.
@@ -11,7 +11,7 @@ Add init scripts so all ALFR3D containers (Kafka, MySQL, Redis, service_api, ser
 - [x] Systemd unit written: `setup/alfr3d.service`, template `WorkingDirectory=/opt/alfr3d` — edit to the actual repo path before installing (see README's new "Autostart on Boot" section for install steps).
 - [x] Startup ordering: existing `depends_on` + `healthcheck` in `docker-compose.yml` already sequences DB/Kafka readiness before dependents — no separate wait-for script needed.
 - [x] Installed and enabled on the NUC (`alfr3d@192.168.2.200`, repo at `/home/alfr3d/alfr3d`) 2026-08-22: `/etc/systemd/system/alfr3d.service` with `WorkingDirectory=/home/alfr3d/alfr3d`, `systemctl enable --now`'d. `docker.service` was already enabled at boot there.
-- [ ] Test with an actual reboot of the NUC to confirm the full stack comes up unattended — not done yet (didn't want to reboot a live home-automation box without asking first; do this next time a reboot is convenient).
+- [x] Test with an actual reboot of the NUC to confirm the full stack comes up unattended — done 2026-08-25 with explicit user go-ahead (`sudo systemctl reboot`). All 12 containers back up within 30s (mysql/kafka/redis/nginx healthy), `/api/iot/status` and the frontend (port 8000) both confirmed responding post-reboot.
 - [x] Document the autostart setup in the README (`### Autostart on Boot` under Setup and Maintenance).
 
 ## Side finding while applying this on the NUC (2026-08-22)
