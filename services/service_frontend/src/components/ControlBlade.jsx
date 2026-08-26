@@ -94,9 +94,16 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   const sendCommand = useCallback(async (command, params = {}) => {
     if (!device?.id || !device?.source) return false;
 
+    // Blueprint.jsx prefixes IoT-sourced devices as `iot_${id}` to avoid colliding with the
+    // local `device` table's own id sequence in the merged devices array; the backend's generic
+    // control endpoint expects the bare smarthome_devices row id.
+    const rawDeviceId = typeof device.id === 'string' && device.id.startsWith('iot_')
+      ? device.id.slice(4)
+      : device.id;
+
     setLoading(true);
     try {
-      const response = await apiFetch(`${API_BASE_URL}/api/iot/devices/${device.id}/control`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/devices/${rawDeviceId}/control`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command, ...params })

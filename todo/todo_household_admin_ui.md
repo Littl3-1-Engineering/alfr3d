@@ -91,7 +91,13 @@ assigning it via the API needs no other backend change. Two real gaps, both fixe
   `setup/migrations/versions/0024_owner_user_type.py`, which backfills the `owner` row only if
   missing (checks by name, not by hardcoded id, so it's safe regardless of what id the fresh-install
   path happened to assign). Not yet run against a live database in this environment -- no DB
-  container is up here; verify with `alembic upgrade head` before/at next deploy.
+  container is up here; verify with `alembic upgrade head` before/at next deploy. **Run 2026-08-25
+  against the live production DB** (`docker compose --profile test run --rm migrate alembic upgrade
+  head`, after rebuilding the `migrate` image since it was stale and didn't have 0024 in its build
+  context yet) -- confirmed `alembic current` now reports `0024 (head)`. The migration itself
+  no-opped (`user_types.owner already present; skipping`) since the row was already backfilled
+  manually during the 2026-08-24 live-verification pass; this run just formally records 0024 in the
+  migration chain so future `alembic upgrade head` runs don't skip it on a fresh install.
 - **Frontend never offered `owner` as an option.** Added it to both role `<select>` dropdowns:
   `PersonnelRoster.jsx`'s "Add User" form and `UserModal.jsx`'s edit view. `eslint`/`flake8`/`black`
   clean on all three changed files.
