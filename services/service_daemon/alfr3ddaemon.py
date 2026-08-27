@@ -45,7 +45,6 @@ import schedule  # 3rd party lib used for alarm clock managment.
 from utils import util_routines
 from utils import (
     gmail_utils,
-    maps_utils,
     calendar_utils,
     spotify_utils,
     mood_utils,
@@ -73,10 +72,6 @@ MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 KAFKA_URL = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")  # For destination weather if needed
-GAS_PRICE = float(os.environ.get("GAS_PRICE", "3.5"))  # Default gas price
-MPG = float(os.environ.get("MPG", "25"))  # Default MPG
 
 # How far ahead of a call-like event's start time check_focus_needed() will fire.
 FOCUS_LEAD_MINUTES = 15
@@ -316,11 +311,6 @@ class MyDaemon:
     DISPLAY_RULES = (
         ("time", 1, "check_time"),
         ("event", 2, "check_events"),
-        # Travel guidance has its own urgency curve -- a leave-by time relative
-        # to *now*, not just the event's start time -- so it's a separate card
-        # from check_events() rather than folded into it. Priority 2.5 keeps
-        # it right after the event it's derived from, ahead of music.
-        ("travel", 2.5, "check_travel"),
         ("music", 3, "check_gatherings"),
         # What's actually playing right now, independent of whether a
         # gathering triggered a recommendation -- priority 3.1 keeps it
@@ -385,12 +375,7 @@ class MyDaemon:
             return {"mode": "email", "content": content, "priority": 4}
 
     def check_events(self):
-        """Check for upcoming events, showing plain title/time info.
-
-        Travel-specific guidance (leave-by time, fuel cost) lives in
-        check_travel() instead -- see its docstring for why this stays
-        separate rather than folded into this card.
-        """
+        """Check for upcoming events, showing plain title/time info."""
         events = calendar_utils.get_upcoming_events()
         if not events:
             return None
@@ -401,66 +386,6 @@ class MyDaemon:
         start_time = event["start_time"]
         content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
         return {"mode": "event", "content": content, "priority": 2}
-
-    def check_travel(self):
-        """Check whether the next upcoming event needs travel guidance.
-
-        Reuses calendar_utils.get_upcoming_events() (same source check_events()
-        uses). Travel timing has its own urgency curve -- a leave-by time
-        relative to *now*, not just the event's start time -- so it's its own
-        card rather than folded into check_events(). check_events() never
-        mentions departure time or fuel cost, so there's no double-reporting
-        of the same trip between the two cards even when both fire for the
-        same event.
-
-        Returns None (no card) whenever travel info can't be computed --
-        missing address, no known current location, or maps_utils.get_travel_info()
-        failing -- rather than falling back to fabricated numbers. check_events()
-        still shows the plain event line in that case.
-        """
-        events = calendar_utils.get_upcoming_events()
-        if not events:
-            return None
-        event = events[0]
-        address = event["address"]
-        if not address:
-            return None
-        start_time = event["start_time"]
-        if start_time - datetime.now(timezone.utc) > timedelta(hours=3):
-            return None
-
-        db = None
-        try:
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            cursor = db.cursor()
-            cursor.execute(
-                "SELECT latitude, longitude FROM environment WHERE name = %s",
-                (ENV_NAME,),
-            )
-            loc_row = cursor.fetchone()
-        except Exception as e:
-            logger.error("Travel location error: " + str(e))
-            return None
-        finally:
-            if db:
-                db.close()
-
-        if not loc_row:
-            logger.warning("No location data found in environment table")
-            return None
-
-        lat, lng = loc_row
-        travel_info = maps_utils.get_travel_info(lat, lng, address, start_time)
-        if not travel_info:
-            return None
-
-        title = event["title"]
-        departure = travel_info["departure"]
-        fuel_cost = travel_info["fuel_cost"]
-        content = f"Leave at {departure.strftime('%I:%M %p')} for {title}. Fuel: ~${fuel_cost:.2f}"
-        return {"mode": "travel", "content": content, "priority": 2.5}
 
     def check_focus_needed(self):
         """Check whether the next upcoming event looks like a call starting soon.

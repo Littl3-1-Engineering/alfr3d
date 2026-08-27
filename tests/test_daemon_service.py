@@ -112,118 +112,6 @@ class TestGmailUtils:
         assert result is None
 
 
-class TestMapsUtils:
-    """Tests for maps_utils.py"""
-
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "", "GAS_PRICE": "3.5", "MPG": "25"})
-    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "")
-    @patch("services.service_daemon.utils.maps_utils.GAS_PRICE", 3.5)
-    @patch("services.service_daemon.utils.maps_utils.MPG", 25)
-    def test_get_travel_info_no_api_key(self):
-        """Without an API key, get_travel_info returns None -- not fabricated numbers."""
-        from services.service_daemon.utils.maps_utils import get_travel_info
-
-        event_time = datetime.now() + timedelta(hours=2)
-        result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
-
-        assert result is None
-
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key", "GAS_PRICE": "3.5", "MPG": "25"})
-    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
-    @patch("services.service_daemon.utils.maps_utils.GAS_PRICE", 3.5)
-    @patch("services.service_daemon.utils.maps_utils.MPG", 25)
-    @patch("googlemaps.Client")
-    def test_get_travel_info_with_api_key(self, mock_client):
-        """Test get_travel_info returns real distance/duration-derived numbers,
-        with the departure buffer subtracted on top of the drive time."""
-        from services.service_daemon.utils.maps_utils import (
-            get_travel_info,
-            DEPARTURE_BUFFER_MINUTES,
-        )
-
-        distance_meters = 16000  # 16 km
-        duration_seconds = 1800  # 30 minutes
-        mock_client.return_value.directions.return_value = [
-            {
-                "legs": [
-                    {
-                        "duration": {"value": duration_seconds},
-                        "distance": {"value": distance_meters},
-                    }
-                ]
-            }
-        ]
-
-        event_time = datetime.now() + timedelta(hours=2)
-        result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
-
-        distance_miles = (distance_meters / 1000.0) * 0.621371
-        assert result is not None
-        assert result["fuel_cost"] == round((distance_miles / 25) * 3.5, 2)
-        assert result["departure"] == event_time - timedelta(seconds=duration_seconds) - timedelta(
-            minutes=DEPARTURE_BUFFER_MINUTES
-        )
-
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key", "GAS_PRICE": "3.5", "MPG": "25"})
-    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
-    @patch("googlemaps.Client")
-    def test_get_travel_info_prefers_traffic_aware_duration(self, mock_client):
-        """When duration_in_traffic is present, it's used instead of the plain estimate."""
-        from services.service_daemon.utils.maps_utils import (
-            get_travel_info,
-            DEPARTURE_BUFFER_MINUTES,
-        )
-
-        duration_seconds = 1800
-        duration_in_traffic_seconds = 2400  # heavier than the plain estimate
-        mock_client.return_value.directions.return_value = [
-            {
-                "legs": [
-                    {
-                        "duration": {"value": duration_seconds},
-                        "duration_in_traffic": {"value": duration_in_traffic_seconds},
-                        "distance": {"value": 16000},
-                    }
-                ]
-            }
-        ]
-
-        event_time = datetime.now() + timedelta(hours=2)
-        result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
-
-        assert result["departure"] == event_time - timedelta(
-            seconds=duration_in_traffic_seconds
-        ) - timedelta(minutes=DEPARTURE_BUFFER_MINUTES)
-
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key"})
-    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
-    @patch("googlemaps.Client")
-    def test_get_travel_info_none_when_destination_not_geocodable(self, mock_client):
-        """An empty routes response (e.g. unresolvable address) returns None."""
-        from services.service_daemon.utils.maps_utils import get_travel_info
-
-        mock_client.return_value.directions.return_value = []
-
-        event_time = datetime.now() + timedelta(hours=2)
-        result = get_travel_info(40.7128, -74.0060, "not a real place", event_time)
-
-        assert result is None
-
-    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test_key"})
-    @patch("services.service_daemon.utils.maps_utils.GOOGLE_MAPS_API_KEY", "test_key")
-    @patch("googlemaps.Client")
-    def test_get_travel_info_none_on_api_failure(self, mock_client):
-        """An exception from the Maps client is logged and swallowed, not raised."""
-        from services.service_daemon.utils.maps_utils import get_travel_info
-
-        mock_client.return_value.directions.side_effect = Exception("API error")
-
-        event_time = datetime.now() + timedelta(hours=2)
-        result = get_travel_info(40.7128, -74.0060, "123 Main St", event_time)
-
-        assert result is None
-
-
 class TestSpotifyUtils:
     """Tests for spotify_utils.py"""
 
@@ -806,7 +694,6 @@ class TestDecideDisplays:
 
     TIME_CARD = {"mode": "time", "content": "t", "priority": 1}
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
-    TRAVEL_CARD = {"mode": "travel", "content": "tr", "priority": 2.5}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
     NOW_PLAYING_CARD = {"mode": "music", "content": "np", "priority": 3.1}
     PARTY_ADVISORY_CARD = {"mode": "party_advisory", "content": "pa", "priority": 3.2}
@@ -820,7 +707,6 @@ class TestDecideDisplays:
         self,
         check_time=None,
         check_events=None,
-        check_travel=None,
         check_gatherings=None,
         check_now_playing=None,
         check_party_advisory=None,
@@ -836,7 +722,6 @@ class TestDecideDisplays:
         daemon = MyDaemon()
         daemon.check_time = MagicMock(return_value=check_time)
         daemon.check_events = MagicMock(return_value=check_events)
-        daemon.check_travel = MagicMock(return_value=check_travel)
         daemon.check_gatherings = MagicMock(return_value=check_gatherings)
         daemon.check_now_playing = MagicMock(return_value=check_now_playing)
         daemon.check_party_advisory = MagicMock(return_value=check_party_advisory)
@@ -847,12 +732,11 @@ class TestDecideDisplays:
         daemon.check_mood = MagicMock(return_value=check_mood)
         return daemon
 
-    def test_all_eleven_checks_produce_cards_in_priority_order(self):
+    def test_all_ten_checks_produce_cards_in_priority_order(self):
         """When every check fires, cards come back sorted by priority (time..mood)."""
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
-            check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
             check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
@@ -868,7 +752,6 @@ class TestDecideDisplays:
         assert [card["mode"] for card in result] == [
             "time",
             "event",
-            "travel",
             "music",
             "music",
             "party_advisory",
@@ -886,7 +769,6 @@ class TestDecideDisplays:
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
-            check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
             check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
@@ -904,7 +786,6 @@ class TestDecideDisplays:
         assert self.WEATHER_CARD in result
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
-        assert self.TRAVEL_CARD in result
         assert self.NOW_PLAYING_CARD in result
         assert self.PARTY_ADVISORY_CARD in result
 
@@ -920,19 +801,6 @@ class TestDecideDisplays:
         result = daemon.decide_displays()
 
         assert [card["mode"] for card in result] == ["time", "music", "focus_needed", "email"]
-
-    def test_travel_sorts_between_event_and_music(self):
-        """travel (priority 2.5) lands between event (2) and music (3) when both fire."""
-        daemon = self._stub_daemon(
-            check_time=self.TIME_CARD,
-            check_events=self.EVENT_CARD,
-            check_travel=self.TRAVEL_CARD,
-            check_gatherings=self.MUSIC_CARD,
-        )
-
-        result = daemon.decide_displays()
-
-        assert [card["mode"] for card in result] == ["time", "event", "travel", "music"]
 
     def test_none_results_are_excluded_without_crashing(self):
         """Checks that return None must not appear in the output or raise."""
@@ -974,16 +842,15 @@ class TestDecideDisplays:
 
     def test_all_categories_firing_simultaneously_is_sorted_capped_and_collision_free(self):
         """End-to-end test of decide_displays() with the full, current category set
-        (all eleven DISPLAY_RULES entries) firing at once.
+        (all ten DISPLAY_RULES entries) firing at once.
 
-        This is the test to extend when a future PR registers a twelfth category:
+        This is the test to extend when a future PR registers an eleventh category:
         add its card to the `self._stub_daemon(...)` call below and to the
         expected `modes` list in priority order.
         """
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
-            check_travel=self.TRAVEL_CARD,
             check_gatherings=self.MUSIC_CARD,
             check_now_playing=self.NOW_PLAYING_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
@@ -1001,10 +868,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all eleven cards come back -- nothing dropped.
+        # rule fired exactly once, so all ten cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 11 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 10 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -1014,7 +881,6 @@ class TestDecideDisplays:
         assert [card["mode"] for card in result] == [
             "time",
             "event",
-            "travel",
             "music",
             "music",
             "party_advisory",
@@ -1694,10 +1560,12 @@ class TestCheckFocusNeeded:
 
 
 class TestCheckEvents:
-    """Regression tests for check_events(). Travel guidance (leave-by time, fuel
-    cost) was split out into its own check_travel() card -- see TestCheckTravel
-    -- so check_events() now only ever shows the plain title/time line and
-    never touches location or maps_utils."""
+    """Regression tests for check_events(). A backend-computed travel/leave-by
+    card (check_travel(), Google Maps Directions) briefly existed as a
+    separate card but was removed -- it needed a paid Maps API tier the
+    household isn't using. The "Open Maps" destination action now lives
+    entirely client-side in alfr3d_deck's next_event_soon rule instead, so
+    check_events() here only ever shows the plain title/time line."""
 
     @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
     def test_event_card_shows_plain_title_and_time(self, mock_get_events):
@@ -1756,167 +1624,6 @@ class TestCheckEvents:
 
         daemon = MyDaemon()
         assert daemon.check_events() is None
-
-
-class TestCheckTravel:
-    """Tests for MyDaemon.check_travel(), split out of check_events() so travel
-    guidance (leave-by time, fuel cost) has its own card and urgency curve."""
-
-    @staticmethod
-    def _make_event(minutes_from_now=30, address="123 Main St", title="Dentist"):
-        return [
-            {
-                "title": title,
-                "start_time": datetime.now(timezone.utc) + timedelta(minutes=minutes_from_now),
-                "address": address,
-                "notes": None,
-            }
-        ]
-
-    @patch("services.service_daemon.alfr3ddaemon.maps_utils.get_travel_info")
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_travel_card_with_real_numbers_when_api_succeeds(
-        self, mock_get_events, mock_connect, mock_travel_info
-    ):
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event()
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = (40.0, -74.0)
-
-        departure = datetime.now(timezone.utc) + timedelta(minutes=10)
-        mock_travel_info.return_value = {"departure": departure, "fuel_cost": 4.32}
-
-        daemon = MyDaemon()
-        card = daemon.check_travel()
-
-        assert card is not None
-        assert card["mode"] == "travel"
-        assert card["priority"] == 2.5
-        assert "Dentist" in card["content"]
-        assert "Fuel: ~$4.32" in card["content"]
-        mock_db.close.assert_called_once()
-
-    @patch("services.service_daemon.alfr3ddaemon.maps_utils.get_travel_info")
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_when_maps_api_fails(
-        self, mock_get_events, mock_connect, mock_travel_info
-    ):
-        """No fallback fake numbers -- just no travel card. check_events() still
-        shows the plain event line separately (see TestCheckEvents)."""
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event()
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = (40.0, -74.0)
-
-        mock_travel_info.return_value = None
-
-        daemon = MyDaemon()
-        assert daemon.check_travel() is None
-
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_when_event_has_no_address(self, mock_get_events):
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event(address=None)
-
-        daemon = MyDaemon()
-        assert daemon.check_travel() is None
-
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_when_no_upcoming_event(self, mock_get_events):
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = None
-
-        daemon = MyDaemon()
-        assert daemon.check_travel() is None
-
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_when_no_location_data(self, mock_get_events, mock_connect):
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event()
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
-
-        daemon = MyDaemon()
-        assert daemon.check_travel() is None
-
-    @patch("services.service_daemon.alfr3ddaemon.maps_utils.get_travel_info")
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_event_and_travel_cards_do_not_duplicate_travel_details(
-        self, mock_get_events, mock_connect, mock_travel_info
-    ):
-        """When both check_events() and check_travel() fire for the same event,
-        only the travel card mentions departure time / fuel cost."""
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event()
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = (40.0, -74.0)
-
-        departure = datetime.now(timezone.utc) + timedelta(minutes=10)
-        mock_travel_info.return_value = {"departure": departure, "fuel_cost": 4.32}
-
-        daemon = MyDaemon()
-        event_card = daemon.check_events()
-        travel_card = daemon.check_travel()
-
-        assert "Fuel:" not in event_card["content"]
-        assert "Leave at" not in event_card["content"]
-        assert "Fuel:" in travel_card["content"]
-        assert "Leave at" in travel_card["content"]
-
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_when_event_more_than_three_hours_out(self, mock_get_events, mock_connect):
-        """Mirrors check_events()'s three-hour cutoff, but for check_travel()
-        specifically -- and confirms it short-circuits before touching the DB."""
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event(minutes_from_now=240)
-
-        daemon = MyDaemon()
-        result = daemon.check_travel()
-
-        assert result is None
-        mock_connect.assert_not_called()
-
-    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
-    @patch("services.service_daemon.alfr3ddaemon.calendar_utils.get_upcoming_events")
-    def test_returns_none_on_db_error(self, mock_get_events, mock_connect):
-        """A DB failure while reading the home location must not crash --
-        just no travel card, same pattern as check_weather_advisory()."""
-        import pymysql
-        from services.service_daemon.alfr3ddaemon import MyDaemon
-
-        mock_get_events.return_value = self._make_event()
-        mock_connect.side_effect = pymysql.err.OperationalError("db down")
-
-        daemon = MyDaemon()
-        assert daemon.check_travel() is None
 
 
 class TestCheckWeatherAdvisory:
