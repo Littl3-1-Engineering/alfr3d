@@ -337,11 +337,17 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
     if delta < timedelta(minutes=30):  # 30 minutes
         logger.info("User is online")
         if user[5] == stat["offline"]:
-            logger.info(user[1] + " just came online")
-            if not check_mute():
-                producer.send("speak", bytes(user[1] + " just came online", "utf-8"))
-            else:
-                send_event("info", f"Speak request muted: {user[1]} just came online")
+            # alfr3d itself has a user row for device/system attribution (see
+            # user_types id 5) but shouldn't announce its own presence like a
+            # household member — suppress just the TTS greetings, not the
+            # state tracking below.
+            is_alfr3d_self = user[1] == "alfr3d"
+            if not is_alfr3d_self:
+                logger.info(user[1] + " just came online")
+                if not check_mute():
+                    producer.send("speak", bytes(user[1] + " just came online", "utf-8"))
+                else:
+                    send_event("info", f"Speak request muted: {user[1]} just came online")
             cursor.execute(
                 "UPDATE user SET state = %s WHERE username = %s",
                 (stat["online"], user[1]),
@@ -352,7 +358,8 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
             if not usr_type:
                 logger.error("User type not found")
                 return
-            speak_welcome(producer, user[1], usr_type[1], user[6])
+            if not is_alfr3d_self:
+                speak_welcome(producer, user[1], usr_type[1], user[6])
             event = {
                 "id": f"user_online_{user[1]}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "type": "info",

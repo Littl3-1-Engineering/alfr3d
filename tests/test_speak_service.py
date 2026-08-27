@@ -7,6 +7,7 @@ from services.service_speak.app import (
     process_speak_message,
     cleanup_old_audio,
     get_tts,
+    normalize_pronunciation,
 )
 
 
@@ -285,3 +286,14 @@ class TestSpeakService:
 
                     assert not os.path.exists(old_file)
                     assert os.path.exists(new_file)
+
+    def test_normalize_pronunciation_replaces_leetspeak_name(self):
+        """Test that the leetspeak 'alfr3d' is rewritten to 'Alfred' for TTS."""
+        assert normalize_pronunciation("ALFR3D just started") == "Alfred just started"
+        assert normalize_pronunciation("alfr3d is online") == "Alfred is online"
+        assert normalize_pronunciation("Ask ALFR3D anything") == "Ask Alfred anything"
+
+    def test_normalize_pronunciation_respects_word_boundaries(self):
+        """Test that only the standalone word is rewritten, not substrings."""
+        assert normalize_pronunciation("not-alfr3d-related") == "not-Alfred-related"
+        assert normalize_pronunciation("alfr3dsomething") == "alfr3dsomething"

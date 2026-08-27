@@ -1,6 +1,46 @@
 # ALFR3D Self-Awareness: Pronounce Its Own Name + Don't Greet Itself
 
-## Status: 🔴 Not started
+## Status: ✅ Both fixed 2026-08-27 (not yet on-device verified)
+
+Both bugs fixed per the design sketch below, using the "safer default" option for #2.
+
+1. **Pronunciation** (`services/service_speak/app.py`): added `normalize_pronunciation(text)` —
+   a single `\balfr3d\b` (case-insensitive) regex substitution to `"Alfred"` — called in
+   `process_speak_message()` right before the `generate_tts()` call (the confirmed single funnel
+   point for all TTS output). Covers the LLM-enhanced text, quip text, and the raw fallback text
+   alike, and also improves the `"Playing: ..."` event text shown in the UI as a side effect.
+   Added `TestSpeakService.test_normalize_pronunciation_replaces_leetspeak_name` and
+   `..._respects_word_boundaries` to `tests/test_speak_service.py` (14/14 pass). black/flake8 clean.
+2. **Self-greeting** (`services/service_user/app.py` `update_user_state()`): guarded both the
+   plain Kafka `"<name> just came online"` speak send and the `speak_welcome()` call with
+   `if not is_alfr3d_self` (`user[1] == "alfr3d"`) — the narrower guard, not the `refresh_all()`
+   filter, so the `user.state`/`last_online` row and the `event-stream` "came online" info event
+   (used for dashboards/logs, not TTS) still update normally for the `alfr3d` row. Answers this
+   doc's own open question: both TTS paths were suppressed together since they fire on the same
+   transition.
+
+**Not yet done**: on-device/live verification that `alfr3d`'s user row still actually transitions
+offline→online during real use (needed to know whether this code path is even reachable, and to
+confirm the suppression is visibly correct) — no live device session in this pass.
+
+**Correction (2026-08-27), verified before making any change**: the `check_gatherings()`
+headcount concern noted here previously does not actually apply. Traced every `INSERT INTO user`
+in the codebase (schema seed in `setup/createTables.sql`, plus the three runtime call sites in
+`service_user/app.py`, `service_api/auth/routes.py`, `service_api/routes/users.py`) — none of them
+ever create a row with `username = 'alfr3d'`. The `user_types`/`device_types` `'alfr3d'` rows are
+schema-level placeholders nothing currently instantiates, so `refresh_all()`/`update_user_state()`
+never sees an alfr3d user row, and `check_gatherings()` can't be counting one that doesn't exist.
+No fix needed; not touching `check_gatherings()`. The `update_user_state()` guard above stays as
+cheap, harmless defensive code matching existing precedent, in case a future onboarding path ever
+does create that row.
+
+**alfr3d_deck check (2026-08-27)**: N/A for this todo — the self-awareness bugs are backend-only
+(`service_speak`/`service_user`), nothing in the launcher constructs TTS text or reads the
+`alfr3d` user's presence state.
+
+---
+
+## Status: 🔴 Not started (historical — see above)
 
 ## Overview
 
