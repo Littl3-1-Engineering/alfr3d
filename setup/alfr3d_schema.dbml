@@ -1,6 +1,6 @@
 // ALFR3D DB schema — DBML for dbdiagram.io
 // Source: live MySQL schema export (2026-08-24), mirrored from README.md "Database Architecture"
-// Paste this into https://dbdiagram.io to regenerate setup/alfr3d_schema.svg for the README.
+// Paste this into https://dbdiagram.io to regenerate setup/alfr3d_schema.png for the README.
 // Re-export whenever a migration meaningfully changes the schema (see todo/todo_db_schema_diagram.md).
 
 Table environment {

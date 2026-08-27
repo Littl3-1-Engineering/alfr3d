@@ -410,7 +410,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 MySQL, 21 tables. Source of truth is `setup/alfr3d_schema.dbml` (DBML, paste into [dbdiagram.io](https://dbdiagram.io) to regenerate); the image below is exported from there (2026-08-26) — re-run whenever a migration meaningfully changes the schema, per `todo/todo_db_schema_diagram.md`.
 
-![ALFR3D database schema](setup/alfr3d_schema.svg)
+![ALFR3D database schema](setup/alfr3d_schema.png)
 
 <details>
 <summary>Mermaid source (renders natively on GitHub, no image asset needed)</summary>
