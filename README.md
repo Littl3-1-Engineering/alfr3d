@@ -408,7 +408,12 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 ### Database Architecture
 
-MySQL, 21 tables. Exported from the live schema and regenerated as a Mermaid diagram (2026-08-24) — re-run whenever a migration meaningfully changes the schema, per `todo/todo_db_schema_diagram.md`.
+MySQL, 21 tables. Source of truth is `setup/alfr3d_schema.dbml` (DBML, paste into [dbdiagram.io](https://dbdiagram.io) to regenerate); the image below is exported from there (2026-08-26) — re-run whenever a migration meaningfully changes the schema, per `todo/todo_db_schema_diagram.md`.
+
+![ALFR3D database schema](setup/alfr3d_schema.png)
+
+<details>
+<summary>Mermaid source (renders natively on GitHub, no image asset needed)</summary>
 
 ```mermaid
 erDiagram
@@ -645,6 +650,8 @@ erDiagram
         datetime created_at
     }
 ```
+
+</details>
 
 `CONTEXT` and `PERSONALITY` carry an `environment_id` column but no formal FK constraint in the live schema (shown unconnected above, matching the export). `ALEMBIC_VERSION`, `CALENDAR_EVENTS`, `CONFIG`, `ESPHOME_NODES`, `INTEGRATIONS_TOKENS`, `LISTENING_HISTORY`, and `SPEAKER_GROUPS` are standalone tables with no foreign keys.
 

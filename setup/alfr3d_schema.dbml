@@ -1,0 +1,242 @@
+// ALFR3D DB schema — DBML for dbdiagram.io
+// Source: live MySQL schema export (2026-08-24), mirrored from README.md "Database Architecture"
+// Paste this into https://dbdiagram.io to regenerate setup/alfr3d_schema.png for the README.
+// Re-export whenever a migration meaningfully changes the schema (see todo/todo_db_schema_diagram.md).
+
+Table environment {
+  id int [pk]
+  name varchar
+  latitude decimal
+  longitude decimal
+  city varchar
+  state varchar
+  country varchar
+  IP varchar
+  low int
+  high int
+  temperature float
+  wind float
+  wind_dir varchar
+  description varchar
+  sunrise datetime
+  sunset datetime
+  pressure int
+  pressure_trend varchar
+  humidity int
+  manual_override boolean
+  manual_location_override boolean
+  subjective_feel varchar
+  forecast_rain_probability float
+  forecast_temp float
+  forecast_conditions varchar
+  forecast_updated_at datetime
+  timezone int
+}
+
+Table device {
+  id int [pk]
+  name varchar
+  IP varchar
+  MAC varchar
+  state int [ref: > states.id]
+  last_online datetime
+  environment_id int [ref: > environment.id]
+  device_type int [ref: > device_types.id]
+  user_id int [ref: > user.id]
+  position_x float
+  position_y float
+  stream_url varchar
+}
+
+Table device_history {
+  device_id int [ref: > device.id]
+  name varchar
+  timestamp datetime
+  IP varchar
+  MAC varchar
+  state int
+  last_online datetime
+  environment_id int [ref: > environment.id]
+  device_type int
+  user_id int [ref: > user.id]
+  position_x float
+  position_y float
+}
+
+Table device_types {
+  id int [pk]
+  type varchar
+}
+
+Table states {
+  id int [pk]
+  state varchar
+}
+
+Table user {
+  id int [pk]
+  username varchar
+  email varchar
+  password_hash varchar
+  about_me varchar
+  state int [ref: > states.id]
+  last_online datetime
+  environment_id int [ref: > environment.id]
+  type int [ref: > user_types.id]
+  created_at datetime
+}
+
+Table user_types {
+  id int [pk]
+  type varchar
+}
+
+Table refresh_tokens {
+  id int [pk]
+  user_id int [ref: > user.id]
+  token_hash varchar
+  issued_at datetime
+  expires_at datetime
+  revoked_at datetime
+}
+
+Table routines {
+  id int [pk]
+  name varchar
+  time varchar
+  enabled boolean
+  recurrence varchar [note: 'enum']
+  actions json
+  triggers json
+  conditions json
+  last_run datetime
+  triggered boolean
+  environment_id int [ref: > environment.id]
+}
+
+Table smarthome_devices {
+  id int [pk]
+  name varchar
+  source varchar
+  mac_address varchar
+  ha_entity_id varchar
+  st_device_id varchar
+  st_location_id varchar
+  device_type varchar
+  room varchar
+  capabilities json
+  online boolean
+  last_state json
+  environment_id int [ref: > environment.id]
+  created_at datetime
+  device_id int [ref: > device.id]
+  esp_entity_id varchar
+}
+
+Table device_command_history {
+  id int [pk]
+  smarthome_device_id int [ref: > smarthome_devices.id]
+  command varchar
+  params json
+  result varchar
+  timestamp datetime
+}
+
+// Standalone tables — no foreign keys in the live schema
+
+Table alembic_version {
+  version_num varchar [pk]
+}
+
+Table calendar_events {
+  id int [pk]
+  title varchar
+  start_time datetime
+  end_time datetime
+  address varchar
+  notes text
+  created_at datetime
+}
+
+Table config {
+  id int [pk]
+  name varchar
+  value text
+}
+
+Table context {
+  id int [pk]
+  environment_id int [note: 'no FK constraint in live schema']
+  repeat_count int
+  hour int
+  weather varchar
+  mood varchar
+  last_error_count int
+  llm_calls_today int
+  updated_at datetime
+  last_text varchar
+  last_spoke_time datetime
+}
+
+Table esphome_nodes {
+  id int [pk]
+  hostname varchar
+  ip_address varchar
+  port int
+  name varchar
+  psk varchar
+  accepted boolean
+  last_seen datetime
+  accepted_at datetime
+  created_at datetime
+}
+
+Table integrations_tokens {
+  id int [pk]
+  integration_type varchar
+  access_token text
+  refresh_token text
+  expires_at datetime
+  created_at datetime
+}
+
+Table listening_history {
+  id bigint [pk]
+  track_id varchar
+  track_name varchar
+  album varchar
+  artist varchar
+  played_at datetime
+  context varchar
+  source varchar
+}
+
+Table personality {
+  id int [pk]
+  name varchar
+  type varchar [note: 'enum']
+  environment_id int [note: 'no FK constraint in live schema']
+  sarcasm float
+  formality float
+  warmth float
+  patience float
+  linguistic_style varchar
+  forbidden_words varchar
+  verbal_tics varchar
+  created_at datetime
+  updated_at datetime
+}
+
+Table quips {
+  id int [pk]
+  type varchar
+  category varchar
+  quips varchar
+}
+
+Table speaker_groups {
+  id int [pk]
+  name varchar
+  entities json
+  created_at datetime
+}
