@@ -1,63 +1,90 @@
-# Deck: Attention Telemetry as a Focus Signal
+# Deck: Attention Telemetry as a Focus/Wind-Down Signal
 
-## Status: 🔲 Scoped only, not started (deliberately — see below)
+## Status: ✅ Built 2026-08-28 (scope corrected, reconciled, not yet on-device/live verified)
 
-## Overview
+Backend: `POST /api/context/attention-telemetry` (routes/context.py, shares the new
+`_upsert_config_json` helper with `surface-state`), `check_attention_focus()` and
+`check_wind_down_signal()` DISPLAY_RULES checks in `alfr3ddaemon.py`, both reading a shared
+`_read_fresh_attention_telemetry()`/`_media_dwell_fraction()` pair. 13 new tests (3 API route,
+10 daemon). Deck: `AttentionTelemetryStore` (in-memory rolling-window accumulator — deviated from
+the plan's "DataStore-backed" assumption once it was clear persistence across process death
+isn't needed for a 15-minute rolling window), `AttentionTelemetryReporter` (own 15-min timer,
+started from `MainActivity`'s existing init `LaunchedEffect`), a new `MainActivity.onResume()`
+override for unlock detection, `WindowManager.openWindow()`/`.focus()` both call
+`recordWindowFocus()` alongside the surface-state report already there, two new
+`SituationalInsights`/`ContextRules` entries. Compiles clean, ktlint/detekt clean.
 
-Nexus Launcher already tracks unlock frequency, per-app-category dwell time, and window-switch
-rate on the spatial canvas but doesn't publish any of it. Scoped in Notion 2026-08-28 alongside
-four other Deck data-feature milestones. Goal: (1) launcher emits these as a new Kafka event
-stream, (2) backend derives a measured `focus_needed` signal from it instead of today's inferred
-one (currently a text heuristic over calendar event address/notes, `focus_utils.looks_like_call()`
-— see `check_focus_needed()` in `alfr3ddaemon.py`), (3) inverse case: late-hour high-unlock-rate +
-social-app dwell triggers a wind-down card (dim via HA, Spotify low-energy switch).
+Thresholds (`ATTENTION_FOCUS_MIN_SWITCHES`, `WIND_DOWN_MIN_UNLOCKS`, media-dwell fractions) are
+conservative starting points with no real telemetry yet to tune them against — same caveat as
+`check_rhythm_break_anomaly()`.
 
-## Why this is scope-only today
+## Correction to the original scope (2026-08-28)
 
-Two blockers, both explicit in the Notion milestone description itself:
+The original Notion milestone said Nexus Launcher "already tracks unlock frequency, per-app-
+category dwell time, and window-switch rate... but doesn't publish it." **That's false** —
+verified by grepping the whole `alfr3d_deck` codebase: nothing tracks unlock frequency or
+window-switch rate anywhere, and the only "dwell" hits are the Nexus radial menu's
+hover-to-open-submenu haptic (`NexusViewModel.kt`), unrelated to usage analytics.
+`search/usage/AppUsageStore.kt` (the closest existing thing) only tracks launch count +
+last-used timestamp per app for search ranking, not duration or switching. This todo is
+therefore building three on-device tracking mechanisms from scratch and then publishing them —
+materially bigger than "wire up an existing signal," confirmed with the user before proceeding.
 
-1. **New Kafka topic required.** Unlike the other three "build today" Deck features (household
-   composition, rhythm-break anomaly, cross-surface continuity), this one doesn't fit the
-   existing situational-awareness pipeline (`DISPLAY_RULES` → `situational-awareness` topic →
-   Deck polls `getSituationalAwareness()`). It needs a *new* inbound stream (launcher → backend),
-   which is new infrastructure, not an additive DISPLAY_RULES check.
-2. **Explicit coordination requirement.** The milestone's own description says: "coordinate
-   scope with [the Nexus Launcher context-source exploration page] before building to avoid
-   overlapping signal definitions." That page (`3c9d732b1d3481b08b51cb5ce4a718cc` in Notion,
-   "Explore: Nexus Launcher as a new context source for Alfr3d") already brainstormed a
-   *different* signal list: WiFi leave/arrive events, named context zones, car Bluetooth,
-   charging-pattern sleep/wake, notification-category correlation, **DND correlation with
-   `focus_needed`** (direct overlap with this todo's goal #2), cross-household "everyone left,"
-   ambient app-category mood input. Its recommended pilot is WiFi leave/arrive, not attention
-   telemetry — the two docs currently define `focus_needed`-adjacent signals independently and
-   would collide if both got built without reconciling first.
+## Reconciliation with "Explore: Nexus Launcher as a new context source" (resolved, no longer a
+blocker)
 
-## Reconciliation needed before implementation (not done yet)
+That page's "DND correlation with `focus_needed`" is a different, simpler signal (the device's
+current Do-Not-Disturb toggle) than attention telemetry's continuous behavioral metrics
+(unlock/dwell/switch-rate). They're complementary, not competing: DND-correlation isn't built
+(still just a brainstormed line on that page, no todo doc of its own), so attention telemetry
+adds its own new, clearly-named card (`mode: "attention_focus"`) rather than touching
+`check_focus_needed()` at all. A future DND-based signal can combine with it later (e.g. an OR of
+both) without either needing to change.
 
-- Decide whether "attention telemetry" (unlock rate, dwell time, window-switch rate) and "DND
-  correlation with focus_needed" (from the exploration page) are the same signal described two
-  ways, or genuinely complementary — if the same, merge into one scoped feature instead of
-  building both.
-- Both pages independently propose replacing/augmenting `check_focus_needed()`'s heuristic — pick
-  one signal source (or a defined combination) as the actual `focus_needed` input before writing
-  any Kafka topic or consumer code, to avoid two competing writers to the same DISPLAY_RULES slot.
-- New Kafka topic naming/schema needs to be decided once, covering whatever signal set comes out
-  of the merge above — not designed per-feature.
+## Design
 
-## Design sketch (not finalized — do this pass before building)
+### Deviations from the original scope
+1. **No literal new Kafka topic.** Every Deck→backend integration in this codebase goes through
+   REST (`HttpAlfr3dClient` → `service_api` routes) -- the Deck never touches Kafka directly.
+   New endpoint `POST /api/context/attention-telemetry`, same shape as
+   `POST /api/context/surface-state`.
+2. **No per-signal opt-in toggle UI.** No existing precedent anywhere in Settings, and
+   `AppUsageStore` (closest analog) has never had one either. Explicitly deferred, separable
+   future scope -- not silently skipped.
+3. **Derived from the launcher's own window system, not Android usage-stats permissions.**
+   "Dwell time on the spatial canvas" / "window-switch rate" map onto this launcher's own window
+   focus events (already instrumented for cross-surface continuity) -- no `UsageStatsManager` /
+   accessibility-service permission needed.
 
-- Launcher-side: new Kafka topic (name TBD post-reconciliation, e.g. `launcher-telemetry`),
-  emitted from wherever unlock/dwell/window-switch is already tracked locally (needs a
-  `alfr3d_deck` repo grep to confirm the current tracking location — not done in this pass).
-  Opt-in-per-signal and on-device-derived-events-only, matching the exploration page's
-  local-first/no-telemetry framing (this brand constraint applies to both docs equally).
-- Backend-side: new consumer alongside the existing `service_device`/`service_user`/etc. Kafka
-  consumers, feeding a merged `focus_needed` computation that supersedes or augments
-  `check_focus_needed()`.
+### On-device (`alfr3d_deck`)
+- `contextawareness/AttentionTelemetryStore.kt` (new, DataStore-backed, mirrors
+  `AppUsageStore`'s pattern): `recordWindowFocus(layoutKey)` called from
+  `WindowManager.focus()`/`.openWindow()` (accumulates per-category dwell ms + switch count),
+  `recordUnlock()` called from a new `MainActivity.onResume()` override, `snapshotAndReset()`
+  returning a rolling-window snapshot and clearing counters.
+- `AttentionTelemetryReporter` (new): own `CoroutineScope`, started from
+  `MainActivity.onCreate()`, flushes a snapshot every 15 minutes via a new
+  `Alfr3dClient.reportAttentionTelemetry()` (same `requestWithBody` pattern as
+  `reportSurfaceState`). Deliberately not piggybacked on `HttpAlfr3dClient`'s 5s connection-probe
+  loop -- far too frequent for telemetry.
+
+### Backend (`alfr3d`)
+- New route in `services/service_api/routes/context.py`:
+  `POST /api/context/attention-telemetry`, upserts `config` under
+  `ATTENTION_TELEMETRY_CONFIG_KEY` (`"launcher_attention_telemetry"`), reusing
+  `_read_config_json`'s pattern (4th use now).
+- `check_attention_focus()`: fires on genuinely high window-switch-rate with dwell *not*
+  concentrated in `"media"` -- additive signal alongside (not replacing) the existing
+  `check_focus_needed()` calendar heuristic.
+- `check_wind_down_signal()`: fires when it's late (`mood_utils.get_day_mood()`'s
+  `time_of_day == "night"`) and unlock count is high and dwell is concentrated in `"media"` --
+  the milestone's own "inverse case." Suggestion card only, no auto-actuation of lights/Spotify
+  (matches every other card built today).
+- Both registered in `DISPLAY_RULES`. Thresholds are conservative starting points -- open to
+  tuning once real telemetry exists.
 
 ## Related
-
-- Notion: "Explore: Nexus Launcher as a new context source for Alfr3d" — reconcile with this
-  before building either.
-- `services/service_daemon/alfr3ddaemon.py` `check_focus_needed()`, `focus_utils.py` — the
-  existing heuristic this would replace/augment.
+- `services/service_daemon/alfr3ddaemon.py` `check_focus_needed()`, `focus_utils.py` -- untouched
+  by this todo, deliberately.
+- Notion: "Explore: Nexus Launcher as a new context source for Alfr3d" -- DND-correlation stays
+  unbuilt, reconciled above.
