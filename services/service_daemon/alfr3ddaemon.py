@@ -31,6 +31,7 @@ This is the main Alfr3d daemon running most standard services
 
 # Standard library imports
 import logging
+import statistics
 import time
 import os  # used to allow execution of system level commands
 import sys
@@ -110,6 +111,30 @@ PARTY_ADVISORY_LAST_NUDGE_TIME = 0.0
 # `config` table key check_now_playing() persists the last-seen track under,
 # so the value survives daemon restarts and is queryable by other services.
 NOW_PLAYING_CONFIG_KEY = "music_now_playing"
+
+# `config` table key POST /api/context/surface-state (service_api/routes/context.py)
+# writes the launcher's last-reported active surface/terminal-session state
+# under; read by check_cross_surface_continuity() via _read_config_json().
+SURFACE_STATE_CONFIG_KEY = "launcher_surface_state"
+
+# check_cross_surface_continuity() only offers a resume for state reported/
+# updated within this many minutes -- a paused track or edited routine from
+# hours ago isn't "picking up where you left off" anymore.
+CROSS_SURFACE_STALENESS_MINUTES = 45
+
+# How far back compute_entity_baselines() looks when reconstructing on/off
+# sessions from device_history to build each device's rhythm baseline.
+ENTITY_BASELINE_LOOKBACK_DAYS = 30
+
+# Minimum complete on/off sessions before a device gets a baseline row at all --
+# below this, a "typical" pattern isn't meaningfully established yet, and
+# publishing one would produce noisy false-positive anomalies.
+ENTITY_BASELINE_MIN_SAMPLES = 5
+
+# check_rhythm_break_anomaly() only fires this many minutes past a device's
+# typical_daily_max on-duration -- a small grace window so a session that's
+# only marginally longer than usual doesn't trigger every cycle.
+RHYTHM_BREAK_GRACE_MINUTES = 15
 
 # set up logging
 logger = logging.getLogger("DaemonLog")
@@ -337,6 +362,16 @@ class MyDaemon:
         # mood is lower-urgency ambient context, not an actionable alert —
         # slotted just below weather rather than competing with priorities 1-5.
         ("mood", 6, "check_mood"),
+        # Priority isn't fixed here -- check_household_composition() computes it per-call:
+        # ambient (6.2, next to mood) when every online device is claimed, elevated (2.3,
+        # next to event/gathering) when an unclaimed/unknown device is on the network.
+        ("household_composition", 6.2, "check_household_composition"),
+        # Actionable, near event/gathering: a genuine deviation from a device's
+        # established on/off rhythm is worth surfacing promptly.
+        ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),
+        # Helpful, not urgent -- below weather (5), above mood (6.2/2.3): a
+        # convenience "resume" offer, not something demanding attention.
+        ("cross_surface_continuity", 5.5, "check_cross_surface_continuity"),
     )
 
     # Cap on cards published per cycle. Tied to the number of registered rules so
@@ -508,20 +543,145 @@ class MyDaemon:
             if db:
                 db.close()
 
-    def _read_now_playing_config(self):
-        """Return the last-persisted now-playing state as a dict, or {} if
-        there is none yet or the read fails."""
+    def check_household_composition(self):
+        """Report which household members' claimed devices are online right now, vs. how
+        many unclaimed/unknown MACs are also on the network.
+
+        `device.user_id` is already exactly "this MAC is claimed by a household member" --
+        the arp-scan sync (service_device.app.check_lan/update_or_create_device) never sets
+        it on discovery, only the device-management UI does -- so no new table is needed to
+        tell known from unknown. Priority is computed here rather than fixed in DISPLAY_RULES:
+        ambient (6.2) when everything online is claimed, elevated (2.3, security-relevant)
+        when at least one unclaimed device is online.
+        """
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("SELECT value FROM config WHERE name = %s", (NOW_PLAYING_CONFIG_KEY,))
+            cursor.execute(
+                """
+                SELECT u.username, d.name
+                FROM device d
+                JOIN states s ON d.state = s.id
+                LEFT JOIN user u ON d.user_id = u.id
+                    AND u.username NOT IN ('unknown', 'alfr3d')
+                WHERE s.state = 'online'
+                """
+            )
+            rows = cursor.fetchall()
+
+            known_names = sorted({row[0] for row in rows if row[0]})
+            known_count = len(known_names)
+            unknown_count = sum(1 for row in rows if not row[0])
+
+            if not rows:
+                return None
+
+            if unknown_count > 0:
+                content = f"{unknown_count} unrecognized device(s) on the network" + (
+                    f" alongside {', '.join(known_names)}" if known_names else ""
+                )
+                return {
+                    "mode": "household_composition",
+                    "content": content,
+                    "priority": 2.3,
+                    "known_count": known_count,
+                    "unknown_count": unknown_count,
+                    "urgent": True,
+                }
+
+            content = (
+                f"Home: {', '.join(known_names)}" if known_names else "No known devices online"
+            )
+            return {
+                "mode": "household_composition",
+                "content": content,
+                "priority": 6.2,
+                "known_count": known_count,
+                "unknown_count": unknown_count,
+                "urgent": False,
+            }
+        except pymysql.Error as e:
+            logger.error("Household composition check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
+
+    def check_rhythm_break_anomaly(self):
+        """Compare currently-online devices against their `entity_baselines` row
+        and surface a card only on a genuine deviation from routine: still on
+        RHYTHM_BREAK_GRACE_MINUTES+ past its typical_daily_max on-duration for
+        this session. Only the "still on past typical" deviation is checked
+        today -- "unusual hour" / "expected absent" are scoped but not yet
+        implemented, see todo/todo_rhythm_break_anomaly.md.
+
+        Returns at most one card per cycle (the single most-overdue device),
+        same "one card per check" shape as every other DISPLAY_RULES method.
+        """
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            now = datetime.now(timezone.utc)
+            cursor.execute(
+                """
+                SELECT d.name, TIMESTAMPDIFF(MINUTE, d.last_online, %s) AS minutes_on,
+                       eb.typical_daily_max
+                FROM device d
+                JOIN states s ON d.state = s.id
+                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
+                WHERE s.state = 'online'
+                  AND d.last_online IS NOT NULL
+                  AND eb.typical_daily_max IS NOT NULL
+                  AND TIMESTAMPDIFF(MINUTE, d.last_online, %s) > eb.typical_daily_max + %s
+                ORDER BY (TIMESTAMPDIFF(MINUTE, d.last_online, %s) - eb.typical_daily_max) DESC
+                LIMIT 1
+                """,
+                (now, now, RHYTHM_BREAK_GRACE_MINUTES, now),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            name, minutes_on, typical_max = row
+            over_by = int(minutes_on - typical_max)
+            return {
+                "mode": "rhythm_break_anomaly",
+                "content": f"{name} has been on for {over_by} min longer than usual",
+                "priority": 2.6,
+                "entity_name": name,
+                "deviation_type": "still_on_past_typical",
+            }
+        except pymysql.Error as e:
+            logger.error("Rhythm break anomaly check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
+
+    def _read_config_json(self, key):
+        """Return the JSON value stored under `config.name = key` as a dict,
+        or {} if there is none yet or the read fails. Generalized from what
+        was originally `_read_now_playing_config()` -- now also used by
+        check_cross_surface_continuity() to read SURFACE_STATE_CONFIG_KEY,
+        the launcher-reported surface state written by
+        `POST /api/context/surface-state` (service_api/routes/context.py)."""
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute("SELECT value FROM config WHERE name = %s", (key,))
             row = cursor.fetchone()
             return orjson.loads(row[0]) if row and row[0] else {}
         except Exception as e:
-            logger.error(f"Now playing config read error: {e}")
+            logger.error(f"Config JSON read error ({key}): {e}")
             return {}
         finally:
             if db:
@@ -539,7 +699,8 @@ class MyDaemon:
             cursor = db.cursor()
             value = orjson.dumps(state).decode("utf-8")
             cursor.execute(
-                "UPDATE config SET value = %s WHERE name = %s", (value, NOW_PLAYING_CONFIG_KEY)
+                "UPDATE config SET value = %s WHERE name = %s",
+                (value, NOW_PLAYING_CONFIG_KEY),
             )
             if cursor.rowcount == 0:
                 cursor.execute(
@@ -563,6 +724,12 @@ class MyDaemon:
         anyway). Only persists to `config` and publishes an event-stream
         message when the track or play state actually changed, so it
         doesn't repeat the same "now playing" line every cycle.
+
+        Persists on a play->pause transition too (not just track changes),
+        even though no card is returned for the paused state itself --
+        check_cross_surface_continuity() needs that persisted "paused N
+        minutes ago" state to offer a resume. Before that feature existed,
+        pausing never got persisted at all here.
         """
         try:
             from common import spotify_utils as spotify_api
@@ -571,7 +738,7 @@ class MyDaemon:
             item = state.get("item") or {}
             track_id = item.get("id")
             is_playing = state.get("is_playing", False)
-            if not track_id or not is_playing:
+            if not track_id:
                 return None
 
             # config.value is VARCHAR(512) -- cap title/artist defensively
@@ -580,7 +747,7 @@ class MyDaemon:
             title = (item.get("name") or "")[:150]
             artist = ", ".join(item.get("artists") or [])[:150]
 
-            last = self._read_now_playing_config()
+            last = self._read_config_json(NOW_PLAYING_CONFIG_KEY)
             if last.get("track_id") != track_id or last.get("is_playing") != is_playing:
                 self._write_now_playing_config(
                     {
@@ -591,18 +758,24 @@ class MyDaemon:
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                p = get_producer()
-                if p:
-                    message = (
-                        f"Now playing: {title} by {artist}" if artist else f"Now playing: {title}"
-                    )
-                    event = {
-                        "id": f"now_playing_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                        "type": "audio",
-                        "message": message,
-                        "time": datetime.now(timezone.utc).isoformat(),
-                    }
-                    p.send("event-stream", orjson.dumps(event))
+                if is_playing:
+                    p = get_producer()
+                    if p:
+                        message = (
+                            f"Now playing: {title} by {artist}"
+                            if artist
+                            else f"Now playing: {title}"
+                        )
+                        event = {
+                            "id": f"now_playing_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                            "type": "audio",
+                            "message": message,
+                            "time": datetime.now(timezone.utc).isoformat(),
+                        }
+                        p.send("event-stream", orjson.dumps(event))
+
+            if not is_playing:
+                return None
 
             content = f"{title} — {artist}" if artist else title
             return {
@@ -616,6 +789,102 @@ class MyDaemon:
         except Exception as e:
             logger.error(f"Now playing check error: {e}")
             return None
+
+    def check_cross_surface_continuity(self):
+        """Offer a "pick up where you left off" resume for whichever surface
+        was most recently left active: paused Spotify playback, an edited
+        Matrix routine, or a reported launcher (terminal) session. Reads
+        three existing signals rather than tracking anything new -- see
+        todo/todo_cross_surface_continuity.md.
+
+        Each candidate is discarded if older than
+        CROSS_SURFACE_STALENESS_MINUTES -- a paused track from hours ago
+        isn't "picking up where you left off" anymore. Returns whichever
+        surviving candidate is most recent.
+        """
+        now = datetime.now(timezone.utc)
+        staleness = timedelta(minutes=CROSS_SURFACE_STALENESS_MINUTES)
+        candidates = []
+
+        now_playing = self._read_config_json(NOW_PLAYING_CONFIG_KEY)
+        if now_playing.get("is_playing") is False and now_playing.get("updated_at"):
+            try:
+                paused_at = datetime.fromisoformat(now_playing["updated_at"])
+            except ValueError:
+                paused_at = None
+            if paused_at and now - paused_at <= staleness:
+                title = now_playing.get("title") or "your last track"
+                minutes_ago = int((now - paused_at).total_seconds() / 60)
+                candidates.append(
+                    (
+                        paused_at,
+                        {
+                            "mode": "cross_surface_continuity",
+                            "content": f"{title} paused {minutes_ago} min ago — resume?",
+                            "priority": 5.5,
+                            "resume_type": "music",
+                            "resume_target": now_playing.get("track_id"),
+                        },
+                    )
+                )
+
+        surface_state = self._read_config_json(SURFACE_STATE_CONFIG_KEY)
+        if surface_state.get("terminal_session_active") and surface_state.get("updated_at"):
+            try:
+                reported_at = datetime.fromisoformat(surface_state["updated_at"])
+            except ValueError:
+                reported_at = None
+            if reported_at and now - reported_at <= staleness:
+                candidates.append(
+                    (
+                        reported_at,
+                        {
+                            "mode": "cross_surface_continuity",
+                            "content": "Terminal session still open — resume on the Deck?",
+                            "priority": 5.5,
+                            "resume_type": "terminal",
+                            "resume_target": None,
+                        },
+                    )
+                )
+
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT name, updated_at FROM routines WHERE updated_at IS NOT NULL "
+                "ORDER BY updated_at DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if row:
+                name, updated_at = row
+                edited_at = updated_at.replace(tzinfo=timezone.utc)
+                if now - edited_at <= staleness:
+                    candidates.append(
+                        (
+                            edited_at,
+                            {
+                                "mode": "cross_surface_continuity",
+                                "content": f'"{name}" routine edited recently — reopen it?',
+                                "priority": 5.5,
+                                "resume_type": "routine",
+                                "resume_target": name,
+                            },
+                        )
+                    )
+        except pymysql.Error as e:
+            logger.error("Cross-surface continuity routine check error: " + str(e))
+        finally:
+            if db:
+                db.close()
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        return candidates[0][1]
 
     def check_party_advisory(self):
         """Catch a real, high-energy gathering happening despite the capped
@@ -873,6 +1142,98 @@ def rebuild_music_recommendations():
         logger.error(f"Failed to rebuild music recommendations: {str(e)}")
 
 
+def compute_entity_baselines():
+    """Recompute per-device on/off session baselines into `entity_baselines`,
+    used by MyDaemon.check_rhythm_break_anomaly() to detect genuine deviation
+    from routine.
+
+    Only `device` rows are covered today: `device_history` logs state
+    transitions per device, which lets on/off sessions be reconstructed from
+    consecutive online->offline timestamp pairs. `smarthome_devices` has no
+    equivalent state-history table -- `device_command_history` logs issued
+    commands, not observed state over time -- so smarthome-device baselines
+    aren't computed yet; `entity_baselines.entity_type` keeps room for that
+    once such a history exists. See todo/todo_rhythm_break_anomaly.md.
+    """
+    logger.info("Computing entity rhythm baselines")
+    db = None
+    try:
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT DISTINCT device_id FROM device_history WHERE timestamp >= %s",
+            (datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),),
+        )
+        device_ids = [row[0] for row in cursor.fetchall()]
+
+        for device_id in device_ids:
+            cursor.execute(
+                """
+                SELECT dh.timestamp, s.state
+                FROM device_history dh
+                JOIN states s ON dh.state = s.id
+                WHERE dh.device_id = %s
+                  AND dh.timestamp >= %s
+                  AND s.state IN ('online', 'offline')
+                ORDER BY dh.timestamp ASC
+                """,
+                (
+                    device_id,
+                    datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),
+                ),
+            )
+            rows = cursor.fetchall()
+
+            durations_minutes = []
+            start_hours = []
+            session_start = None
+            for row_timestamp, state in rows:
+                if state == "online" and session_start is None:
+                    session_start = row_timestamp
+                elif state == "offline" and session_start is not None:
+                    duration = (row_timestamp - session_start).total_seconds() / 60
+                    if duration > 0:
+                        durations_minutes.append(duration)
+                        start_hours.append(session_start.hour)
+                    session_start = None
+
+            if len(durations_minutes) < ENTITY_BASELINE_MIN_SAMPLES:
+                continue
+
+            cursor.execute(
+                """
+                INSERT INTO entity_baselines
+                    (entity_type, entity_id, median_on_minutes, typical_active_hour,
+                     typical_daily_min, typical_daily_max, sample_count, computed_at)
+                VALUES ('device', %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    median_on_minutes = VALUES(median_on_minutes),
+                    typical_active_hour = VALUES(typical_active_hour),
+                    typical_daily_min = VALUES(typical_daily_min),
+                    typical_daily_max = VALUES(typical_daily_max),
+                    sample_count = VALUES(sample_count),
+                    computed_at = VALUES(computed_at)
+                """,
+                (
+                    device_id,
+                    statistics.median(durations_minutes),
+                    statistics.mode(start_hours),
+                    min(durations_minutes),
+                    max(durations_minutes),
+                    len(durations_minutes),
+                    datetime.now(timezone.utc),
+                ),
+            )
+        db.commit()
+    except pymysql.Error as e:
+        logger.error(f"Entity baseline computation error: {e}")
+        if db:
+            db.rollback()
+    finally:
+        if db:
+            db.close()
+
+
 def init_daemon():
     """
     Description:
@@ -927,6 +1288,7 @@ def init_daemon():
         schedule.every(60).minutes.do(discover_esphome_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)
+        schedule.every(6).hours.do(compute_entity_baselines)
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
