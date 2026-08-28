@@ -752,6 +752,18 @@ class TestDecideDisplays:
         "resume_type": "music",
         "resume_target": "track1",
     }
+    ATTENTION_FOCUS_CARD = {
+        "mode": "attention_focus",
+        "content": "Deep in it — 20 window switches recently",
+        "priority": 3.6,
+        "switch_count": 20,
+    }
+    WIND_DOWN_SIGNAL_CARD = {
+        "mode": "wind_down_signal",
+        "content": "Lots of screen time tonight (8 unlocks) — wind down?",
+        "priority": 5.8,
+        "unlock_count": 8,
+    }
 
     def _stub_daemon(
         self,
@@ -768,6 +780,8 @@ class TestDecideDisplays:
         check_household_composition=None,
         check_rhythm_break_anomaly=None,
         check_cross_surface_continuity=None,
+        check_attention_focus=None,
+        check_wind_down_signal=None,
     ):
         """Build a MyDaemon with each check_* replaced by a stub returning the given card."""
         from services.service_daemon.alfr3ddaemon import MyDaemon
@@ -785,6 +799,8 @@ class TestDecideDisplays:
         daemon.check_mood = MagicMock(return_value=check_mood)
         daemon.check_household_composition = MagicMock(return_value=check_household_composition)
         daemon.check_rhythm_break_anomaly = MagicMock(return_value=check_rhythm_break_anomaly)
+        daemon.check_attention_focus = MagicMock(return_value=check_attention_focus)
+        daemon.check_wind_down_signal = MagicMock(return_value=check_wind_down_signal)
         daemon.check_cross_surface_continuity = MagicMock(
             return_value=check_cross_surface_continuity
         )
@@ -806,6 +822,8 @@ class TestDecideDisplays:
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
             check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
+            check_attention_focus=self.ATTENTION_FOCUS_CARD,
+            check_wind_down_signal=self.WIND_DOWN_SIGNAL_CARD,
         )
 
         result = daemon.decide_displays()
@@ -818,10 +836,12 @@ class TestDecideDisplays:
             "music",
             "party_advisory",
             "focus_needed",
+            "attention_focus",
             "email",
             "weather_advisory",
             "weather",
             "cross_surface_continuity",
+            "wind_down_signal",
             "mood",
             "household_composition",
         ]
@@ -844,6 +864,8 @@ class TestDecideDisplays:
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
             check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
+            check_attention_focus=self.ATTENTION_FOCUS_CARD,
+            check_wind_down_signal=self.WIND_DOWN_SIGNAL_CARD,
         )
 
         result = daemon.decide_displays()
@@ -858,6 +880,8 @@ class TestDecideDisplays:
         assert self.HOUSEHOLD_COMPOSITION_CARD in result
         assert self.RHYTHM_BREAK_ANOMALY_CARD in result
         assert self.CROSS_SURFACE_CONTINUITY_CARD in result
+        assert self.ATTENTION_FOCUS_CARD in result
+        assert self.WIND_DOWN_SIGNAL_CARD in result
 
     def test_focus_needed_sorts_between_music_and_email(self):
         """focus_needed (priority 3.5) lands between music (3) and email (4) when both fire."""
@@ -919,9 +943,9 @@ class TestDecideDisplays:
         self,
     ):
         """End-to-end test of decide_displays() with the full, current category set
-        (all thirteen DISPLAY_RULES entries) firing at once.
+        (all fifteen DISPLAY_RULES entries) firing at once.
 
-        This is the test to extend when a future PR registers a fourteenth category:
+        This is the test to extend when a future PR registers a sixteenth category:
         add its card to the `self._stub_daemon(...)` call below and to the
         expected `modes` list in priority order.
         """
@@ -939,6 +963,8 @@ class TestDecideDisplays:
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
             check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
+            check_attention_focus=self.ATTENTION_FOCUS_CARD,
+            check_wind_down_signal=self.WIND_DOWN_SIGNAL_CARD,
         )
 
         result = daemon.decide_displays()
@@ -948,10 +974,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all thirteen cards come back -- nothing dropped.
+        # rule fired exactly once, so all fifteen cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 13 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 15 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -966,10 +992,12 @@ class TestDecideDisplays:
             "music",
             "party_advisory",
             "focus_needed",
+            "attention_focus",
             "email",
             "weather_advisory",
             "weather",
             "cross_surface_continuity",
+            "wind_down_signal",
             "mood",
             "household_composition",
         ]
@@ -1915,6 +1943,224 @@ class TestCheckCrossSurfaceContinuity:
 
         daemon = MyDaemon()
         result = daemon.check_cross_surface_continuity()
+
+        assert result is None
+
+
+def _telemetry_row(minutes_ago, **fields):
+    import json
+
+    value = json.dumps(
+        {
+            **fields,
+            "reported_at": (
+                datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+            ).isoformat(),
+        }
+    )
+    return (value,)
+
+
+class TestCheckAttentionFocus:
+    """Tests for MyDaemon.check_attention_focus()."""
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_fires_when_switching_is_high_and_not_media_heavy(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5,
+            switch_count=20,
+            unlock_count=1,
+            dwell_by_category_ms={"terminal": 600000, "media": 100000},
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_attention_focus()
+
+        assert result["mode"] == "attention_focus"
+        assert result["priority"] == 3.6
+        assert result["switch_count"] == 20
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_switch_count_is_low(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5, switch_count=3, dwell_by_category_ms={"terminal": 600000}
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_attention_focus()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_switching_is_media_heavy(self, mock_connect):
+        """High switch count while mostly dwelling in media is the wind-down
+        pattern, not focus -- must not double-fire both cards."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5,
+            switch_count=20,
+            dwell_by_category_ms={"media": 800000, "terminal": 100000},
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_attention_focus()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_snapshot_is_stale(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            120, switch_count=20, dwell_by_category_ms={"terminal": 600000}
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_attention_focus()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_no_snapshot_reported_yet(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+
+        daemon = MyDaemon()
+        result = daemon.check_attention_focus()
+
+        assert result is None
+
+
+class TestCheckWindDownSignal:
+    """Tests for MyDaemon.check_wind_down_signal()."""
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    def test_fires_when_night_and_high_unlocks_and_media_heavy(
+        self, mock_get_local_time, mock_connect
+    ):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_get_local_time.return_value = datetime(2026, 8, 28, 23, 30)  # night
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5,
+            unlock_count=8,
+            switch_count=2,
+            dwell_by_category_ms={"media": 900000, "terminal": 50000},
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_wind_down_signal()
+
+        assert result["mode"] == "wind_down_signal"
+        assert result["priority"] == 5.8
+        assert result["unlock_count"] == 8
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    def test_returns_none_when_not_night(self, mock_get_local_time, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_get_local_time.return_value = datetime(2026, 8, 28, 14, 0)  # afternoon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5, unlock_count=8, dwell_by_category_ms={"media": 900000}
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_wind_down_signal()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    def test_returns_none_when_unlock_count_is_low(self, mock_get_local_time, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_get_local_time.return_value = datetime(2026, 8, 28, 23, 30)
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5, unlock_count=1, dwell_by_category_ms={"media": 900000}
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_wind_down_signal()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
+    def test_returns_none_when_dwell_is_not_media_heavy(self, mock_get_local_time, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_get_local_time.return_value = datetime(2026, 8, 28, 23, 30)
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = _telemetry_row(
+            5,
+            unlock_count=8,
+            dwell_by_category_ms={"terminal": 900000, "media": 50000},
+        )
+
+        daemon = MyDaemon()
+        result = daemon.check_wind_down_signal()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_no_snapshot_reported_yet(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+
+        daemon = MyDaemon()
+        result = daemon.check_wind_down_signal()
 
         assert result is None
 
