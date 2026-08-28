@@ -1,7 +1,7 @@
 {
   "name": "alfr3d-frontend",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "generate:theme": "node scripts/generate-theme-css.mjs",
