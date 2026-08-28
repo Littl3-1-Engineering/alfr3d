@@ -122,6 +122,37 @@ SURFACE_STATE_CONFIG_KEY = "launcher_surface_state"
 # hours ago isn't "picking up where you left off" anymore.
 CROSS_SURFACE_STALENESS_MINUTES = 45
 
+# `config` table key POST /api/context/attention-telemetry writes the
+# launcher's most recent rolling-window snapshot under; read by
+# check_attention_focus() and check_wind_down_signal().
+ATTENTION_TELEMETRY_CONFIG_KEY = "launcher_attention_telemetry"
+
+# The launcher reports a fresh attention-telemetry snapshot every ~15
+# minutes -- a snapshot older than this is treated as stale (device likely
+# offline/asleep) rather than fed into either check below.
+ATTENTION_TELEMETRY_STALENESS_MINUTES = 30
+
+# check_attention_focus() fires when the reported window-switch count is at
+# least this high -- a conservative starting point (roughly one switch per
+# minute sustained over a ~15-minute report window) with no real telemetry
+# yet to tune it against.
+ATTENTION_FOCUS_MIN_SWITCHES = 15
+
+# ...and only when media-category dwell is under this fraction of total
+# dwell time -- high switching concentrated in media (e.g. flipping between
+# a few apps while half-watching something) isn't "focus", it's the
+# wind-down check's pattern instead.
+ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION = 0.3
+
+# check_wind_down_signal() fires when the reported unlock count is at least
+# this high within the report window -- another conservative starting point.
+WIND_DOWN_MIN_UNLOCKS = 5
+
+# ...and only when media-category dwell is over this fraction of total dwell
+# time -- the milestone's own "late-hour high unlock rate + social-app
+# dwell" pattern.
+WIND_DOWN_MIN_MEDIA_DWELL_FRACTION = 0.5
+
 # How far back compute_entity_baselines() looks when reconstructing on/off
 # sessions from device_history to build each device's rhythm baseline.
 ENTITY_BASELINE_LOOKBACK_DAYS = 30
@@ -352,6 +383,9 @@ class MyDaemon:
         # orchestrating as an event departure — priority 3.5 sits it directly
         # between music (3) and email (4) without renumbering existing rules.
         ("focus_needed", 3.5, "check_focus_needed"),
+        # Evidence-based sibling to focus_needed, not a replacement -- see
+        # check_attention_focus()'s own doc comment.
+        ("attention_focus", 3.6, "check_attention_focus"),
         ("email", 4, "check_emails"),
         # Forward-looking and actionable ("bring an umbrella"), unlike the
         # passive weather status readout below it -- sits between email (4)
@@ -372,6 +406,9 @@ class MyDaemon:
         # Helpful, not urgent -- below weather (5), above mood (6.2/2.3): a
         # convenience "resume" offer, not something demanding attention.
         ("cross_surface_continuity", 5.5, "check_cross_surface_continuity"),
+        # Just below cross_surface_continuity -- a low-urgency suggestion,
+        # not something demanding attention either.
+        ("wind_down_signal", 5.8, "check_wind_down_signal"),
     )
 
     # Cap on cards published per cycle. Tied to the number of registered rules so
@@ -885,6 +922,90 @@ class MyDaemon:
             return None
         candidates.sort(key=lambda c: c[0], reverse=True)
         return candidates[0][1]
+
+    def _read_fresh_attention_telemetry(self):
+        """Return the most recent attention-telemetry snapshot (see
+        POST /api/context/attention-telemetry, routes/context.py) as a dict,
+        or None if there isn't one yet or it's older than
+        ATTENTION_TELEMETRY_STALENESS_MINUTES -- shared staleness gate for
+        both check_attention_focus() and check_wind_down_signal()."""
+        snapshot = self._read_config_json(ATTENTION_TELEMETRY_CONFIG_KEY)
+        reported_at = snapshot.get("reported_at")
+        if not reported_at:
+            return None
+        try:
+            reported_dt = datetime.fromisoformat(reported_at)
+        except ValueError:
+            return None
+        age = datetime.now(timezone.utc) - reported_dt
+        if age > timedelta(minutes=ATTENTION_TELEMETRY_STALENESS_MINUTES):
+            return None
+        return snapshot
+
+    @staticmethod
+    def _media_dwell_fraction(dwell_by_category_ms):
+        """Fraction of total reported dwell time spent in the "media"
+        category -- shared by check_attention_focus() (wants this low) and
+        check_wind_down_signal() (wants this high). 0.0 if there's no dwell
+        data at all (rather than dividing by zero)."""
+        if not dwell_by_category_ms:
+            return 0.0
+        total = sum(dwell_by_category_ms.values())
+        if total <= 0:
+            return 0.0
+        return dwell_by_category_ms.get("media", 0) / total
+
+    def check_attention_focus(self):
+        """A measured, evidence-based focus signal from the launcher's own
+        window-switching behavior -- additive alongside (not a replacement
+        for) check_focus_needed()'s calendar heuristic; see
+        todo/todo_attention_telemetry.md for why the two coexist rather than
+        one replacing the other.
+
+        Fires when the reported window-switch count is genuinely high and
+        that switching isn't concentrated in media (which would be the
+        wind-down pattern instead, see check_wind_down_signal()).
+        """
+        snapshot = self._read_fresh_attention_telemetry()
+        if not snapshot:
+            return None
+        switch_count = snapshot.get("switch_count", 0)
+        if switch_count < ATTENTION_FOCUS_MIN_SWITCHES:
+            return None
+        media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
+        if media_fraction >= ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:
+            return None
+        return {
+            "mode": "attention_focus",
+            "content": f"Deep in it — {switch_count} window switches recently",
+            "priority": 3.6,
+            "switch_count": switch_count,
+        }
+
+    def check_wind_down_signal(self):
+        """The milestone's own "inverse case": late-hour high unlock rate +
+        media-heavy dwell suggests winding down. Suggestion card only --
+        does not auto-actuate lights/Spotify itself, matching every other
+        card in this file (informational, never autonomous device control).
+        """
+        snapshot = self._read_fresh_attention_telemetry()
+        if not snapshot:
+            return None
+        local_dt = db_utils.get_env_local_time(ENV_NAME)
+        if mood_utils.get_day_mood(local_dt)["time_of_day"] != "night":
+            return None
+        unlock_count = snapshot.get("unlock_count", 0)
+        if unlock_count < WIND_DOWN_MIN_UNLOCKS:
+            return None
+        media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
+        if media_fraction < WIND_DOWN_MIN_MEDIA_DWELL_FRACTION:
+            return None
+        return {
+            "mode": "wind_down_signal",
+            "content": f"Lots of screen time tonight ({unlock_count} unlocks) — wind down?",
+            "priority": 5.8,
+            "unlock_count": unlock_count,
+        }
 
     def check_party_advisory(self):
         """Catch a real, high-energy gathering happening despite the capped
