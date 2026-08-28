@@ -1,3 +1,15 @@
+# Release v0.3.0
+
+## Release Name: Behavioral Signals
+
+### Notes:
+- **Feature:** Household composition awareness — a new situational-awareness card reporting which household members' claimed devices are online, with an elevated, security-relevant priority when an unclaimed/unknown device is on the network.
+- **Feature:** Rhythm-break anomaly cards — a new `entity_baselines` table and scheduled job reconstruct each device's typical on/off rhythm from history, and a new check fires only on a genuine deviation from it (e.g. a light on well past its usual hours).
+- **Feature:** Cross-surface continuity card — offers to pick up where you left off (paused music, an edited routine, a reported launcher session), fed by a new `POST /api/context/surface-state` endpoint and a `routines.updated_at` column. Also fixed `check_now_playing()` never persisting a play→pause transition, so pausing previously left no signal behind at all.
+- **Feature:** Attention telemetry — new `POST /api/context/attention-telemetry` endpoint backing two new cards: `check_attention_focus()` (a measured, evidence-based focus signal from window-switching behavior, additive alongside the existing calendar-based `focus_needed`) and `check_wind_down_signal()` (a late-night, high-screen-time suggestion — informational only, no auto-actuation of lights/media).
+- **Fix:** Self-awareness — ALFR3D's own TTS now pronounces its name "Alfred" instead of reading the leetspeak literally, and no longer announces itself coming online like a household member.
+- **Refactor:** Removed the Google Maps Directions travel-guidance integration (required a paid API tier the household isn't using), replaced with a local, no-API "Open Maps" hand-off from the launcher's calendar view. See `todo_free_routing_alternatives.md` for a free/self-hosted routing replacement, not yet built.
+
 # Release v0.2.0
 
 ## Release Name: Multi-Camera Registry
