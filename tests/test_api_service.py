@@ -330,3 +330,87 @@ def test_put_user_admin_editing_someone_else_can_change_type(mock_db_connection,
     assert response.status_code == 200
     mock_cursor.execute.assert_any_call("SELECT id FROM user_types WHERE type = %s", ("guest",))
     mock_cursor.execute.assert_any_call("UPDATE user SET type = %s WHERE id = %s", [3, 2])
+
+
+# --- POST /api/context/surface-state (todo_cross_surface_continuity.md) --
+
+
+def test_surface_state_rejects_unauthenticated_request(api_client):
+    response = api_client.post("/api/context/surface-state", json={"active_surface": "music"})
+    assert response.status_code == 401
+
+
+def test_surface_state_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/surface-state",
+        json={"active_surface": "music"},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_surface_state_upserts_for_permitted_resident_token(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.rowcount = 1  # UPDATE "succeeds" -> no INSERT fallback
+
+    response = api_client.post(
+        "/api/context/surface-state",
+        json={"active_surface": "music", "terminal_session_active": False},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]]
+    assert len(update_calls) == 1
+    assert update_calls[0].args[1][1] == "launcher_surface_state"
+    mock_db.commit.assert_called_once()
+
+
+# --- POST /api/context/attention-telemetry (todo_attention_telemetry.md) --
+
+
+def test_attention_telemetry_rejects_unauthenticated_request(api_client):
+    response = api_client.post("/api/context/attention-telemetry", json={"unlock_count": 3})
+    assert response.status_code == 401
+
+
+def test_attention_telemetry_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/attention-telemetry",
+        json={"unlock_count": 3},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_attention_telemetry_upserts_for_permitted_resident_token(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.rowcount = 0  # UPDATE affects nothing -> INSERT fallback
+
+    response = api_client.post(
+        "/api/context/attention-telemetry",
+        json={
+            "unlock_count": 5,
+            "switch_count": 12,
+            "dwell_by_category_ms": {"media": 600000, "terminal": 120000},
+            "window_start_ms": 1000,
+            "window_end_ms": 2000,
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    insert_calls = [
+        c for c in mock_cursor.execute.call_args_list if "INSERT INTO config" in c.args[0]
+    ]
+    assert len(insert_calls) == 1
+    assert insert_calls[0].args[1][0] == "launcher_attention_telemetry"
+    mock_db.commit.assert_called_once()

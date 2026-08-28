@@ -34,6 +34,7 @@ _TECHNOKING_AND_RESIDENT = {"technoking", "resident"}
 # key. Resources that mix everyday household actions with admin/setup actions override specific
 # action names on top of "*".
 PERMISSIONS = {
+    "context": {"*": _TECHNOKING_AND_RESIDENT},  # launcher-reported surface state
     "devices": {"*": _TECHNOKING_AND_RESIDENT},
     "environment": {"*": _TECHNOKING_ONLY},
     "integrations": {"*": _TECHNOKING_ONLY},

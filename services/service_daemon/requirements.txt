@@ -5,7 +5,6 @@ pymysql==1.2.0
 DBUtils==3.2.0
 cryptography==50.0.0
 requests
-googlemaps
 google-api-python-client
 google-auth-oauthlib
 orjson==3.12.0

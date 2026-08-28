@@ -6,6 +6,7 @@ Consumes messages from 'speak' Kafka topic, generates audio, and notifies fronte
 
 # Standard libraries
 import os
+import re
 import sys
 import logging
 import threading
@@ -326,6 +327,14 @@ def generate_tts(
         return None
 
 
+_ALFR3D_NAME_RE = re.compile(r"\balfr3d\b", re.IGNORECASE)
+
+
+def normalize_pronunciation(text):
+    """Rewrite the leetspeak 'alfr3d' to 'Alfred' so TTS pronounces it correctly."""
+    return _ALFR3D_NAME_RE.sub("Alfred", text)
+
+
 def process_speak_message(message):
     """Process incoming speak message with personality enhancement"""
     try:
@@ -398,6 +407,7 @@ def process_speak_message(message):
                 logger.warning(f"Personality processing failed: {str(e)}, using original text")
 
         # Generate TTS
+        text = normalize_pronunciation(text)
         filename = generate_tts(text, engine, model, speaker, speaker_wav)
         if filename:
             audio_url = f"/api/audio/{filename}"
