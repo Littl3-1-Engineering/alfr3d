@@ -382,7 +382,9 @@ class TestNowPlayingMonitor:
     @patch("services.service_daemon.utils.now_playing_monitor.get_producer")
     def test_monitor_loop_publishes_event(self, mock_get_producer):
         """The monitor loop publishes a song-start event via the Kafka producer."""
-        from services.service_daemon.utils.now_playing_monitor import monitor_now_playing
+        from services.service_daemon.utils.now_playing_monitor import (
+            monitor_now_playing,
+        )
 
         mock_producer = MagicMock()
         mock_get_producer.return_value = mock_producer
@@ -459,7 +461,19 @@ class TestUtilRoutines:
         mock_cursor.fetchall.side_effect = [
             [],  # user states
             [],  # device states
-            [(1, "Test Routine", timedelta(hours=10), 1, "daily", None, 0, None, None)],  # routines
+            [
+                (
+                    1,
+                    "Test Routine",
+                    timedelta(hours=10),
+                    1,
+                    "daily",
+                    None,
+                    0,
+                    None,
+                    None,
+                )
+            ],  # routines
         ]
 
         result = check_routines()
@@ -517,7 +531,10 @@ class TestDaemonRunLoop:
         },
     )
     @patch("services.service_daemon.alfr3ddaemon.schedule.run_pending")
-    @patch("services.service_daemon.alfr3ddaemon.time.sleep", side_effect=[None, Exception("stop")])
+    @patch(
+        "services.service_daemon.alfr3ddaemon.time.sleep",
+        side_effect=[None, Exception("stop")],
+    )
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.reset_routines")
     def test_run_resets_routines_on_local_day_change(
@@ -557,7 +574,10 @@ class TestDaemonRunLoop:
         },
     )
     @patch("services.service_daemon.alfr3ddaemon.schedule.run_pending")
-    @patch("services.service_daemon.alfr3ddaemon.time.sleep", side_effect=[None, Exception("stop")])
+    @patch(
+        "services.service_daemon.alfr3ddaemon.time.sleep",
+        side_effect=[None, Exception("stop")],
+    )
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.reset_routines")
     def test_run_does_not_reset_within_same_local_day(
@@ -699,9 +719,39 @@ class TestDecideDisplays:
     PARTY_ADVISORY_CARD = {"mode": "party_advisory", "content": "pa", "priority": 3.2}
     FOCUS_CARD = {"mode": "focus_needed", "content": "f", "priority": 3.5}
     EMAIL_CARD = {"mode": "email", "content": "em", "priority": 4}
-    WEATHER_ADVISORY_CARD = {"mode": "weather_advisory", "content": "wa", "priority": 4.5}
+    WEATHER_ADVISORY_CARD = {
+        "mode": "weather_advisory",
+        "content": "wa",
+        "priority": 4.5,
+    }
     WEATHER_CARD = {"mode": "weather", "content": "w", "priority": 5}
-    MOOD_CARD = {"mode": "mood", "content": "Tuesday evening — moderate energy", "priority": 6}
+    MOOD_CARD = {
+        "mode": "mood",
+        "content": "Tuesday evening — moderate energy",
+        "priority": 6,
+    }
+    HOUSEHOLD_COMPOSITION_CARD = {
+        "mode": "household_composition",
+        "content": "Home: athos",
+        "priority": 6.2,
+        "known_count": 1,
+        "unknown_count": 0,
+        "urgent": False,
+    }
+    RHYTHM_BREAK_ANOMALY_CARD = {
+        "mode": "rhythm_break_anomaly",
+        "content": "Garage light has been on for 42 min longer than usual",
+        "priority": 2.6,
+        "entity_name": "Garage light",
+        "deviation_type": "still_on_past_typical",
+    }
+    CROSS_SURFACE_CONTINUITY_CARD = {
+        "mode": "cross_surface_continuity",
+        "content": "Song paused 4 min ago — resume on the Deck?",
+        "priority": 5.5,
+        "resume_type": "music",
+        "resume_target": "track1",
+    }
 
     def _stub_daemon(
         self,
@@ -715,6 +765,9 @@ class TestDecideDisplays:
         check_weather_advisory=None,
         check_weather=None,
         check_mood=None,
+        check_household_composition=None,
+        check_rhythm_break_anomaly=None,
+        check_cross_surface_continuity=None,
     ):
         """Build a MyDaemon with each check_* replaced by a stub returning the given card."""
         from services.service_daemon.alfr3ddaemon import MyDaemon
@@ -730,10 +783,15 @@ class TestDecideDisplays:
         daemon.check_weather_advisory = MagicMock(return_value=check_weather_advisory)
         daemon.check_weather = MagicMock(return_value=check_weather)
         daemon.check_mood = MagicMock(return_value=check_mood)
+        daemon.check_household_composition = MagicMock(return_value=check_household_composition)
+        daemon.check_rhythm_break_anomaly = MagicMock(return_value=check_rhythm_break_anomaly)
+        daemon.check_cross_surface_continuity = MagicMock(
+            return_value=check_cross_surface_continuity
+        )
         return daemon
 
     def test_all_ten_checks_produce_cards_in_priority_order(self):
-        """When every check fires, cards come back sorted by priority (time..mood)."""
+        """When every check fires, cards come back sorted by priority (time..household)."""
         daemon = self._stub_daemon(
             check_time=self.TIME_CARD,
             check_events=self.EVENT_CARD,
@@ -745,6 +803,9 @@ class TestDecideDisplays:
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
             check_mood=self.MOOD_CARD,
+            check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
+            check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
+            check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
         )
 
         result = daemon.decide_displays()
@@ -752,6 +813,7 @@ class TestDecideDisplays:
         assert [card["mode"] for card in result] == [
             "time",
             "event",
+            "rhythm_break_anomaly",
             "music",
             "music",
             "party_advisory",
@@ -759,7 +821,9 @@ class TestDecideDisplays:
             "email",
             "weather_advisory",
             "weather",
+            "cross_surface_continuity",
             "mood",
+            "household_composition",
         ]
 
     def test_weather_and_mood_are_not_dropped_when_everything_fires(self):
@@ -777,6 +841,9 @@ class TestDecideDisplays:
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
             check_mood=self.MOOD_CARD,
+            check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
+            check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
+            check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
         )
 
         result = daemon.decide_displays()
@@ -788,6 +855,9 @@ class TestDecideDisplays:
         assert self.FOCUS_CARD in result
         assert self.NOW_PLAYING_CARD in result
         assert self.PARTY_ADVISORY_CARD in result
+        assert self.HOUSEHOLD_COMPOSITION_CARD in result
+        assert self.RHYTHM_BREAK_ANOMALY_CARD in result
+        assert self.CROSS_SURFACE_CONTINUITY_CARD in result
 
     def test_focus_needed_sorts_between_music_and_email(self):
         """focus_needed (priority 3.5) lands between music (3) and email (4) when both fire."""
@@ -800,7 +870,12 @@ class TestDecideDisplays:
 
         result = daemon.decide_displays()
 
-        assert [card["mode"] for card in result] == ["time", "music", "focus_needed", "email"]
+        assert [card["mode"] for card in result] == [
+            "time",
+            "music",
+            "focus_needed",
+            "email",
+        ]
 
     def test_none_results_are_excluded_without_crashing(self):
         """Checks that return None must not appear in the output or raise."""
@@ -840,11 +915,13 @@ class TestDecideDisplays:
 
         assert len(priorities) == len(set(priorities))
 
-    def test_all_categories_firing_simultaneously_is_sorted_capped_and_collision_free(self):
+    def test_all_categories_firing_simultaneously_is_sorted_capped_and_collision_free(
+        self,
+    ):
         """End-to-end test of decide_displays() with the full, current category set
-        (all ten DISPLAY_RULES entries) firing at once.
+        (all thirteen DISPLAY_RULES entries) firing at once.
 
-        This is the test to extend when a future PR registers an eleventh category:
+        This is the test to extend when a future PR registers a fourteenth category:
         add its card to the `self._stub_daemon(...)` call below and to the
         expected `modes` list in priority order.
         """
@@ -859,6 +936,9 @@ class TestDecideDisplays:
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
             check_mood=self.MOOD_CARD,
+            check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
+            check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
+            check_cross_surface_continuity=self.CROSS_SURFACE_CONTINUITY_CARD,
         )
 
         result = daemon.decide_displays()
@@ -868,10 +948,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all ten cards come back -- nothing dropped.
+        # rule fired exactly once, so all thirteen cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 10 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 13 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -881,6 +961,7 @@ class TestDecideDisplays:
         assert [card["mode"] for card in result] == [
             "time",
             "event",
+            "rhythm_break_anomaly",
             "music",
             "music",
             "party_advisory",
@@ -888,7 +969,9 @@ class TestDecideDisplays:
             "email",
             "weather_advisory",
             "weather",
+            "cross_surface_continuity",
             "mood",
+            "household_composition",
         ]
 
     def test_partial_firing_set_still_sorts_and_caps_correctly(self):
@@ -1097,7 +1180,12 @@ class TestCheckGatherings:
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_morning_gathering_passes_morning_time_of_day_to_recommend(
-        self, mock_connect, mock_get_local_time, mock_producer, mock_recommend, mock_resolve
+        self,
+        mock_connect,
+        mock_get_local_time,
+        mock_producer,
+        mock_recommend,
+        mock_resolve,
     ):
         """A gathering detected at 9am must be bucketed as 'morning', not 'day' or 'night'.
 
@@ -1181,7 +1269,12 @@ class TestCheckGatherings:
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_resolved_playlist_fields_are_attached_to_the_card(
-        self, mock_connect, mock_get_local_time, mock_producer, mock_recommend, mock_resolve
+        self,
+        mock_connect,
+        mock_get_local_time,
+        mock_producer,
+        mock_recommend,
+        mock_resolve,
     ):
         """When spotify_utils.resolve_playlist() finds a real playlist, its
         fields (id/name/uri/url/image/source) must land on the returned card
@@ -1240,7 +1333,12 @@ class TestCheckGatherings:
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_publishes_event_stream_message_when_producer_available(
-        self, mock_connect, mock_get_local_time, mock_get_producer, mock_recommend, mock_resolve
+        self,
+        mock_connect,
+        mock_get_local_time,
+        mock_get_producer,
+        mock_recommend,
+        mock_resolve,
     ):
         """A gathering-detected event is published to the event-stream topic
         when a Kafka producer is available."""
@@ -1289,7 +1387,12 @@ class TestCheckGatherings:
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_local_time")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_playlist_resolution_exception_falls_back_to_text_hint(
-        self, mock_connect, mock_get_local_time, mock_producer, mock_recommend, mock_resolve
+        self,
+        mock_connect,
+        mock_get_local_time,
+        mock_producer,
+        mock_recommend,
+        mock_resolve,
     ):
         """resolve_playlist() raising must not crash check_gatherings() --
         it falls back to the plain text hint, with no playlist_* fields."""
@@ -1346,6 +1449,235 @@ class TestCheckGatherings:
         result = daemon.check_gatherings()
 
         assert result is None
+
+
+class TestCheckHouseholdComposition:
+    """Tests for MyDaemon.check_household_composition()."""
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_all_online_devices_claimed_is_ambient_priority(self, mock_connect):
+        """Every online device belongs to a known household member -- low-urgency
+        ambient card, same priority tier as mood."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            ("athos", "Athos's Phone"),
+            ("athos", "Athos's Laptop"),
+        ]
+
+        daemon = MyDaemon()
+        result = daemon.check_household_composition()
+
+        assert result["mode"] == "household_composition"
+        assert result["priority"] == 6.2
+        assert result["urgent"] is False
+        assert result["known_count"] == 1
+        assert result["unknown_count"] == 0
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_unclaimed_device_online_is_elevated_priority(self, mock_connect):
+        """An unclaimed/unknown MAC on the network -- elevated, security-relevant
+        priority regardless of how many known members are also home."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            ("athos", "Athos's Phone"),
+            (None, "Unclaimed Device"),
+        ]
+
+        daemon = MyDaemon()
+        result = daemon.check_household_composition()
+
+        assert result["priority"] == 2.3
+        assert result["urgent"] is True
+        assert result["known_count"] == 1
+        assert result["unknown_count"] == 1
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_no_devices_online(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = []
+
+        daemon = MyDaemon()
+        result = daemon.check_household_composition()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_on_db_error(self, mock_connect):
+        import pymysql
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+
+        daemon = MyDaemon()
+        result = daemon.check_household_composition()
+
+        assert result is None
+        mock_db.close.assert_called_once()
+
+
+class TestCheckRhythmBreakAnomaly:
+    """Tests for MyDaemon.check_rhythm_break_anomaly()."""
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_card_when_a_device_is_past_its_typical_max(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = ("Garage light", 90, 60)
+
+        daemon = MyDaemon()
+        result = daemon.check_rhythm_break_anomaly()
+
+        assert result["mode"] == "rhythm_break_anomaly"
+        assert result["priority"] == 2.6
+        assert result["entity_name"] == "Garage light"
+        assert result["deviation_type"] == "still_on_past_typical"
+        assert "30 min" in result["content"]
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_no_device_exceeds_its_baseline(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+
+        daemon = MyDaemon()
+        result = daemon.check_rhythm_break_anomaly()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_on_db_error(self, mock_connect):
+        import pymysql
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+
+        daemon = MyDaemon()
+        result = daemon.check_rhythm_break_anomaly()
+
+        assert result is None
+        mock_db.close.assert_called_once()
+
+
+class TestComputeEntityBaselines:
+    """Tests for compute_entity_baselines()."""
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_upserts_a_baseline_from_reconstructed_sessions(self, mock_connect):
+        """Three online->offline pairs for one device should produce one
+        upsert with the median/typical-hour/min/max derived from those
+        three sessions, and a commit."""
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+
+        online_hour = datetime(2026, 8, 1, 9, 0)
+        sessions = [
+            (online_hour, "online"),
+            (online_hour + timedelta(minutes=60), "offline"),
+            (online_hour + timedelta(days=1), "online"),
+            (online_hour + timedelta(days=1, minutes=90), "offline"),
+            (online_hour + timedelta(days=2), "online"),
+            (online_hour + timedelta(days=2, minutes=120), "offline"),
+            (online_hour + timedelta(days=3), "online"),
+            (online_hour + timedelta(days=3, minutes=60), "offline"),
+            (online_hour + timedelta(days=4), "online"),
+            (online_hour + timedelta(days=4, minutes=60), "offline"),
+        ]
+        mock_cursor.fetchall.side_effect = [[(42,)], sessions]
+
+        compute_entity_baselines()
+
+        upsert_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0]
+        ]
+        assert len(upsert_calls) == 1
+        params = upsert_calls[0].args[1]
+        assert params[0] == 42  # device_id
+        assert params[1] == 60  # median_on_minutes (60, 90, 120, 60, 60 -> median 60)
+        assert params[2] == 9  # typical_active_hour (every session starts at 9am)
+        assert params[5] == 5  # sample_count
+        mock_db.commit.assert_called_once()
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_skips_devices_below_minimum_sample_count(self, mock_connect):
+        """A device with fewer than ENTITY_BASELINE_MIN_SAMPLES complete
+        sessions must not get a baseline row -- too little history to be a
+        real "typical" pattern yet."""
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+
+        online_hour = datetime(2026, 8, 1, 9, 0)
+        sessions = [
+            (online_hour, "online"),
+            (online_hour + timedelta(minutes=60), "offline"),
+        ]
+        mock_cursor.fetchall.side_effect = [[(42,)], sessions]
+
+        compute_entity_baselines()
+
+        upsert_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0]
+        ]
+        assert len(upsert_calls) == 0
+        mock_db.commit.assert_called_once()
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_rolls_back_and_closes_on_db_error(self, mock_connect):
+        import pymysql
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_db = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+
+        compute_entity_baselines()
+
+        mock_db.rollback.assert_called_once()
+        mock_db.close.assert_called_once()
 
 
 class TestCheckNowPlaying:
@@ -1443,6 +1775,42 @@ class TestCheckNowPlaying:
         mock_p.send.assert_not_called()
 
     @patch("common.spotify_utils.get_playback_state")
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_pause_transition_persists_state_but_returns_no_card(
+        self, mock_connect, mock_producer, mock_playback
+    ):
+        """A track paused (item still present, is_playing False) must still
+        get persisted to config -- check_cross_surface_continuity() depends
+        on that "paused N minutes ago" state -- but produces no situational-
+        awareness card and no event-stream announcement of its own."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_playback.return_value = self._playback_state(track_id="track1", is_playing=False)
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (
+            '{"track_id": "track1", "title": "Song", "artist": "Artist", "is_playing": true}',
+        )
+        mock_cursor.rowcount = 1
+
+        mock_p = MagicMock()
+        mock_producer.return_value = mock_p
+
+        daemon = MyDaemon()
+        card = daemon.check_now_playing()
+
+        assert card is None
+        update_calls = [
+            c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]
+        ]
+        assert len(update_calls) == 1
+        mock_p.send.assert_not_called()
+
+    @patch("common.spotify_utils.get_playback_state")
     def test_playback_lookup_error_is_caught_and_returns_none(self, mock_playback):
         """A Spotify/network error must not crash decide_displays() -- same
         graceful-degradation contract as the other DB/API-backed checks."""
@@ -1452,6 +1820,101 @@ class TestCheckNowPlaying:
 
         daemon = MyDaemon()
         result = daemon.check_now_playing()
+
+        assert result is None
+
+
+class TestCheckCrossSurfaceContinuity:
+    """Tests for MyDaemon.check_cross_surface_continuity()."""
+
+    @staticmethod
+    def _config_row(minutes_ago, **fields):
+        import json
+
+        value = json.dumps(
+            {
+                **fields,
+                "updated_at": (
+                    datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+                ).isoformat(),
+            }
+        )
+        return (value,)
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_offers_resume_for_a_recently_paused_track(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [
+            self._config_row(4, track_id="track1", title="Song", is_playing=False),  # now_playing
+            None,  # surface_state: nothing reported
+            None,  # routines: none edited
+        ]
+
+        daemon = MyDaemon()
+        result = daemon.check_cross_surface_continuity()
+
+        assert result["mode"] == "cross_surface_continuity"
+        assert result["resume_type"] == "music"
+        assert result["resume_target"] == "track1"
+        assert "Song" in result["content"]
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_ignores_a_paused_track_older_than_staleness_window(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [
+            self._config_row(120, track_id="track1", title="Song", is_playing=False),
+            None,
+            None,
+        ]
+
+        daemon = MyDaemon()
+        result = daemon.check_cross_surface_continuity()
+
+        assert result is None
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_picks_the_most_recent_of_multiple_candidates(self, mock_connect):
+        """A terminal session reported 1 min ago must win over a track
+        paused 10 min ago, even though the music check runs first."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [
+            self._config_row(10, track_id="track1", title="Song", is_playing=False),
+            self._config_row(1, terminal_session_active=True),
+            None,
+        ]
+
+        daemon = MyDaemon()
+        result = daemon.check_cross_surface_continuity()
+
+        assert result["resume_type"] == "terminal"
+
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_returns_none_when_nothing_available(self, mock_connect):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [None, None, None]
+
+        daemon = MyDaemon()
+        result = daemon.check_cross_surface_continuity()
 
         assert result is None
 
@@ -1654,7 +2117,10 @@ class TestCheckWeatherAdvisory:
 
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_returns_none_below_threshold(self, mock_connect):
-        from services.service_daemon.alfr3ddaemon import MyDaemon, RAIN_ADVISORY_THRESHOLD
+        from services.service_daemon.alfr3ddaemon import (
+            MyDaemon,
+            RAIN_ADVISORY_THRESHOLD,
+        )
 
         mock_db = MagicMock()
         mock_cursor = MagicMock()
