@@ -330,3 +330,41 @@ def test_put_user_admin_editing_someone_else_can_change_type(mock_db_connection,
     assert response.status_code == 200
     mock_cursor.execute.assert_any_call("SELECT id FROM user_types WHERE type = %s", ("guest",))
     mock_cursor.execute.assert_any_call("UPDATE user SET type = %s WHERE id = %s", [3, 2])
+
+
+# --- POST /api/context/surface-state (todo_cross_surface_continuity.md) --
+
+
+def test_surface_state_rejects_unauthenticated_request(api_client):
+    response = api_client.post("/api/context/surface-state", json={"active_surface": "music"})
+    assert response.status_code == 401
+
+
+def test_surface_state_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/surface-state",
+        json={"active_surface": "music"},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_surface_state_upserts_for_permitted_resident_token(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.rowcount = 1  # UPDATE "succeeds" -> no INSERT fallback
+
+    response = api_client.post(
+        "/api/context/surface-state",
+        json={"active_surface": "music", "terminal_session_active": False},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]]
+    assert len(update_calls) == 1
+    assert update_calls[0].args[1][1] == "launcher_surface_state"
+    mock_db.commit.assert_called_once()

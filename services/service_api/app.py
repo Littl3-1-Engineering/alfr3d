@@ -42,6 +42,7 @@ from routes.stream import router as stream_router  # noqa: E402
 from routes.health import router as health_router  # noqa: E402
 from routes.system import router as system_router  # noqa: E402
 from routes.music import router as music_router  # noqa: E402
+from routes.context import router as context_router  # noqa: E402
 from auth.routes import router as auth_router  # noqa: E402
 
 CURRENT_PATH = os.path.dirname(__file__)
@@ -214,6 +215,7 @@ app.include_router(stream_router)
 app.include_router(health_router)
 app.include_router(system_router)
 app.include_router(music_router)
+app.include_router(context_router)
 
 
 @app.websocket("/ws")
