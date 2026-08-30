@@ -413,4 +413,229 @@ def test_attention_telemetry_upserts_for_permitted_resident_token(mock_db_connec
     ]
     assert len(insert_calls) == 1
     assert insert_calls[0].args[1][0] == "launcher_attention_telemetry"
+
+    history_calls = [
+        c
+        for c in mock_cursor.execute.call_args_list
+        if "INSERT INTO attention_telemetry_history" in c.args[0]
+    ]
+    assert len(history_calls) == 1
+    assert history_calls[0].args[1][0] == 5  # unlock_count
+    assert history_calls[0].args[1][1] == 12  # switch_count
+
+
+def test_card_interaction_rejects_unauthenticated_request(api_client):
+    response = api_client.post(
+        "/api/context/card-interaction", json={"rule_id": "music", "action": "shown"}
+    )
+    assert response.status_code == 401
+
+
+def test_card_interaction_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={"rule_id": "music", "action": "shown"},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_rejects_invalid_action(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={"rule_id": "music", "action": "loved-it"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_rejects_missing_rule_id(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={"action": "shown"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_inserts_for_permitted_resident_token(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={
+            "rule_id": "rhythm_break_anomaly",
+            "subject_key": "Living Room Lamp",
+            "action": "dismissed",
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    insert_calls = [
+        c
+        for c in mock_cursor.execute.call_args_list
+        if "INSERT INTO card_interactions" in c.args[0]
+    ]
+    assert len(insert_calls) == 1
+    params = insert_calls[0].args[1]
+    assert params[0] == "rhythm_break_anomaly"
+    assert params[1] == "Living Room Lamp"
+    assert params[2] == "dismissed"
     mock_db.commit.assert_called_once()
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_defaults_subject_key_to_empty_string(mock_db_connection, api_client):
+    """Singleton-identity rules (most of them) have no subject_key at all --
+    the consumer just omits it."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={"rule_id": "weather", "action": "shown"},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    insert_calls = [
+        c
+        for c in mock_cursor.execute.call_args_list
+        if "INSERT INTO card_interactions" in c.args[0]
+    ]
+    assert insert_calls[0].args[1][1] == ""
+
+
+class TestInferSourceService:
+    """Tests for app._infer_source_service() (SA-11 Phase 1)."""
+
+    def test_prefers_an_explicit_service_key(self, api_app):
+        from app import _infer_source_service
+
+        assert _infer_source_service({"service": "device", "id": "user_x"}) == "device"
+
+    def test_falls_back_to_id_prefix(self, api_app):
+        from app import _infer_source_service
+
+        assert _infer_source_service({"id": "user_online_20260829"}) == "user"
+        assert _infer_source_service({"id": "song_start_20260829"}) == "daemon"
+        assert _infer_source_service({"id": "personality_20260829"}) == "speak"
+        assert _infer_source_service({"id": "weather_info_20260829"}) == "environment"
+        assert _infer_source_service({"id": "calendar_event_created_20260829"}) == "daemon"
+        assert _infer_source_service({"id": "calendar_event_removed_20260829"}) == "daemon"
+
+    def test_unknown_id_prefix_falls_back_to_unknown(self, api_app):
+        from app import _infer_source_service
+
+        assert _infer_source_service({"id": "mystery_20260829"}) == "unknown"
+
+    def test_missing_id_falls_back_to_unknown(self, api_app):
+        from app import _infer_source_service
+
+        assert _infer_source_service({}) == "unknown"
+
+
+class TestParseEventTime:
+    """Tests for app._parse_event_time() (SA-11 Phase 1)."""
+
+    def test_parses_a_clean_isoformat_string(self, api_app):
+        from app import _parse_event_time
+
+        dt = _parse_event_time("2026-08-29T12:00:00+00:00")
+        assert dt.year == 2026 and dt.hour == 12
+
+    def test_tolerates_the_double_timezone_suffix_some_producers_emit(self, api_app):
+        """service_user/service_environment/service_speak's send_event()
+        appends a literal "Z" to an already-offset-bearing isoformat string
+        (e.g. "...+00:00Z"), which datetime.fromisoformat rejects outright."""
+        from app import _parse_event_time
+
+        dt = _parse_event_time("2026-08-29T12:00:00+00:00Z")
+        assert dt.year == 2026 and dt.hour == 12
+
+    def test_missing_time_falls_back_to_now_rather_than_dropping(self, api_app):
+        from app import _parse_event_time
+
+        dt = _parse_event_time(None)
+        assert dt.tzinfo is not None
+
+    def test_unparseable_time_falls_back_to_now_rather_than_dropping(self, api_app):
+        from app import _parse_event_time
+
+        dt = _parse_event_time("not-a-timestamp")
+        assert dt.tzinfo is not None
+
+
+@patch("app.db_connection")
+def test_persist_household_events_inserts_one_row_per_event(mock_db_connection, api_app):
+    """Every event-stream message must produce exactly one durable row --
+    the write-through side of SA-11 Phase 1."""
+    import asyncio
+    from app import _persist_household_events
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    events = [
+        {
+            "id": "device_created_x",
+            "type": "success",
+            "message": "New device",
+            "time": None,
+            "subject_type": "device",
+            "subject_id": "7",
+            "verb": "created",
+        },
+        {"id": "personality_x", "type": "personality_state", "time": None},
+    ]
+    asyncio.run(_persist_household_events(events))
+
+    insert_calls = [
+        c
+        for c in mock_cursor.executemany.call_args_list
+        if "INSERT INTO household_events" in c.args[0]
+    ]
+    assert len(insert_calls) == 1
+    rows = insert_calls[0].args[1]
+    assert len(rows) == 2
+    assert rows[0][0] == "success"
+    assert rows[0][2:5] == ("device", "7", "created")
+    assert rows[0][6] == "device"  # source_service
+    assert rows[1][0] == "personality_state"
+    assert rows[1][1] is None  # personality_state events carry no `message`
+    assert rows[1][2:5] == (None, None, None)  # no structured fields yet
+    assert rows[1][6] == "speak"  # source_service
+    mock_db.commit.assert_called_once()
+
+
+@patch("app.db_connection")
+def test_persist_household_events_swallows_db_errors(mock_db_connection, api_app):
+    """A DB hiccup while persisting must never propagate -- the in-memory
+    recent_events buffer and its broadcast are the live dashboard feed and
+    must keep working even if the durable write fails."""
+    import asyncio
+    from app import _persist_household_events
+
+    mock_db_connection.side_effect = RuntimeError("db down")
+
+    asyncio.run(_persist_household_events([{"id": "device_created_x", "type": "success"}]))
+
+
+def test_persist_household_events_noop_on_empty_list(api_app):
+    import asyncio
+    from app import _persist_household_events
+
+    asyncio.run(_persist_household_events([]))

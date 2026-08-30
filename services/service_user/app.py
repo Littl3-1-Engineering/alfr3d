@@ -365,6 +365,9 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "type": "info",
                 "message": f"User {user[1]} came online",
                 "time": datetime.now(timezone.utc).isoformat(),
+                "subject_type": "user",
+                "subject_id": str(user[0]),
+                "verb": "came_online",
             }
             producer.send("event-stream", orjson.dumps(event))
     else:
@@ -385,6 +388,9 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
                 "type": "warning",
                 "message": f"User {user[1]} went offline",
                 "time": datetime.now(timezone.utc).isoformat(),
+                "subject_type": "user",
+                "subject_id": str(user[0]),
+                "verb": "went_offline",
             }
             producer.send("event-stream", orjson.dumps(event))
 
