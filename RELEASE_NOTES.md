@@ -1,3 +1,16 @@
+# Release v0.4.0
+
+## Release Name: Full Spectrum Awareness
+
+### Notes:
+- **Feature:** Self-hosted OSRM routing + leave-by travel guidance (SA-6) replacing the removed Google Maps dependency — Phase 0-2 built and live-verified against real production hardware; routing container now running.
+- **Feature:** Structured card payload (SA-5) — situational-awareness cards now carry additive typed `data` fields alongside display `content`, migrated end-to-end in the backend and, in a same-day alfr3d_deck follow-up, across all 8 launcher parsers.
+- **Feature:** Durable household event log (SA-11), card feedback loop & suppression (SA-1), launcher attention-telemetry history (SA-2), and calendar conferencing metadata (SA-7).
+- **Feature:** Shared per-cycle context frame (SA-4) and presence-transition departure-anomaly detection (SA-3).
+- **Feature:** Entity baselines generalized to per-resident/household subjects, plus two new rhythm-break-anomaly deviation types (SA-10) — live-verified, caught a real MySQL ONLY_FULL_GROUP_BY bug.
+- **Investigated, correctly stopped:** SA-9 (ESPHome sensors) and SA-8 (BLE presence) at Phase 0 — no real hardware to validate against this pass. SA-12 (transition learning) stopped at Phase 0 — not enough real household_events history to mine yet.
+- 19 `DISPLAY_RULES` now registered (was 16). Migrations 0027–0035.
+
 # Release v0.3.0
 
 ## Release Name: Behavioral Signals
