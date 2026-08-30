@@ -1,6 +1,12 @@
 # SA-11: Durable Household Event Log
 
-## Status: 🟢 Phase 1 + Phase 2 built and live-verified 2026-08-29
+## Status: 🟢 Phase 1 + Phase 2 built and live-verified 2026-08-29; deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; `service-daemon`/
+`service-api` rebuilt and redeployed; verified live with a clean cycle and a real authenticated
+API response. See the top-level session note in this repo's Notion Capability Audit page for the
+full deployment record (backup path, exact steps) shared across every item deployed that day.
 
 Wave 1, item 1 of the situational-awareness expansion — foundational for SA-3, SA-10, SA-12,
 and the revised SA-2. Everything on `event-stream` used to live only in `service_api`'s

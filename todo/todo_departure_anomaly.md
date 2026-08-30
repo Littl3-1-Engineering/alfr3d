@@ -1,6 +1,14 @@
 # SA-3: Presence-transition spike & departure anomaly
 
-## Status: 🟢 Built and live-verified 2026-08-29 (no live *firing* observed yet -- see below)
+## Status: 🟢 Built and live-verified 2026-08-29 (no live *firing* observed yet -- see below);
+deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; `service-daemon`
+rebuilt and redeployed; verified live with a clean cycle and a real authenticated API response.
+The real baselines this needs are now computing against the household's actual production
+history (not just the local dev stack's mirrored copy) -- the still-open "no live firing" item
+below is the same, just now on the box that actually matters.
 
 Last item of Wave 2, following [[todo_context_frame]] (SA-4) and [[todo_structured_card_payload]]
 (SA-5), unblocked by [[todo_household_event_log]] (SA-11) landing earlier this session. Unlike

@@ -53,7 +53,7 @@ echo "Copying processed dataset to ${OUT_DIR}"
 # container -- unreadable by this script's own user on the host bind mount. Fix permissions via a
 # throwaway container (a minimal, definitely-available image, not assuming osrm-backend's own
 # minimal base carries chmod/a shell) before copying out.
-docker run --rm -v "${WORK_DIR}:/data" alpine chmod -R a+r "/data/${REGION_NAME}.osrm"*
+docker run --rm -v "${WORK_DIR}:/data" alpine sh -c "chmod -R a+r /data/${REGION_NAME}.osrm*"
 cp "${WORK_DIR}/${REGION_NAME}.osrm"* "$OUT_DIR/"
 
 echo "Done. Start the routing service with: ROUTING_REGION_NAME=${REGION_NAME} docker compose --profile routing up -d routing"

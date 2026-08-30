@@ -1,6 +1,12 @@
 # SA-7: Sync calendar conferencing metadata
 
-## Status: 🟡 Built 2026-08-29, not yet live-verified against a real conferencing event
+## Status: 🟡 Built 2026-08-29, not yet live-verified against a real conferencing event; deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; affected services
+rebuilt and redeployed; verified live with a clean cycle and a real authenticated API response.
+This doesn't change the still-open item below (no real conferencing event has synced yet) — the
+code is live and waiting, not confirmed against real conferenceData.
 
 Wave 1 of the situational-awareness expansion, following [[todo_household_event_log]] (SA-11),
 [[todo_attention_telemetry_history]] (SA-2), and [[todo_card_feedback_loop]] (SA-1). Smallest
