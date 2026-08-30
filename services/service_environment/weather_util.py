@@ -59,7 +59,7 @@ def check_mute() -> bool:
     return db_utils.check_mute_optimized(ALFR3D_ENV_NAME)
 
 
-def send_event(event_type, message):
+def send_event(event_type, message, subject_type=None, subject_id=None, verb=None):
     """Send event to event-stream topic"""
     p = get_producer()
     if p:
@@ -69,6 +69,10 @@ def send_event(event_type, message):
             "message": message,
             "time": datetime.now().isoformat() + "Z",
         }
+        if subject_type:
+            event["subject_type"] = subject_type
+            event["subject_id"] = subject_id
+            event["verb"] = verb
         try:
             p.send("event-stream", orjson.dumps(event))
             p.flush()
@@ -432,26 +436,51 @@ def speak_weather(db, cursor, weatherData):
     if not producer:
         logger.error("No Kafka producer available, cannot speak weather")
         return False
+    weather_city = weatherData.get("name")
     if badDay[0]:
         if not check_mute():
             producer.send("speak", b"I am afraid I don't have good news.")
         else:
-            send_event("info", "Speak request muted: I am afraid I don't have good news.")
+            send_event(
+                "info",
+                "Speak request muted: I am afraid I don't have good news.",
+                subject_type="weather",
+                subject_id=weather_city,
+                verb="muted_announcement",
+            )
         greeting += "indicate " + subjective_weather
         if not check_mute():
             producer.send("speak", greeting.encode("utf-8"))
         else:
-            send_event("info", f"Speak request muted: {greeting}")
+            send_event(
+                "info",
+                f"Speak request muted: {greeting}",
+                subject_type="weather",
+                subject_id=weather_city,
+                verb="muted_announcement",
+            )
     else:
         if not check_mute():
             producer.send("speak", b"Weather today is just gorgeous!")
         else:
-            send_event("info", "Speak request muted: Weather today is just gorgeous!")
+            send_event(
+                "info",
+                "Speak request muted: Weather today is just gorgeous!",
+                subject_type="weather",
+                subject_id=weather_city,
+                verb="muted_announcement",
+            )
         greeting += "indicate " + weatherData["weather"][0]["description"]
         if not check_mute():
             producer.send("speak", greeting.encode("utf-8"))
         else:
-            send_event("info", f"Speak request muted: {greeting}")
+            send_event(
+                "info",
+                f"Speak request muted: {greeting}",
+                subject_type="weather",
+                subject_id=weather_city,
+                verb="muted_announcement",
+            )
         logger.info(greeting + "\n")
 
     producer.send(

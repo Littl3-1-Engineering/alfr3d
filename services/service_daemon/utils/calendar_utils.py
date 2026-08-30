@@ -9,10 +9,13 @@ import os
 import sys
 import logging
 from datetime import datetime, timedelta, timezone
+import orjson
 import pymysql
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+
+from common import get_producer
 
 logger = logging.getLogger("CalendarUtils")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -106,6 +109,36 @@ def update_tokens(integration_type, creds):
         logger.error(f"Error updating tokens: {e}")
 
 
+def _extract_conference_info(event):
+    """Return (conference_uri, conference_solution) from a Google Calendar API event's
+    `conferenceData`/`hangoutLink` fields, or (None, None) if the event has no structured
+    conferencing attached (SA-7). `conferenceData` is the modern, general field -- covers
+    Google Meet, Zoom, Teams, phone/SIP entry points via `conferenceSolution.name` +
+    `entryPoints[].uri` -- and is already present in events().list()'s response with no
+    extra request parameter or broader OAuth scope needed to read it (conferenceDataVersion
+    only gates *creating* conference data on write calls). `hangoutLink` is an older,
+    simpler Google-Meet-only field, checked as a fallback for the rare response shape that
+    carries it without full `conferenceData`.
+
+    A Zoom/Teams link a human pastes into the free-text notes/address fields by hand -- not
+    created through the calendar's structured conferencing integration -- has none of this,
+    which is exactly why focus_utils.looks_like_call()'s text heuristic is kept as a lower
+    confidence tier rather than retired.
+    """
+    conference_data = event.get("conferenceData") or {}
+    entry_points = conference_data.get("entryPoints") or []
+    entry = next((e for e in entry_points if e.get("entryPointType") == "video"), None) or (
+        entry_points[0] if entry_points else None
+    )
+    if entry and entry.get("uri"):
+        solution = (conference_data.get("conferenceSolution") or {}).get("name")
+        return entry["uri"], solution
+    hangout_link = event.get("hangoutLink")
+    if hangout_link:
+        return hangout_link, "Google Meet"
+    return None, None
+
+
 def get_upcoming_events():
     """
     Fetch upcoming events from DB.
@@ -118,8 +151,8 @@ def get_upcoming_events():
         now = datetime.now()
         future = now + timedelta(hours=2)
         cursor.execute(
-            "SELECT title, start_time, address, notes FROM calendar_events "
-            "WHERE start_time BETWEEN %s AND %s "
+            "SELECT title, start_time, address, notes, conference_uri, conference_solution "
+            "FROM calendar_events WHERE start_time BETWEEN %s AND %s "
             "ORDER BY start_time ASC LIMIT 1",
             (now, future),
         )
@@ -132,6 +165,8 @@ def get_upcoming_events():
                     "start_time": row[1].replace(tzinfo=timezone.utc),
                     "address": row[2],
                     "notes": row[3],
+                    "conference_uri": row[4],
+                    "conference_solution": row[5],
                 }
             ]
     except Exception as e:
@@ -190,12 +225,31 @@ def sync_calendar():
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
 
-        # Delete existing events in the sync range to avoid duplicates
+        # The Google Calendar API's timeMin/timeMax filter by *end* time and *start* time
+        # respectively (an event is returned if it hasn't ended yet and starts before the
+        # horizon) -- not by start_time on both ends. A window filtered on start_time >=
+        # now_dt would miss any event still in progress (started before now, not yet
+        # ended), leaving its old row undeleted *and* invisible to the diff below, so a
+        # still-ongoing event would get re-inserted as a duplicate and misreported as
+        # "created" on every sync while it runs.
+        window_clause = "end_time >= %s AND start_time <= %s"
+
+        # sync_calendar() wipes and re-inserts the whole sync window every run (no Google
+        # event id is stored to upsert against), so a diff against what was there *before*
+        # the delete is the only way to tell a genuinely new/changed event from one that's
+        # just being re-synced unchanged -- see todo/todo_household_event_log.md.
         cursor.execute(
-            "DELETE FROM calendar_events WHERE start_time >= %s AND start_time <= %s",
+            f"SELECT title, start_time, end_time, address, notes FROM calendar_events "
+            f"WHERE {window_clause}",
             (now_dt, future_dt),
         )
+        events_before_sync = set(cursor.fetchall())
 
+        # Delete existing events in the sync range to avoid duplicates
+        cursor.execute(f"DELETE FROM calendar_events WHERE {window_clause}", (now_dt, future_dt))
+
+        synced_keys = set()
+        new_events = []
         for event in all_events:
             start_str = event["start"].get("dateTime", event["start"].get("date"))
             end_str = event["end"].get("dateTime", event["end"].get("date"))
@@ -229,20 +283,71 @@ def sync_calendar():
             title = event.get("summary", "No Title")
             location = event.get("location", "")
             description = event.get("description", "")
+            conference_uri, conference_solution = _extract_conference_info(event)
+
+            # Comparison key uses the same (naive, second-precision) datetime objects
+            # `events_before_sync` was read back as -- not the formatted strings passed
+            # to INSERT -- so a previously-synced, unchanged event round-trips to an
+            # identical key and isn't mistaken for new. Deliberately excludes
+            # conference_uri/conference_solution (SA-7) -- a conference link appearing on
+            # an otherwise-unchanged event isn't a new event worth a household_event.
+            row_key = (title, start, end, location, description)
+            synced_keys.add(row_key)
+            if row_key not in events_before_sync:
+                new_events.append(row_key)
 
             cursor.execute(
-                "INSERT INTO calendar_events (title, start_time, end_time, address, notes) "
-                "VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO calendar_events "
+                "(title, start_time, end_time, address, notes, conference_uri, "
+                "conference_solution) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
                     title,
                     start.strftime("%Y-%m-%d %H:%M:%S") if start else None,
                     end.strftime("%Y-%m-%d %H:%M:%S") if end else None,
                     location,
                     description,
+                    conference_uri,
+                    conference_solution,
                 ),
             )
+        removed_events = events_before_sync - synced_keys
         db.commit()
         db.close()
         logger.info(f"Synced {len(all_events)} calendar events from {len(calendar_ids)} calendars")
+        _publish_calendar_diff(new_events, removed_events)
     except Exception as e:
         logger.error(f"Error syncing calendar: {e}")
+
+
+def _publish_calendar_diff(new_events, removed_events):
+    """Publish one event-stream message per calendar event that appeared or
+    disappeared since the last sync (SA-11 Phase 2) -- not for events that
+    were merely re-synced unchanged."""
+    if not new_events and not removed_events:
+        return
+    p = get_producer()
+    if not p:
+        logger.warning("No Kafka producer available; dropping calendar-event changes")
+        return
+    for title, start, _end, _location, _description in new_events:
+        event = {
+            "id": f"calendar_event_created_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "type": "info",
+            "message": f"New calendar event: {title}",
+            "time": datetime.now(timezone.utc).isoformat(),
+            "subject_type": "calendar_event",
+            "subject_id": title,
+            "verb": "created",
+        }
+        p.send("event-stream", orjson.dumps(event))
+    for title, start, _end, _location, _description in removed_events:
+        event = {
+            "id": f"calendar_event_removed_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+            "type": "info",
+            "message": f"Calendar event removed: {title}",
+            "time": datetime.now(timezone.utc).isoformat(),
+            "subject_type": "calendar_event",
+            "subject_id": title,
+            "verb": "removed",
+        }
+        p.send("event-stream", orjson.dumps(event))

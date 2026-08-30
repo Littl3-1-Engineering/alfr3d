@@ -1,6 +1,8 @@
 # Todo: Explore Free/Open-Source Routing for Travel Guidance
 
-## Status: 🔲 Not started (exploration only, added 2026-08-27)
+## Status: ➡️ Superseded 2026-08-30 by SA-6 (`todo/todo_self_hosted_routing.md`), which answers the
+open questions below with real, live-measured numbers rather than assumptions. Kept here for the
+original candidate list and framing.
 
 ## Goal
 Revisit real leave-by time / drive-time guidance for calendar events with a destination, using
