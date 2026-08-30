@@ -1,7 +1,14 @@
 # SA-10: Generalise entity_baselines to users, rooms & household
 
 ## Status: 🟢 Built and live-verified 2026-08-30 (a real MySQL `ONLY_FULL_GROUP_BY` bug caught
-and fixed live)
+and fixed live); deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; `service-daemon`
+rebuilt and redeployed; verified live with a clean cycle and a real authenticated API response.
+The 175s device-baseline timing this design was built around was itself measured on this same
+box, so the real production `compute_entity_baselines()` run there is now the same code this
+doc's Phase 0 timed -- worth a real before/after comparison next time it's convenient to check.
 
 Last item of Wave 3, following SA-6 (in progress) and the two Phase-0-stopped items SA-9/SA-8.
 Widens `entity_baselines` (the mechanism SA-3 already extended to `'user'`) to also cover

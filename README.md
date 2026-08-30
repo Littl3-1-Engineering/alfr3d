@@ -39,7 +39,7 @@ A containerized microservices project for home automation, featuring Kafka messa
   - Manual chunk splitting for parallel loading and better caching
   - React Query for client-side API caching (5-min stale time)
   - orjson for 3-10x faster JSON serialization
-  - Alembic migration chain (versions 0001-0020) wrapping all raw SQL migrations
+  - Alembic migration chain (versions 0001-0035) wrapping all raw SQL migrations
   - Slow-query MySQL config with targeted indexes
   - Multi-stage frontend build and BuildKit pip cache
 - **Authentication & RBAC**: JWT access + revocable refresh tokens, a role-based permission matrix (`technoking`/`resident`/`guest`) enforced on all write routes, login/claim rate limiting, no username-enumeration, and self-service/admin-assisted password change and reset. Both the React webapp and the Nexus Launcher (Keystore-backed on Android) have full sign-in UI. See [Authentication & RBAC](#authentication--rbac) below.
@@ -368,7 +368,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 ### Database Setup
 - **`createTables.sql`**: Initial database schema creation with all tables, indexes, and triggers
-- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0020`):
+- **Migrations** (`setup/migration_*.sql`): Incremental schema changes, wrapped in the Alembic chain (`setup/migrations/versions/0001-0035`) — note the raw SQL files use their own separate numbering (currently up to `033`) from the Alembic revision files (up to `0035`); verify both independently before adding a new one:
   - `001_calendar_cleanup.sql` / `002_iot.sql` / `003_routines.sql`
   - `004_personality.sql` / `005_indexes.sql` / `006_personality_context.sql`
   - `007_device_types_expansion.sql` / `008_iot_device_link.sql`
@@ -378,6 +378,14 @@ The `setup/` directory contains scripts for database initialization, maintenance
   - `015_environment_timezone.sql` / `016_iot_device_cleanup.sql` / `017_iot_dedupe.sql`
   - `018_weather_forecast.sql` (forecast rain probability / temp / conditions snapshot)
   - `019_esphome.sql` (ESPHome per-entity ID column + `esphome_nodes` table)
+  - `020_camera_stream_url.sql` / `021_widen_secret_columns.sql` / `022_refresh_tokens.sql`
+  - `023_entity_baselines.sql` (per-device rhythm baselines, later widened to per-resident/
+    household by `033_entity_baselines_generalize.sql`) / `024_routines_updated_at.sql`
+  - `025_device_history_partitioning.sql` / `026_household_events.sql` (durable event log) /
+    `027_household_events_structured_fields.sql`
+  - `028_attention_telemetry_history.sql` / `029_card_interactions.sql` (card feedback loop)
+  - `030_calendar_conferencing.sql` / `031_departure_anomaly.sql` / `032_geocode_cache.sql`
+    (self-hosted routing) / `033_entity_baselines_generalize.sql`
 - **`drop_cleanup_trigger.sql`**: Script to remove old cleanup triggers
 
 ## Development
@@ -395,15 +403,16 @@ The `setup/` directory contains scripts for database initialization, maintenance
 - **Kafka**: Message broker with auto-created topics (`speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`) for inter-service communication.
 - **MySQL**: Database with comprehensive schema including users, devices, environments, routines, states, listening history, and speaker groups.
 - **Redis**: Cache layer for frequently-accessed data with TTL and in-memory fallback (users, devices, weather, environment, personality, quips, routines).
-- **Migrate**: Alembic migration runner — applies `setup/migrations/versions/0001-0020` against MySQL on startup.
+- **Migrate**: Alembic migration runner — applies `setup/migrations/versions/0001-0035` against MySQL on startup.
 - **Test MySQL**: Separate MySQL instance (port 3307, `test_alfr3d_db`) for pytest fixtures to avoid interfering with production data.
-- **Service Daemon**: Core orchestration service handling voice commands, Google integrations, a registry-based situational-awareness engine (time/events/gathering-music/focus/email/rain-advisory/weather/mood cards), weather + forecast scheduling, gathering detection and music cards, context-aware scheduled tune playback, music recommendation rebuilds, and message routing.
+- **Service Daemon**: Core orchestration service handling voice commands, Google integrations, a registry-based situational-awareness engine (19 rules: time/events/travel/gathering-music/focus/email/rain-advisory/weather/mood/rhythm-break-anomaly/departure-anomaly/household-unusual-day and more), weather + forecast scheduling, gathering detection and music cards, context-aware scheduled tune playback, music recommendation rebuilds, learned per-device/per-resident/household baselines (`entity_baselines`), and message routing.
 - **Service User**: Manages user accounts, authentication, and online/offline status tracking.
 - **Service Device**: Manages IoT devices, performs network scanning with arp-scan, and device state monitoring. Runs as a standalone container on the host machine for direct network access.
 - **Service Environment**: Handles geolocation, weather updates, environmental data collection, and timezone-aware time-of-day logic.
 - **Service API**: FastAPI REST API gateway with native WebSocket support, providing endpoints for users, devices, containers, routines, personality, IoT metrics, music/Spotify, health, system, and camera streaming, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard (Nexus), device/domain management (Domain), and automation/control hub (Matrix).
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
+- **Routing** (opt-in, `docker compose --profile routing up -d routing`): self-hosted OSRM routing engine backing `check_travel()`'s leave-by guidance — no paid Maps API, zero external network calls per route. Not started by default; needs a regional dataset provisioned first via `setup/build_routing_extract.sh` (see the script's own header for usage).
 - **IoT Integration**: Unified IoT layer supporting Home Assistant, SmartThings, and ESPHome with automatic device syncing and blueprint visualization.
 
 ### Database Architecture

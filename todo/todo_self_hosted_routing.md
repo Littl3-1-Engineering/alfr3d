@@ -1,9 +1,43 @@
 # SA-6: Self-hosted routing & leave-by guidance
 
-## Status: 🟡 Phase 0 live-verified against the real production NUC; Phase 1/2 code built and
-fully unit-tested (444 passed); end-to-end verification against the *local* dev stack in
-progress (slow background extract download — see "Not yet done"); NOT yet deployed to the
-household's real production NUC (needs an explicit go-ahead)
+## Status: 🟢 Fully live in production — routing container started and end-to-end verified
+2026-08-30, with explicit go-ahead
+
+**Code/schema deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to
+`main`). A real `mysqldump` backup was taken first; migrations applied cleanly through 0035
+(including `geocode_cache`); `service-daemon` rebuilt and redeployed; verified live with a clean
+cycle and a real authenticated API response.
+
+**Routing container started 2026-08-30, with explicit go-ahead.** Ran
+`ROUTING_CITY=Toronto ROUTING_REGION_NAME=region bash setup/build_routing_extract.sh` directly on
+the NUC (not the dev sandbox — this box's network doesn't hit the ~20-25KB/s throttling the
+sandbox did): extract/partition/customize reproduced Phase 0's numbers almost exactly (262MB
+output), but the copy step failed the same way as the dev-sandbox attempt below —
+**the "fix" from that prior session never actually worked.** Root cause: `docker run` doesn't
+invoke a shell, so `docker run --rm -v "$WORK_DIR:/data" alpine chmod -R a+r "/data/$REGION_NAME.osrm"*`
+never glob-expanded the trailing `*` anywhere — no `/data` directory exists on the host for the
+host shell to match against, so it was passed to `chmod` as a literal filename containing an
+asterisk character. Fixed in `setup/build_routing_extract.sh` by routing the chmod through the
+container's own shell instead: `alpine sh -c "chmod -R a+r /data/${REGION_NAME}.osrm*"` — host
+bash substitutes `$REGION_NAME` before the container sees the string, and the trailing `*` (now
+protected inside double quotes on the host side) only gets glob-expanded once inside the
+container's `sh`, against the real mounted files. Re-ran after the fix: succeeded, all 27 output
+files landed in `routing_data/` world-readable. Started
+`ROUTING_REGION_NAME=region docker compose --profile routing up -d routing` — up immediately,
+`restart: unless-stopped` in place for the existing autostart mechanism. Disk barely moved (43GB
+→ 42GB free; the one-time build temp files are cleaned by the script's own `trap`).
+
+**End-to-end verified without touching the household's real calendar data**: rather than querying
+`calendar_events` for a real address (blocked by this session's own permission classifier as
+sensitive personal data, correctly), verification was done by calling the actual
+`utils.routing_utils.get_route()` function from *inside the running, deployed*
+`service-daemon` container against the *actual* `routing` container over the exact network path
+`check_travel()` uses in production (`network_mode: host`, `localhost:5005`) — no synthetic
+stand-in for either side. Returned a real route: `{'duration_minutes': 20.575, 'distance_km':
+20.0865}` (Etobicoke to downtown Toronto), matching Phase 0's original manual test to within
+measurement noise. `check_travel()` itself has not yet fired on a real calendar event (none with
+an address currently upcoming) — that's expected and will happen naturally the next time one
+exists; the plumbing it depends on is now confirmed live end-to-end.
 
 First item of Wave 3, following Wave 2 (SA-4, SA-5, SA-3). Restores what commit `08509ce` removed
 (Google Maps Directions `check_travel()`), on self-hosted infrastructure instead of a paid API —
@@ -140,45 +174,29 @@ mode-order list) updated for the 18th registered rule. Full suite: **444 passed,
 
 ## Live verification
 
-- **Phase 0's routing-engine numbers (see above) are themselves the primary live verification**
-  — measured against the actual production hardware, not a synthetic dev-box benchmark: real
-  extract, real preprocessing, a real served route query, cleaned up after with disk confirmed
-  back to baseline.
-- **Not yet done: an end-to-end `check_travel()` firing against a running `routing` container.**
-  Ran `setup/build_routing_extract.sh` locally to reproduce that same pipeline against this dev
-  environment for an in-repo functional check (not just the standalone commands already proven
-  on the NUC). Two attempts: the first completed the full `osrm-extract`/`partition`/`customize`
-  pipeline successfully but failed at the final copy step (`region.osrm.fileIndex` came out of
-  the container root-owned and 0700, unreadable by this script's own user) -- fixed in the script
-  by chmod'ing the output via a throwaway `alpine` container before copying. The second attempt,
-  re-running the fixed script end to end, was killed by the environment (a background-task
-  session boundary, not a script failure) before the slow BBBike download
-  (~20-25KB/s from this sandbox specifically, the same symptom SA-9 hit with unrelated endpoints)
-  completed. **Not retried further this pass** -- the download has proven unreliable in this
-  specific sandbox across multiple attempts, and Phase 0's own real-hardware numbers (see above)
-  already carry the load-bearing evidence for this task; a redundant local confirmation isn't
-  worth another open-ended wait. Next session (or with more reliable network conditions): rerun
-  `ROUTING_CITY=Toronto ROUTING_REGION_NAME=region bash setup/build_routing_extract.sh`, then
-  `docker compose --profile routing up -d routing` and confirm `check_travel()` produces a real
-  card against a live calendar event with a real address -- and only then update the README's
-  now-stale "needed a paid Google Maps Directions tier" line.
+- **Phase 0's routing-engine numbers (see above)** — measured against the actual production
+  hardware, not a synthetic dev-box benchmark: real extract, real preprocessing, a real served
+  route query, cleaned up after with disk confirmed back to baseline.
+- **The routing container is live in production and its full runtime path is verified** (see
+  above) — real extract/partition/customize on the NUC itself, a real bug found and fixed in
+  `setup/build_routing_extract.sh`'s copy step, the `routing` container started with
+  `restart: unless-stopped`, and `utils.routing_utils.get_route()` called from inside the live
+  `service-daemon` container returning a real route over the exact network path production code
+  uses. `check_travel()` itself hasn't fired yet only because no upcoming calendar event
+  currently has an address — nothing left to build or verify in the plumbing.
 
 ## Not yet done
 
-- End-to-end `check_travel()` firing against a live `routing` container (see above -- in
-  progress, not skipped).
-- **Deploying this to the household's real production NUC.** Phase 0's test there was
-  deliberately bounded and fully cleaned up (`docker rm`/`rmi`, extract files deleted, disk
-  confirmed back to the 18GB-free baseline) -- making the `routing` service and real regional
-  data a *permanent* part of that live stack (~262MB+ disk, a new always-on ~170MB+ RAM
-  container) is a bigger, standing commitment on a disk-constrained box already running the
-  household's actual home automation, and needs an explicit go-ahead first, not an assumption
-  that Phase 0's one-time test implied consent to a permanent install.
-- The 20.83GB of reclaimable Docker build cache found on the production NUC during Phase 0 --
-  flagged as a separate, real finding; not touched, not this task's job to clean up unprompted.
-- README's situational-awareness feature line still describes the pre-SA-6 state ("needed a paid
-  Google Maps Directions tier... Open Maps action instead") -- update once live verification
-  above completes.
+- **`check_travel()` firing on a real calendar event** — purely a matter of a real event with an
+  address existing; check back next time one does. Not a code or infra gap.
+- ~~Deploying the routing container to the household's real production NUC~~ -- **done
+  2026-08-30**, explicit go-ahead given; see "Routing container started" above.
+- ~~The 20.83GB of reclaimable Docker build cache found on the production NUC during Phase 0~~ --
+  **cleaned 2026-08-30**, explicitly asked for by the user this time (`docker builder prune -f`):
+  28.9GB → 10.96GB total cache, 18GB → 39GB free disk.
+- ~~README's situational-awareness feature line still describes the pre-SA-6 state~~ -- **updated
+  2026-08-30**: now describes self-hosted OSRM routing, the opt-in `routing` Compose profile, and
+  `setup/build_routing_extract.sh`.
 
 ## Out of scope (per the task doc, unchanged)
 

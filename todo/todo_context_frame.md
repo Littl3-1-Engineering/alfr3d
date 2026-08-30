@@ -1,6 +1,10 @@
 # SA-4: Shared per-cycle context frame
 
-## Status: 🟢 Built and live-verified 2026-08-29
+## Status: 🟢 Built and live-verified 2026-08-29; deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; `service-daemon`
+rebuilt and redeployed; verified live with a clean cycle and a real authenticated API response.
 
 Wave 2 of the situational-awareness expansion, following Wave 1 (SA-11, SA-2, SA-1, SA-7).
 A refactor, not a new capability — turns `decide_displays()`'s 15 independent snapshot readers

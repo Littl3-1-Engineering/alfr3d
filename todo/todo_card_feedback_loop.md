@@ -1,6 +1,10 @@
 # SA-1: Card feedback loop & suppression
 
-## Status: 🟢 Backend + React dashboard built and live-verified 2026-08-29; Android launcher reporting not started
+## Status: 🟢 Backend + React dashboard built and live-verified 2026-08-29; Android launcher reporting not started; deployed to production 2026-08-30
+
+**Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
+`mysqldump` backup was taken first; migrations applied cleanly through 0035; affected services
+rebuilt and redeployed; verified live with a clean cycle and a real authenticated API response.
 
 Wave 1 of the situational-awareness expansion, following [[todo_household_event_log]] (SA-11)
 and [[todo_attention_telemetry_history]] (SA-2). The only item on the list that improves the 16

@@ -1,6 +1,13 @@
 # SA-5: Structured card payload
 
-## Status: 🟢 Built and live-verified 2026-08-29 (a real Decimal-serialization bug caught and fixed on first deploy); Kotlin side compiles clean but unverified on a real device
+## Status: 🟢 Backend built and live-verified 2026-08-29 (a real Decimal-serialization bug caught and fixed on first deploy), deployed to production 2026-08-30; Kotlin side compiles clean but unverified on a real device, still uncommitted in `alfr3d_deck`
+
+**Backend deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to
+`main`). A real `mysqldump` backup was taken first; migrations applied cleanly through 0035;
+`service-daemon` rebuilt and redeployed; verified live with a clean cycle and a real
+authenticated API response. **The `alfr3d_deck` launcher side was NOT part of this deploy** --
+that change lives only in `alfr3d_deck`'s own working tree (uncommitted), separate from this
+repo's git history entirely. See that repo's `agents.md` 2026-08-30 entry.
 
 Wave 2 of the situational-awareness expansion, following [[todo_context_frame]] (SA-4). Gives
 every situational-awareness card an additive `data` dict alongside its existing prose `content`,
