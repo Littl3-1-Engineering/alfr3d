@@ -135,13 +135,17 @@ MySQL-integration tests unavailable without a live test DB, unrelated to this ch
   regex only once the structured path is confirmed working against a live backend"), the regex
   fallback in `MusicEnergy.parseAlfr3dSignal()` stays in place — it hasn't been proven redundant
   yet, only compiled.
-- **The other seven `SituationalInsights.kt` parsers** (`mood`, `focus_needed`,
-  `weather_advisory`, `household_composition`, `rhythm_break_anomaly`, `cross_surface_continuity`,
-  `attention_focus`, `wind_down_signal`) still parse/display `content` only — `data` is available
-  to them (threaded through generically, not per-mode), but migrating each one is separate,
-  unscoped work, flagged in Phase 0.
 - A live end-to-end `GET /api/situational-awareness` check against the real stack for this phase
   specifically (see Live verification above).
+
+**Update 2026-08-30**: the other seven `SituationalInsights.kt` parsers (`mood`, `focus_needed`,
+`weather_advisory`, `household_composition`, `rhythm_break_anomaly`, `cross_surface_continuity`,
+`attention_focus`, `wind_down_signal`) — flagged above as real-but-unscoped — are now also migrated
+to read `data` structurally, same session as SA-6 Phase 3. `content` stays authoritative for
+display everywhere; every addition is a new additive typed field. `./gradlew :app:assembleDebug`,
+`ktlintCheck`, and `detekt` all pass clean; still no device/emulator available to verify on-device.
+Still uncommitted in `alfr3d_deck` — see that repo's `agents.md` 2026-08-30 entry (the one titled
+"SA-6 Phase 3 ... SA-5 Phase 2's remaining 7 parsers migrated") for the full detail.
 
 ## Out of scope (per the task doc, unchanged)
 

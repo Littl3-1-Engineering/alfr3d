@@ -42,15 +42,16 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   in the real scan.
 
 **Could just be done, no permission needed, just wasn't finished:**
-- **`alfr3d_deck` (SA-5 Phase 2)**: the Kotlin structured-`data` migration
-  (`MusicEnergy.parseAlfr3dSignal()` reading `data.energy`/`data.genre` structurally) exists only
-  in that repo's own working tree, **uncommitted**. Compiles clean, never verified on-device (no
-  device/emulator available in this environment all session). Commit it when ready — see
-  `alfr3d_deck/agents.md`'s 2026-08-30 entry for the full detail. Also unbuilt there: SA-6 Phase 3
-  (upgrading the launcher's plain "Open Maps" action to show the real leave-by time SA-6's
-  backend now computes) and migrating the other 7 `SituationalInsights.kt` parsers to read
-  `data` structurally (most display `content` verbatim by design, so this is real but unscoped
-  value, not a gap).
+- **`alfr3d_deck` (SA-5 Phase 2 + SA-6 Phase 3, same-day follow-up)**: the Kotlin structured-`data`
+  migration (`MusicEnergy.parseAlfr3dSignal()` reading `data.energy`/`data.genre` structurally),
+  SA-6 Phase 3 (`next_event_soon` now reads the real `travel` card and shows the computed
+  leave-by time instead of the plain "Open Maps" hand-off), and migrating the other 7
+  `SituationalInsights.kt` parsers to read `data` structurally are all now done — but all still
+  exist only in that repo's own working tree, **uncommitted**. `./gradlew :app:assembleDebug`,
+  `ktlintCheck`, and `detekt` all pass clean; never verified on-device (no device/emulator
+  available in this environment all session). Commit it when ready — see `alfr3d_deck/agents.md`'s
+  2026-08-30 entries for the full detail (two entries: the original SA-5 Phase 2 pass, and the
+  same-day "SA-6 Phase 3 ... SA-5 Phase 2's remaining 7 parsers migrated" follow-up).
 - **SA-9/SA-8's stopped conditions**: both could be retried in a differently-configured
   environment (faster network for an ESPHome host-mode virtual device; a real BLE wearable in
   hand) without needing new code — see each doc's own "Not yet done" section for the concrete
@@ -66,6 +67,9 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `service-daemon` container — see `todo_self_hosted_routing.md` for detail. `check_travel()`
   itself just needs a real calendar event with an address to fire; that's the only remaining
   "not yet done" item and it's a waiting-on-real-world-event, not a build task.
+- **2026-08-30**: picked up the `alfr3d_deck` "could just be done" bullet's three items (Kotlin
+  structured-`data` migration, SA-6 Phase 3, remaining-7-parser migration) — all done, all still
+  uncommitted in that repo's working tree. See `alfr3d_deck/agents.md`'s same-day follow-up entry.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
