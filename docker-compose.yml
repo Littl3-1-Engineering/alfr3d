@@ -171,6 +171,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - audio_data:/tmp/audio
+      - secrets_data:/secrets
 
   service-daemon:
     build:
@@ -189,6 +190,27 @@ services:
       - MYSQL_DATABASE=localhost
       - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
       - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - secrets_data:/secrets
+
+  # SA-6: self-hosted routing (check_travel()). Opt-in via the "routing" profile -- not started
+  # by default, since it needs real regional OSRM data (see setup/build_routing_extract.sh) that
+  # doesn't exist until someone provisions it for their own location. Without this profile
+  # active, routing_utils.get_route() simply can't connect and check_travel() degrades to no
+  # card, same as any other missing optional integration in this file.
+  routing:
+    profiles: ["routing"]
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    restart: unless-stopped
+    command: >
+      osrm-routed --algorithm mld /data/${ROUTING_REGION_NAME:-region}.osrm
+    ports:
+      - "5005:5000"
+    volumes:
+      - ./routing_data:/data
+    # No healthcheck: nothing else in this file depends_on `routing` being healthy (it's
+    # opt-in and standalone), and the osrm-backend image's minimal Ubuntu base isn't confirmed
+    # to carry curl/wget to probe with -- not worth guessing at rather than verifying.
 
   service-frontend:
     build:

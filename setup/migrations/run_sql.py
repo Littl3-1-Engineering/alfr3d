@@ -131,6 +131,22 @@ def table_exists(op, table):
     return bool(rows and rows[0])
 
 
+def is_partitioned(op, table):
+    """Whether ``table`` already has partitions defined in the connected schema."""
+    bind = op.get_bind()
+    if bind is None:
+        return False
+    rows = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.PARTITIONS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table "
+            "AND PARTITION_NAME IS NOT NULL"
+        ),
+        {"table": table},
+    ).fetchone()
+    return bool(rows and rows[0])
+
+
 def drop_foreign_keys_for_column(op, table, column):
     """Drop FK constraints on ``table`` that reference ``column``.
 

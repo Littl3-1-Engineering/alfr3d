@@ -22,3 +22,4 @@ k8s/configmap.yaml
 secrets/*
 certs/
 .osgrep
+routing_data/

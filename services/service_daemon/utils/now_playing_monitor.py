@@ -54,6 +54,9 @@ def _build_track_event(state, track):
         },
         "is_playing": True,
         "time": datetime.now(timezone.utc).isoformat(),
+        "subject_type": "track",
+        "subject_id": track.get("id"),
+        "verb": "play_start",
     }
 
 
@@ -66,6 +69,8 @@ def _build_stop_event():
         "track": None,
         "is_playing": False,
         "time": datetime.now(timezone.utc).isoformat(),
+        "subject_type": "track",
+        "verb": "play_stop",
     }
 
 

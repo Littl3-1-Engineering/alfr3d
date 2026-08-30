@@ -130,6 +130,7 @@ class Device:
                     envid,
                 ),
             )
+            new_device_id = cursor.lastrowid
             db.commit()
         except pymysql.Error as e:
             logger.error(f"Database error creating device entry: {e}")
@@ -144,6 +145,9 @@ class Device:
                 "type": "success",
                 "message": f"New device {self.name} added to database",
                 "time": datetime.now(timezone.utc).isoformat(),
+                "subject_type": "device",
+                "subject_id": str(new_device_id),
+                "verb": "created",
             }
             producer.send("event-stream", orjson.dumps(event))
         logger.info("Device created successfully")

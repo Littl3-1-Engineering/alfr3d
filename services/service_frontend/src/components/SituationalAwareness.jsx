@@ -1,18 +1,40 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car } from 'lucide-react';
+import { Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 import socket from '../utils/socket';
+import { apiFetch } from '../utils/apiClient';
 
 // Matches MAX_DISPLAYS in service_daemon/alfr3ddaemon.py (len(DISPLAY_RULES) = 9
 // registered card types). Keep in sync -- a lower cap here silently drops cards
 // the backend intentionally raised its own cap to stop dropping.
 const MAX_DISPLAY_CARDS = 9;
 
+// A card's real identity (SA-1) is (rule_id, subject_key) -- decide_displays()
+// stamps both onto every card it returns. "mode" isn't a reliable identity: two
+// different rules (check_gatherings/"music" and check_now_playing/"now_playing")
+// both stamp "mode": "music". Falls back to `mode` alone for a card from a
+// backend that predates this stamping (or the initial pre-cycle GET) so
+// reporting still has *something* to key on rather than throwing.
+const cardKey = (card) => `${card.rule_id || card.mode}:${card.subject_key || ''}`;
+
+const reportCardInteraction = (card, action) => {
+  apiFetch(`${API_BASE_URL}/api/context/card-interaction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      rule_id: card.rule_id || card.mode,
+      subject_key: card.subject_key || '',
+      action,
+    }),
+  }).catch(() => {});
+};
+
 const SituationalAwareness = ({ timezone = null }) => {
   const [saData, setSaData] = useState([]);
+  const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
 
   useEffect(() => {
     const fetchSA = async () => {
@@ -38,6 +60,33 @@ const SituationalAwareness = ({ timezone = null }) => {
     };
   }, []);
 
+  // "shown" is reported by the consumer, never assumed by the daemon (SA-1) -- a card
+  // truncated away by MAX_DISPLAY_CARDS was never actually shown. Fires once per card
+  // per broadcast, not once per identity ever -- decide_displays()'s repetition damping
+  // needs one "shown" row per cycle a card is genuinely displayed, so re-showing the
+  // same identity next cycle must report again, not dedupe against a past cycle. The
+  // effect is keyed on the `saData` array reference (only changes on a genuine new
+  // fetch/socket push), and the ref just guards against the same identity appearing
+  // twice *within* one payload. Deliberately independent of local dismiss state -- a
+  // card the backend put in its top MAX_DISPLAY_CARDS this cycle was shown regardless
+  // of what the user does with it after.
+  useEffect(() => {
+    const reportedThisCycle = new Set();
+    saData.slice(0, MAX_DISPLAY_CARDS).forEach((card) => {
+      const key = cardKey(card);
+      if (reportedThisCycle.has(key)) return;
+      reportedThisCycle.add(key);
+      reportCardInteraction(card, 'shown');
+    });
+  }, [saData]);
+
+  const handleDismiss = (card) => {
+    setDismissedKeys((prev) => new Set(prev).add(cardKey(card)));
+    reportCardInteraction(card, 'dismissed');
+  };
+
+  const visibleCards = saData.filter((card) => !dismissedKeys.has(cardKey(card)));
+
   const getIcon = (mode) => {
     switch (mode) {
       case 'time': return <Clock className="text-fui-accent" />;
@@ -60,10 +109,10 @@ const SituationalAwareness = ({ timezone = null }) => {
 
   return (
     <div className="space-y-4">
-      {saData.length > 0 ? (
-        saData.slice(0, MAX_DISPLAY_CARDS).map((card, index) => (
+      {visibleCards.length > 0 ? (
+        visibleCards.slice(0, MAX_DISPLAY_CARDS).map((card, index) => (
           <motion.div
-            key={index}
+            key={cardKey(card)}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.1 }}
@@ -93,6 +142,16 @@ const SituationalAwareness = ({ timezone = null }) => {
               )}
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
+            {!card.urgent && (
+              <button
+                type="button"
+                aria-label="Dismiss card"
+                onClick={() => handleDismiss(card)}
+                className="w-6 h-6 flex items-center justify-center flex-shrink-0 text-fui-text/40 hover:text-fui-text transition-colors duration-200"
+              >
+                <X size={16} />
+              </button>
+            )}
           </motion.div>
         ))
       ) : (

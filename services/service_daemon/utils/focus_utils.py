@@ -1,19 +1,29 @@
 #!/usr/bin/python
 
 """
-Heuristic "is this calendar event a call?" detector for Alfr3d Daemon.
+Tiered "is this calendar event a call?" detector for Alfr3d Daemon (SA-7).
 
 Kept separate from calendar_utils.py (which owns Google Calendar sync/fetch)
-so sync/fetch logic doesn't get cluttered with unrelated text-heuristic code.
+so sync/fetch logic doesn't get cluttered with unrelated detection code.
 
-This is a v1 heuristic over the free-text `address`/`notes` fields already
-stored in `calendar_events` (see calendar_utils.get_upcoming_events()).
-Google Calendar's `conferenceData`/`hangoutLink` fields are not requested or
-stored anywhere in this schema today — a real v2 would sync those fields and
-match on them directly instead of pattern-matching text. Expect false
-negatives for calls that don't paste a recognizable URL/label into address
-or notes, and false positives for unrelated text that happens to mention a
-marker word in passing (e.g. "re-zoom the picture before the meeting").
+Two tiers, in order:
+1. `conference_uri` present (calendar_utils._extract_conference_info(), synced from
+   Google's `conferenceData`/`hangoutLink`) -> "confirmed". The calendar's own
+   structured conferencing data, not a guess.
+2. No conference data, but the free-text `address`/`notes` fields match a known
+   conferencing marker -> "probable". The original v1 heuristic, kept rather than
+   retired: a Zoom/Teams link a human pastes into notes by hand -- not created
+   through the calendar's structured conferencing integration -- has no
+   `conference_uri` either, and losing that case would be a real regression.
+   Still has the same known false-positive shape as before (e.g. "re-zoom the
+   picture before the meeting" mentions "zoom" in passing) -- that's an accepted
+   limitation of tier 2, not something tier 2 tries to fix; it just never gets
+   promoted to "confirmed" on text content alone.
+3. Neither -> `None`, no call detected.
+
+Callers should treat the tiers as calibrated confidence, not just a bool -- see
+alfr3ddaemon.check_focus_needed()'s card content, which speaks with more certainty
+for "confirmed" than "probable".
 """
 
 import re
@@ -34,17 +44,22 @@ CALL_MARKERS = (
 
 _CALL_MARKERS_RE = re.compile("|".join(re.escape(marker) for marker in CALL_MARKERS), re.IGNORECASE)
 
+CONFIRMED = "confirmed"
+PROBABLE = "probable"
 
-def looks_like_call(address, notes):
-    """Heuristically decide whether a calendar event looks like a video/voice call.
 
-    Case-insensitive substring match against `address` and `notes` for known
-    conferencing markers (see CALL_MARKERS). This is a heuristic, not a
-    reliable signal: it will miss calls that don't mention a recognizable
-    URL/label, and can false-positive on unrelated text that happens to
-    contain a marker word.
+def looks_like_call(address, notes, conference_uri=None):
+    """Decide whether a calendar event looks like a video/voice call, tiered by confidence.
+
+    Returns `CONFIRMED` ("confirmed") if `conference_uri` is present -- the
+    calendar's own structured conferencing data. Otherwise falls back to a
+    case-insensitive substring match against `address`/`notes` for known
+    conferencing markers (see CALL_MARKERS), returning `PROBABLE` ("probable")
+    on a match. Returns `None` if neither signal fires.
     """
+    if conference_uri:
+        return CONFIRMED
     combined = " ".join(text for text in (address, notes) if text)
-    if not combined:
-        return False
-    return bool(_CALL_MARKERS_RE.search(combined))
+    if combined and _CALL_MARKERS_RE.search(combined):
+        return PROBABLE
+    return None
