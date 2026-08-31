@@ -93,7 +93,7 @@ jobs:
 
       - name: Verify version table
         working-directory: setup/migrations
-        run: alembic current | grep -E "0035"
+        run: alembic current --check-heads
 
   backend-integration:
     name: Backend integration tests (MySQL + Kafka)
