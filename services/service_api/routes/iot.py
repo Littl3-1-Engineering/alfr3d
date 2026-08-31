@@ -15,14 +15,17 @@ from models import (
     IoTProvider,
     LinkDevice,
     IOTDeviceControl,
+    FavoriteDevice,
     ESPHomeAccept,
     ESPHomeControl,
     ESPHomeConfig,
 )
-from auth.dependencies import require_permission
+from auth.dependencies import CurrentUser, require_auth, require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["iot"])
+
+MAX_FAVORITE_DEVICES = 10
 
 
 def fetch_iot_devices_data(linked_only=False):
@@ -89,6 +92,30 @@ def fetch_iot_devices_data(linked_only=False):
     except pymysql.Error as e:
         logger.error(f"Error fetching IoT devices data: {str(e)}")
         return []
+
+
+def fetch_favorite_devices(user_id):
+    """A user's favorited IoT devices, in position order, in the same shape
+    fetch_iot_devices_data() returns (source/last_state included) so the Nexus quick-controls
+    pane can render them without a second lookup."""
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT smarthome_device_id FROM device_favorites "
+                "WHERE user_id = %s ORDER BY position ASC",
+                (user_id,),
+            )
+            favorite_ids = [row[0] for row in cursor.fetchall()]
+    except pymysql.Error as e:
+        logger.error(f"Error fetching favorite device ids: {str(e)}")
+        return []
+
+    if not favorite_ids:
+        return []
+
+    devices_by_id = {d["id"]: d for d in fetch_iot_devices_data()}
+    return [devices_by_id[i] for i in favorite_ids if i in devices_by_id]
 
 
 async def broadcast_iot_devices():
@@ -584,6 +611,87 @@ async def control_iot_device(
         raise
     except Exception as e:
         logger.error(f"Error controlling IoT device: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/iot/favorites")
+async def get_favorite_devices(user: CurrentUser = Depends(require_auth)):
+    try:
+        favorites = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_favorite_devices, user.id
+        )
+        return favorites
+    except Exception as e:
+        logger.error(f"Error fetching favorite devices: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/favorites")
+async def add_favorite_device(data: FavoriteDevice, user: CurrentUser = Depends(require_auth)):
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT id FROM smarthome_devices WHERE id = %s", (data.device_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Device not found")
+
+            cursor.execute(
+                "SELECT id FROM device_favorites WHERE user_id = %s AND smarthome_device_id = %s",
+                (user.id, data.device_id),
+            )
+            already_favorited = cursor.fetchone() is not None
+
+            if not already_favorited:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM device_favorites WHERE user_id = %s", (user.id,)
+                )
+                if cursor.fetchone()[0] >= MAX_FAVORITE_DEVICES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Maximum of {MAX_FAVORITE_DEVICES} favorite devices reached",
+                    )
+
+                cursor.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 FROM device_favorites "
+                    "WHERE user_id = %s",
+                    (user.id,),
+                )
+                next_position = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT INTO device_favorites (user_id, smarthome_device_id, position) "
+                    "VALUES (%s, %s, %s)",
+                    (user.id, data.device_id, next_position),
+                )
+                db.commit()
+
+        favorites = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_favorite_devices, user.id
+        )
+        return favorites
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding favorite device: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/iot/favorites/{device_id}")
+async def remove_favorite_device(device_id: int, user: CurrentUser = Depends(require_auth)):
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "DELETE FROM device_favorites WHERE user_id = %s AND smarthome_device_id = %s",
+                (user.id, device_id),
+            )
+            db.commit()
+
+        favorites = await asyncio.get_event_loop().run_in_executor(
+            None, fetch_favorite_devices, user.id
+        )
+        return favorites
+    except Exception as e:
+        logger.error(f"Error removing favorite device: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

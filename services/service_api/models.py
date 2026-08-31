@@ -152,6 +152,10 @@ class IOTDeviceControl(BaseModel):
     params: Dict[str, Any] = {}
 
 
+class FavoriteDevice(BaseModel):
+    device_id: int
+
+
 class ESPHomeAccept(BaseModel):
     psk: Optional[str] = None
     name: Optional[str] = None

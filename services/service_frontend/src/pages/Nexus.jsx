@@ -18,6 +18,7 @@ import TimeDatePanel from '../components/TimeDatePanel';
 import WeatherPanel from '../components/WeatherPanel';
 import CalendarPanel from '../components/CalendarPanel';
 import CollapsibleSidePanel from '../components/CollapsibleSidePanel';
+import FavoritesPanel from '../components/FavoritesPanel';
 import ProjectTreeViz from '../components/ProjectTreeViz';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CameraStream from '../components/CameraStream';
@@ -133,6 +134,7 @@ const NexusLoader = () => {
 const Nexus = () => {
   const [systemHealth] = useState('cyan');
   const [locationTitle, setLocationTitle] = useState('');
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [openPanels, setOpenPanels] = useState({
     timeDate: false,
     weather: false,
@@ -233,7 +235,7 @@ const Nexus = () => {
                 transition={{ delay: 0.6, duration: 0.8 }}
                 className="flex flex-col gap-8 px-6 items-center order-1 md:order-none min-w-0"
               >
-              <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} />
+              <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} onClick={() => setFavoritesOpen(v => !v)} />
 <TacticalPanelVariant1 title="Situat1onal Awar3ness" className="w-full">
                   <SituationalAwareness timezone={location?.timezone} />
                 </TacticalPanelVariant1>
@@ -259,6 +261,8 @@ const Nexus = () => {
 
                 </div>
             </div>
+
+         <FavoritesPanel isOpen={favoritesOpen} onClose={() => setFavoritesOpen(false)} />
 
          {/* Collapsible Side Panels */}
           <CollapsibleSidePanel
