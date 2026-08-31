@@ -97,6 +97,25 @@ describe('authStore', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('concurrent refresh calls share one in-flight request instead of racing', async () => {
+    mockFetch({ json: { access_token: 'access-1', refresh_token: 'refresh-1', token_type: 'bearer' } })
+    await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
+
+    const fetchMock = mockFetch({
+      json: { access_token: 'access-2', refresh_token: 'refresh-2', token_type: 'bearer' },
+    })
+
+    // Two callers racing after the access token expired (e.g. two apiFetch calls both hit a
+    // 401 around the same time) must not send two /refresh requests with the same single-use
+    // refresh token -- that would have the loser's 401 wipe out the winner's fresh tokens.
+    const [first, second] = await Promise.all([authStore.refresh(), authStore.refresh()])
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(first).toBe(second)
+    expect(authStore.getAccessToken()).toBe('access-2')
+    expect(authStore.getRefreshToken()).toBe('refresh-2')
+  })
+
   it('logout clears tokens and best-effort notifies the backend', async () => {
     mockFetch({ json: { access_token: 'access-1', refresh_token: 'refresh-1', token_type: 'bearer' } })
     await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
