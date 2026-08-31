@@ -42,20 +42,20 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   in the real scan.
 
 **Could just be done, no permission needed, just wasn't finished:**
-- **`alfr3d_deck` (SA-5 Phase 2 + SA-6 Phase 3, same-day follow-up)**: the Kotlin structured-`data`
-  migration (`MusicEnergy.parseAlfr3dSignal()` reading `data.energy`/`data.genre` structurally),
-  SA-6 Phase 3 (`next_event_soon` now reads the real `travel` card and shows the computed
-  leave-by time instead of the plain "Open Maps" hand-off), and migrating the other 7
-  `SituationalInsights.kt` parsers to read `data` structurally are all now done — but all still
-  exist only in that repo's own working tree, **uncommitted**. `./gradlew :app:assembleDebug`,
-  `ktlintCheck`, and `detekt` all pass clean; never verified on-device (no device/emulator
-  available in this environment all session). Commit it when ready — see `alfr3d_deck/agents.md`'s
-  2026-08-30 entries for the full detail (two entries: the original SA-5 Phase 2 pass, and the
-  same-day "SA-6 Phase 3 ... SA-5 Phase 2's remaining 7 parsers migrated" follow-up).
 - **SA-9/SA-8's stopped conditions**: both could be retried in a differently-configured
   environment (faster network for an ESPHome host-mode virtual device; a real BLE wearable in
   hand) without needing new code — see each doc's own "Not yet done" section for the concrete
   retry conditions.
+
+**Just needs a `git push` (both already ahead of `origin/main` by 3 commits, nothing to build):**
+- **`alfr3d`**: bumped to v0.4.0 "Full Spectrum Awareness" — the SA-1..SA-12 roadmap docs and the
+  Wave 1-4 production deployment record.
+- **`alfr3d_deck`**: bumped to 0.1.34 — the Kotlin structured-`data` migration (SA-5 Phase 2 + the
+  remaining-7-parser follow-up) and SA-6 Phase 3's travel leave-by card, all committed. Confirmed
+  on-device 2026-08-30 against the real live backend (ASUS_AI2202 over wireless adb/Tailscale) —
+  `MusicEnergy.parseAlfr3dSignal()` reads real `data.energy`/`data.genre` (not the regex fallback);
+  see `todo_structured_card_payload.md`'s "Not yet done" section for the full verification detail.
+  Deleting the now-redundant regex fallback is a deliberate follow-up call, not yet done.
 
 ## Since this was written
 
@@ -70,6 +70,12 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
 - **2026-08-30**: picked up the `alfr3d_deck` "could just be done" bullet's three items (Kotlin
   structured-`data` migration, SA-6 Phase 3, remaining-7-parser migration) — all done, all still
   uncommitted in that repo's working tree. See `alfr3d_deck/agents.md`'s same-day follow-up entry.
+- **2026-08-30 (later)**: found both `alfr3d` and `alfr3d_deck` already committed/released
+  (0.4.0 and 0.1.34) and clean — the "uncommitted" note above is stale, superseded by an
+  intervening commit. With adb access to a real device (wireless, over Tailscale), verified
+  `alfr3d_deck`'s structured-`data` path on-device against the live backend — see
+  `todo_structured_card_payload.md`'s update for detail. Both repos are 3 commits ahead of
+  `origin/main`, not yet pushed.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
