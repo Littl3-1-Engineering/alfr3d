@@ -172,6 +172,15 @@ services:
     volumes:
       - audio_data:/tmp/audio
       - secrets_data:/secrets
+    healthcheck:
+      # Mirrors HEARTBEAT_STALE_SECONDS in service_speak/app.py - the consumer thread touches
+      # /tmp/speak_heartbeat on every connect attempt and poll cycle, so a stale file means it's
+      # stuck (e.g. hung connecting to Kafka at boot) even though the process is still running.
+      test: [ "CMD", "python", "-c", "import os,sys,time; p='/tmp/speak_heartbeat'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 90 else 1)" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   service-daemon:
     build:

@@ -416,14 +416,30 @@ def determine_mood(traits, context):
     return "neutral"
 
 
+# Verbal tics get overused when every prompt just says "occasionally" - each LLM call is a
+# fresh, isolated request with no memory of the last response, so "occasionally" reads as
+# "every time". Gate it in code instead: only about 1 in TICS_FREQUENCY calls asks for the
+# tic, and the rest explicitly forbid it.
+TICS_FREQUENCY = 8
+_tics_call_count = 0
+
+
 def build_llm_system_prompt(personality):
+    global _tics_call_count
+
     blended = personality.get("blended", {})
     linguistic_style = personality.get("linguistic_style", "default assistant")
 
     forbidden = personality.get("forbidden_words", "")
     tics = personality.get("verbal_tics", "")
 
-    tics_instruction = f"Use these verbal tics occasionally: {tics}" if tics else ""
+    tics_instruction = ""
+    if tics:
+        _tics_call_count += 1
+        if _tics_call_count % TICS_FREQUENCY == 0:
+            tics_instruction = f"Use one of these verbal tics naturally: {tics}"
+        else:
+            tics_instruction = "Do not use any verbal tics or catchphrases in this response."
     forbidden_instruction = f"Never use these words: {forbidden}" if forbidden else ""
 
     formality_instruction = ""
