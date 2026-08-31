@@ -48,6 +48,15 @@ ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 AUDIO_STORAGE_PATH = os.environ.get("AUDIO_STORAGE_PATH", "/tmp/audio")
 AUDIO_RETENTION_MINUTES = int(os.environ.get("AUDIO_RETENTION_MINUTES", "5"))
 
+# Heartbeat file the Kafka consumer touches on every connect attempt and poll cycle. A stale
+# heartbeat means the consumer thread is stuck (e.g. hung inside a blocking Kafka connect at
+# boot, racing the broker before it's healthy) even though the process itself looks alive -
+# both main()'s watchdog and the Docker HEALTHCHECK key off this file.
+HEARTBEAT_PATH = "/tmp/speak_heartbeat"
+HEARTBEAT_STALE_SECONDS = 90
+KAFKA_CONSUMER_RETRY_INITIAL_SECONDS = 5
+KAFKA_CONSUMER_RETRY_MAX_SECONDS = 60
+
 # Ensure audio directory exists
 os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
 
@@ -420,29 +429,56 @@ def process_speak_message(message):
         send_event("warning", f"Speak processing failed: {str(e)}")
 
 
-def consume_speak():
-    """Consume messages from speak topic"""
+def touch_heartbeat():
+    """Record that the consumer is making progress (connecting or actively polling)."""
     try:
-        kafka_url = get_kafka_url()
-        logger.info(f"Speak consumer bootstrap servers: {kafka_url}")
-        consumer = KafkaConsumer(
-            "speak",
-            bootstrap_servers=kafka_url,
-            auto_offset_reset="latest",
-            group_id="speak-service",
-        )
-        logger.info("Connected to Kafka speak topic")
+        with open(HEARTBEAT_PATH, "w") as f:
+            f.write(str(time.time()))
+    except OSError as e:
+        logger.warning(f"Failed to write heartbeat: {e}")
 
-        while True:
-            msg = consumer.poll(timeout_ms=1000)
-            if msg:
-                for tp, messages in msg.items():
-                    for message in messages:
-                        process_speak_message(message)
 
-    except KafkaError as e:
-        logger.error(f"Error connecting to Kafka for speak: {str(e)}")
-        send_event("warning", f"Speak service Kafka error: {str(e)}")
+def consume_speak():
+    """Consume messages from the speak topic, retrying with backoff on any failure.
+
+    Bounds the Kafka connect itself (fixed api_version skips the broker version auto-probe,
+    request_timeout_ms caps each round trip) so a broker that isn't ready yet - e.g. right
+    after a host reboot, racing service-speak's own restart - fails fast instead of hanging
+    the thread forever. touch_heartbeat() lets main()'s watchdog catch it either way.
+    """
+    backoff = KAFKA_CONSUMER_RETRY_INITIAL_SECONDS
+
+    while True:
+        touch_heartbeat()
+        try:
+            kafka_url = get_kafka_url()
+            logger.info(f"Speak consumer bootstrap servers: {kafka_url}")
+            consumer = KafkaConsumer(
+                "speak",
+                bootstrap_servers=kafka_url,
+                auto_offset_reset="latest",
+                group_id="speak-service",
+                api_version=(2, 5, 0),
+                request_timeout_ms=30000,
+                reconnect_backoff_ms=1000,
+                reconnect_backoff_max_ms=10000,
+            )
+            logger.info("Connected to Kafka speak topic")
+            backoff = KAFKA_CONSUMER_RETRY_INITIAL_SECONDS
+
+            while True:
+                touch_heartbeat()
+                msg = consumer.poll(timeout_ms=1000)
+                if msg:
+                    for tp, messages in msg.items():
+                        for message in messages:
+                            process_speak_message(message)
+
+        except Exception as e:
+            logger.error(f"Speak consumer error: {e}; retrying in {backoff}s")
+            send_event("warning", f"Speak service Kafka error: {str(e)}")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, KAFKA_CONSUMER_RETRY_MAX_SECONDS)
 
 
 def cleanup_old_audio():
@@ -513,6 +549,7 @@ def reset_daily_llm_calls():
 
 def main():
     logger.info("Starting Speak Service")
+    touch_heartbeat()
 
     schedule.every(1).minutes.do(cleanup_old_audio)
     schedule.every(1).minutes.do(reset_inactive_repeat_count)
@@ -525,6 +562,23 @@ def main():
 
     while not shutdown_event.is_set():
         schedule.run_pending()
+
+        try:
+            heartbeat_age = time.time() - os.path.getmtime(HEARTBEAT_PATH)
+        except OSError:
+            heartbeat_age = float("inf")
+
+        if heartbeat_age > HEARTBEAT_STALE_SECONDS:
+            # The consumer thread is stuck (e.g. hung inside a blocking Kafka connect) even
+            # though this scheduler loop is still ticking fine. Exit so the container's
+            # `restart: unless-stopped` policy gives it a clean restart instead of it sitting
+            # silently dead for hours.
+            logger.critical(
+                f"Speak consumer heartbeat stale for {heartbeat_age:.0f}s "
+                f"(> {HEARTBEAT_STALE_SECONDS}s); exiting for container restart"
+            )
+            os._exit(1)
+
         shutdown_event.wait(timeout=1)
 
 

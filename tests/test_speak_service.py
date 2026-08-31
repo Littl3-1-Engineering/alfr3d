@@ -8,6 +8,9 @@ from services.service_speak.app import (
     cleanup_old_audio,
     get_tts,
     normalize_pronunciation,
+    consume_speak,
+    touch_heartbeat,
+    KAFKA_CONSUMER_RETRY_INITIAL_SECONDS,
 )
 
 
@@ -297,3 +300,49 @@ class TestSpeakService:
         """Test that only the standalone word is rewritten, not substrings."""
         assert normalize_pronunciation("not-alfr3d-related") == "not-Alfred-related"
         assert normalize_pronunciation("alfr3dsomething") == "alfr3dsomething"
+
+
+class TestHeartbeatAndConsumerRetry:
+    def test_touch_heartbeat_writes_current_time(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            heartbeat_path = os.path.join(temp_dir, "heartbeat")
+            with patch("services.service_speak.app.HEARTBEAT_PATH", heartbeat_path):
+                before = time.time()
+                touch_heartbeat()
+                after = time.time()
+
+                with open(heartbeat_path) as f:
+                    written = float(f.read())
+
+                assert before <= written <= after
+
+    def test_consume_speak_retries_with_backoff_and_touches_heartbeat_on_failure(self):
+        """A broker that's unreachable (e.g. not healthy yet at boot) must not kill the
+        consumer thread outright - it should back off and keep retrying, touching the
+        heartbeat each attempt so main()'s watchdog doesn't mistake it for a hang."""
+        sleep_calls = []
+
+        def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 3:
+                raise RuntimeError("stop-test-loop")
+
+        with patch(
+            "services.service_speak.app.KafkaConsumer", side_effect=Exception("no brokers")
+        ), patch("services.service_speak.app.time.sleep", side_effect=fake_sleep), patch(
+            "services.service_speak.app.touch_heartbeat"
+        ) as mock_heartbeat, patch(
+            "services.service_speak.app.send_event"
+        ):
+            with pytest.raises(RuntimeError, match="stop-test-loop"):
+                consume_speak()
+
+        assert sleep_calls == [
+            KAFKA_CONSUMER_RETRY_INITIAL_SECONDS,
+            KAFKA_CONSUMER_RETRY_INITIAL_SECONDS * 2,
+            KAFKA_CONSUMER_RETRY_INITIAL_SECONDS * 4,
+        ]
+        # Touched once per attempt before each connect, in addition to the 3 sleeps.
+        assert mock_heartbeat.call_count == 3

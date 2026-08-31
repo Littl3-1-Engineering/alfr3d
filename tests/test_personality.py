@@ -18,8 +18,11 @@ from services.service_speak.personality import (
     blend_traits,
     determine_mood,
     select_quip_by_traits,
+    build_llm_system_prompt,
     ROUTINE_QUIP_TYPES,
+    TICS_FREQUENCY,
 )
+import services.service_speak.personality as personality_module
 
 
 class TestPersonalityFunctions:
@@ -154,6 +157,31 @@ class TestPersonalityFunctions:
 
     def test_routine_quip_types_are_reserved(self):
         assert ROUTINE_QUIP_TYPES == {"sunrise", "sunset", "bedtime"}
+
+
+class TestBuildLlmSystemPromptTics:
+    def setup_method(self):
+        personality_module._tics_call_count = 0
+
+    def test_no_tics_configured_omits_instruction(self):
+        prompt = build_llm_system_prompt({"verbal_tics": ""})
+        assert "verbal tic" not in prompt.lower()
+
+    def test_tics_used_once_per_frequency_window_not_every_call(self):
+        personality = {"verbal_tics": "Of course, sir or madam"}
+        prompts = [build_llm_system_prompt(personality) for _ in range(TICS_FREQUENCY * 3)]
+
+        used_count = sum(1 for p in prompts if "Of course, sir or madam" in p)
+        forbidden_count = sum(1 for p in prompts if "Do not use any verbal tics" in p)
+
+        assert used_count == 3
+        assert forbidden_count == len(prompts) - 3
+        # Exactly every TICS_FREQUENCY-th call gets to use the tic.
+        assert [i for i, p in enumerate(prompts, start=1) if "Of course, sir or madam" in p] == [
+            TICS_FREQUENCY,
+            TICS_FREQUENCY * 2,
+            TICS_FREQUENCY * 3,
+        ]
 
 
 class TestDatabaseFunctions:
