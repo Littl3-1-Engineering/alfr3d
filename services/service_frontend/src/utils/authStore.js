@@ -118,18 +118,33 @@ export async function getSetupStatus() {
   return data;
 }
 
+let refreshInFlight = null;
+
 /** Trade the current refresh token for a new access/refresh pair. Returns the new tokens on
- * success, or null (and clears stored state) on failure. */
-export async function refresh() {
-  if (!refreshToken) return null;
-  try {
-    const data = await postAuth('/api/auth/refresh', { refresh_token: refreshToken });
-    setTokens(data);
-    return data;
-  } catch {
-    clearTokens();
-    return null;
-  }
+ * success, or null (and clears stored state) on failure.
+ *
+ * The refresh token is single-use (the backend revokes it on redemption), so if two callers
+ * race in here with the same token, whichever request loses the race gets a 401 and would
+ * otherwise clear out the tokens the winner just set. Sharing one in-flight promise across
+ * concurrent callers avoids that -- only the single underlying request's outcome matters. */
+export function refresh() {
+  if (refreshInFlight) return refreshInFlight;
+  if (!refreshToken) return Promise.resolve(null);
+
+  refreshInFlight = (async () => {
+    try {
+      const data = await postAuth('/api/auth/refresh', { refresh_token: refreshToken });
+      setTokens(data);
+      return data;
+    } catch {
+      clearTokens();
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
 }
 
 export async function logout() {
