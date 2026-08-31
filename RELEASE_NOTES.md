@@ -1,3 +1,10 @@
+# Release v0.4.1
+
+## Release Name: Real-Time ESPHome
+
+### Notes:
+- **Feature:** ESPHome Phase 5 -- persistent, auto-reconnecting `subscribe_states()` push replaces the 15-minute poll as the primary state source for accepted nodes, using aioesphomeapi's `ReconnectLogic` on a dedicated background thread. The old poll keeps running as a reconciliation fallback. Not yet exercised against a real ESPHome device.
+
 # Release v0.4.0
 
 ## Release Name: Full Spectrum Awareness
