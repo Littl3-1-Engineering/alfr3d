@@ -12,15 +12,23 @@ asyncio-only. Functions ending in `_async` are the core implementation and are m
 Functions without that suffix are synchronous, safe to call from service_device's blocking Kafka
 consumer loop the same way ha_utils/st_utils functions are; internally they wrap the async core
 with `asyncio.run()`. Discovery itself uses zeroconf's sync API and needs no event loop at all.
+
+Phase 5 (see "Push (persistent, Phase 5)" below) adds a third calling convention:
+`start_push_state_thread()` is a synchronous entry point service_device's main thread calls once
+at startup, which spins up its own dedicated background thread running its own asyncio event loop
+(`asyncio.run`) for the lifetime of the process -- required because aioesphomeapi's persistent
+connections need a long-lived event loop, which doesn't fit the per-message `asyncio.run()` calls
+the rest of this module uses for one-shot sync/control operations.
 """
 
 import asyncio
 import logging
+import threading
 import time
 
 import orjson
 import pymysql
-from aioesphomeapi import APIClient, FanSpeed, LockCommand, MediaPlayerCommand
+from aioesphomeapi import APIClient, FanSpeed, LockCommand, MediaPlayerCommand, ReconnectLogic
 from zeroconf import ServiceBrowser, Zeroconf
 
 from .db_pool import get_connection
@@ -467,3 +475,161 @@ def sync_esphome_devices():
     """Sync wrapper for service_device's blocking Kafka consumer loop -- mirrors
     ha_utils.sync_ha_devices()'s call shape (see service_device/app.py's action dispatch)."""
     return asyncio.run(sync_esphome_devices_async())
+
+
+# --- Push (persistent, Phase 5) --------------------------------------------------------------
+#
+# Replaces the connect/snapshot/disconnect cycle above with one persistent, auto-reconnecting
+# Noise connection per accepted node, kept open for the life of the process and fed by
+# aioesphomeapi's subscribe_states() -- real-time push instead of a 15-minute poll. See
+# todo/todo_esphome.md Design section 2, Phase B. The Kafka-triggered sync_esphome_devices()
+# above still runs on its existing 15-minute schedule alongside this as a reconciliation
+# fallback (picks up entities added to a node since its last connect, and self-heals if a push
+# connection silently wedges) -- it is not removed, just no longer the primary state source for
+# already-accepted nodes.
+
+_NODE_POLL_INTERVAL = 30  # seconds between re-checking which nodes are accepted
+
+
+def _handle_state_push(hostname, entity_map, state):
+    """subscribe_states() callback for one node's persistent connection -- upserts just the one
+    changed entity's last_state, unlike _upsert_node_entities' full-node resync. Runs
+    synchronously (not scheduled as a task) since the DB call is a quick blocking round-trip and
+    this whole loop already lives on its own dedicated thread -- consistent with every other DB
+    call in this module."""
+    entity = entity_map.get(state.key)
+    if entity is None:
+        return
+    esp_entity_id = f"{hostname}:{state.key}"
+    last_state = orjson.dumps(
+        {
+            "object_id": entity.object_id,
+            "key": entity.key,
+            "state": state.to_dict(),
+        }
+    ).decode("utf-8")
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        "UPDATE smarthome_devices SET online = TRUE, last_state = %s "
+        "WHERE source = 'esphome' AND esp_entity_id = %s",
+        (last_state, esp_entity_id),
+    )
+    db.commit()
+    db.close()
+
+
+def _mark_node_entities_offline(hostname):
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        "UPDATE smarthome_devices SET online = FALSE "
+        "WHERE source = 'esphome' AND esp_entity_id LIKE %s",
+        (f"{hostname}:%",),
+    )
+    db.commit()
+    db.close()
+
+
+async def _run_node_push_connection(hostname, ip_address, port, psk, stop_event):
+    """One persistent connection for one accepted node, using aioesphomeapi's ReconnectLogic for
+    automatic reconnect/backoff -- the same helper Home Assistant core itself uses for this exact
+    purpose, rather than hand-rolling reconnect logic here. Runs until stop_event is set (checked
+    every second) or the node is dropped from the accepted list by run_push_state_loop, which
+    cancels this task directly."""
+    host = ip_address or hostname
+    client = APIClient(host, port, password=None, noise_psk=psk or None)
+    entity_map = {}
+
+    def on_state(state):
+        _handle_state_push(hostname, entity_map, state)
+
+    async def on_connect():
+        device_info = await client.device_info()
+        entities, _services = await client.list_entities_services()
+        entity_map.clear()
+        entity_map.update({entity.key: entity for entity in entities})
+        _upsert_node_entities(hostname, device_info, entities, {})
+        client.subscribe_states(on_state)
+        logger.info(
+            f"ESPHome push connection established for {hostname} ({len(entities)} entities)"
+        )
+
+    async def on_disconnect(expected_disconnect):
+        _mark_node_entities_offline(hostname)
+        if not expected_disconnect:
+            logger.warning(f"ESPHome push connection to {hostname} dropped, reconnecting")
+
+    logic = ReconnectLogic(
+        client=client, on_connect=on_connect, on_disconnect=on_disconnect, name=hostname
+    )
+    await logic.start()
+    try:
+        while not stop_event.is_set():
+            await asyncio.sleep(1)
+    finally:
+        await logic.stop()
+        try:
+            await client.disconnect()
+        except Exception as e:
+            logger.warning(f"Error disconnecting ESPHome push connection for {hostname}: {e}")
+
+
+def _get_node_psk(hostname):
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute("SELECT psk FROM esphome_nodes WHERE hostname = %s", (hostname,))
+    row = cursor.fetchone()
+    db.close()
+    psk = row[0] if row else None
+    return secrets_utils.decrypt_or_plaintext(psk) if psk else psk
+
+
+async def run_push_state_loop(stop_event):
+    """Top-level entry point for the push-state loop: keeps one persistent connection task
+    running per currently-accepted node, starting new ones and cancelling removed ones every
+    _NODE_POLL_INTERVAL seconds so a node accepted (or removed) via the API is picked up without
+    a service restart. Exits once stop_event is set, cancelling every in-flight connection task
+    first. No-ops immediately if ESPHome is disabled -- matches sync_esphome_devices_async's own
+    is_esphome_enabled() check."""
+    if not is_esphome_enabled():
+        logger.info("ESPHome disabled, push-state loop not starting")
+        return
+
+    tasks = {}
+    while not stop_event.is_set():
+        accepted_hostnames = {node["hostname"]: node for node in get_esphome_nodes(accepted=True)}
+
+        for hostname in [h for h in tasks if h not in accepted_hostnames]:
+            tasks.pop(hostname).cancel()
+
+        for hostname, node in accepted_hostnames.items():
+            if hostname in tasks and not tasks[hostname].done():
+                continue
+            psk = _get_node_psk(hostname)
+            tasks[hostname] = asyncio.create_task(
+                _run_node_push_connection(
+                    hostname, node["ip_address"], node["port"], psk, stop_event
+                )
+            )
+
+        await asyncio.sleep(_NODE_POLL_INTERVAL)
+
+    for task in tasks.values():
+        task.cancel()
+    await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+
+def start_push_state_thread(stop_event):
+    """Synchronous entry point service_device's main thread calls once at startup. Runs
+    run_push_state_loop() on its own dedicated background thread with its own long-lived asyncio
+    event loop (daemon=True so it never blocks process exit on its own) -- see the module
+    docstring's "third calling convention" note for why this needs a different shape than every
+    other function here."""
+
+    def _run():
+        asyncio.run(run_push_state_loop(stop_event))
+
+    thread = threading.Thread(target=_run, name="esphome-push-state", daemon=True)
+    thread.start()
+    return thread

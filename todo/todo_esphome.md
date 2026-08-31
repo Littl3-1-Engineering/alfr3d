@@ -1,6 +1,6 @@
 # Plan: ESPHome Integration
 
-## Status: 🟡 Phases 0-3 shipped (2026-08-21); Phase 4 (frontend) shipped same day; Phase 5 (push-based state) not started
+## Status: 🟡 Phases 0-4 shipped (2026-08-21); Phase 5 (push-based state) shipped 2026-08-30, not yet exercised against a real device
 
 Backend (discovery, client, sync, API routes) and a frontend discovery/accept panel in
 `Integrations.jsx` are implemented and passing lint/tests/build. Not yet exercised against a real
@@ -231,9 +231,42 @@ commit before the ESPHome-specific work, not bundled into it.
   per-node optional-PSK accept, accepted-node list with remove. `DeviceRegistry.jsx` was not
   touched — it already generalizes over `source` from earlier IoT work, so ESPHome rows should
   render there without changes, but this has not been visually confirmed in a browser this session.
-- ⬜ **Phase 5 — stretch — push-based state (Phase B)**: persistent asyncio loop for
-  `subscribe_states()`, replacing the 15-minute poll with real-time push for accepted nodes
-  (Design §2). Not started — separate follow-up, not required for v1.
+- ✅ **Phase 5 — push-based state (Phase B)**: shipped 2026-08-30 in
+  `services/common/esphome_utils.py`'s new "Push (persistent, Phase 5)" section +
+  `service_device/app.py`. One dedicated background thread (`start_push_state_thread()`, launched
+  from `service_device/app.py`'s `__main__` block, started right after the Kafka consumer connects
+  and before the poll loop begins) runs its own long-lived asyncio event loop
+  (`run_push_state_loop()`), which keeps one persistent, auto-reconnecting Noise connection open
+  per currently-*accepted* node via aioesphomeapi's `ReconnectLogic` — the same reconnect helper
+  Home Assistant core itself uses, rather than hand-rolled backoff logic. Each node's
+  `subscribe_states()` callback (`_handle_state_push`) upserts just the one changed entity's
+  `online`/`last_state` directly, instead of the old poll's full connect/snapshot-every-entity/
+  disconnect cycle. The accepted-node list is re-checked every 30s
+  (`_NODE_POLL_INTERVAL`) so accepting or removing a node via the API starts/cancels its
+  connection task without a service restart, and a disconnect marks that node's entities offline
+  (`_mark_node_entities_offline`) until it reconnects.
+  - **Deliberately not a full replacement**: the existing 15-minute Kafka-triggered
+    `sync_esphome_devices()` poll (Phase A) is left running unchanged, now as a reconciliation
+    fallback rather than the primary state source — it still picks up entities added to a node
+    since its last connect, and self-heals if a push connection silently wedges. This is a
+    stronger guarantee than "replace the poll outright" and was a scope call made while
+    implementing, not a user decision — flag if a full replacement (poll removed entirely) turns
+    out to be preferred once this runs against real hardware.
+  - The frontend needs no changes: `service_api`'s existing `broadcast_iot_devices()` loop
+    (`routes/iot.py`) already re-reads `smarthome_devices` from the DB and pushes over the
+    `iot_devices` websocket channel every cycle regardless of what updated the row, so push-state
+    writes reach the UI through the same path poll-based writes always did.
+  - **Verified**: 14 pre-existing unit tests still pass; 7 new unit tests added for
+    `_handle_state_push` (known-entity update + unknown-key no-op), `_mark_node_entities_offline`,
+    `_get_node_psk`, and `run_push_state_loop`'s orchestration (disabled no-op; starts one task per
+    accepted node with correct args, tears down cleanly on `stop_event`) — all mocked, no real
+    device or aioesphomeapi connection involved. Full suite (463 tests), `black`, and `flake8`
+    (`--max-line-length=100 --ignore=E203,W503,E402,F401`) all clean.
+  - **Not yet verified** (same gap as the rest of this doc): no real ESPHome device was available
+    to actually open a push connection against, so `ReconnectLogic`'s reconnect/backoff behavior,
+    the ~30s node-list re-check picking up a live accept/remove, and the ~1s `stop_event` shutdown
+    responsiveness are all unexercised outside the mocked unit tests above. Confirm all three the
+    first time this runs against a real node.
 
 ## Decisions (resolved 2026-08-21 — previously open questions)
 1. **PSK at rest: plaintext for v1**, consistent with `ha_token`/`st_pat` (Design §3) — broader
