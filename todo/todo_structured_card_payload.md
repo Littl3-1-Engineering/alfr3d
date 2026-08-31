@@ -1,6 +1,6 @@
 # SA-5: Structured card payload
 
-## Status: 🟢 Backend built and live-verified 2026-08-29 (a real Decimal-serialization bug caught and fixed on first deploy), deployed to production 2026-08-30; Kotlin side compiles clean but unverified on a real device, still uncommitted in `alfr3d_deck`
+## Status: 🟢 Backend built and live-verified 2026-08-29 (a real Decimal-serialization bug caught and fixed on first deploy), deployed to production 2026-08-30; Kotlin side committed/released (`alfr3d_deck` 0.1.34) and confirmed working on a real device against the live backend 2026-08-30
 
 **Backend deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to
 `main`). A real `mysqldump` backup was taken first; migrations applied cleanly through 0035;
@@ -131,21 +131,35 @@ MySQL-integration tests unavailable without a live test DB, unrelated to this ch
 
 ## Not yet done
 
-- **On-device confirmation of the structured path.** Per the task's own instruction ("delete the
-  regex only once the structured path is confirmed working against a live backend"), the regex
-  fallback in `MusicEnergy.parseAlfr3dSignal()` stays in place — it hasn't been proven redundant
-  yet, only compiled.
-- A live end-to-end `GET /api/situational-awareness` check against the real stack for this phase
-  specifically (see Live verification above).
+- ~~On-device confirmation of the structured path~~ — **done 2026-08-30, see below.**
 
 **Update 2026-08-30**: the other seven `SituationalInsights.kt` parsers (`mood`, `focus_needed`,
 `weather_advisory`, `household_composition`, `rhythm_break_anomaly`, `cross_surface_continuity`,
 `attention_focus`, `wind_down_signal`) — flagged above as real-but-unscoped — are now also migrated
 to read `data` structurally, same session as SA-6 Phase 3. `content` stays authoritative for
 display everywhere; every addition is a new additive typed field. `./gradlew :app:assembleDebug`,
-`ktlintCheck`, and `detekt` all pass clean; still no device/emulator available to verify on-device.
-Still uncommitted in `alfr3d_deck` — see that repo's `agents.md` 2026-08-30 entry (the one titled
-"SA-6 Phase 3 ... SA-5 Phase 2's remaining 7 parsers migrated") for the full detail.
+`ktlintCheck`, and `detekt` all pass clean.
+
+**Update 2026-08-30 (later, on-device verification)**: both the Kotlin structured-`data` migration
+and this same day's follow-up are now committed and released in `alfr3d_deck` (`0.1.34`) — no
+longer "uncommitted" as the note above said; that repo is 3 commits ahead of `origin/main`,
+awaiting push. Verified live on a real device (ASUS_AI2202, connected via wireless adb over
+Tailscale) running the already-configured production launcher: installed the rebuilt debug APK,
+opened the Ambient Brief (Context Awareness) window via the Nexus Core radial menu → Workspace →
+Context, and added temporary `Log.d` instrumentation (reverted after, never committed) at the two
+key points — `ContextSnapshotProvider.alfr3dSnapshot()`'s per-card mapping, and
+`MusicEnergy.parseAlfr3dSignal()`. Real backend response confirmed: the gathering-triggered
+`mode=music` card carried `data={mood, genre, energy, tempo_hint, guest_count, total_count,
+time_of_day, because}`, and `parseAlfr3dSignal` logged `structuredEnergy=0.79
+structuredGenre="alt-rock / upbeat pop / nu-disco"` — read from `data`, not the regex fallback.
+`household_composition` (`data.known_names`), `rhythm_break_anomaly` (`data.current_hour`/
+`typical_active_hour`/`because`), `weather_advisory` (`data.forecast_rain_probability`/
+`hours_ahead`/`because`), `weather` (`data.city`/`subjective_feel`/`description`/`low`/`high`), and
+`mood` (`data.day_of_week`/`time_of_day`/`energy`/`energy_label`) all showed `hasData=true` with
+the expected keys in the same live snapshot. The task's own stated condition for deleting the
+regex fallback ("only once the structured path is confirmed working against a live backend") is
+now met — deleting `ENERGY_REGEX`/`GENRE_REGEX` from `MusicEnergy.kt` is a deliberate follow-up
+call, not done as part of this verification pass.
 
 ## Out of scope (per the task doc, unchanged)
 
