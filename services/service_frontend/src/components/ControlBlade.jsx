@@ -420,6 +420,13 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   );
 
   const renderDeviceControls = () => {
+    if (device.state === 'offline') {
+      return (
+        <div className="flex items-center justify-center py-8">
+          <span className="text-text-secondary uppercase tracking-widest text-sm">Offline</span>
+        </div>
+      );
+    }
     switch (deviceType) {
       case 'light':
         return renderLightControls();
@@ -524,7 +531,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
                 <p>Source: {device.source === 'homeassistant' ? 'Home Assistant' : device.source === 'smartthings' ? 'SmartThings' : 'Unknown'}</p>
                 <p>Room: {device.room || 'Unknown'}</p>
                 <p>Type: {deviceType}</p>
-                <p>Online: {device.online ? 'Yes' : 'No'}</p>
+                <p>Online: {device.state === 'online' ? 'Yes' : 'No'}</p>
               </div>
             )}
 
