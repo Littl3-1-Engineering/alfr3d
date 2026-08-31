@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "generate:theme": "node scripts/generate-theme-css.mjs",
-    "predev": "npm run generate:theme",
+    "sync:version": "node scripts/sync-version.mjs",
+    "predev": "npm run generate:theme && npm run sync:version",
     "dev": "vite",
-    "prebuild": "npm run generate:theme",
+    "prebuild": "npm run generate:theme && npm run sync:version",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives",
     "preview": "vite preview",
