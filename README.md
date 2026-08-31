@@ -193,6 +193,7 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 - **FK Relationship**: smarthome_devices.device_id links to device table for type and position
 - **ESPHome Manual Accept**: Discovered ESPHome nodes require an explicit accept step (with an optional PSK) before ALFR3D connects — mDNS discovery isn't account-scoped like HA/ST, so nodes never auto-link
 - **Centralized Control**: Every IoT device — including HA-backed speakers, previously only reachable from the Music tab's cast controls — is controllable from the Blueprint via ControlBlade, routed through the single provider-agnostic `POST /api/iot/devices/{device_id}/control` endpoint rather than feature-specific tabs
+- **Favorites / Quick Controls**: Any signed-in user can star up to 10 devices for the Nexus dashboard's Core-triggered quick-controls panel — a per-user, ordered shortlist stored separately from the Blueprint/ControlBlade device set
 
 #### Configuration
 1. Configure Home Assistant via the Integrations page:
@@ -231,10 +232,14 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 - **`device`**: Local device table stores linked devices with type from device_types
 - **`device_types`**: Expanded to include fan, climate, cover, lock, media_player, sensor, binary_sensor, camera
 - **`device_command_history`**: Tracks device control commands for audit logs
+- **`device_favorites`**: Per-user, ordered list of favorited smarthome_devices (max 10, enforced server-side) backing the Nexus quick-controls panel; FK-cascaded on both user and smarthome_devices deletion
 
 #### API Endpoints (Additional)
 - `PUT /api/iot/devices/{id}/link`: Link/unlink IoT device to local device
 - `GET /api/iot/devices?linked=true`: Filter to linked devices
+- `GET /api/iot/favorites`: List the signed-in user's favorited devices, in order
+- `POST /api/iot/favorites`: Add a device to favorites (`{device_id}`), capped at 10 per user
+- `DELETE /api/iot/favorites/{device_id}`: Remove a device from favorites
 
 #### Sync Mechanism
 - Daemon sends Kafka messages (`iot_ha_sync`, `iot_st_sync`) every 15 minutes
@@ -311,6 +316,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 #### Nexus (Dashboard)
 - **Boot Sequence**: Animated Lottie logo with boot-log and glitch effects
 - **Core Clock**: 24h clock ring with solar/lunar ephemeris satellites; uptime/version tooltip
+- **Quick Controls**: Clicking the Core opens a top-center panel with up to 10 favorited IoT devices as compact toggle/dial tiles (per-user, edit mode to star/unstar, same control endpoint as ControlBlade)
 - **Real-Time Metrics**: Live CPU/memory, service health bars, user/device/IoT metrics via WebSocket
 - **WeatherPanel**: Animated weather icon, large current temp, wind + pressure trend
 - **ResidentsSummary**: Residents vs. guests online
@@ -320,6 +326,8 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Project Tree**: Interactive force-directed visualization of the project structure
 - **Health Indicators**: Visual status (🟢 Healthy, 🟡 Warning, 🔴 Unhealthy)
 - **Connection Lines**: Animated Kafka topic flows between services
+
+![Nexus Quick Controls panel](quick-controls.png)
 
 #### Domain (Device Management)
 - **User Management**: Registration, editing, deletion with role-based access
