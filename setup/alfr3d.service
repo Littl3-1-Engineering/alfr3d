@@ -10,6 +10,8 @@ RemainAfterExit=yes
 # Edit to the alfr3d repo path on this host before installing.
 WorkingDirectory=/opt/alfr3d
 ExecStart=/usr/bin/docker compose up -d
+Restart=on-failure
+RestartSec=30
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
 
