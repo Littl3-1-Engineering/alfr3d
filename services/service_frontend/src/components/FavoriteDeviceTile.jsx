@@ -125,6 +125,13 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove }) => {
   const disabled = !canControl || loading;
 
   const renderControl = () => {
+    if (!device.online) {
+      return (
+        <div className="text-center text-fui-text/50 font-mono text-[10px] uppercase tracking-widest py-1">
+          Offline
+        </div>
+      );
+    }
     switch (deviceType) {
       case 'light':
         return (
