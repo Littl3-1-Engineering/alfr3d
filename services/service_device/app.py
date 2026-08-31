@@ -490,6 +490,8 @@ if __name__ == "__main__":
         logger.info("Shutdown requested during connection attempt")
         sys.exit(0)
 
+    esphome_utils.start_push_state_thread(shutdown_event)
+
     while not shutdown_event.is_set():
         messages = consumer.poll(timeout_ms=1000)
         for topic_partition, msgs in messages.items():
