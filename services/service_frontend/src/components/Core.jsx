@@ -318,7 +318,7 @@ SVGReticle.propTypes = {
   variant: PropTypes.oneOf(['crosshair', 'radar', 'crosshair1', 'crosshair2', 'crosshair3', 'grid']),
 };
 
-const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null }) => {
+const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null, onClick = null }) => {
   const DEFAULT_LOCATION = { latitude: 44.7866, longitude: 20.4489 };
 
   const [animationData, setAnimationData] = useState(null);
@@ -544,9 +544,12 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
   return (
     // Responsive container that maintains a square aspect ratio
     <div
-      className="relative w-full max-w-[450px] aspect-square"
+      className={`relative w-full max-w-[450px] aspect-square ${onClick ? 'cursor-pointer' : ''}`}
       onMouseEnter={() => { setShowTooltip(true); refreshHealth(); }}
       onMouseLeave={() => setShowTooltip(false)}
+      onClick={onClick || undefined}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
     >
       <AnimatePresence>
         {showTooltip && (
@@ -559,6 +562,7 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
           >
             <div>SYSTEM UPTIME: {formatUptime(health && health.uptime_seconds)}</div>
             <div>VERSION: {health ? health.version : '...'}</div>
+            {onClick && <div className="text-fui-accent mt-1">◈ TAP FOR QUICK CONTROLS</div>}
           </motion.div>
         )}
       </AnimatePresence>
@@ -725,6 +729,7 @@ Core.propTypes = {
   initialContainers: PropTypes.array,
   initialDevices: PropTypes.array,
   initialUsers: PropTypes.array,
+  onClick: PropTypes.func,
 };
 
 export default Core;
