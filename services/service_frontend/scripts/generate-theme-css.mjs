@@ -151,6 +151,8 @@ const THEME_META = {
   dark: { selector: ':root', label: 'Dark theme (default)' },
   amber: { selector: '[data-theme="amber"]', label: 'Amber / charcoal theme' },
   light: { selector: '[data-theme="light"]', label: 'Light theme' },
+  matrix: { selector: '[data-theme="matrix"]', label: 'Matrix / green terminal theme' },
+  graphite: { selector: '[data-theme="graphite"]', label: 'Steel / graphite theme' },
 };
 
 function themeBlock(themeName, selector, theme) {
@@ -214,9 +216,9 @@ const header = `/* AUTO-GENERATED from src/utils/themes.js — do not edit by ha
 
 const css = [
   header,
-  themeBlock('dark', THEME_META.dark.selector, themes.dark),
-  themeBlock('amber', THEME_META.amber.selector, themes.amber),
-  themeBlock('light', THEME_META.light.selector, themes.light),
+  ...Object.keys(themes).map(name =>
+    themeBlock(name, THEME_META[name]?.selector ?? `[data-theme="${name}"]`, themes[name])
+  ),
   LEAFLET,
 ].join('\n\n') + '\n';
 

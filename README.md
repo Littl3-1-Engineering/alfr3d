@@ -25,7 +25,7 @@ A containerized microservices project for home automation, featuring Kafka messa
 - **Camera Streaming**: RTSP cameras streamed to the browser via an ffmpeg proxy (MJPEG) or persistent RTSP→HLS pipelines with hls.js playback and snapshot capture.
 - **Routine Automation (WHEN/IF/THEN)**: Time-, sunrise/sunset-, and event-triggered routines with conditions (occupancy, device state, temperature, mode) and actions (speak, device, email, thermostat, lock, cover, music, cast).
 - **Personality & Quips**: Configurable personality matrix with semantic quip categories, one-click presets, context inputs, and optional LLM configuration for generated responses.
-- **Theme System**: Centralized theme tokens (single source of truth) with three built-in themes (Cyan/Navy, Amber/Charcoal, Light/Teal) and a live theme picker that persists across sessions.
+- **Theme System**: Centralized theme tokens (single source of truth) with five built-in themes (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite) and a live theme picker that persists across sessions.
 - **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling). Event types broadcast: events, situational awareness, containers, users, devices, IoT devices, weather, environment, calendar events, personality state, project tree.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
 - **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`. Includes text-to-speech audio generation.
@@ -165,6 +165,8 @@ All configured conditions must evaluate true:
   - Cyan / Navy (default) — deep navy substrate with glowing cyan accents
   - Amber / Charcoal — ultra-deep charcoal with electric amber highlights
   - Light / Teal — whites and grays with teal primary
+  - Matrix / Green — near-black substrate with a phosphor-green terminal look
+  - Steel / Graphite — cold blue-gray slate with a steel-blue accent
 - **Live Picker**: Matrix → Customizations lets you switch themes instantly; changes persist across sessions
 - Components use only theme tokens — no hardcoded colors
 
@@ -339,7 +341,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Routines**: WHEN/IF/THEN recipe builder with triggers, conditions, and actions
 - **Personality**: Persona configuration, presets, context, and LLM settings
 - **Integrations**: Home Assistant, SmartThings, Gmail, Calendar, OpenWeather, and Google setup
-- **Customizations**: Live theme picker (Cyan/Navy, Amber/Charcoal, Light/Teal)
+- **Customizations**: Live theme picker (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite)
 - **Music**: Spotify player with now-playing, visualizer, playlists, devices, and speaker casting
 - **System**: Network, database, config editor, and service management
 

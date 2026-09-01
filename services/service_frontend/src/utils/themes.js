@@ -238,6 +238,158 @@ export const themes = {
       dim: 'rgba(13, 148, 136, 0.1)', // Dim teal background
       grid: '#e2e8f0',     // Light grid lines
     }
+  },
+
+  matrix: {
+    // Substrate colors - near-black with a faint green cast
+    bg: 'hsl(120, 20%, 3%)',
+    bgSecondary: 'hsl(120, 15%, 6%)',
+    bgTertiary: 'hsl(120, 12%, 9%)',
+
+    // Primary colors - phosphor green
+    primary: 'hsl(135, 95%, 45%)',
+    primaryHover: 'hsl(135, 95%, 55%)',
+    primaryLight: 'hsl(135, 80%, 12%)', // dark green fill for active states
+
+    // Secondary colors - dimmer lime-green
+    secondary: 'hsl(95, 70%, 45%)',
+    secondaryHover: 'hsl(95, 70%, 55%)',
+    secondaryLight: 'hsl(120, 15%, 8%)',
+
+    // Accent colors - bright terminal lime
+    accent: 'hsl(115, 100%, 55%)',
+    accentHover: 'hsl(115, 100%, 62%)',
+    accentLight: 'hsl(120, 15%, 8%)',
+
+    // Environmental accent - chartreuse (sun, location, environment)
+    env: 'hsl(75, 90%, 50%)',
+    envLight: 'hsl(75, 60%, 12%)',
+    envBorder: 'hsla(75, 90%, 50%, 0.35)',
+
+    // Secondary brand accent - green (keeps the monochrome look)
+    magenta: 'hsl(135, 95%, 45%)',
+    magentaLight: 'hsla(135, 95%, 45%, 0.15)',
+
+    // Text colors - green-tinted phosphor
+    textPrimary: 'hsl(120, 45%, 85%)',
+    textSecondary: 'hsl(120, 30%, 65%)',
+    textTertiary: 'hsl(120, 20%, 45%)',
+    textInverse: 'hsl(120, 20%, 3%)',
+
+    // Border colors - glowing green edges
+    border: 'hsla(135, 95%, 45%, 0.4)',
+    borderActive: 'hsl(135, 95%, 45%)',
+    borderSecondary: 'hsla(135, 95%, 45%, 0.15)',
+
+    // Glow color - green halo
+    glow: 'hsla(135, 95%, 45%, 0.6)',
+
+    // Status colors
+    success: 'hsl(135, 95%, 45%)', // green
+    warning: 'hsl(75, 90%, 50%)',  // chartreuse
+    warningLight: 'hsl(75, 60%, 12%)',
+    error: 'hsl(0, 85%, 60%)',     // red still reads as an alert
+    info: 'hsl(160, 60%, 45%)',    // teal-green
+
+    // Card and surface colors - near-black with green border glow
+    card: 'hsla(120, 20%, 3%, 0.65)',
+    cardHover: 'hsla(120, 18%, 8%, 0.85)',
+    cardBorder: 'hsla(135, 95%, 45%, 0.35)',
+
+    // Input colors
+    input: 'hsla(120, 20%, 5%, 0.75)',
+    inputBorder: 'hsla(135, 95%, 45%, 0.4)',
+    inputFocus: 'hsl(135, 95%, 45%)',
+
+    // Backdrop blur overlay
+    backdrop: 'hsla(120, 20%, 3%, 0.85)',
+
+    // Tactical FUI additions
+    tactical: {
+      bg: '#020402',       // Near-pure black
+      panel: '#081008',    // Faint green-black panel
+      border: '#1a3a1a',   // Dim green borders
+      accent: '#22dd22',   // Terminal green accent
+      text: '#7aa87a',     // Muted green text
+      dim: 'rgba(34, 221, 34, 0.1)', // Dim green background
+      grid: '#0f1f0f',     // Grid lines
+    }
+  },
+
+  graphite: {
+    // Substrate colors - cold blue-gray slate
+    bg: 'hsl(215, 18%, 10%)',
+    bgSecondary: 'hsl(215, 16%, 14%)',
+    bgTertiary: 'hsl(215, 14%, 18%)',
+
+    // Primary colors - steel / ice blue
+    primary: 'hsl(205, 70%, 60%)',
+    primaryHover: 'hsl(205, 75%, 68%)',
+    primaryLight: 'hsl(205, 40%, 20%)', // dark steel fill for active states
+
+    // Secondary colors - muted periwinkle
+    secondary: 'hsl(230, 25%, 62%)',
+    secondaryHover: 'hsl(230, 30%, 70%)',
+    secondaryLight: 'hsl(215, 16%, 16%)',
+
+    // Accent colors - cool cyan-steel
+    accent: 'hsl(190, 65%, 58%)',
+    accentHover: 'hsl(190, 70%, 65%)',
+    accentLight: 'hsl(215, 16%, 16%)',
+
+    // Environmental accent - amber/yellow (sun, location, environment)
+    env: '#eab308',
+    envLight: 'hsl(45, 50%, 16%)',
+    envBorder: 'hsla(45, 90%, 55%, 0.35)',
+
+    // Secondary brand accent - periwinkle
+    magenta: 'hsl(230, 25%, 62%)',
+    magentaLight: 'hsla(230, 25%, 62%, 0.15)',
+
+    // Text colors - cool off-white
+    textPrimary: 'hsl(210, 20%, 90%)',
+    textSecondary: 'hsl(210, 14%, 68%)',
+    textTertiary: 'hsl(210, 12%, 48%)',
+    textInverse: 'hsl(215, 18%, 10%)',
+
+    // Border colors - steel edges
+    border: 'hsla(205, 70%, 60%, 0.35)',
+    borderActive: 'hsl(205, 70%, 60%)',
+    borderSecondary: 'hsla(205, 70%, 60%, 0.14)',
+
+    // Glow color - soft steel halo
+    glow: 'hsla(205, 70%, 60%, 0.5)',
+
+    // Status colors
+    success: 'hsl(150, 55%, 50%)',
+    warning: 'hsl(38, 90%, 58%)',
+    warningLight: 'hsl(38, 60%, 16%)',
+    error: 'hsl(2, 75%, 62%)',
+    info: 'hsl(205, 70%, 60%)',
+
+    // Card and surface colors - cold slate with steel border glow
+    card: 'hsla(215, 20%, 7%, 0.65)',
+    cardHover: 'hsla(215, 18%, 16%, 0.85)',
+    cardBorder: 'hsla(205, 70%, 60%, 0.3)',
+
+    // Input colors
+    input: 'hsla(215, 20%, 9%, 0.75)',
+    inputBorder: 'hsla(205, 70%, 60%, 0.35)',
+    inputFocus: 'hsl(205, 70%, 60%)',
+
+    // Backdrop blur overlay
+    backdrop: 'hsla(215, 18%, 8%, 0.85)',
+
+    // Tactical FUI additions
+    tactical: {
+      bg: '#12161c',       // Cold graphite
+      panel: '#1a2028',    // Slightly lighter panel bg
+      border: '#333c47',   // Steel-grey borders
+      accent: '#5aa9d6',   // Steel-blue accent
+      text: '#8b97a6',     // Muted text
+      dim: 'rgba(90, 169, 214, 0.1)', // Dim steel background
+      grid: '#20262f',     // Grid lines
+    }
   }
 };
 

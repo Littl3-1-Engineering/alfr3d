@@ -16,6 +16,14 @@ const THEME_DETAILS = {
     label: 'Light / Teal',
     description: 'Whites and grays with teal primary and red secondary highlights.',
   },
+  matrix: {
+    label: 'Matrix / Green',
+    description: 'Near-black substrate with a phosphor-green, green-on-black terminal look.',
+  },
+  graphite: {
+    label: 'Steel / Graphite',
+    description: 'Cold blue-gray slate with a steel-blue primary accent.',
+  },
 };
 
 const ThemeCustomization = () => {
