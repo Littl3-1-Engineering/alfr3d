@@ -281,11 +281,11 @@ handing out full control to anyone who can reach it.
   role), and full owner/technoking administration of other users through the web UI — add/edit/
   delete, plus a generate-and-display password reset — with every mutating control hidden from
   non-admins (the roster itself stays visible read-only). See `todo/todo_auth_rbac.md`,
-  `todo/todo_onboarding_first_user.md`, `todo/todo_user_management.md`, and
-  `todo/todo_household_admin_ui.md` for full history.
+  `todo/todo_user_management.md`, and `todo/todo_household_admin_ui.md` for full history.
 - **Decided against**: an emailed onboarding-OTP step — `claim`/`bootstrap` already require
-  physical-device or local-network access, so an emailed code would add no real security there
-  (see `todo/todo_email_service.md`'s Decision section). Household units don't send email at all.
+  physical-device or local-network access, so an emailed code would add no real security there.
+  Household units don't send email at all (the transactional-email plan was closed out — see the
+  "Transactional email service — decided against" row in the Notion Alfr3d Timeline).
 - **Not yet shipped**: an owner-administers-household surface on the Nexus Launcher (a v2
   decision, not yet scoped).
 - **Solo-owner lockout recovery**: `setup/reset_owner_password.py` resets any user's password
@@ -427,7 +427,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 
 ### Database Architecture
 
-MySQL, 21 tables. Source of truth is `setup/alfr3d_schema.dbml` (DBML, paste into [dbdiagram.io](https://dbdiagram.io) to regenerate); the image below is exported from there (2026-08-26) — re-run whenever a migration meaningfully changes the schema, per `todo/todo_db_schema_diagram.md`.
+MySQL, 21 tables. Source of truth is `setup/alfr3d_schema.dbml` (DBML, paste into [dbdiagram.io](https://dbdiagram.io) to regenerate); the image below is exported from there (2026-08-26) — re-run whenever a migration meaningfully changes the schema.
 
 ![ALFR3D database schema](setup/alfr3d_schema.png)
 
