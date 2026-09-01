@@ -232,29 +232,59 @@ class TestSpeakService:
                         None,
                     )
 
-    def test_process_speak_message_no_key_uses_quip(self):
-        """No API key -> personality quip spoken"""
+    def test_process_speak_message_no_key_uses_quip_when_gate_hits(self):
+        """No API key + quip gate rolls a hit -> personality quip spoken"""
         with patch("services.service_speak.app.generate_tts") as mock_generate:
             with patch("services.service_speak.app.send_event"):
-                mock_generate.return_value = "test.mp3"
+                with patch("services.service_speak.app.random.randint", return_value=1):
+                    mock_generate.return_value = "test.mp3"
 
-                with self._patch_pipeline(
-                    get_claude_config=lambda: {},
-                    get_quips_for_environment=lambda: [{"type": "smart", "quips": "random quip"}],
-                    select_quip_by_traits=lambda quips, traits: "random quip",
-                ):
-                    message = MagicMock()
-                    message.value = "Test message"
+                    with self._patch_pipeline(
+                        get_claude_config=lambda: {},
+                        get_quips_for_environment=lambda: [
+                            {"type": "smart", "quips": "random quip"}
+                        ],
+                        select_quip_by_traits=lambda quips, traits: "random quip",
+                    ):
+                        message = MagicMock()
+                        message.value = "Test message"
 
-                    process_speak_message(message)
+                        process_speak_message(message)
 
-                    mock_generate.assert_called_once_with(
-                        "random quip",
-                        "Coqui",
-                        "tts_models/multilingual/multi-dataset/xtts_v2",
-                        None,
-                        None,
-                    )
+                        mock_generate.assert_called_once_with(
+                            "random quip",
+                            "Coqui",
+                            "tts_models/multilingual/multi-dataset/xtts_v2",
+                            None,
+                            None,
+                        )
+
+    def test_process_speak_message_no_key_speaks_original_when_gate_misses(self):
+        """No API key + quip gate rolls a miss -> original text spoken, no quip swap"""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event"):
+                with patch("services.service_speak.app.random.randint", return_value=2):
+                    mock_generate.return_value = "test.mp3"
+
+                    with self._patch_pipeline(
+                        get_claude_config=lambda: {},
+                        get_quips_for_environment=lambda: [
+                            {"type": "smart", "quips": "random quip"}
+                        ],
+                        select_quip_by_traits=lambda quips, traits: "random quip",
+                    ):
+                        message = MagicMock()
+                        message.value = "Test message"
+
+                        process_speak_message(message)
+
+                        mock_generate.assert_called_once_with(
+                            "Test message",
+                            "Coqui",
+                            "tts_models/multilingual/multi-dataset/xtts_v2",
+                            None,
+                            None,
+                        )
 
     def test_get_tts_failure(self):
         """Test TTS loading failure handling"""
