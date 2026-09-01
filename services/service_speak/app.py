@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import logging
+import random
 import threading
 import time
 import orjson
@@ -47,6 +48,13 @@ logger.addHandler(handler)
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 AUDIO_STORAGE_PATH = os.environ.get("AUDIO_STORAGE_PATH", "/tmp/audio")
 AUDIO_RETENTION_MINUTES = int(os.environ.get("AUDIO_RETENTION_MINUTES", "5"))
+
+# On the no-LLM path a matched quip *replaces* the spoken line entirely, so applying one
+# every single time makes ALFR3D sound like it's performing a bit on every utterance (and
+# drops the real message). Gate it: only roughly 1 in QUIP_ODDS speaks gets quip-substituted,
+# the rest speak their original text. Mirrors personality.py's TICS_FREQUENCY gating of the
+# LLM-path verbal tics.
+QUIP_ODDS = int(os.environ.get("SPEAK_QUIP_ODDS", "8"))
 
 # Heartbeat file the Kafka consumer touches on every connect attempt and poll cycle. A stale
 # heartbeat means the consumer thread is stuck (e.g. hung inside a blocking Kafka connect at
@@ -402,7 +410,7 @@ def process_speak_message(message):
                         logger.info(f"LLM enhanced text: {text[:50]}...")
                     else:
                         logger.warning("Claude call failed, speaking original text")
-                else:
+                elif QUIP_ODDS > 0 and random.randint(1, QUIP_ODDS) == 1:
                     quips = get_quips_for_environment()
                     if quips:
                         selected_quip = select_quip_by_traits(quips, blended)
