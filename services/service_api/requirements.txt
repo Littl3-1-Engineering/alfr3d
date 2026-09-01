@@ -10,7 +10,7 @@ PyJWT==2.13.0
 requests==2.33.0
 orjson==3.11.9
 aioesphomeapi==45.13.1
-zeroconf==0.150.0
+zeroconf==0.151.1
 pydantic>=2.13.4
 websockets
 anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability
