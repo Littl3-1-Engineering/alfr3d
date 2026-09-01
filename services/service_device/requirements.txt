@@ -1,7 +1,7 @@
 kafka-python-ng==2.2.3
 pymysql==1.2.0
 DBUtils==3.2.0
-cryptography==50.0.0
+cryptography==50.0.1
 google-auth
 requests==2.34.2
 orjson==3.12.0
