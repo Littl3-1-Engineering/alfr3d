@@ -47,15 +47,14 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   hand) without needing new code — see each doc's own "Not yet done" section for the concrete
   retry conditions.
 
-**Just needs a `git push` (both already ahead of `origin/main` by 3 commits, nothing to build):**
-- **`alfr3d`**: bumped to v0.4.0 "Full Spectrum Awareness" — the SA-1..SA-12 roadmap docs and the
-  Wave 1-4 production deployment record.
-- **`alfr3d_deck`**: bumped to 0.1.34 — the Kotlin structured-`data` migration (SA-5 Phase 2 + the
-  remaining-7-parser follow-up) and SA-6 Phase 3's travel leave-by card, all committed. Confirmed
-  on-device 2026-08-30 against the real live backend (ASUS_AI2202 over wireless adb/Tailscale) —
-  `MusicEnergy.parseAlfr3dSignal()` reads real `data.energy`/`data.genre` (not the regex fallback);
-  see `todo_structured_card_payload.md`'s "Not yet done" section for the full verification detail.
-  Deleting the now-redundant regex fallback is a deliberate follow-up call, not yet done.
+**All pushed and released as of 2026-09-01 — nothing outstanding here:**
+- **`alfr3d`**: v0.4.0/v0.4.1 plus the 2026-08-31 hardening batch (hung-Kafka-consumer recovery,
+  version-string desync fix, offline-device control gating, auth refresh dedupe, CI migration-head
+  fix, systemd retry) — all committed, pushed, working tree clean.
+- **`alfr3d_deck`**: 0.1.34, and the now-redundant regex fallback in `MusicEnergy` **has been
+  deleted** (commit `1f301dd`, "refactor(context): remove regex fallback in MusicEnergy parsing")
+  now that the structured `data.energy`/`data.genre` path is confirmed live on-device. Working
+  tree clean.
 
 ## Since this was written
 
@@ -73,9 +72,30 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
 - **2026-08-30 (later)**: found both `alfr3d` and `alfr3d_deck` already committed/released
   (0.4.0 and 0.1.34) and clean — the "uncommitted" note above is stale, superseded by an
   intervening commit. With adb access to a real device (wireless, over Tailscale), verified
-  `alfr3d_deck`'s structured-`data` path on-device against the live backend — see
-  `todo_structured_card_payload.md`'s update for detail. Both repos are 3 commits ahead of
-  `origin/main`, not yet pushed.
+  `alfr3d_deck`'s structured-`data` path (SA-5) on-device against the live backend; the regex
+  fallback in `MusicEnergy` was then deleted (commit `1f301dd`). SA-5 is fully closed — its
+  `todo_structured_card_payload.md` was removed in the 2026-09-01 cleanup.
+- **2026-08-31**: `alfr3d` hardening session (not SA-roadmap) — six fix commits landed and were
+  pushed: `de9d74e9` Nexus quick-controls pane for favorite IoT devices (+ `cd8253e4` README),
+  `bda4922b` auth refresh-call dedupe (spurious idle logout), `595df241` VERSION-file desync /
+  stale hardcoded version in the Nexus UI, `83c0ad40` hide live controls for offline smarthome
+  devices, `b8463ed4` CI stop hardcoding the migration head revision, `a9763c3d` systemd retry on
+  transient boot-time compose failures, `651454e7` recover from a hung service-speak Kafka
+  consumer (~44h silent outage) + gate LLM verbal tics to ~1 in 8.
+- **2026-09-01**: todo cleanup pass. Closed the last two buildable open items — the personality
+  verbal-tic/quip overuse (LLM path fixed in `651454e7`; added matching ~1-in-8 gating to the
+  no-LLM quip-substitution path in `service_speak/app.py` with tests) and the two extra UI
+  themes `matrix` + `graphite` (theme-CSS generator generalized to iterate all themes). Then
+  synced the Notion **Alfr3d Timeline** and **deleted 24 fully-completed todo docs** across the
+  three repos (all recoverable from git history) — every remaining `todo/` file here is either a
+  reference doc or has a genuine blocker (real-world event, real hardware, paid Aikido plan, or
+  pending on-device verification). Deleted from `alfr3d/todo/`: implementation_plan,
+  optimizations, optimizations_v2, personality, todo_customizations, todo_branch_naming_consistency,
+  todo_container_autostart, todo_db_schema_diagram, todo_encrypt_secrets_at_rest,
+  todo_flask_to_fastapi, todo_onboarding_first_user, todo_routines, todo_theme_centralization,
+  todo_websockets, tree_of_alfr3d, todo_music_playlist_recommendation, todo_structured_card_payload,
+  todo_ble_presence_sensing, todo_email_service, todo_free_routing_alternatives. Plus deck's
+  app_drawer_cache / auth_rbac / launcher_rotation_lock and littl31's mobile_scramble_jitter.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
