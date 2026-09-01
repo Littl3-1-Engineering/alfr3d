@@ -20,11 +20,13 @@ const renderWithTheme = (currentTheme, setCurrentTheme) => {
 }
 
 describe('ThemeCustomization', () => {
-  it('renders all three theme options', () => {
+  it('renders all theme options', () => {
     renderWithTheme('dark', () => {})
     expect(screen.getByText('Cyan / Navy')).toBeInTheDocument()
     expect(screen.getByText('Amber / Charcoal')).toBeInTheDocument()
     expect(screen.getByText('Light / Teal')).toBeInTheDocument()
+    expect(screen.getByText('Matrix / Green')).toBeInTheDocument()
+    expect(screen.getByText('Steel / Graphite')).toBeInTheDocument()
   })
 
   it('marks the active theme as selected', () => {
