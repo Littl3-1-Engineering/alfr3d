@@ -21,7 +21,7 @@ const FAN_SPEEDS = ['off', 'low', 'medium', 'high'];
 // Compact single-tile counterpart to ControlBlade.jsx: one toggle + one contextual dial per
 // device, sized to fit up to 10 favorites in a grid rather than one full anchored popover per
 // device. Talks to the same /api/iot/devices/{id}/control endpoint and command names.
-const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove }) => {
+const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }) => {
   const deviceType = device.device_type;
   const Icon = TYPE_ICONS[deviceType] || Power;
   const state = device.last_state || {};
@@ -243,10 +243,18 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove }) => {
     }
   };
 
+  const handleTileClick = (e) => {
+    if (editMode || !onSelect) return;
+    onSelect(device, { x: e.clientX, y: e.clientY });
+  };
+
   return (
     <motion.div
       whileHover={{ scale: 1.02 }}
-      className="relative border border-fui-border bg-fui-panel/60 p-2 flex flex-col gap-2 min-w-0"
+      onClick={handleTileClick}
+      className={`relative border border-fui-border bg-fui-panel/60 p-2 flex flex-col gap-2 min-w-0 ${
+        !editMode && onSelect ? 'cursor-pointer' : ''
+      }`}
     >
       {editMode && (
         <button
@@ -264,7 +272,9 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove }) => {
         </span>
         {loading && <RefreshCw className="w-3 h-3 text-fui-accent animate-spin flex-shrink-0" />}
       </div>
-      {renderControl()}
+      <div onClick={(e) => e.stopPropagation()}>
+        {renderControl()}
+      </div>
     </motion.div>
   );
 };
@@ -293,6 +303,7 @@ FavoriteDeviceTile.propTypes = {
   canControl: PropTypes.bool,
   editMode: PropTypes.bool,
   onRemove: PropTypes.func,
+  onSelect: PropTypes.func,
 };
 
 export default FavoriteDeviceTile;

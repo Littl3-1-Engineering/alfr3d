@@ -5,6 +5,7 @@ import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
+import TacticalPanelVariant5 from './TacticalPanelVariant5';
 
 const ControlBlade = ({ device, onClose, anchor }) => {
   const { isAuthenticated } = useAuth();
@@ -173,6 +174,10 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   const isSmartHomeDevice = device?.source !== undefined;
   const canControl = isSmartHomeDevice && isAuthenticated;
   const deviceType = device?.device_type || device?.deviceType;
+  // Raw /api/iot/devices payloads (FavoritesPanel) carry a boolean `online`; Blueprint's merged
+  // map/list shape instead synthesizes a `state: 'online'|'offline'` string for both local and
+  // iot devices. Prefer the boolean when present so both callers agree on online/offline.
+  const isOnline = device?.online !== undefined ? device.online : device?.state !== 'offline';
 
   const renderLightControls = () => (
     <>
@@ -420,7 +425,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   );
 
   const renderDeviceControls = () => {
-    if (device.state === 'offline') {
+    if (!isOnline) {
       return (
         <div className="flex items-center justify-center py-8">
           <span className="text-text-secondary uppercase tracking-widest text-sm">Offline</span>
@@ -510,36 +515,36 @@ const ControlBlade = ({ device, onClose, anchor }) => {
           animate={{ opacity: panelStyle ? 1 : 0, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
           transition={{ duration: 0.2 }}
-          className="w-80 glass z-50 p-6 rounded-2xl shadow-lg"
+          className="w-80 z-50"
           style={panelStyle || { position: 'fixed', left: -9999, top: -9999 }}
         >
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-primary drop-shadow-lg">{device.name}</h2>
-            <button
-              onClick={onClose}
-              className="p-2 rounded-full hover:bg-card-hover transition-colors"
-            >
-              <X className="w-5 h-5 text-text-secondary" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="absolute -top-2 -right-2 w-6 h-6 flex items-center justify-center border border-fui-border bg-fui-panel text-fui-text hover:border-fui-accent z-20"
+            title="Close"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
 
-          <div className="space-y-6">
-            {renderDeviceControls()}
+          <TacticalPanelVariant5 title={device.name}>
+            <div className="space-y-6">
+              {renderDeviceControls()}
 
-            {isSmartHomeDevice && (
-              <div className="text-xs text-text-tertiary space-y-1">
-                <p>Source: {device.source === 'homeassistant' ? 'Home Assistant' : device.source === 'smartthings' ? 'SmartThings' : 'Unknown'}</p>
-                <p>Room: {device.room || 'Unknown'}</p>
-                <p>Type: {deviceType}</p>
-                <p>Online: {device.state === 'online' ? 'Yes' : 'No'}</p>
-              </div>
-            )}
+              {isSmartHomeDevice && (
+                <div className="text-xs text-text-tertiary space-y-1">
+                  <p>Source: {device.source === 'homeassistant' ? 'Home Assistant' : device.source === 'smartthings' ? 'SmartThings' : 'Unknown'}</p>
+                  <p>Room: {device.room || 'Unknown'}</p>
+                  <p>Type: {deviceType}</p>
+                  <p>Online: {isOnline ? 'Yes' : 'No'}</p>
+                </div>
+              )}
 
-            <button className="w-full flex items-center justify-center space-x-2 py-3 bg-card/50 rounded-lg hover:bg-card-hover/50 transition-colors">
-              <Settings className="w-5 h-5 text-primary" />
-              <span className="text-text-secondary">Advanced Settings</span>
-            </button>
-          </div>
+              <button className="w-full flex items-center justify-center space-x-2 py-3 bg-card/50 rounded-lg hover:bg-card-hover/50 transition-colors">
+                <Settings className="w-5 h-5 text-primary" />
+                <span className="text-text-secondary">Advanced Settings</span>
+              </button>
+            </div>
+          </TacticalPanelVariant5>
         </motion.div>
       )}
     </AnimatePresence>
