@@ -6,8 +6,9 @@ import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
 import socket from '../utils/socket';
-import TacticalPanelVariant2 from './TacticalPanelVariant2';
+import TacticalPanelVariant6 from './TacticalPanelVariant6';
 import FavoriteDeviceTile from './FavoriteDeviceTile';
+import ControlBlade from './ControlBlade';
 
 const MAX_FAVORITES = 10;
 
@@ -22,6 +23,18 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [editMode, setEditMode] = useState(false);
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [selectedDeviceAnchor, setSelectedDeviceAnchor] = useState(null);
+
+  const handleDeviceSelect = (device, anchor) => {
+    setSelectedDevice(device);
+    setSelectedDeviceAnchor(anchor);
+  };
+
+  const closeControlBlade = () => {
+    setSelectedDevice(null);
+    setSelectedDeviceAnchor(null);
+  };
 
   const fetchJson = (url) => apiFetch(url).then((r) => (r.ok ? r.json() : Promise.reject(r.status)));
 
@@ -43,10 +56,9 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
 
     const handleDevicesUpdate = (devices) => {
       setAllDevices(devices);
-      setFavorites((prev) => {
-        const byId = new Map(devices.map((d) => [d.id, d]));
-        return prev.map((f) => byId.get(f.id) || f);
-      });
+      const byId = new Map(devices.map((d) => [d.id, d]));
+      setFavorites((prev) => prev.map((f) => byId.get(f.id) || f));
+      setSelectedDevice((prev) => (prev ? byId.get(prev.id) || prev : prev));
     };
     socket.on('iot_devices', handleDevicesUpdate);
     return () => socket.off('iot_devices', handleDevicesUpdate);
@@ -80,9 +92,9 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -30 }}
           transition={{ duration: 0.3, ease: 'easeInOut' }}
-          className="fixed top-20 left-1/2 -translate-x-1/2 z-40 w-[min(94vw,680px)]"
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-40 w-fit max-w-[94vw]"
         >
-          <TacticalPanelVariant2 title="Qu1ck C0ntr0ls">
+          <TacticalPanelVariant6 title="Qu1ck C0ntr0ls">
             <div className="absolute -top-1 right-8 flex items-center gap-2 z-10">
               {isAuthenticated && (
                 <button
@@ -118,9 +130,9 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
 
             {isAuthenticated && !loading && !error && !editMode && (
               favorites.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {favorites.map((device) => (
-                    <FavoriteDeviceTile key={device.id} device={device} canControl />
+                    <FavoriteDeviceTile key={device.id} device={device} canControl onSelect={handleDeviceSelect} />
                   ))}
                 </div>
               ) : (
@@ -166,7 +178,9 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
                 })}
               </div>
             )}
-          </TacticalPanelVariant2>
+          </TacticalPanelVariant6>
+
+          <ControlBlade device={selectedDevice} anchor={selectedDeviceAnchor} onClose={closeControlBlade} />
         </motion.div>
       )}
     </AnimatePresence>
