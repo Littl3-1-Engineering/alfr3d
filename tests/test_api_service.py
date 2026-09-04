@@ -69,8 +69,8 @@ def test_api_get_users(mock_db_connection, api_client):
     _mock_connection(
         mock_db_connection,
         [
-            (1, "user1", "email1", "about1", "online", "resident", None, None),
-            (2, "user2", "email2", "about2", "offline", "guest", None, None),
+            (1, "user1", "email1", "about1", "online", "resident", None, None, "boss"),
+            (2, "user2", "email2", "about2", "offline", "guest", None, None, None),
         ],
     )
 
@@ -80,6 +80,8 @@ def test_api_get_users(mock_db_connection, api_client):
     assert isinstance(data, list)
     assert len(data) == 2
     assert data[0]["name"] == "user1"
+    assert data[0]["title"] == "boss"
+    assert data[1]["title"] is None
 
 
 @patch("dependencies.db_connection")
@@ -268,6 +270,24 @@ def test_put_user_self_service_edit_succeeds(mock_db_connection, api_client):
     assert response.status_code == 200
     mock_cursor.execute.assert_called_once_with(
         "UPDATE user SET username = %s WHERE id = %s", ["New Name", 2]
+    )
+
+
+@patch("routes.users.db_connection")
+def test_put_user_self_service_edit_sets_title(mock_db_connection, api_client):
+    """A resident setting their own `title` (free-text form of address) is a plain field
+    update, same self-service bypass as `name`."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.put(
+        "/api/users/2", json={"title": "boss"}, headers=_bearer(2, "resident")
+    )
+    assert response.status_code == 200
+    mock_cursor.execute.assert_called_once_with(
+        "UPDATE user SET title = %s WHERE id = %s", ["boss", 2]
     )
 
 

@@ -20,6 +20,7 @@ CREATE TABLE `user` (
   `email` VARCHAR(128) NULL DEFAULT NULL, -- User's email address
   `password_hash` VARCHAR(128) NULL DEFAULT NULL, -- Hashed password for authentication
   `about_me` VARCHAR(256) NULL DEFAULT NULL, -- Short description or bio of the user
+  `title` VARCHAR(64) NULL DEFAULT NULL, -- Free-text form of address the user prefers Alfred to use (e.g. "boss", "Dr. Athos", or a first name)
   `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
   `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp when user was created
