@@ -19,6 +19,7 @@ from kafka.errors import KafkaError  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer, get_kafka_url, db_utils  # noqa: E402
+from common.day_context import get_day_context  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -447,6 +448,15 @@ def speak_welcome(producer, user_name, user_type, last_online):
         full_greeting = f"{base_greeting}. {time_suffix}"
     else:
         full_greeting = base_greeting
+
+    # Lead with a time-of-day greeting when it's daytime; day_context returns an
+    # empty greeting overnight, so late arrivals just get "Welcome home, ...".
+    try:
+        tod_greeting = get_day_context(ALFR3D_ENV_NAME).greeting
+        if tod_greeting:
+            full_greeting = f"{tod_greeting}. {full_greeting}"
+    except Exception as e:
+        logger.warning(f"speak_welcome: day context unavailable ({e})")
 
     if not check_mute():
         producer.send("speak", full_greeting.encode("utf-8"))

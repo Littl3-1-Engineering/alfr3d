@@ -62,6 +62,8 @@ from kafka import KafkaConsumer  # user to write messages to Kafka
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer  # noqa: E402
 from common import db_utils  # noqa: E402
+from common import day_context  # noqa: E402
+from common import timeofday  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -415,6 +417,20 @@ class MyDaemon:
         global QUIP_WAIT_TIME
 
         if time.time() - QUIP_START_TIME > QUIP_WAIT_TIME * 60:
+            # Unprompted chatter should taper off before bed. be_smart() only
+            # runs inside waking hours already (check_mute gates the caller), so
+            # the new condition here is the wind-down tail -- the ~45 min before
+            # the Bedtime routine. Routine quips and answers to real requests
+            # still speak; this timer does not.
+            try:
+                if day_context.get_day_context(ENV_NAME).in_wind_down:
+                    logger.info("Winding down for the night - skipping idle quip")
+                    QUIP_START_TIME = time.time()
+                    QUIP_WAIT_TIME = randint(10, 50)
+                    return
+            except Exception as e:
+                logger.warning(f"be_smart: day context check failed ({e}); speaking anyway")
+
             logger.info("It is time to be a smartass")
 
             quip = get_random_quip("smart")
@@ -466,15 +482,7 @@ class MyDaemon:
                 desc, subj = None, None
 
             local_dt = db_utils.get_env_local_time(ENV_NAME)
-            hour = local_dt.hour
-            if 6 <= hour < 12:
-                time_of_day = "morning"
-            elif 12 <= hour < 18:
-                time_of_day = "day"
-            elif 18 <= hour < 22:
-                time_of_day = "evening"
-            else:
-                time_of_day = "night"
+            time_of_day = timeofday.coarse_bucket(local_dt.hour)
 
             reco = spotify_utils.recommend(
                 total_people=total_people,
@@ -650,6 +658,7 @@ class MyDaemon:
         try:
             frame.local_dt = db_utils.get_env_local_time(ENV_NAME)
             frame.day_mood = mood_utils.get_day_mood(frame.local_dt)
+            frame.day_ctx = day_context.get_day_context(ENV_NAME, now=frame.local_dt)
         except Exception as e:
             logger.error(f"Context frame: day_mood build failed: {e}")
 

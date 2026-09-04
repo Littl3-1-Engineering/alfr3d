@@ -6,12 +6,14 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_connection, db_utils  # noqa: E402
+from common.day_context import get_day_context  # noqa: E402
 
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME", "default")
 
-# Quip types reserved for their matching routines (Sunrise/Sunset/Bedtime).
-# They must not be picked randomly by the personality system.
-ROUTINE_QUIP_TYPES = {"sunrise", "sunset", "bedtime"}
+# Quip types reserved for their matching routines (Sunrise/Morning/Sunset/Bedtime).
+# They must not be picked randomly by the personality system -- "Hello sunshine"
+# living in the generic 'smart' pool is exactly how it got shouted at 22:00.
+ROUTINE_QUIP_TYPES = {"sunrise", "morning", "sunset", "bedtime"}
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +205,11 @@ def get_context_by_environment(env_id=None):
         if result:
             context = {
                 "repeat_count": result["repeat_count"] or 0,
-                "hour": result["hour"] or db_utils.get_env_local_time(ENV_NAME).hour,
+                # Always the live env-local hour. The context.hour column is a
+                # dead relic -- nothing writes it, so it sat frozen (at 12) and
+                # the "cooler after dark" nudge in calculate_mood_offset() never
+                # fired.
+                "hour": db_utils.get_env_local_time(ENV_NAME).hour,
                 "weather": result["weather"] or "clear",
                 "mood": result["mood"] or "neutral",
                 "last_error_count": result["last_error_count"] or 0,
@@ -361,6 +367,16 @@ def blend_traits(base, offset):
     return {k: max(0.0, min(1.0, v + offset.get(k, 0.0))) for k, v in base.items()}
 
 
+def _safe_day_context():
+    """DayContext for this environment, or None if the clock lookup fails --
+    a personality flourish must never be what breaks TTS."""
+    try:
+        return get_day_context(ENV_NAME)
+    except Exception as e:
+        logger.warning(f"day context unavailable ({e})")
+        return None
+
+
 def get_blended_personality(env_id=None):
     personality = get_personality_by_environment(env_id)
     context = get_context_by_environment(env_id)
@@ -389,6 +405,7 @@ def get_blended_personality(env_id=None):
 
     personality["blended"] = blended
     personality["mood"] = determine_mood(blended, context)
+    personality["day_ctx"] = _safe_day_context()
 
     logger.debug(
         f"Returning blended personality: "
@@ -460,6 +477,30 @@ def build_llm_system_prompt(personality):
     elif blended.get("sarcasm", 0.5) > 0.4:
         sarcasm_instruction = "Add occasional sarcasm and wit."
 
+    # Give the model the household's real local time. Without it, an ambiguous
+    # input like the "Hello sunshine" quip got rewritten to "Good morning!" at
+    # 22:00 -- the model had no way to know it was night. The DayContext is
+    # attached by get_blended_personality(); it's absent only in unit tests or
+    # when the clock lookup failed.
+    dc = personality.get("day_ctx")
+    if dc is None:
+        time_line = ""
+        greeting_rule = (
+            "- Do not open with a time-of-day greeting unless the request is itself a greeting"
+        )
+    elif dc.greeting:
+        time_line = f"- Current time: {dc.describe()}"
+        greeting_rule = (
+            f'- Only greet by time of day with a "{dc.part_of_day}" greeting '
+            f'("{dc.greeting}"), and only if the request is itself a greeting'
+        )
+    else:
+        time_line = f"- Current time: {dc.describe()}"
+        greeting_rule = (
+            "- It is night: never greet by time of day "
+            '(no "good morning", "good afternoon", "good evening")'
+        )
+
     return f"""You are ALFR3D, a home assistant named "Alfred".
 
 CRITICAL: NEVER spell out ALFR3D as letters. ALWAYS say "Alfred" when referring to yourself by name.
@@ -471,9 +512,11 @@ Current Personality State:
 - Warmth: {blended.get("warmth", 0.5):.1f}/1.0
 - Patience: {blended.get("patience", 1.0):.1f}/1.0
 - Mood: {personality.get("mood", "neutral")}
+{time_line}
 
 Voice Constraints:
 - When speaking aloud, NEVER say "A-L-F-R-3-D" or spell out letters - ALWAYS say "Alfred"
+{greeting_rule}
 - There is no microphone or speech-to-text input: whatever you say is never heard, so a genuine \
 question never gets an answer. NEVER ask a question that expects or waits for a reply (no "What \
 would you like me to do?", "Should I proceed?", "Anything else?", etc.)

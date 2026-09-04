@@ -23,7 +23,7 @@ from gtts import gTTS
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer as _get_producer, get_kafka_url, get_connection  # noqa: E402
-from common.db_utils import get_env_local_time  # noqa: E402
+from common import db_utils  # noqa: E402
 
 # Local imports
 from personality import (  # noqa: E402
@@ -76,114 +76,20 @@ def check_mute() -> bool:
     """
     Description:
              checks what time it is and decides if Alfr3d should be quiet
-             - between wake-up time and bedtime
-             - only when Athos is at home
-             - only when 'owner' is at home
+             - between wake-up time and bedtime (the Morning..Bedtime routine window)
+             - only when an owner/technoking/resident is online to hear it
+
+    Delegates to the shared implementation in common.db_utils so the waking-hours
+    window comes from one place (day_context) -- this used to be a ~110-line
+    duplicate of check_mute_optimized().
     """
     logger.info("Checking if Alfr3d should be mute")
-    result = False
 
     if not ENV_NAME:
         logger.error("ALFR3D_ENV_NAME environment variable not set")
         return False
 
-    try:
-        db = get_connection()
-        cursor = db.cursor()
-    except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        return False
-
-    # get environemnt id of current environment
-    cursor.execute("SELECT * from environment WHERE name = %s;", (ENV_NAME,))
-    data = cursor.fetchone()
-    if not data:
-        logger.error("Environment not found")
-        db.close()
-        return False
-    env_id = data[0]
-
-    cursor.execute(
-        "SELECT * from routines WHERE environment_id = %s and name = %s;",
-        (env_id, "Morning"),
-    )
-    morning = cursor.fetchone()
-    if not morning:
-        logger.error("Morning routine not found")
-        db.close()
-        return False
-    morning_time = morning[2]
-
-    cursor.execute(
-        "SELECT * from routines WHERE environment_id = %s and name = %s;",
-        (env_id, "Bedtime"),
-    )
-    bed = cursor.fetchone()
-    if not bed:
-        logger.error("Bedtime routine not found")
-        db.close()
-        return False
-    bed_time = bed[2]
-
-    cur_time = get_env_local_time(ENV_NAME)
-    mor_time = cur_time.replace(
-        hour=int(morning_time.seconds / 3600),
-        minute=int((morning_time.seconds // 60) % 60),
-    )
-    end_time = cur_time.replace(
-        hour=int(bed_time.seconds / 3600), minute=int((bed_time.seconds // 60) % 60)
-    )
-
-    # only speak between morning alarm and bedtime alarm...
-    if cur_time > mor_time and cur_time < end_time:
-        logger.info("Alfr3d is free to speak during this time of day")
-    else:
-        logger.info("Alfr3d should be quiet while we're sleeping")
-        result = True
-
-    # get state id of status "online"
-    cursor.execute('SELECT * from states WHERE state = "online";')
-    data = cursor.fetchone()
-    if not data:
-        logger.error("Online state not found")
-        db.close()
-        return False
-    state_id = data[0]
-
-    # get all user types which are god or owner type
-    cursor.execute(
-        'SELECT * from user_types WHERE type = "owner" or type = "technoking" or type = "resident";'
-    )
-    data = cursor.fetchall()
-    if not data:
-        logger.error("No user types found")
-        db.close()
-        return False
-    types = []
-    for item in data:
-        types.append(item[0])
-
-    # see if any users worth speaking to are online
-    cursor.execute(
-        "SELECT * from user WHERE state = %s and type IN (%s, %s, %s);",
-        (state_id, types[0], types[1], types[2]),
-    )
-    data = cursor.fetchall()
-
-    if not data:
-        logger.info("Alfr3d should be quiet when no worthy ears are around")
-        result = True
-    else:
-        logger.info("Alfr3d has worthy listeners:")
-        for user in data:
-            logger.info("    - " + user[1])
-
-    if result:
-        logger.info("Alfr3d is to be quiet")
-    else:
-        logger.info("Alfr3d is free to speak")
-
-    return result
+    return db_utils.check_mute_optimized(ENV_NAME)
 
 
 def list_available_speakers(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):

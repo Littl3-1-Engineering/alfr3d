@@ -54,8 +54,15 @@ MYSQL_USER = os.environ.get("MYSQL_USER") or "user"
 MYSQL_PSWD = os.environ.get("MYSQL_PSWD") or "password"
 ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 
-# Routine names to quip types. These quips are only spoken by their matching routines.
-ROUTINE_QUIP_TYPES = {"Sunrise": "sunrise", "Sunset": "sunset", "Bedtime": "bedtime"}
+# Routine names to quip types. These quips are only spoken by their matching
+# routines (and are excluded from the personality system's random pool -- see
+# personality.ROUTINE_QUIP_TYPES). The Morning routine used to be silent.
+ROUTINE_QUIP_TYPES = {
+    "Sunrise": "sunrise",
+    "Morning": "morning",
+    "Sunset": "sunset",
+    "Bedtime": "bedtime",
+}
 
 
 def _get_routine_quip(cursor, quip_type):

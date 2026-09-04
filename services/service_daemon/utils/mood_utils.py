@@ -9,16 +9,19 @@ bucketing, factored out of what used to be inline hour math in
 `check_mood()` situational-awareness card both call `get_day_mood()` so the
 "what part of the day/week is it" logic lives in exactly one place.
 
-The time-of-day boundaries intentionally mirror
-`common.spotify_utils._normalize_time_of_day()` (6-12 morning, 12-18 day,
-18-22 evening, else night). They are duplicated rather than imported: this
-module stays dependency-free, and `common/` (shared with `service_api`) must
-not import from a single service's `utils/` package. If the boundaries in
-`common.spotify_utils._normalize_time_of_day()` ever change, update
-`_bucket_time_of_day()` below to match.
+The time-of-day boundaries live in `common.timeofday.coarse_bucket()` (6-12
+morning, 12-18 day, 18-22 evening, else night) -- one definition, shared with
+`common.spotify_utils` and the daemon's scheduled music. `common.timeofday` is
+stdlib-only (no DB/Kafka), so importing it here keeps this module effectively
+dependency-free.
 """
 
+import sys
+import os
 from datetime import datetime
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
+from common import timeofday  # noqa: E402
 
 _WEEKEND_DAYS = ("Saturday", "Sunday")
 
@@ -42,16 +45,10 @@ _WEEKEND_ENERGY_BONUS = 0.15
 def _bucket_time_of_day(hour):
     """Bucket an hour (0-23) into 'morning'/'day'/'evening'/'night'.
 
-    Mirrors common.spotify_utils._normalize_time_of_day() — see module
-    docstring for why this is duplicated rather than imported.
+    Thin wrapper kept for this module's existing call sites; the definition is
+    common.timeofday.coarse_bucket().
     """
-    if 6 <= hour < 12:
-        return "morning"
-    if 12 <= hour < 18:
-        return "day"
-    if 18 <= hour < 22:
-        return "evening"
-    return "night"
+    return timeofday.coarse_bucket(hour)
 
 
 def get_day_mood(now=None):

@@ -154,8 +154,9 @@ All configured conditions must evaluate true:
 - **Personality Matrix**: Configure the daemon's persona (name, tone, energy) via `/api/personality`
 - **Presets**: Save/apply named personality presets (`/api/personality/presets`, `/api/personality/apply-preset`)
 - **Context**: Manage personality context inputs (`/api/personality/context`)
-- **LLM Config**: Optionally configure an LLM for generated responses in the speak service (`/api/personality/llm-config`)
-- **Quip Categories**: Quips are grouped into semantic categories — greeting, weather_joke, sarcasm, wisdom, goodbye, custom — filterable via `GET /api/quips?category=...` (migration 011)
+- **LLM Config**: Optionally configure an LLM for generated responses in the speak service (`/api/personality/llm-config`). The LLM system prompt now includes the household's real local time and part-of-day, and is told not to greet by time of day unless it matches — so an ambiguous line can't be rewritten into "Good morning" at night.
+- **Time-of-day awareness**: `common/day_context.py` derives one `DayContext` (waking hours, part-of-day, greeting, a pre-bed "wind-down" window) from the `environment` row plus the Sunrise/Morning/Sunset/Bedtime routines. It backs the speak mute gate, the LLM prompt, the arrival greeting, and the daemon's idle-quip timer (which now goes quiet ~45 min before the Bedtime routine).
+- **Quip Categories**: Quips are grouped into semantic categories — greeting, weather_joke, sarcasm, wisdom, goodbye, custom — filterable via `GET /api/quips?category=...` (migration 011). Routine-scoped quip types (`sunrise`/`morning`/`sunset`/`bedtime`) are spoken only by their matching routine and never by the random idle picker.
 
 ### Theme Customization
 
