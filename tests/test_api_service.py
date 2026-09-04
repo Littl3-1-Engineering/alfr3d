@@ -130,6 +130,37 @@ def test_api_get_devices(mock_db_connection, api_client):
     assert "stream_url" not in data[1]
 
 
+@patch("routes.devices.db_connection")
+def test_users_with_devices_includes_title(mock_db_connection, api_client):
+    """PersonnelRoster's admin dialog reads this endpoint (not GET /api/users), so `title`
+    has to round-trip here too or the "how Alfred addresses them" field can never load."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchall.side_effect = [
+        [
+            {
+                "id": 1,
+                "name": "Alice",
+                "email": "alice@example.com",
+                "about_me": "",
+                "title": "boss",
+                "state": "online",
+                "type": "owner",
+                "last_online": None,
+                "created_at": None,
+            }
+        ],
+        [],
+    ]
+
+    response = api_client.get("/api/users-with-devices")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["users"][0]["title"] == "boss"
+
+
 def test_api_get_events(api_client):
     """Test get events endpoint."""
     response = api_client.get("/api/events")

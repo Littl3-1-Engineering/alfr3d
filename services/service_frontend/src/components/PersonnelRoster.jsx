@@ -66,7 +66,7 @@ const PersonnelRoster = ({ initialUserId }) => {
   const isAdmin = isAuthenticated && ADMIN_ROLES.includes(authUser?.role);
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
-  const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '' });
+  const [newUser, setNewUser] = useState({ name: '', type: 'guest', email: '', about_me: '', title: '' });
   const [showAddUser, setShowAddUser] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
@@ -145,7 +145,7 @@ const PersonnelRoster = ({ initialUserId }) => {
         setUsers(data.users);
         const allDevices = data.users.flatMap(u => (u.devices || []).map(d => ({ ...d, user: u.name })));
         setDevices(allDevices);
-        setNewUser({ name: '', type: 'guest', email: '', about_me: '' });
+        setNewUser({ name: '', type: 'guest', email: '', about_me: '', title: '' });
         setShowAddUser(false);
       })
       .catch(err => console.error('Error adding user:', err));
@@ -307,6 +307,12 @@ const PersonnelRoster = ({ initialUserId }) => {
                 className="w-full p-2 bg-card rounded text-text-primary"
                 rows={2}
                 placeholder="About Me"
+              />
+              <input
+                value={newUser.title}
+                onChange={(e) => setNewUser(prev => ({ ...prev, title: e.target.value }))}
+                className="w-full p-2 bg-card rounded text-text-primary"
+                placeholder='How Alfred should address them (e.g. "boss", "Dr. Athos")'
               />
               <div className="flex space-x-2">
                 <button

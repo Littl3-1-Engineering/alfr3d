@@ -266,6 +266,15 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
                 />
               </div>
               <div className="text-sm text-text-secondary">
+                <span className="text-primary font-medium">How Alfred addresses them:</span>
+                <input
+                  value={editedUser?.title || ''}
+                  onChange={(e) => handleInputChange('title', e.target.value)}
+                  className="ml-2 px-2 py-1 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                  placeholder='e.g. "boss", "Dr. Athos", or leave blank to use their name'
+                />
+              </div>
+              <div className="text-sm text-text-secondary">
                 <span className="text-primary font-medium">State:</span>
                 <span className="ml-2">{user?.state}</span>
               </div>
@@ -281,6 +290,9 @@ const UserModal = ({ isOpen, onClose, user, devices, onDeviceClick, onSave, onDe
               </div>
               <div className="text-sm text-text-secondary">
                 <span className="text-primary font-medium">About:</span> {user?.about_me || 'Not provided'}
+              </div>
+              <div className="text-sm text-text-secondary">
+                <span className="text-primary font-medium">How Alfred addresses them:</span> {user?.title || 'Not set (uses name)'}
               </div>
               <div className="text-sm text-text-secondary">
                 <span className="text-primary font-medium">State:</span> {user?.state}
