@@ -377,6 +377,44 @@ def _safe_day_context():
         return None
 
 
+def get_owner_address(env_id=None):
+    """Free-text form of address this environment's owner wants Alfred to use, or None if
+    unset/no owner. Owner-only for now -- the speak pipeline has no per-speaker identity, and
+    the owner is who Alfred is almost always talking to."""
+    if env_id is None:
+        env_id = get_environment_id()
+
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        cursor.execute(
+            "SELECT u.title, u.username FROM user u "
+            "JOIN user_types ut ON u.type = ut.id "
+            "WHERE ut.type = 'owner' AND u.environment_id = %s LIMIT 1",
+            (env_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        title, username = row
+        return (title or username or "").strip() or None
+    except pymysql.Error as e:
+        logger.error(f"Database error getting owner address: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _safe_owner_address():
+    """Owner's preferred form of address, or None if the lookup fails -- a personality
+    flourish must never be what breaks TTS."""
+    try:
+        return get_owner_address()
+    except Exception as e:
+        logger.warning(f"owner address unavailable ({e})")
+        return None
+
+
 def get_blended_personality(env_id=None):
     personality = get_personality_by_environment(env_id)
     context = get_context_by_environment(env_id)
@@ -406,6 +444,7 @@ def get_blended_personality(env_id=None):
     personality["blended"] = blended
     personality["mood"] = determine_mood(blended, context)
     personality["day_ctx"] = _safe_day_context()
+    personality["address_as"] = _safe_owner_address()
 
     logger.debug(
         f"Returning blended personality: "
@@ -440,9 +479,16 @@ def determine_mood(traits, context):
 TICS_FREQUENCY = 8
 _tics_call_count = 0
 
+# Same problem for the user's preferred form of address: told to use it "occasionally", a
+# fresh isolated LLM call reads that as "always" and it becomes as robotic/repetitive as the
+# "sir or madam" habit it replaces. Gate it the same way as verbal tics, just less rare -- a
+# form of address reads natural more often than a full catchphrase does.
+ADDRESS_FREQUENCY = 4
+_address_call_count = 0
+
 
 def build_llm_system_prompt(personality):
-    global _tics_call_count
+    global _tics_call_count, _address_call_count
 
     blended = personality.get("blended", {})
     linguistic_style = personality.get("linguistic_style", "default assistant")
@@ -458,6 +504,26 @@ def build_llm_system_prompt(personality):
         else:
             tics_instruction = "Do not use any verbal tics or catchphrases in this response."
     forbidden_instruction = f"Never use these words: {forbidden}" if forbidden else ""
+
+    address_as = personality.get("address_as")
+    if address_as:
+        _address_call_count += 1
+        if _address_call_count % ADDRESS_FREQUENCY == 0:
+            address_instruction = (
+                f'- Address the user as "{address_as}" once, where it reads naturally '
+                f"(e.g. a sign-off or emphasis) -- never generic honorifics like "
+                f'"sir" or "madam"'
+            )
+        else:
+            address_instruction = (
+                "- Do not address the user by name or title in this response -- and never "
+                'with generic honorifics like "sir" or "madam"'
+            )
+    else:
+        address_instruction = (
+            '- Never address the user with gendered honorifics like "sir" or "madam" -- omit '
+            "any form of address"
+        )
 
     formality_instruction = ""
     if blended.get("formality", 0.5) > 0.7:
@@ -522,6 +588,7 @@ question never gets an answer. NEVER ask a question that expects or waits for a 
 would you like me to do?", "Should I proceed?", "Anything else?", etc.)
 - Rhetorical or sarcastic questions are fine when the personality calls for them (e.g. "Another \
 meeting? Shocking."), as long as they don't require a response
+{address_instruction}
 {tics_instruction}
 {forbidden_instruction}
 

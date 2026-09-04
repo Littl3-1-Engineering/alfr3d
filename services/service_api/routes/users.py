@@ -98,10 +98,10 @@ async def create_user(data: UserCreate, _perm=Depends(require_permission("users"
                 raise HTTPException(status_code=500, detail="Environment not found")
             env_id = env_row[0]
             cursor.execute(
-                "INSERT INTO user (username, email, about_me, created_at, state, type, "
+                "INSERT INTO user (username, email, about_me, title, created_at, state, type, "
                 "environment_id) "
-                "VALUES (%s, %s, %s, NOW(), %s, %s, %s)",
-                (data.name, data.email, data.about_me, state_id, type_id, env_id),
+                "VALUES (%s, %s, %s, %s, NOW(), %s, %s, %s)",
+                (data.name, data.email, data.about_me, data.title, state_id, type_id, env_id),
             )
             db.commit()
             new_id = cursor.lastrowid
@@ -138,6 +138,9 @@ async def update_user(user_id: int, data: UserUpdate, user: CurrentUser = Depend
             if data.about_me is not None:
                 updates.append("about_me = %s")
                 params.append(data.about_me)
+            if data.title is not None:
+                updates.append("title = %s")
+                params.append(data.title)
             if requested_type is not None:
                 cursor.execute("SELECT id FROM user_types WHERE type = %s", (requested_type,))
                 type_id = cursor.fetchone()

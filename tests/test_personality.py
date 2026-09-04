@@ -1,6 +1,8 @@
 import os
 from unittest.mock import patch, MagicMock
 
+import pymysql
+
 os.environ["MYSQL_DATABASE"] = "mysql"
 os.environ["MYSQL_USER"] = "user"
 os.environ["MYSQL_PSWD"] = "password"
@@ -14,6 +16,7 @@ from services.service_speak.personality import (
     get_quips_for_environment,
     get_default_personality,
     get_default_context,
+    get_owner_address,
     calculate_mood_offset,
     blend_traits,
     determine_mood,
@@ -21,6 +24,7 @@ from services.service_speak.personality import (
     build_llm_system_prompt,
     ROUTINE_QUIP_TYPES,
     TICS_FREQUENCY,
+    ADDRESS_FREQUENCY,
 )
 import services.service_speak.personality as personality_module
 
@@ -184,6 +188,37 @@ class TestBuildLlmSystemPromptTics:
         ]
 
 
+class TestBuildLlmSystemPromptAddress:
+    """The prompt must steer the model to the owner's preferred form of address instead of
+    its own default "sir or madam" -- and, same overuse problem as verbal tics, only ask for
+    it occasionally rather than every single response."""
+
+    def setup_method(self):
+        personality_module._address_call_count = 0
+
+    def test_no_address_configured_forbids_sir_madam(self):
+        prompt = build_llm_system_prompt({"verbal_tics": "", "address_as": None})
+        assert "sir" in prompt.lower() or "madam" in prompt.lower()  # named in the ban itself
+        assert "never address the user with gendered honorifics" in prompt.lower()
+
+    def test_address_used_once_per_frequency_window_not_every_call(self):
+        personality = {"verbal_tics": "", "address_as": "boss"}
+        prompts = [build_llm_system_prompt(personality) for _ in range(ADDRESS_FREQUENCY * 3)]
+
+        used_count = sum(1 for p in prompts if 'Address the user as "boss"' in p)
+        withheld_count = sum(1 for p in prompts if "Do not address the user by name or title" in p)
+
+        assert used_count == 3
+        assert withheld_count == len(prompts) - 3
+        # Every response, used or not, still bans the generic honorifics.
+        assert all('"sir" or "madam"' in p for p in prompts)
+
+    def test_missing_address_key_falls_back_without_a_db_call(self):
+        # bare dict, no "address_as" key -> same as explicitly None, no crash
+        prompt = build_llm_system_prompt({"verbal_tics": ""})
+        assert "never address the user with gendered honorifics" in prompt.lower()
+
+
 class TestBuildLlmSystemPromptDayContext:
     """The prompt must tell the model the time of day so an ambiguous input
     (the "Hello sunshine" quip) can't be rewritten to "Good morning" at night."""
@@ -281,3 +316,43 @@ class TestDatabaseFunctions:
             assert len(result) == 2
             assert all(isinstance(item, dict) for item in result)
             assert {item["type"] for item in result} == {"formal", "casual"}
+
+    def test_get_owner_address_prefers_title_over_username(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = ("boss", "athos")
+
+        mock_db = MagicMock()
+        mock_db.cursor.return_value = mock_cursor
+
+        with patch("services.service_speak.personality.get_db_connection", return_value=mock_db):
+            assert get_owner_address(env_id=1) == "boss"
+
+    def test_get_owner_address_falls_back_to_username_when_title_unset(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (None, "athos")
+
+        mock_db = MagicMock()
+        mock_db.cursor.return_value = mock_cursor
+
+        with patch("services.service_speak.personality.get_db_connection", return_value=mock_db):
+            assert get_owner_address(env_id=1) == "athos"
+
+    def test_get_owner_address_returns_none_when_no_owner_row(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+
+        mock_db = MagicMock()
+        mock_db.cursor.return_value = mock_cursor
+
+        with patch("services.service_speak.personality.get_db_connection", return_value=mock_db):
+            assert get_owner_address(env_id=1) is None
+
+    def test_get_owner_address_returns_none_on_db_error(self):
+        mock_cursor = MagicMock()
+        mock_cursor.execute.side_effect = pymysql.Error("boom")
+
+        mock_db = MagicMock()
+        mock_db.cursor.return_value = mock_cursor
+
+        with patch("services.service_speak.personality.get_db_connection", return_value=mock_db):
+            assert get_owner_address(env_id=1) is None

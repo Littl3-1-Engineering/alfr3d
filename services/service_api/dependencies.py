@@ -274,7 +274,7 @@ def _fetch_users():
         cursor.execute(
             """
             SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
-                   u.last_online, u.created_at
+                   u.last_online, u.created_at, u.title
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
@@ -293,6 +293,7 @@ def _fetch_users():
                 "type": row[5],
                 "last_online": row[6].isoformat() if row[6] else None,
                 "created_at": row[7].isoformat() if row[7] else None,
+                "title": row[8],
             }
             for row in cursor.fetchall()
         ]

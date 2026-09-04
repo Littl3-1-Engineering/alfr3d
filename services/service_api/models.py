@@ -9,12 +9,14 @@ class UserCreate(BaseModel):
     type: str
     email: Optional[str] = ""
     about_me: Optional[str] = ""
+    title: Optional[str] = ""
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     about_me: Optional[str] = None
+    title: Optional[str] = None
     type: Optional[str] = None
 
 
