@@ -40,7 +40,7 @@ async def get_users_with_devices():
 
             cursor.execute(
                 """
-                SELECT u.id, u.username as name, u.email, u.about_me, s.state, ut.type,
+                SELECT u.id, u.username as name, u.email, u.about_me, u.title, s.state, ut.type,
                        u.last_online, u.created_at
                 FROM user u
                 JOIN states s ON u.state = s.id

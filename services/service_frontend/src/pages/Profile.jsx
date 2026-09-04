@@ -10,6 +10,7 @@ const Profile = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [aboutMe, setAboutMe] = useState('');
+  const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
@@ -25,6 +26,7 @@ const Profile = () => {
           setName(mine.name || '');
           setEmail(mine.email || '');
           setAboutMe(mine.about_me || '');
+          setTitle(mine.title || '');
         }
       })
       .catch(() => setStatus({ type: 'error', message: 'Failed to load profile' }))
@@ -48,7 +50,7 @@ const Profile = () => {
       const response = await apiFetch(`${API_BASE_URL}/api/users/${user.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, about_me: aboutMe }),
+        body: JSON.stringify({ name, email, about_me: aboutMe, title }),
       });
       if (response.ok) {
         setStatus({ type: 'success', message: 'Profile updated' });
@@ -125,6 +127,18 @@ const Profile = () => {
                   rows={3}
                   className="w-full px-3 py-2 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none resize-none"
                   placeholder="About you"
+                />
+              </div>
+              <div>
+                <label htmlFor="profile-title" className="block text-sm text-primary font-medium mb-1">
+                  How Alfred should address you
+                </label>
+                <input
+                  id="profile-title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 bg-card/50 border border-primary/30 rounded text-text-primary focus:border-primary outline-none"
+                  placeholder="e.g. &quot;boss&quot;, &quot;Dr. Athos&quot;, or leave blank to use your name"
                 />
               </div>
 

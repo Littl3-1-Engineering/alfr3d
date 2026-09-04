@@ -38,7 +38,7 @@ describe('Profile', () => {
       ok: true,
       json: async () => [
         { id: 1, name: 'Bob', type: 'guest', email: 'bob@example.com', about_me: 'not me' },
-        { id: 2, name: 'Alice', type: 'resident', email: 'alice@example.com', about_me: 'hi there' },
+        { id: 2, name: 'Alice', type: 'resident', email: 'alice@example.com', about_me: 'hi there', title: 'boss' },
       ],
     })
 
@@ -51,6 +51,7 @@ describe('Profile', () => {
     await waitFor(() => expect(screen.getByDisplayValue('Alice')).toBeInTheDocument())
     expect(screen.getByDisplayValue('alice@example.com')).toBeInTheDocument()
     expect(screen.getByDisplayValue('hi there')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('boss')).toBeInTheDocument()
     expect(screen.queryByDisplayValue('Bob')).not.toBeInTheDocument()
   })
 
@@ -78,7 +79,7 @@ describe('Profile', () => {
       expect.stringContaining('/api/users/2'),
       expect.objectContaining({
         method: 'PUT',
-        body: JSON.stringify({ name: 'Alice Updated', email: '', about_me: '' }),
+        body: JSON.stringify({ name: 'Alice Updated', email: '', about_me: '', title: '' }),
       }),
     )
   })
