@@ -57,6 +57,7 @@ class ContextFrame:
         self.now = None
         self.local_dt = None
         self.day_mood = None
+        self.day_ctx = None  # common.day_context.DayContext for this cycle
         self.upcoming_events = None
         self.online_devices = None
         self.smarthome_online = None

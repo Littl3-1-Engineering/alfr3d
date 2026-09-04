@@ -96,12 +96,23 @@ def clear_cache():
 
 
 def check_mute_optimized(env_name) -> bool:
-    """
-    Optimized check_mute that combines multiple queries into fewer database calls.
+    """Return True when Alfr3d should stay quiet: outside the household's waking
+    hours (the Morning..Bedtime routine window, via day_context) or with no
+    owner/technoking/resident currently online to hear it.
     """
     if not env_name:
         logger.error("Environment name not provided")
         return False
+
+    # "Are we inside waking hours" is the Morning..Bedtime routine window -- now
+    # owned by day_context so every consumer (this, service_speak, the daemon's
+    # idle-quip wind-down, the LLM prompt) reads one definition. Imported here
+    # rather than at module scope to avoid a common<->day_context import cycle.
+    from .day_context import get_day_context
+
+    if not get_day_context(env_name).is_waking_hours:
+        logger.info("Alfr3d should be quiet while we're sleeping")
+        return True
 
     try:
         db = get_db_connection()
@@ -111,39 +122,6 @@ def check_mute_optimized(env_name) -> bool:
         return False
 
     try:
-        cursor.execute(
-            """
-            SELECT r_morning.time as morning_time, r_bed.time as bed_time
-            FROM environment e
-            JOIN routines r_morning ON e.id = r_morning.environment_id
-            AND r_morning.name = 'Morning'
-            JOIN routines r_bed ON e.id = r_bed.environment_id AND r_bed.name = 'Bedtime'
-            WHERE e.name = %s
-            """,
-            (env_name,),
-        )
-        routine_times = cursor.fetchone()
-
-        if not routine_times:
-            logger.error("Morning or Bedtime routine not found")
-            db.close()
-            return False
-
-        morning_time, bed_time = routine_times
-        cur_time = get_env_local_time(env_name)
-        mor_time = cur_time.replace(
-            hour=int(morning_time.seconds / 3600),
-            minute=int((morning_time.seconds // 60) % 60),
-        )
-        end_time = cur_time.replace(
-            hour=int(bed_time.seconds / 3600), minute=int((bed_time.seconds // 60) % 60)
-        )
-
-        if cur_time <= mor_time or cur_time >= end_time:
-            logger.info("Alfr3d should be quiet while we're sleeping")
-            db.close()
-            return True
-
         cursor.execute(
             """
             SELECT u.username

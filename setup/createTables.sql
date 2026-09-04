@@ -332,7 +332,7 @@ INSERT INTO `environment` (`name`) VALUES ('test');
 
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"It is good to see you.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"You look pretty today.");
-INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"Hello sunshine");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('morning',"Hello sunshine");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"Still plenty of time to save the day. Make the most of it.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"I hope you are using your time wisely.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"Unfortunately, we cannot ignore the inevitable or the persistent.");
@@ -368,6 +368,10 @@ INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"Life would be much easier 
 INSERT INTO `quips` (`type`,`quips`) VALUES ('smart',"All I ever wanted is everything");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('email',"Yet another email");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('email',"Pardon the interruption sir. Another email has arrived for you to ignore.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('morning',"Good morning. The day will not optimise itself.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('morning',"Awake, then. I have taken the liberty of starting the day without you.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('sunrise',"Sunrise. Somewhere a rooster is taking credit for my work.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('sunset',"Sunset. The lights and I will take it from here.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Unless we are burning the midnight oil, ");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"If you are going to invent something new tomorrow, ");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"If you intend on being charming tomorrow");

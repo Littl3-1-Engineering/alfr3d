@@ -156,7 +156,7 @@ class TestPersonalityFunctions:
         assert result is None
 
     def test_routine_quip_types_are_reserved(self):
-        assert ROUTINE_QUIP_TYPES == {"sunrise", "sunset", "bedtime"}
+        assert ROUTINE_QUIP_TYPES == {"sunrise", "morning", "sunset", "bedtime"}
 
 
 class TestBuildLlmSystemPromptTics:
@@ -182,6 +182,40 @@ class TestBuildLlmSystemPromptTics:
             TICS_FREQUENCY * 2,
             TICS_FREQUENCY * 3,
         ]
+
+
+class TestBuildLlmSystemPromptDayContext:
+    """The prompt must tell the model the time of day so an ambiguous input
+    (the "Hello sunshine" quip) can't be rewritten to "Good morning" at night."""
+
+    def setup_method(self):
+        personality_module._tics_call_count = 0
+
+    def _dc(self, **kw):
+        from types import SimpleNamespace
+
+        base = dict(part_of_day="evening", greeting="Good evening")
+        base.update(kw)
+        return SimpleNamespace(describe=lambda: f"Thursday 22:00 ({base['part_of_day']})", **base)
+
+    def test_night_prompt_forbids_time_of_day_greeting(self):
+        prompt = build_llm_system_prompt(
+            {"verbal_tics": "", "day_ctx": self._dc(part_of_day="night", greeting="")}
+        )
+        assert "never greet by time of day" in prompt.lower()
+
+    def test_daytime_prompt_pins_the_greeting_to_the_current_part(self):
+        prompt = build_llm_system_prompt(
+            {"verbal_tics": "", "day_ctx": self._dc(part_of_day="morning", greeting="Good morning")}
+        )
+        assert "Good morning" in prompt
+        assert "Current time:" in prompt
+
+    def test_missing_day_context_falls_back_without_a_db_call(self):
+        # bare dict, no "day_ctx" key -> no crash, no time line
+        prompt = build_llm_system_prompt({"verbal_tics": ""})
+        assert "Current time:" not in prompt
+        assert "time-of-day greeting" in prompt
 
 
 class TestDatabaseFunctions:

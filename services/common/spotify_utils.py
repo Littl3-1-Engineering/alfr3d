@@ -590,18 +590,11 @@ def search_by_seeds(track_ids, artist_names, limit=20):
 
 
 def _normalize_time_of_day(hour):
-    # Boundaries are mirrored in service_daemon/utils/mood_utils.py's
-    # _bucket_time_of_day(). Kept as a duplicate rather than a shared import
-    # because `common` is shared with service_api and must not depend on a
-    # single service's utils package — see mood_utils.py's module docstring.
-    # Keep both in sync if these boundaries ever change.
-    if 6 <= hour < 12:
-        return "morning"
-    if 12 <= hour < 18:
-        return "day"
-    if 18 <= hour < 22:
-        return "evening"
-    return "night"
+    # One definition, in common.timeofday.coarse_bucket() -- also used by
+    # service_daemon/utils/mood_utils.py and the daemon's scheduled music.
+    from . import timeofday
+
+    return timeofday.coarse_bucket(hour)
 
 
 # The household's declared "party nights": Friday evening through Saturday

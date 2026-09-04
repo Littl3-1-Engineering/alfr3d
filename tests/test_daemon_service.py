@@ -1,6 +1,7 @@
 """Tests for the ALFR3D daemon service utilities."""
 
 import os
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
@@ -1009,31 +1010,23 @@ class TestDaemonRunLoop:
             "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
         },
     )
-    @patch("common.db_utils.datetime")
+    @patch("common.day_context.get_day_context")
     @patch("common.db_utils.get_db_connection")
-    def test_check_mute_during_day_with_users(self, mock_connect, mock_datetime):
-        """Test check_mute returns False during day with users online."""
+    def test_check_mute_during_day_with_users(self, mock_connect, mock_day_ctx):
+        """check_mute returns False inside waking hours with users online."""
         from services.service_daemon.utils.util_routines import check_mute
 
-        # Mock current time to 2 PM UTC (offset 0)
-        mock_datetime.utcnow.return_value = datetime(2023, 1, 1, 14, 0)
+        mock_day_ctx.return_value = SimpleNamespace(is_waking_hours=True)
 
-        # Mock DB
         mock_cursor = MagicMock()
         mock_db = MagicMock()
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
-
-        # Mock queries - morning at 8 AM, bed at 10 PM, UTC timezone
-        mock_cursor.fetchone.side_effect = [
-            (timedelta(hours=8), timedelta(hours=22)),  # morning/bed routine times
-            (0,),  # environment timezone offset (UTC)
-        ]
         mock_cursor.fetchall.return_value = [(1, "user1")]  # online users
 
         result = check_mute()
 
-        assert result is False  # Should not be mute during day with users
+        assert result is False  # waking hours + a listener -> speak
 
     @patch.dict(
         os.environ,
@@ -1046,31 +1039,33 @@ class TestDaemonRunLoop:
             "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
         },
     )
-    @patch("common.db_utils.datetime")
+    @patch("common.day_context.get_day_context")
     @patch("common.db_utils.get_db_connection")
-    def test_check_mute_at_night_no_users(self, mock_connect, mock_datetime):
-        """Test check_mute returns True at night with no users online."""
+    def test_check_mute_at_night_no_users(self, mock_connect, mock_day_ctx):
+        """check_mute returns True outside waking hours (short-circuits before the
+        listeners query)."""
         from services.service_daemon.utils.util_routines import check_mute
 
-        # Mock current time to 2 AM UTC (offset 0)
-        mock_datetime.utcnow.return_value = datetime(2023, 1, 1, 2, 0)
+        mock_day_ctx.return_value = SimpleNamespace(is_waking_hours=False)
 
-        # Mock DB
+        result = check_mute()
+
+        assert result is True  # asleep -> muted regardless of who's online
+
+    @patch("common.day_context.get_day_context")
+    @patch("common.db_utils.get_db_connection")
+    def test_check_mute_waking_hours_but_no_listeners(self, mock_connect, mock_day_ctx):
+        """Inside waking hours but nobody worth speaking to is online -> muted."""
+        from services.service_daemon.utils.util_routines import check_mute
+
+        mock_day_ctx.return_value = SimpleNamespace(is_waking_hours=True)
         mock_cursor = MagicMock()
         mock_db = MagicMock()
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
-
-        # Mock queries - morning at 8 AM, bed at 10 PM, UTC timezone
-        mock_cursor.fetchone.side_effect = [
-            (timedelta(hours=8), timedelta(hours=22)),  # morning/bed routine times
-            (0,),  # environment timezone offset (UTC)
-        ]
         mock_cursor.fetchall.return_value = []  # no users online
 
-        result = check_mute()
-
-        assert result is True  # Should be mute at night with no users
+        assert check_mute() is True
 
 
 class TestDecideDisplays:
