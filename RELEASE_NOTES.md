@@ -1,3 +1,21 @@
+# Release v0.4.2
+
+## Release Name: Unified Day Context
+
+### Notes:
+- **Feature:** Time-of-day awareness unified behind one `DayContext` (`common/day_context.py`) -- feeds the speak mute gate, the LLM greeting prompt, arrival greetings, and the idle-quip wind-down. Fixes ALFR3D greeting "good morning" at 22:00.
+- **Feature:** Nexus quick-controls panel -- up to 10 favorited smarthome devices as compact toggle/dial tiles opened from the Socket menu, with full device controls reachable from a tile.
+- **Feature:** Matrix and Graphite UI themes added, alongside the existing Cyan/Navy, Amber/Charcoal, and Light/Teal themes.
+- **Feature:** The owner can set a preferred form of address, surfaced in the web UI.
+- **Fix:** Concurrent auth refresh calls are now deduped, stopping spurious idle logouts.
+- **Fix:** Nexus quick-controls no longer shows live controls for offline smarthome devices.
+- **Fix:** Personality verbal-tics and no-LLM quip substitution are now gated to roughly 1 in 8 utterances instead of firing on every speak.
+- **Fix:** The speak service now recovers automatically from a hung Kafka consumer.
+- **Fix:** `alfr3d.service` retries on transient boot-time `docker compose` failures instead of failing the boot outright.
+- **Fix:** CI's migration-head-revision check no longer hardcodes a specific revision.
+- **Fix:** The Nexus UI's version tooltip now reads the real shipped version instead of falling back to a stale hardcoded default.
+- **Chore:** Dependency updates across services (cryptography, recharts, zeroconf, orjson, pymysql, anthropic, requests, aioesphomeapi, postcss-selector-parser, vite-plugin-svgr).
+
 # Release v0.4.1
 
 ## Release Name: Real-Time ESPHome
