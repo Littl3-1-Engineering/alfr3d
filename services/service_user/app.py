@@ -169,7 +169,15 @@ class User:
             host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
         )
         cursor = db.cursor()
-        cursor.execute("SELECT * from user WHERE username = %s", (self.name,))
+        # Explicit column list: the rows below are read positionally, so a bare
+        # SELECT * breaks whenever a migration adds a column (0038 added
+        # user.title AFTER about_me and shifted state/last_online/type). Keep
+        # this column order in sync with the indices used below.
+        cursor.execute(
+            "SELECT id, username, email, password_hash, about_me, state, "
+            "last_online, environment_id, type, created_at FROM user WHERE username = %s",
+            (self.name,),
+        )
         data = cursor.fetchone()
 
         if not data:
@@ -478,7 +486,14 @@ def refresh_all():
         host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
     )
     cursor = db.cursor()
-    cursor.execute("SELECT * from user;")
+    # Explicit column list: rows are read positionally by refresh_user_devices()
+    # and update_user_state() (user[5]=state, user[6]=last_online, user[8]=type),
+    # so a bare SELECT * breaks whenever a migration adds a column (0038 added
+    # user.title AFTER about_me). Keep this order in sync with those indices.
+    cursor.execute(
+        "SELECT id, username, email, password_hash, about_me, state, "
+        "last_online, environment_id, type, created_at FROM user"
+    )
     user_data = cursor.fetchall()
 
     # figure out device types
