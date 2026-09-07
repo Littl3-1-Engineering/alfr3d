@@ -15,7 +15,7 @@ google-api-python-client
 google-auth-oauthlib
 alembic==1.19.1
 SQLAlchemy>=2.0.52
-aioesphomeapi==45.13.1
+aioesphomeapi==46.2.1
 zeroconf==0.151.1
 werkzeug==3.1.8
 PyJWT==2.13.0
