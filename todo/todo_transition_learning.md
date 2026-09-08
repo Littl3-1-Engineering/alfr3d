@@ -180,6 +180,67 @@ rows have accumulated real multi-week history with genuine candidate pairs (e.g.
 presence→device or routine→device sequence). Derive every threshold/window from that real
 data — do not invent one.
 
+## Data points collected for SA-12
+
+SA-12 builds no store of its own yet. Its raw material is the **structured subset** of
+SA-11's `household_events` table — rows where **both `subject_type` and `verb` are set**.
+A future `compute_transitions()` orders these by `occurred_at` and counts which
+`(subject_type, verb)` follows which within a transition window. Everything below is what
+is being accumulated toward that.
+
+### Per-row schema (`household_events`, migrations 026 + 027)
+
+| column | type | role for SA-12 |
+|---|---|---|
+| `id` | BIGINT UNSIGNED PK | row identity |
+| `occurred_at` | DATETIME | **ordering key** — defines "A then B" and the transition window |
+| `event_type` | VARCHAR(32) | loose type string mirrored from the event-stream message |
+| `source_service` | VARCHAR(32) | producing service (`_infer_source_service()`, or explicit `service` key) |
+| `message` | TEXT NULL | prose; not queried for transitions |
+| `subject_type` | VARCHAR(32) NULL | **structured** — the entity category (the "what") |
+| `subject_id` | VARCHAR(64) NULL | **structured** — the specific entity id |
+| `verb` | VARCHAR(32) NULL | **structured** — the action |
+
+Index: `idx_household_events_type_occurred (event_type, occurred_at)`.
+
+### Structured streams currently produced
+
+Inherited from SA-11 Phase 2:
+
+| subject_type | verb(s) | subject_id | producer(s) |
+|---|---|---|---|
+| `track` | `play_start`, `play_stop` | Spotify track id | `service_daemon/utils/now_playing_monitor.py`, `alfr3ddaemon.py` `check_now_playing()` |
+| `user` | `came_online`, `went_offline` | `users.id` | `service_user/app.py` `update_user_state()` |
+| `calendar_event` | `created`, `removed` | — (none stored) | `service_daemon/utils/calendar_utils.py` `_publish_calendar_diff()` |
+| `device` | `created` (lifecycle only — **not** state changes) | new `smarthome_devices.id` | `service_device/app.py` |
+| `weather` | `muted_announcement` | city name | `service_environment/weather_util.py` `speak_weather()` |
+
+Added for SA-12 (Branch C, 2026-09-07, commit `b9e6e36f`) — reuse the existing
+`get_producer().send("event-stream", …)` → `service_api._persist_household_events()` path,
+`"service"` set explicitly on the event dict:
+
+| subject_type | verb(s) | subject_id | producer(s) | notes |
+|---|---|---|---|---|
+| `device` | `turned_on`, `turned_off`, `toggled`, `set` | `smarthome_devices.id` | `service_api/routes/iot.py` `_emit_device_event()`, called from each `if success:` branch (Home Assistant / ESPHome / SmartThings) of `control_iot_device()` | command→verb: `turn_on`→`turned_on`, `turn_off`→`turned_off`, `toggle`→`toggled`, everything else (brightness/temp/mode/position/lock/media/volume/…)→`set`. Emitted **only** after the command actually succeeds. |
+| `routine` | `executed` | `routines.id` | `service_daemon/utils/util_routines.py` `check_routines()` (scheduled + event-triggered, after `should_trigger` + condition check, before `execute_actions()`); `service_api/routes/routines.py` `run_routine()` (manual "run now") | `source_service` is `daemon` for scheduled fires, `api` for manual runs |
+
+### Collection status (as of 2026-09-08)
+
+| stream | live rows accumulating? |
+|---|---|
+| `track/play_*` | yes — dominant volume (1700 `play_start` over 9 days) |
+| `user/came_online`, `user/went_offline` | yes — healthy (~136 rows / 9 days) |
+| `weather/muted_announcement` | yes — 46 rows |
+| `calendar_event/created`, `/removed` | trickle — 1–2 rows total |
+| `device/created` | trickle — 3 rows (lifecycle only, useless for transitions) |
+| `routine/executed` (manual) | ✅ verified end-to-end (row 14917) |
+| `routine/executed` (scheduled) | ⏳ deployed, awaiting first daemon fire |
+| `device/turned_on|off|toggled|set` | ⚠️ deployed but **zero rows** — all 61 Home Assistant devices offline on production, so no control command reaches `if success:`. Re-verify once HA is reconnected. |
+
+Candidate transition pairs the task doc names — presence→device, routine→device,
+device→device — have **zero** samples until the two Branch C streams accumulate real
+history. That is what the ~2026-09-28 re-check measures.
+
 ## Not yet done
 
 - Everything: Phase 1 (`event_transitions` table, `compute_transitions()`), Phase 2
