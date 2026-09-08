@@ -1,6 +1,7 @@
 """Routine management routes."""
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 import orjson
 import pymysql
@@ -18,6 +19,34 @@ from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["routines"])
+
+
+def _emit_routine_executed(producer, routine_id, routine_name, trigger):
+    """Record a routine firing as a structured household event (SA-12 Phase 0b follow-up).
+
+    Same event-stream -> service_api._persist_household_events() path every other structured
+    producer uses; best-effort, must never break the run it is reporting on.
+    """
+    try:
+        if not producer:
+            return
+        now = datetime.now(timezone.utc)
+        producer.send(
+            "event-stream",
+            {
+                "id": f"routine_executed_{routine_id}_{now.strftime('%Y%m%d%H%M%S%f')}",
+                "type": "routine",
+                "message": f"routine '{routine_name}' executed ({trigger})",
+                "time": now.isoformat(),
+                "service": "api",
+                "subject_type": "routine",
+                "subject_id": str(routine_id),
+                "verb": "executed",
+            },
+        )
+        producer.flush()
+    except Exception as e:  # noqa: BLE001 -- telemetry must not break routine execution
+        logger.error(f"Failed to emit routine household event: {e}")
 
 
 @router.get("/routines")
@@ -161,6 +190,10 @@ async def run_routine(routine_id: int, _perm=Depends(require_permission("routine
         kafka_producer = get_producer()
         if not kafka_producer:
             raise HTTPException(status_code=500, detail="Kafka not available")
+
+        _emit_routine_executed(
+            kafka_producer, routine_id, routine.get("name", str(routine_id)), "manual run"
+        )
 
         for action in actions:
             action_type = action.get("type")
