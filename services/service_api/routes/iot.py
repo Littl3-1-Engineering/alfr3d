@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 import orjson
 import pymysql
@@ -26,6 +27,47 @@ logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["iot"])
 
 MAX_FAVORITE_DEVICES = 10
+
+# Generic IoT commands collapse onto four structured verbs for the durable household
+# event log (SA-12 Phase 0b follow-up). Anything that is not an explicit on/off/toggle --
+# brightness, temperature, mode, position, lock/unlock, media, volume, ... -- is recorded
+# as a "set".
+_DEVICE_COMMAND_VERB = {
+    "turn_on": "turned_on",
+    "turn_off": "turned_off",
+    "toggle": "toggled",
+}
+
+
+def _emit_device_event(device_id, device_type, command, message):
+    """Record a *successful* IoT control action as a structured household event.
+
+    Reuses the same event-stream -> service_api._persist_household_events() path every other
+    structured producer uses (SA-11); best-effort, a failure here must never affect the
+    control response the caller already succeeded at.
+    """
+    try:
+        producer = get_producer()
+        if not producer:
+            return
+        verb = _DEVICE_COMMAND_VERB.get(command, "set")
+        now = datetime.now(timezone.utc)
+        producer.send(
+            "event-stream",
+            {
+                "id": f"device_{verb}_{device_id}_{now.strftime('%Y%m%d%H%M%S%f')}",
+                "type": "iot",
+                "message": message or f"{device_type or 'device'} {device_id}: {command}",
+                "time": now.isoformat(),
+                "service": "api",
+                "subject_type": "device",
+                "subject_id": str(device_id),
+                "verb": verb,
+            },
+        )
+        producer.flush()
+    except Exception as e:  # noqa: BLE001 -- telemetry must not break device control
+        logger.error(f"Failed to emit device household event: {e}")
 
 
 def fetch_iot_devices_data(linked_only=False):
@@ -547,6 +589,7 @@ async def control_iot_device(
             params = ha_utils.translate_generic_control_params(command, data.params)
             success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
             if success:
+                _emit_device_event(device_id, device_type, command, message)
                 devices = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_iot_devices_data
                 )
@@ -567,6 +610,7 @@ async def control_iot_device(
                 hostname, int(key), device_type, command, data.params or {}
             )
             if success:
+                _emit_device_event(device_id, device_type, command, message)
                 devices = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_iot_devices_data
                 )
@@ -593,6 +637,7 @@ async def control_iot_device(
                 st_device_id, capability, st_command, args
             )
             if success:
+                _emit_device_event(device_id, device_type, command, message)
                 devices = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_iot_devices_data
                 )

@@ -33,7 +33,7 @@ import sys
 import logging
 import orjson
 import pymysql as MySQLdb
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from random import randint
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
@@ -63,6 +63,37 @@ ROUTINE_QUIP_TYPES = {
     "Sunset": "sunset",
     "Bedtime": "bedtime",
 }
+
+
+def _emit_routine_executed(routine_id, routine_name):
+    """Record a routine firing as a structured household event (SA-12 Phase 0b follow-up).
+
+    Reuses the same event-stream -> service_api._persist_household_events() path every other
+    structured producer uses (SA-11); best-effort, must never break routine execution.
+    """
+    try:
+        producer = get_producer()
+        if not producer:
+            return
+        now = datetime.now(timezone.utc)
+        producer.send(
+            "event-stream",
+            orjson.dumps(
+                {
+                    "id": f"routine_executed_{routine_id}_{now.strftime('%Y%m%d%H%M%S%f')}",
+                    "type": "routine",
+                    "message": f"routine '{routine_name}' executed (scheduled)",
+                    "time": now.isoformat(),
+                    "service": "daemon",
+                    "subject_type": "routine",
+                    "subject_id": str(routine_id),
+                    "verb": "executed",
+                }
+            ),
+        )
+        producer.flush()
+    except Exception as e:
+        logger.error(f"Failed to emit routine household event: {e}")
 
 
 def _get_routine_quip(cursor, quip_type):
@@ -498,6 +529,7 @@ def check_routines() -> bool:
 
         if should_trigger:
             logger.info(routine_name + " routine is being triggered")
+            _emit_routine_executed(routine_id, routine_name)
             quip_type = ROUTINE_QUIP_TYPES.get(routine_name)
             if quip_type:
                 quip = _get_routine_quip(cursor, quip_type)
