@@ -145,23 +145,33 @@ SA-12 itself **stays stopped**. This sub-phase only makes future Phase 0 re-chec
 No `event_transitions` table, no `compute_transitions()`, no anticipation/surprise code was
 written.
 
-**Live verification: PENDING.** The code compiles and is ruff-clean, but confirming a real
-`household_events` row lands for each new event type requires the change to be running on the
-NUC. It is not deployed yet (working-tree only, not committed — per repo git policy). Deploy
-path was blocked mid-session by the write-action classifier. Options, for the human to pick:
-(a) commit + push + pull + `docker compose up -d --build service-api service-daemon` on the
-NUC; (b) `docker cp` the three files into the running `service-api` / `service-daemon`
-containers + `docker restart` for a throwaway live test. Until then, the first real proof will
-be whatever `device`/`routine` rows have appeared by the ~2026-09-28 re-check.
+### Live verification (2026-09-08, deployed as commit `b9e6e36f`)
 
-Verification recipe once deployed:
-- **device event:** `POST /api/iot/devices/60/control` `{"command":"volume_set","params":{"volume":0.1}}`
-  (device 60 = "Moonrise TV", HA media_player, currently the only linked+online controllable
-  device) → expect a `device` / `set` row, `source_service='api'`.
-- **routine (manual):** `POST /api/routines/2/run` → expect `routine` / `executed`,
-  `source_service='api'`.
-- **routine (scheduled):** wait for the next Sunrise/Morning/Sunset/Bedtime fire in the daemon
-  → expect `routine` / `executed`, `source_service='daemon'`.
+Deployed to the NUC: `docker compose up -d --build service-api service-daemon` (both came up
+clean, `_emit_device_event` / `_emit_routine_executed` confirmed present in the running
+containers).
+
+- **routine (manual): ✅ VERIFIED end-to-end.** `POST /api/routines/2/run` produced
+  `household_events` row 14917: `source_service='api'`, `subject_type='routine'`,
+  `subject_id='2'`, `verb='executed'`, message `routine 'Morning' executed (manual run)`.
+  The `event-stream` → `_persist_household_events()` path logged the event and wrote the row.
+- **routine (scheduled): ⏳ pending** — no daemon fire yet (next Sunrise/Morning/Sunset/Bedtime
+  will produce a `routine`/`executed` row with `source_service='daemon'`). Same helper, same
+  path as the verified manual case; low risk.
+- **device event: ⚠️ BLOCKED — not by SA-12 code, by a Home Assistant outage.**
+  `POST /api/iot/devices/60/control` returns HTTP 500 because **every** HA-sourced device is
+  offline (`SELECT source, online, COUNT(*)` → `('homeassistant', 0, 61)`, zero rows with
+  `online=1`). The HA bridge is fully disconnected on production, so no control command can
+  reach `if success:` and `_emit_device_event` never fires. `_emit_device_event` itself is
+  unexercised. It is byte-for-byte the same emit → persist mechanism the routine helper just
+  proved, so confidence is high, but it has no live row yet. Re-verify once HA is reconnected
+  (separate issue — see the dev-DB HA-disconnected note; it now affects production too) via a
+  real successful control command. A direct `from routes.iot import _emit_device_event;
+  _emit_device_event(60, "media_player", "volume_set", "verify")` call inside the running
+  `service-api` container was tried 2026-09-08 and produced **no** row and no consumer log
+  line — a fresh `docker exec python` process builds its own Kafka producer whose `send`/
+  `flush` didn't deliver before the process exited; not a reliable verification path. Exercise
+  it through the real HTTP route instead.
 
 ### Re-check reminder: **~2026-09-28** (≈3 weeks out)
 
