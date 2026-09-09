@@ -7,6 +7,8 @@ passed ControlBlade's params straight through, which silently sent HA the wrong 
 brightness, volume, and fan speed (right endpoint, wrong payload).
 """
 
+from unittest.mock import MagicMock, patch
+
 from common import ha_utils
 
 
@@ -68,3 +70,31 @@ def test_ha_state_is_online_treats_any_real_state_as_reachable():
         assert ha_utils.ha_state_is_online(reachable) is True, reachable
     for unreachable in ("unavailable", "unknown", None, ""):
         assert ha_utils.ha_state_is_online(unreachable) is False, repr(unreachable)
+
+
+def test_sync_ha_devices_prunes_entities_no_longer_in_home_assistant():
+    """A house move (or a removed integration) leaves smarthome_devices rows for HA
+    entities that will never come back. sync_ha_devices() only ever INSERT/UPDATEs,
+    so those rows lingered forever. It should now DELETE homeassistant-source rows
+    whose entity_id wasn't in the current HA response."""
+    ha_devices = [
+        {"entity_id": "light.kitchen", "name": "Kitchen", "domain": "light", "state": "on"},
+        {"entity_id": "lock.front", "name": "Front", "domain": "lock", "state": "locked"},
+    ]
+    mock_db = MagicMock()
+    cursor = mock_db.cursor.return_value
+    cursor.fetchone.return_value = None  # no environment row, no existing device rows
+    cursor.rowcount = 3
+
+    with patch.object(ha_utils, "is_ha_configured", return_value=True), patch.object(
+        ha_utils, "get_ha_devices", return_value=ha_devices
+    ), patch.object(ha_utils, "get_connection", return_value=mock_db):
+        assert ha_utils.sync_ha_devices() is True
+
+    delete_calls = [
+        c for c in cursor.execute.call_args_list if "DELETE FROM smarthome_devices" in c.args[0]
+    ]
+    assert len(delete_calls) == 1
+    sql, params = delete_calls[0].args
+    assert "NOT IN" in sql and "source = 'homeassistant'" in sql
+    assert set(params) == {"light.kitchen", "lock.front"}
