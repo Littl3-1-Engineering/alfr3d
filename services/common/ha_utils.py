@@ -238,8 +238,10 @@ def sync_ha_devices():
     synced = 0
     updated = 0
     linked = 0
+    seen_entity_ids = set()
     for device in devices:
         entity_id = device["entity_id"]
+        seen_entity_ids.add(entity_id)
         name = device["name"]
         device_type = device["domain"]
         state = device["state"]
@@ -293,10 +295,33 @@ def sync_ha_devices():
             )
         synced += 1
 
+    # Prune rows for HA entities that no longer exist in Home Assistant at all
+    # (e.g. devices left behind in a house move, or an integration that was
+    # removed). Entities that still exist but are unreachable come back from
+    # get_ha_devices() as `unavailable` and are kept (marked offline) above --
+    # only genuine disappearances are removed here. The `if not devices` guard
+    # near the top already skips this whole function when HA returns nothing, so
+    # a fully-empty list can't wipe the table. device_favorites cascades on
+    # delete; household_events history is keyed by loose subject_id, not an FK,
+    # so past events survive the prune.
+    pruned = 0
+    if seen_entity_ids:
+        placeholders = ", ".join(["%s"] * len(seen_entity_ids))
+        cursor.execute(
+            f"""
+            DELETE FROM smarthome_devices
+            WHERE source = 'homeassistant'
+              AND ha_entity_id IS NOT NULL
+              AND ha_entity_id NOT IN ({placeholders})
+            """,
+            tuple(seen_entity_ids),
+        )
+        pruned = cursor.rowcount
+
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} HA devices ({updated} updated), linked {linked}")
+    logger.info(f"Synced {synced} HA devices ({updated} updated), linked {linked}, pruned {pruned}")
     return True
 
 
