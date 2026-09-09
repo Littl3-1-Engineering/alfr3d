@@ -137,7 +137,9 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   is wrong, and the DELETE was FK-unsafe (`device_command_history` has no cascade). Replaced
   with an explicit `DELETE /api/iot/devices/{id}` endpoint (`3dfa3f29`, technoking-only, clears
   command history then the row). Athos will delete the gone-for-good devices in HA + via that
-  endpoint. None of `93354114`/`3dfa3f29` is deployed to the NUC yet.
+  endpoint (auto-prune was offered and declined — leave it manual). **Deployed to the NUC
+  2026-09-08** (`service-api` + `service-device` rebuilt, no migration); post-deploy sync moved
+  `online` 1→44, only the ~17 genuinely `unavailable`/`unknown` entities stay hidden.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
