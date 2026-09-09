@@ -269,6 +269,52 @@ def test_write_route_succeeds_for_permitted_resident_token(mock_db_connection, a
     assert response.json()["id"] == 42
 
 
+# --- DELETE /api/iot/devices/{id}: explicit removal of a synced smarthome device --
+
+
+def test_delete_iot_device_rejects_unauthenticated_request(api_client):
+    assert api_client.delete("/api/iot/devices/60").status_code == 401
+
+
+def test_delete_iot_device_rejects_resident_token(api_client):
+    """Removing a synced device is technoking-only (iot resource "*" grant) -- a resident
+    can control devices but not delete their registry rows."""
+    response = api_client.delete("/api/iot/devices/60", headers=_bearer(2, "resident"))
+    assert response.status_code == 403
+
+
+@patch("routes.iot.db_connection")
+def test_delete_iot_device_404_when_missing(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = None
+
+    response = api_client.delete("/api/iot/devices/999", headers=_bearer(1, "owner"))
+    assert response.status_code == 404
+
+
+@patch("routes.iot.db_connection")
+def test_delete_iot_device_clears_command_history_then_the_row(mock_db_connection, api_client):
+    """device_command_history FKs smarthome_devices with no ON DELETE CASCADE, so its rows
+    must be cleared before the device row or the DELETE errors."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (60, "Moonrise TV", "homeassistant")
+    mock_cursor.fetchall.return_value = []
+
+    response = api_client.delete("/api/iot/devices/60", headers=_bearer(1, "owner"))
+    assert response.status_code == 200
+    assert response.json()["device_id"] == 60
+
+    deletes = [c.args[0] for c in mock_cursor.execute.call_args_list if "DELETE" in c.args[0]]
+    assert deletes[0].startswith("DELETE FROM device_command_history")
+    assert deletes[1].startswith("DELETE FROM smarthome_devices")
+
+
 # --- PUT /api/users/{id}: self-service profile editing (todo_user_management.md) --
 
 
