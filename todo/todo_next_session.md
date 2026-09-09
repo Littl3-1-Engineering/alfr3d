@@ -35,8 +35,11 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   had **zero** structured rows because no producer emitted them. Branch C fix shipped (commit
   `b9e6e36f`): `service_api` now emits structured `device/turned_*` and `routine/executed`
   events. SA-12 stays stopped; **re-check ~2026-09-28** once those two new streams have real
-  history. Note `device/*` events are still at zero rows — all 61 HA devices are offline on
-  production (HA disconnected), so no control command reaches the emit path.
+  history. `device/*` events are still near-zero: HA itself is healthy and syncing
+  (`192.168.2.200:8123`, up since Aug 29), but ~59 of 61 HA entities report `unavailable` —
+  the Cast integration (Google Home speakers, TVs, tablets) has dropped. Only `Moonrise TV`
+  is controllable right now, so the stream stays thin until HA's device connectivity is
+  restored (HA restart / reload Cast integration — needs the household).
 - **SA-9** (`todo_esphome_situational_awareness.md`, stopped at Phase 0): revisit only if the
   household actually gets a real ESPHome node (a live mDNS scan of the real LAN found none as of
   2026-08-30).
@@ -117,6 +120,15 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   large batch this week outside this repo's roadmap (Deck/Socket rename, AGP 9 upgrade,
   first-launch onboarding, app long-press menu, app-list disk cache on a branch) — see that
   repo's `todo/` and `agents.md`.
+- **2026-09-08**: verified the household HA instance is healthy (`192.168.2.200:8123`, running
+  since Aug 29, `GET /api/iot/ha/status` → `connected`, weather/battery sensors fresh today).
+  Found + fixed a real bug this un-masked (commit `93354114`): `sync_ha_devices()` set
+  `online = state == "on"`, so any reachable HA device not in state `on` (media_player on
+  `idle`, an off light, a `locked` lock, a `heat`ing climate unit, every sensor) was marked
+  offline and hidden by the launcher. Now `online` = "HA isn't reporting `unavailable`/
+  `unknown`". Remaining real issue, needs the household: ~59 of 61 HA entities are genuinely
+  `unavailable` in HA (the Cast integration dropped — Google Homes, TVs, tablets); an HA
+  restart / Cast reload should bring them back. Only `Moonrise TV` is currently live.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
