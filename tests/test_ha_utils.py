@@ -56,3 +56,15 @@ def test_other_commands_pass_params_through_unchanged():
 def test_handles_missing_or_none_params():
     assert ha_utils.translate_generic_control_params("turn_on", None) == {}
     assert ha_utils.translate_generic_control_params("volume_set", {}) == {}
+
+
+def test_ha_state_is_online_treats_any_real_state_as_reachable():
+    """sync_ha_devices used `online = state == "on"`, which marked every reachable
+    device that wasn't a lit bulb (a media_player on `idle`/`paused`, a switched-off
+    light, a `locked` lock, a climate on `heat`) as offline -- and the launcher hides
+    offline devices entirely. "online" means HA can talk to the device, i.e. the state
+    isn't `unavailable`/`unknown`."""
+    for reachable in ("on", "off", "idle", "playing", "paused", "locked", "heat", "23.5"):
+        assert ha_utils.ha_state_is_online(reachable) is True, reachable
+    for unreachable in ("unavailable", "unknown", None, ""):
+        assert ha_utils.ha_state_is_online(unreachable) is False, repr(unreachable)

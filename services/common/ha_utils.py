@@ -8,6 +8,17 @@ from . import secrets_utils
 
 logger = logging.getLogger("HALog")
 
+# Home Assistant reports these two states when an integration cannot reach a
+# device; every other state ("on", "off", "idle", "playing", "locked", "heat",
+# a bare sensor value, ...) means HA is talking to it. "online" tracks
+# reachability, not power state -- a light that is switched off is still online.
+HA_UNREACHABLE_STATES = ("unavailable", "unknown")
+
+
+def ha_state_is_online(state):
+    """True when a Home Assistant entity state indicates the device is reachable."""
+    return bool(state) and state not in HA_UNREACHABLE_STATES
+
 
 def get_ha_config():
     db = None
@@ -247,7 +258,7 @@ def sync_ha_devices():
                 linked += 1
 
         last_state = orjson.dumps(device).decode("utf-8")
-        online = state == "on"
+        online = ha_state_is_online(state)
 
         cursor.execute(
             "SELECT id FROM smarthome_devices WHERE source = 'homeassistant' AND ha_entity_id = %s",
