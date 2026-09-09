@@ -13,7 +13,7 @@ schedule==1.2.2
 gtts==2.5.4
 google-api-python-client
 google-auth-oauthlib
-alembic==1.19.1
+alembic==1.19.2
 SQLAlchemy>=2.0.52
 aioesphomeapi==46.2.1
 zeroconf==0.151.1
