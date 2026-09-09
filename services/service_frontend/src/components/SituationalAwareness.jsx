@@ -1,16 +1,23 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X } from 'lucide-react';
+import {
+  Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X,
+  Focus, Repeat, DoorOpen, Lightbulb, Users, Activity, Gauge, PartyPopper, Moon,
+} from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 import socket from '../utils/socket';
 import { apiFetch } from '../utils/apiClient';
 
-// Matches MAX_DISPLAYS in service_daemon/alfr3ddaemon.py (len(DISPLAY_RULES) = 9
-// registered card types). Keep in sync -- a lower cap here silently drops cards
-// the backend intentionally raised its own cap to stop dropping.
-const MAX_DISPLAY_CARDS = 9;
+// No fixed frontend card ceiling. The backend already caps each cycle to its own
+// dynamic limit (MAX_DISPLAYS = len(DISPLAY_RULES) in
+// service_daemon/alfr3ddaemon.py) and publishes only that slice sorted by
+// priority, so the dashboard renders -- and reports "shown" to SA-1's feedback
+// loop -- exactly the set the backend sent. A hardcoded cap here (formerly 9)
+// silently dropped cards the backend deliberately kept once the rule count grew
+// past it, and starved SA-1's suppression logic of shown/dismissed telemetry for
+// the cards it never rendered.
 
 // A card's real identity (SA-1) is (rule_id, subject_key) -- decide_displays()
 // stamps both onto every card it returns. "mode" isn't a reliable identity: two
@@ -60,19 +67,18 @@ const SituationalAwareness = ({ timezone = null }) => {
     };
   }, []);
 
-  // "shown" is reported by the consumer, never assumed by the daemon (SA-1) -- a card
-  // truncated away by MAX_DISPLAY_CARDS was never actually shown. Fires once per card
-  // per broadcast, not once per identity ever -- decide_displays()'s repetition damping
-  // needs one "shown" row per cycle a card is genuinely displayed, so re-showing the
-  // same identity next cycle must report again, not dedupe against a past cycle. The
-  // effect is keyed on the `saData` array reference (only changes on a genuine new
-  // fetch/socket push), and the ref just guards against the same identity appearing
-  // twice *within* one payload. Deliberately independent of local dismiss state -- a
-  // card the backend put in its top MAX_DISPLAY_CARDS this cycle was shown regardless
-  // of what the user does with it after.
+  // "shown" is reported by the consumer, never assumed by the daemon (SA-1). Fires
+  // once per card per broadcast, not once per identity ever -- decide_displays()'s
+  // repetition damping needs one "shown" row per cycle a card is genuinely
+  // displayed, so re-showing the same identity next cycle must report again, not
+  // dedupe against a past cycle. The effect is keyed on the `saData` array
+  // reference (only changes on a genuine new fetch/socket push), and the ref just
+  // guards against the same identity appearing twice *within* one payload.
+  // Deliberately independent of local dismiss state -- a card the backend sent this
+  // cycle was shown regardless of what the user does with it after.
   useEffect(() => {
     const reportedThisCycle = new Set();
-    saData.slice(0, MAX_DISPLAY_CARDS).forEach((card) => {
+    saData.forEach((card) => {
       const key = cardKey(card);
       if (reportedThisCycle.has(key)) return;
       reportedThisCycle.add(key);
@@ -103,6 +109,24 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'weather_advisory': return <CloudRain className="text-fui-magenta" />;
       // Leave-by guidance is as time-boxed/actionable as focus_needed -- same treatment.
       case 'travel': return <Car className="text-fui-magenta" />;
+      // Ambient launcher-focus readout -- cyan status treatment.
+      case 'attention_focus': return <Focus className="text-fui-accent" />;
+      // "Resume what you were doing" hand-off -- actionable, magenta.
+      case 'cross_surface_continuity': return <Repeat className="text-fui-magenta" />;
+      // Observation about a person's routine (SA-3) -- deliberately understated, cyan.
+      case 'departure_anomaly': return <DoorOpen className="text-fui-accent" />;
+      // Something was left on in an empty house -- actionable, magenta.
+      case 'empty_house_still_on': return <Lightbulb className="text-fui-magenta" />;
+      // Who's home / composition -- ambient, cyan.
+      case 'household_composition': return <Users className="text-fui-accent" />;
+      // "Today is unusual for the household" (SA-10) -- observation, cyan.
+      case 'household_unusual_day': return <Activity className="text-fui-accent" />;
+      // Appliance running outside its learned rhythm -- observation, cyan.
+      case 'rhythm_break_anomaly': return <Gauge className="text-fui-accent" />;
+      // Party-night energy advisory -- actionable, magenta.
+      case 'party_advisory': return <PartyPopper className="text-fui-magenta" />;
+      // Late-hour wind-down nudge -- ambient evening, cyan.
+      case 'wind_down_signal': return <Moon className="text-fui-accent" />;
       default: return <Thermometer className="text-error" />;
     }
   };
@@ -110,7 +134,7 @@ const SituationalAwareness = ({ timezone = null }) => {
   return (
     <div className="space-y-4">
       {visibleCards.length > 0 ? (
-        visibleCards.slice(0, MAX_DISPLAY_CARDS).map((card, index) => (
+        visibleCards.map((card, index) => (
           <motion.div
             key={cardKey(card)}
             initial={{ opacity: 0, y: 20 }}

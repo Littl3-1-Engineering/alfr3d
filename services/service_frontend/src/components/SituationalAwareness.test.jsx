@@ -83,7 +83,7 @@ describe('SituationalAwareness', () => {
     expect(screen.getByText('FETCHING DATA...')).toBeTruthy()
   })
 
-  it('caps rendered cards at MAX_DISPLAY_CARDS (9) even if the backend sends more', async () => {
+  it('renders every card the backend sends -- no fixed frontend cap (backend already sliced)', async () => {
     const manyCards = Array.from({ length: 12 }, (_, i) => ({
       mode: 'weather',
       content: `card ${i}`,
@@ -96,8 +96,28 @@ describe('SituationalAwareness', () => {
     render(<SituationalAwareness />)
     await screen.findByText('card 0')
 
-    expect(screen.queryAllByText(/^card \d+$/).length).toBe(9)
-    expect(screen.queryByText('card 9')).toBeFalsy()
+    expect(screen.queryAllByText(/^card \d+$/).length).toBe(12)
+    expect(screen.queryByText('card 11')).toBeTruthy()
+  })
+
+  it('reports "shown" for every card the backend sends, not just the first N (SA-1)', async () => {
+    const manyCards = Array.from({ length: 12 }, (_, i) => ({
+      mode: 'weather',
+      rule_id: 'weather',
+      subject_key: `s${i}`,
+      content: `card ${i}`,
+      priority: i,
+    }))
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => manyCards })
+    render(<SituationalAwareness />)
+    await screen.findByText('card 0')
+
+    await waitFor(() => expect(interactionCalls().length).toBe(12))
+  })
+
+  it('renders distinct icons for the newer card modes', async () => {
+    await renderWithData(mockSaData('wind_down_signal'))
+    expect(document.querySelector('.lucide-moon')).toBeTruthy()
   })
 
   it('renders a playlist link for a music card carrying playlist fields', async () => {
