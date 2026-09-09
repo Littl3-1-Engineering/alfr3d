@@ -239,6 +239,7 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 
 #### API Endpoints (Additional)
 - `PUT /api/iot/devices/{id}/link`: Link/unlink IoT device to local device
+- `DELETE /api/iot/devices/{id}`: Remove a synced smarthome device for good (technoking-only; clears its command history, cascades favorites). For devices genuinely gone — e.g. left behind in a house move — since sync itself never prunes
 - `GET /api/iot/devices?linked=true`: Filter to linked devices
 - `GET /api/iot/favorites`: List the signed-in user's favorited devices, in order
 - `POST /api/iot/favorites`: Add a device to favorites (`{device_id}`), capped at 10 per user
@@ -249,6 +250,8 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 - Device service fetches devices from HA/ST APIs and updates the database
 - MAC addresses extracted from HA entity connections for device auto-linking
 - On sync: looks up MAC in device table, sets device_id FK (no auto-creation for unmatched devices)
+- Sync only inserts/updates — it never deletes. A device that disappears from HA (unpaired, or left behind in a move) keeps its row, marked offline, until removed via `DELETE /api/iot/devices/{id}`
+- `online` reflects reachability: true unless HA reports the entity `unavailable`/`unknown` (a switched-off light or an idle speaker is still online)
 - Frontend uses FK join for position data
 
 ### Authentication & RBAC
