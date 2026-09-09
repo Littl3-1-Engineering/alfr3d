@@ -29,10 +29,14 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   detection has never seen a real event with structured `conferenceData` from Google. Check
   `SELECT conference_uri, conference_solution FROM calendar_events WHERE conference_uri IS NOT
   NULL` next time a Meet/Zoom invite syncs.
-- **SA-12** (`todo_transition_learning.md`, stopped at Phase 0): `household_events` had ~10 hours
-  of real history and 71 structured rows when checked. Re-run the Phase 0 check
-  (`SELECT COUNT(*), MIN(occurred_at), MAX(occurred_at) FROM household_events`) after it's had
-  real weeks to accumulate, and only then reconsider building `event_transitions`.
+- **SA-12** (`todo_transition_learning.md`, still stopped — Phase 0b re-check 2026-09-07): elapsed
+  time is no longer the blocker (`household_events` now spans ~9 real days). The blocker is
+  structural — the candidate transition pairs (presence→device, routine→device, device→device)
+  had **zero** structured rows because no producer emitted them. Branch C fix shipped (commit
+  `b9e6e36f`): `service_api` now emits structured `device/turned_*` and `routine/executed`
+  events. SA-12 stays stopped; **re-check ~2026-09-28** once those two new streams have real
+  history. Note `device/*` events are still at zero rows — all 61 HA devices are offline on
+  production (HA disconnected), so no control command reaches the emit path.
 - **SA-9** (`todo_esphome_situational_awareness.md`, stopped at Phase 0): revisit only if the
   household actually gets a real ESPHome node (a live mDNS scan of the real LAN found none as of
   2026-08-30).
@@ -96,6 +100,23 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   todo_websockets, tree_of_alfr3d, todo_music_playlist_recommendation, todo_structured_card_payload,
   todo_ble_presence_sensing, todo_email_service, todo_free_routing_alternatives. Plus deck's
   app_drawer_cache / auth_rbac / launcher_rotation_lock and littl31's mobile_scramble_jitter.
+
+- **2026-09-04**: shipped **DayContext** (commit `3fa2f072`, alembic 0037) — unified time-of-day
+  source feeding the mute gate, LLM prompt, greeting, and idle-quip wind-down; fixes "good
+  morning at 22:00". Deployed. Not an SA-roadmap item; tracked in `todo_day_context.md`-adjacent
+  work / memory.
+- **2026-09-07**: owner can set a preferred form of address (`service_speak`, commits `12a77fdf`
+  + `f35e23fe` web UI). Also fixed a real presence-tracking bug — `service_user` was reading the
+  user row by a stale positional index (`f9abf62c`).
+- **2026-09-08**: **SA-12** picked back up for a Phase 0b re-check — see the revised SA-12 bullet
+  above. Verdict: still stopped, but the *reason* changed (structural, not time), and the two
+  missing structured-event producers were built and deployed (`b9e6e36f`). Concrete re-check
+  date: ~2026-09-28.
+- **2026-09-08**: `littl31` CI workflow added (`.github/workflows/ci.yml` — build + pre-commit),
+  closing the last non-Aikido item in `todo_repo_standardization.md`. `alfr3d_deck` shipped a
+  large batch this week outside this repo's roadmap (Deck/Socket rename, AGP 9 upgrade,
+  first-launch onboarding, app long-press menu, app-list disk cache on a branch) — see that
+  repo's `todo/` and `agents.md`.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
