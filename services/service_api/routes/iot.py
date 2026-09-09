@@ -659,6 +659,43 @@ async def control_iot_device(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/iot/devices/{device_id}")
+async def remove_iot_device(device_id: int, _perm=Depends(require_permission("iot", "remove"))):
+    """Delete a synced smarthome device row for good. sync_ha_devices()/sync_st_devices()
+    only ever insert/update, so a device that is genuinely gone -- left behind in a house
+    move, an integration removed -- otherwise lingers forever. Sync is deliberately NOT
+    auto-pruning (a device that drops off for a day mid-recovery must not be destroyed);
+    removal is an explicit, technoking-only action instead.
+
+    device_command_history has an FK to smarthome_devices with no ON DELETE CASCADE, so its
+    rows are cleared first; device_favorites cascades on its own. household_events history
+    is keyed by a loose subject_id (not an FK) and is left intact."""
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT id, name, source FROM smarthome_devices WHERE id = %s", (device_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Device not found")
+
+            cursor.execute(
+                "DELETE FROM device_command_history WHERE smarthome_device_id = %s", (device_id,)
+            )
+            cursor.execute("DELETE FROM smarthome_devices WHERE id = %s", (device_id,))
+            db.commit()
+
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        return {"message": "Device removed", "device_id": device_id, "name": row[1]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error removing IoT device: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/iot/favorites")
 async def get_favorite_devices(user: CurrentUser = Depends(require_auth)):
     try:
