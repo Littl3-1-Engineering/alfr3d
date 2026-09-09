@@ -235,7 +235,7 @@ Added for SA-12 (Branch C, 2026-09-07, commit `b9e6e36f`) — reuse the existing
 | `device/created` | trickle — 3 rows (lifecycle only, useless for transitions) |
 | `routine/executed` (manual) | ✅ verified end-to-end (row 14917) |
 | `routine/executed` (scheduled) | ⏳ deployed, awaiting first daemon fire |
-| `device/turned_on|off|toggled|set` | ⚠️ deployed but **zero rows** — all 61 Home Assistant devices offline on production, so no control command reaches `if success:`. Re-verify once HA is reconnected. |
+| `device/turned_on|off|toggled|set` | ⚠️ deployed but **near-zero rows**. HA itself is healthy and syncing (`192.168.2.200:8123`), but ~59 of 61 HA entities report `unavailable` — the Cast integration (Google Homes, TVs, tablets) has dropped, so a control command against them never reaches `if success:`. Only `Moonrise TV` is currently controllable. (Separately fixed 2026-09-08, commit `93354114`: `sync_ha_devices()` was marking any HA device not in state `on` as offline — unrelated to whether the *event* fires, but it's why the launcher showed everything offline.) Re-verify once HA's Cast devices are back. |
 
 Candidate transition pairs the task doc names — presence→device, routine→device,
 device→device — have **zero** samples until the two Branch C streams accumulate real
