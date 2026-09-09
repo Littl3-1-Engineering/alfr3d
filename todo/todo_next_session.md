@@ -36,10 +36,14 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `b9e6e36f`): `service_api` now emits structured `device/turned_*` and `routine/executed`
   events. SA-12 stays stopped; **re-check ~2026-09-28** once those two new streams have real
   history. `device/*` events are still near-zero: HA itself is healthy and syncing
-  (`192.168.2.200:8123`, up since Aug 29), but ~59 of 61 HA entities report `unavailable` —
-  the Cast integration (Google Home speakers, TVs, tablets) has dropped. Only `Moonrise TV`
-  is controllable right now, so the stream stays thin until HA's device connectivity is
-  restored (HA restart / reload Cast integration — needs the household).
+  (`192.168.2.200:8123`, up since Aug 29), but ~59 of 61 HA entities are **genuinely gone** —
+  the household moved and the Google Home speakers / TVs / tablets stayed at the old place.
+  They aren't coming back. Only `Moonrise TV` (and `moonrise_tv_2`) followed the move. Two
+  cleanup steps: (a) the household deletes the dead devices/integration in the HA UI; (b)
+  `sync_ha_devices()` now prunes HA-source rows that vanish from HA (commit `3b10fadb`), so
+  once (a) is done a sync clears the orphan `smarthome_devices` rows automatically. Until then
+  the `device/*` transition stream only has the one live TV to work with, which isn't enough —
+  SA-12 stays stopped regardless.
 - **SA-9** (`todo_esphome_situational_awareness.md`, stopped at Phase 0): revisit only if the
   household actually gets a real ESPHome node (a live mDNS scan of the real LAN found none as of
   2026-08-30).
@@ -126,9 +130,12 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `online = state == "on"`, so any reachable HA device not in state `on` (media_player on
   `idle`, an off light, a `locked` lock, a `heat`ing climate unit, every sensor) was marked
   offline and hidden by the launcher. Now `online` = "HA isn't reporting `unavailable`/
-  `unknown`". Remaining real issue, needs the household: ~59 of 61 HA entities are genuinely
-  `unavailable` in HA (the Cast integration dropped — Google Homes, TVs, tablets); an HA
-  restart / Cast reload should bring them back. Only `Moonrise TV` is currently live.
+  `unknown`". **Then the household clarified: the ~59 dead devices are a house move** — the
+  Google Homes / TVs / tablets stayed at the old place and aren't coming back; only Moonrise
+  TV followed. Added a prune step to `sync_ha_devices()` (commit `3b10fadb`) so HA-source rows
+  that disappear from HA are deleted on the next sync. Still needs the household to delete the
+  dead devices in the HA UI first — until then HA keeps listing them as `unavailable` and
+  alfr3d keeps them (offline).
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
