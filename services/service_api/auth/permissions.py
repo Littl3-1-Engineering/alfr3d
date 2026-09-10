@@ -34,7 +34,11 @@ _TECHNOKING_AND_RESIDENT = {"technoking", "resident"}
 # key. Resources that mix everyday household actions with admin/setup actions override specific
 # action names on top of "*".
 PERMISSIONS = {
-    "context": {"*": _TECHNOKING_AND_RESIDENT},  # launcher-reported surface state
+    # launcher-reported surface state / attention telemetry / card interactions / device
+    # location (todo_device_location_reporting.md) -- the "*" wildcard covers every sub-action,
+    # and the resident-or-above floor deliberately 403s guest-typed Deck users out of location
+    # reporting.
+    "context": {"*": _TECHNOKING_AND_RESIDENT},
     "devices": {"*": _TECHNOKING_AND_RESIDENT},
     "environment": {"*": _TECHNOKING_ONLY},
     "integrations": {"*": _TECHNOKING_ONLY},

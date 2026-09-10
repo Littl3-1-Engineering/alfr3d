@@ -13,6 +13,7 @@ todo/todo_card_feedback_loop.md.
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import orjson
@@ -108,6 +109,110 @@ async def report_attention_telemetry(
         return {"message": "Attention telemetry recorded"}
     except Exception as e:
         logger.error(f"Error recording attention telemetry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# POST /api/context/device-location bounds (todo/todo_device_location_reporting.md).
+_LOCATION_MAX_ACCURACY_M = 20_000.0  # a fix claiming worse than 20 km is a bad reading, not data
+_LOCATION_MAX_FIX_AGE_DAYS = 180  # matches cleanup_device_location_history_event's retention
+_LOCATION_MAX_FUTURE_SKEW_MS = 60_000.0  # tolerate a minute of device-clock skew, no more
+
+
+@router.post("/context/device-location")
+async def report_device_location(
+    data: dict = None, user=Depends(require_permission("context", "device_location"))
+):
+    """Ingest a batch of approximate location fixes from one ALFR3D Deck install into
+    `device_location_history`.
+
+    Per-*device*: keyed by `client_install_id` (a stable UUID the Deck generates), never
+    merged across the reporting user's other devices. `user_id` is taken from the JWT, never
+    the request body. `device_id` is left NULL -- a later device-linking step ties the install
+    to its arp-scan `device` row.
+
+    No DISPLAY_RULES check reads this table yet; it is a data-collection pipeline for later SA
+    work (geofence departures, `check_travel()` origin, transition learning). Returns
+    `{"accepted": n, "rejected": m}` -- individual bad fixes are dropped, not fatal.
+    """
+    try:
+        data = data or {}
+        install_id = str(data.get("client_install_id") or "").strip()
+        try:
+            uuid.UUID(install_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="client_install_id must be a UUID")
+
+        fixes = data.get("fixes")
+        if not isinstance(fixes, list) or not fixes:
+            raise HTTPException(status_code=400, detail="fixes must be a non-empty list")
+
+        reported_at = datetime.now(timezone.utc)
+        now_ms = reported_at.timestamp() * 1000.0
+        oldest_allowed_ms = now_ms - _LOCATION_MAX_FIX_AGE_DAYS * 86_400_000.0
+
+        rows = []
+        rejected = 0
+        for fix in fixes:
+            if not isinstance(fix, dict):
+                rejected += 1
+                continue
+            try:
+                lat = float(fix["latitude"])
+                lon = float(fix["longitude"])
+                captured_ms = float(fix["captured_at_ms"])
+            except (KeyError, TypeError, ValueError):
+                rejected += 1
+                continue
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                rejected += 1
+                continue
+            too_new = captured_ms > now_ms + _LOCATION_MAX_FUTURE_SKEW_MS
+            if too_new or captured_ms < oldest_allowed_ms:
+                rejected += 1
+                continue
+
+            accuracy = fix.get("accuracy_m")
+            try:
+                accuracy = float(accuracy) if accuracy is not None else None
+            except (TypeError, ValueError):
+                accuracy = None
+            if accuracy is not None and not (0.0 <= accuracy <= _LOCATION_MAX_ACCURACY_M):
+                accuracy = None
+
+            provider = fix.get("provider")
+            provider = str(provider)[:16] if provider is not None else None
+
+            captured_at = datetime.fromtimestamp(captured_ms / 1000.0, tz=timezone.utc)
+            rows.append(
+                (
+                    install_id,
+                    int(user.id),
+                    lat,
+                    lon,
+                    accuracy,
+                    provider,
+                    "deck",
+                    captured_at,
+                    reported_at,
+                )
+            )
+
+        if rows:
+            with db_connection() as db:
+                cursor = db.cursor()
+                cursor.executemany(
+                    "INSERT INTO device_location_history "
+                    "(client_install_id, user_id, latitude, longitude, accuracy_m, provider, "
+                    "source, captured_at, reported_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    rows,
+                )
+                db.commit()
+        return {"accepted": len(rows), "rejected": rejected}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recording device location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
