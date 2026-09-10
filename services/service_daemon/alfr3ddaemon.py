@@ -2191,6 +2191,24 @@ def check_forecast_routine():
         p.send("environment", b"check forecast")
 
 
+def sync_calendar_routine():
+    """
+    Description:
+            Trigger a Google Calendar sync every 15 minutes by publishing to the
+            `integrations` topic -- the same message the API's
+            /integrations/calendar/sync endpoint sends, picked up by
+            consume_integrations(). Without this, calendar_events only refreshes at
+            daemon startup or on a manual Sync from the Integrations page, so a
+            newly-created event (e.g. one with an address that check_travel() needs)
+            could sit unsynced for hours. Published, not called inline, to keep the
+            schedule loop non-blocking like every other routine here.
+    """
+    logger.info("Scheduled calendar sync")
+    p = get_producer()
+    if p:
+        p.send("integrations", orjson.dumps({"type": "calendar", "action": "sync"}))
+
+
 def sync_iot_devices():
     """
     Description:
@@ -2656,6 +2674,7 @@ def init_daemon():
         # until i deploy a more configurable alarm clock
         schedule.every(4).hours.do(check_weather_routine)
         schedule.every(1).hours.do(check_forecast_routine)
+        schedule.every(15).minutes.do(sync_calendar_routine)
         schedule.every(15).minutes.do(sync_iot_devices)
         schedule.every(60).minutes.do(discover_esphome_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
