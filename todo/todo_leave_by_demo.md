@@ -106,20 +106,20 @@ works, just have the dashboard/Deck up and record.
 4. **Record** ~20–30 s on a real device — the card appearing, with enough surrounding UI that it
    reads as a real dashboard, not a crop.
 
-## Deploy / git state
+## Deploy / git state — all reconciled 2026-09-10
 
-Both source changes were `scp`'d onto the NUC checkout (`~/alfr3d`) and the container rebuilt
-(`docker compose up -d --build service-daemon`, no migration) on 2026-09-10, then committed to
-`main` from the dev checkout and pushed:
+Both source changes were `scp`'d onto the NUC checkout (`~/alfr3d`), the `service-daemon`
+container rebuilt (`docker compose up -d --build service-daemon`, no migration), then committed
+to `main` from the dev checkout and pushed:
 
-- `feat(daemon): scheduled 15-minute Google Calendar sync`
-- `fix(daemon): render calendar card times in the household's timezone, not UTC`
+- `65dec9e1 fix(daemon): render calendar card times in the household's timezone, not UTC`
+- `ecbdccbe feat(daemon): scheduled 15-minute Google Calendar sync`
 
-**The NUC working tree still holds these as uncommitted local edits** and is behind `origin/main`
-(it was 13 commits behind before this session). The scp'd files are byte-identical to what
-landed on `main`, so the reconciliation is safe: on the NUC, `git checkout -- services/` (or
-`git stash`) then `git pull` — no rebuild needed afterwards, the running image already has them.
-Until that's done a NUC `git pull` will report a conflict on these two files.
+The NUC's redundant local edits were discarded and it was fast-forwarded to `origin/main`
+(`4cb5a169`) — clean, no rebuild needed since the running image already has both changes. That
+pull also brought in the frontend Tailwind v4 / ESLint 9 / lottie v3 migrations and deps bumps
+that were already on `main`; only `service-daemon` was rebuilt this session, so `service-frontend`
+et al. still run their prior images until separately rebuilt.
 
 ## Hand the clip to the site (`littl31` repo)
 
