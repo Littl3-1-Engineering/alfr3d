@@ -37,6 +37,7 @@ the cycle) and thrown away at the end of it -- no cross-cycle caching.
 
 import logging
 import os
+from datetime import timedelta, timezone
 
 import pymysql
 
@@ -56,6 +57,7 @@ class ContextFrame:
     def __init__(self):
         self.now = None
         self.local_dt = None
+        self.tz_offset = None  # household UTC offset in seconds (environment.timezone)
         self.day_mood = None
         self.day_ctx = None  # common.day_context.DayContext for this cycle
         self.upcoming_events = None
@@ -65,6 +67,24 @@ class ContextFrame:
         self.playback = None
         self.persisted_now_playing = None
         self.launcher_context = None
+
+    def to_local(self, dt):
+        """Render an aware (UTC) datetime in the household's local wall-clock time.
+
+        `calendar_events.start_time` (and anything derived from it, like check_travel()'s
+        leave_by) is stored and carried through the daemon as UTC -- correct for arithmetic
+        against `frame.now`, but a card that shows a bare `%I:%M %p` off it would print the
+        UTC clock, not the time the household actually reads off the wall. Rules that put an
+        event/leave-by time in a card's `content` string must format `to_local(dt)`, not `dt`.
+
+        Uses `environment.timezone` (seconds east of UTC, DST-aware -- it comes from the same
+        OpenWeatherMap field `db_utils.get_env_local_time()` already trusts). Falls back to
+        the input unchanged when the offset isn't known this cycle, so a failed lookup just
+        reverts to the old (UTC) display rather than dropping the card.
+        """
+        if dt is None or self.tz_offset is None:
+            return dt
+        return dt.astimezone(timezone(timedelta(seconds=self.tz_offset)))
 
 
 class LauncherContext:

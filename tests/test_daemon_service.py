@@ -3934,6 +3934,31 @@ class TestCheckFocusNeeded:
         assert "Google Meet" in card["content"]
         assert "1:1 with Bob" in card["content"]
 
+    def test_start_time_is_shown_in_household_local_time_not_utc(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        now = datetime(2026, 9, 10, 14, 50, tzinfo=timezone.utc)
+        frame = _make_frame(
+            now=now,
+            tz_offset=-4 * 3600,  # EDT
+            upcoming_events=[
+                {
+                    "title": "1:1 with Bob",
+                    "start_time": datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc),
+                    "address": "https://zoom.us/j/123",
+                    "notes": None,
+                    "conference_uri": None,
+                    "conference_solution": None,
+                }
+            ],
+        )
+
+        card = MyDaemon().check_focus_needed(frame)
+
+        assert card is not None
+        assert "at 11:00 AM" in card["content"]  # 15:00 UTC - 4h
+        assert "03:00 PM" not in card["content"]
+
     def test_documented_false_positive_fires_but_only_at_probable_tier(self):
         """ "re-zoom the picture" is a known false positive of the text
         heuristic -- it must still fire (accepted limitation of tier 2), but
@@ -4043,6 +4068,31 @@ class TestCheckEvents:
         ):
             assert dead_text not in card["content"]
 
+    def test_event_time_is_shown_in_household_local_time_not_utc(self):
+        """calendar_events.start_time is stored/carried as UTC; the card's `content`
+        string must be formatted in the household's local wall time (frame.to_local),
+        or a CEST-authored event shows the wrong clock on an EST dashboard."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        now = datetime(2026, 9, 10, 14, 30, tzinfo=timezone.utc)
+        frame = _make_frame(
+            now=now,
+            tz_offset=-4 * 3600,  # America/Toronto, EDT
+            upcoming_events=[
+                {
+                    "title": "Dentist",
+                    "start_time": datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc),
+                    "address": "123 Main St",
+                    "notes": None,
+                }
+            ],
+        )
+
+        card = MyDaemon().check_events(frame)
+
+        assert "11:00 AM" in card["content"]  # 15:00 UTC - 4h
+        assert "03:00 PM" not in card["content"]
+
     def test_returns_none_when_no_upcoming_event(self):
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
@@ -4113,6 +4163,41 @@ class TestCheckTravel:
         assert card["data"]["distance_km"] == 12.3
         assert card["data"]["traffic_aware"] is False
         assert card["data"]["because"]
+
+    @patch("services.service_daemon.alfr3ddaemon.routing_utils.get_route")
+    @patch("services.service_daemon.alfr3ddaemon.routing_utils.fetch_home_coordinates")
+    @patch("services.service_daemon.alfr3ddaemon.routing_utils.geocode_address")
+    def test_leave_by_time_is_shown_in_household_local_time_not_utc(
+        self, mock_geocode, mock_home, mock_route
+    ):
+        """leave_by is computed on the UTC timeline; the card's `content` must render it
+        in the household's local wall time (frame.to_local)."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        mock_geocode.return_value = (43.65, -79.38)
+        mock_home.return_value = (43.62, -79.55)
+        mock_route.return_value = {"duration_minutes": 20, "distance_km": 12.3}
+
+        now = datetime(2026, 9, 10, 14, 30, tzinfo=timezone.utc)
+        frame = _make_frame(
+            now=now,
+            tz_offset=-4 * 3600,  # EDT
+            upcoming_events=[
+                {
+                    "title": "Dentist",
+                    "start_time": datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc),
+                    "address": "100 Queen St W",
+                    "notes": None,
+                    "conference_uri": None,
+                }
+            ],
+        )
+
+        card = MyDaemon().check_travel(frame)
+
+        # 15:00 UTC start - 20 min drive = 14:40 UTC leave_by = 10:40 AM EDT
+        assert card is not None
+        assert "Leave by 10:40 AM for Dentist" == card["content"]
 
     def test_returns_none_when_no_upcoming_event(self):
         from services.service_daemon.alfr3ddaemon import MyDaemon
@@ -4359,6 +4444,38 @@ class TestCheckEmails:
 
         daemon = MyDaemon()
         assert daemon.check_emails(_make_frame()) is None
+
+
+class TestContextFrameToLocal:
+    """Tests for ContextFrame.to_local() -- renders a UTC datetime in the household's
+    local wall time for card `content` strings (calendar_events.start_time is UTC)."""
+
+    def test_applies_the_household_offset(self):
+        from services.service_daemon.utils.context_frame import ContextFrame
+
+        frame = ContextFrame()
+        frame.tz_offset = -4 * 3600  # EDT
+        utc = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+
+        local = frame.to_local(utc)
+
+        assert local.strftime("%I:%M %p") == "11:00 AM"
+        assert local.utcoffset() == timedelta(hours=-4)
+
+    def test_passes_through_unchanged_when_offset_unknown(self):
+        from services.service_daemon.utils.context_frame import ContextFrame
+
+        frame = ContextFrame()  # tz_offset defaults to None
+        utc = datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc)
+
+        assert frame.to_local(utc) is utc
+
+    def test_handles_none(self):
+        from services.service_daemon.utils.context_frame import ContextFrame
+
+        frame = ContextFrame()
+        frame.tz_offset = -4 * 3600
+        assert frame.to_local(None) is None
 
 
 class TestContextFrameFetchers:

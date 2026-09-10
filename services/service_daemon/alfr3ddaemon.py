@@ -656,6 +656,7 @@ class MyDaemon:
         frame.now = datetime.now(timezone.utc)
 
         try:
+            frame.tz_offset = db_utils.get_env_timezone(ENV_NAME)
             frame.local_dt = db_utils.get_env_local_time(ENV_NAME)
             frame.day_mood = mood_utils.get_day_mood(frame.local_dt)
             frame.day_ctx = day_context.get_day_context(ENV_NAME, now=frame.local_dt)
@@ -844,7 +845,7 @@ class MyDaemon:
         title = event["title"]
         start_time = event["start_time"]
         minutes_until = int((start_time - frame.now).total_seconds() / 60)
-        content = f"Upcoming event: {title} at {start_time.strftime('%I:%M %p')}"
+        content = f"Upcoming event: {title} at {frame.to_local(start_time).strftime('%I:%M %p')}"
         return {
             "mode": "event",
             "content": content,
@@ -905,7 +906,7 @@ class MyDaemon:
         title = event["title"]
         duration_minutes = round(route["duration_minutes"])
         distance_km = round(route["distance_km"], 1)
-        content = f"Leave by {leave_by.strftime('%I:%M %p')} for {title}"
+        content = f"Leave by {frame.to_local(leave_by).strftime('%I:%M %p')} for {title}"
         return {
             "mode": "travel",
             "content": content,
@@ -942,17 +943,13 @@ class MyDaemon:
         if start_time - frame.now > timedelta(minutes=FOCUS_LEAD_MINUTES):
             return None
         title = event["title"]
+        start_label = frame.to_local(start_time).strftime("%I:%M %p")
         if confidence == focus_utils.CONFIRMED:
             solution = event.get("conference_solution") or "Call"
-            content = (
-                f"{solution} starting soon: {title} at {start_time.strftime('%I:%M %p')}. "
-                "Find a quiet spot."
-            )
+            lead = f"{solution} starting soon"
         else:
-            content = (
-                f"Looks like a call starting soon: {title} at {start_time.strftime('%I:%M %p')}. "
-                "Find a quiet spot."
-            )
+            lead = "Looks like a call starting soon"
+        content = f"{lead}: {title} at {start_label}. Find a quiet spot."
         minutes_until = int((start_time - frame.now).total_seconds() / 60)
         return {
             "mode": "focus_needed",
