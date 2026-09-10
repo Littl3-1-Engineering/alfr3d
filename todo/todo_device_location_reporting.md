@@ -1,6 +1,12 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🟢 Phase 1 (backend) built 2026-09-10 — migration + endpoint + tests, staged on branch `docs/device-location-reporting-plan`, **not deployed**. Phase 0 complete bar the day-long density pass (spike running on-device), Play data-safety form, Deck-auth headcount. Phase 2 (deck pipeline) + Phase 3 (consent/privacy) not started. Cross-repo: `alfr3d` + `alfr3d_deck`.
+## Status: 🟢 Phases 1–3 built 2026-09-10, on branch `feat/device-location-reporting` in both repos, **not merged, not deployed**.
+- **Phase 1 (backend):** migration `0039` + `POST /api/context/device-location` + 8 tests. `alfr3d` PR #197, CI green. Verified up/down on dev DB + live smoke test.
+- **Phase 2 (deck pipeline):** `LocationContextProvider`, `DeviceLocationQueue`, `DeviceLocationCapture` (onResume), `Alfr3dBackgroundSync` drain+upload, `reportDeviceLocation`, `Alfr3d.ensureAuthLoaded`, settings flags. `assembleDebug`/ktlint/detekt/lint green.
+- **Phase 3 (consent):** Settings toggle (off by default, triggers the permission prompt), `PRIVACY.md` + `README` reworked, manifest `ACCESS_COARSE_LOCATION`. Onboarding card deferred.
+- **Open:** merge #197 → deploy backend to NUC (DB backup first); merge deck PR + on-device verify (Phase 4); day-long density pass (spike on-device); Play data-safety form; Deck-auth headcount; onboarding card.
+
+Cross-repo: `alfr3d` + `alfr3d_deck`.
 
 **Goal (this todo):** ALFR3D Deck reports its own device geolocation to the backend once per
 existing deck↔backend sync window, and the backend persists it as **per-device** location
@@ -331,7 +337,31 @@ empty-list, batch insert asserting `user_id` from token not body, mixed-validity
 
 ---
 
-## Phase 2 — deck (`alfr3d_deck`), core pipeline
+## Phase 2 — deck (`alfr3d_deck`), core pipeline — ✅ BUILT 2026-09-10
+
+As built (branch `feat/device-location-reporting`):
+- `alfr3d/model/LocationFix.kt` — wire model (lat/lon/accuracyM/provider/capturedAtMillis).
+- `contextawareness/device/LocationContextProvider.kt` — `capture()`: fresh last-known
+  (FUSED/NETWORK/GPS, age < 15 min) first; else one active `NETWORK_PROVIDER`/`GPS` request via
+  `requestLocationUpdates` + `suspendCancellableCoroutine`, 25 s cap, tolerates null. Plain
+  `LocationManager` (no `LocationManagerCompat` — its `getCurrentLocation` overload collides).
+- `alfr3d/sync/DeviceLocationQueue.kt` — DataStore (`alfr3d_location`), JSON-encoded, bounded
+  50 drop-oldest, atomic `drain()`, `restore()`, `lastCaptureAtMillis`/`markCaptured` debounce.
+- `contextawareness/DeviceLocationCapture.kt` — `onForeground()` from `MainActivity.onResume`;
+  gates: toggle on → permission → `authState` role in {resident,owner,technoking} → 10-min
+  debounce (advanced *before* the capture so failing fixes don't retry every resume).
+- `alfr3d/sync/Alfr3dBackgroundSync.runSync()` — `flushDeviceLocationQueue()` after the core
+  fetch (Synced branch only): drain → `Alfr3d.ensureAuthLoaded()` → `reportDeviceLocation` →
+  `restore()` on failure.
+- `Alfr3d.ensureAuthLoaded(context)` — new; loads persisted bearer tokens + wires
+  refresh/expiry persistence without `init`'s probe loop, so the worker's POST is authed on a
+  cold process. Extracted the token-attach block of `init` into `attachPersistedAuth`.
+- `Alfr3dClient.reportDeviceLocation(clientInstallId, fixes)` + `HttpAlfr3dClient` impl
+  (`requestWithBody`, JSONArray of fixes; empty list → no-op success).
+- `Alfr3dSettingsStore` — `locationReportingEnabled` (default false, `ttsRelayEnabled` shape) +
+  `deviceInstallId()` (generate-on-first-read UUID in `alfr3d_settings`).
+
+_Original plan sketch:_
 
 - `AndroidManifest.xml`: `<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />`
   only. Add `<uses-feature android:name="android.hardware.location.network" android:required="false" />`.
@@ -367,7 +397,25 @@ empty-list, batch insert asserting `user_id` from token not body, mixed-validity
 
 ---
 
-## Phase 3 — deck, consent surface & privacy
+## Phase 3 — deck, consent surface & privacy — ✅ BUILT 2026-09-10 (onboarding card deferred)
+
+As built:
+- `settings/ui/SettingsWindowContent.kt` — new `LocationReportingSection` (a `SettingsCard`
+  after `BackgroundSyncSection`): off-by-default toggle; flipping on with permission ungranted
+  fires the `ACCESS_COARSE_LOCATION` prompt via `rememberLauncherForActivityResult` and only
+  persists `true` on grant; description states "only to the ALFR3D backend you configured —
+  never to Littl3.1 Engineering". Status line covers not-configured / permission-off / on / off.
+- `PRIVACY.md` — summary reworked (sell/share/developer carve-out kept tight), new "Location
+  reporting" subsection, permission-table row, retention (180 d, backend-controlled), queue
+  behaviour in Data retention, "Last updated" → 2026-09-10.
+- `README.md` — new Location reporting bullet + Settings-tabs line.
+- Manifest — `ACCESS_COARSE_LOCATION` + `location.network` uses-feature (foreground use only).
+- **Deferred:** onboarding card (the Settings toggle is a complete self-contained opt-in path;
+  onboarding is a "convenience funnel" per `OnboardingPermissions`' own doc — add later); a
+  confirm-on-enable dialog (the OS permission prompt + explicit copy is the consent gate for v1).
+- `agents.md` §7 — gitignored in this repo; a local status note was added.
+
+_Original plan:_
 
 - **Settings UI** (`settings/ui/SettingsSections.kt`): a toggle **"Report my location to
   ALFR3D"**, OFF by default, with an explainer that states all of:
