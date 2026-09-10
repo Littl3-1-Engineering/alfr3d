@@ -1,6 +1,6 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🟡 Planned — Phase 0 done 2026-09-10: backend/deck plumbing confirmed from source + coarse-fix behaviour measured on a real device (spike branch, do not merge). Open: Play data-safety form, Deck-auth headcount, optional day-long density pass. No production implementation started. Cross-repo: `alfr3d` + `alfr3d_deck`.
+## Status: 🟢 Phase 1 (backend) built 2026-09-10 — migration + endpoint + tests, staged on branch `docs/device-location-reporting-plan`, **not deployed**. Phase 0 complete bar the day-long density pass (spike running on-device), Play data-safety form, Deck-auth headcount. Phase 2 (deck pipeline) + Phase 3 (consent/privacy) not started. Cross-repo: `alfr3d` + `alfr3d_deck`.
 
 **Goal (this todo):** ALFR3D Deck reports its own device geolocation to the backend once per
 existing deck↔backend sync window, and the backend persists it as **per-device** location
@@ -245,13 +245,27 @@ GPS provider request `OFF` (nothing driving it).
 
 ---
 
-## Phase 1 — backend (`alfr3d`)
+## Phase 1 — backend (`alfr3d`) — ✅ BUILT 2026-09-10 (staged on branch, not deployed)
 
-### Schema
-- `setup/createTables.sql`: add `device_location_history`.
-- Alembic `setup/migrations/versions/0039_device_location_history.py` (down_revision `0038`) +
-  legacy `setup/migration_036_device_location_history.sql`, same `table_exists` guard pattern as
-  `0030_attention_telemetry_history.py`.
+Migration verified end-to-end on the real dev DB (`alfr3d-mysql-1`): `0038 → 0039` applies
+clean, `0039 → 0038` downgrade drops the table + event clean, re-upgrade works. 8 new route
+tests pass (auth 401/403, bad-UUID 400, empty-batch 400, batch insert with user-from-JWT,
+out-of-range/future/ancient drop, absurd-accuracy nulled-but-kept, all-bad-no-DB-call); full
+`test_api_service.py` (53) green; `service_api` lint clean. Live HTTP smoke test against a
+rebuilt `service-api` container: **pending** (route + migration are otherwise proven).
+
+### Schema — done
+- **No `createTables.sql` change** — recent SA tables (`attention_telemetry_history`,
+  `household_events`, `card_interactions`, `geocode_cache`) all live only in the migration
+  chain, not the legacy base schema. Followed that.
+- `setup/migration_036_device_location_history.sql` — `CREATE TABLE IF NOT EXISTS` + the
+  `cleanup_device_location_history_event` (180-day, `DELIMITER` block, same shape as
+  `migration_002`'s `cleanup_device_command_history_event`).
+- `setup/migrations/versions/0039_device_location_history.py` — `table_exists` guard on
+  upgrade (like `0030`), `DROP EVENT` + `DROP TABLE` on downgrade. `down_revision = "0038"`,
+  single head.
+
+_Original schema sketch, as-built (DECIMAL(9,6), 3 indexes):_
 
 ```sql
 CREATE TABLE `device_location_history` (
@@ -277,10 +291,10 @@ history-cleanup job) — `DELETE ... INTERVAL 180 DAY`, matching `device_history
 downstream SA baselines see a consistent window. Note this in `PRIVACY.md` (server-side
 retention is user-visible policy).
 
-### Endpoint
-`POST /api/context/device-location` in `services/service_api/routes/context.py`
-(`require_permission("context", "device_location")`; the file's docstring already frames it as
-"consumers telling the backend about their own state").
+### Endpoint — done
+`POST /api/context/device-location` in `services/service_api/routes/context.py`,
+`user=Depends(require_permission("context", "device_location"))` (the `"context"` wildcard
+covers it; **`user.id` comes from the JWT, never the body** — unlike `card-interaction`).
 
 Payload — batch, with the device identity:
 ```json
@@ -290,22 +304,30 @@ Payload — batch, with the device identity:
       "provider": "network", "captured_at_ms": 1757500000000 }
   ] }
 ```
-- Read `user.id` from the auth dep. Require `client_install_id` to be a well-formed UUID (400
-  otherwise).
-- Validate lat ∈ [-90,90], lon ∈ [-180,180], drop fixes with `accuracy_m` above a sane ceiling
-  (e.g. 20 km) or `captured_at_ms` in the future / older than the retention window.
-- `executemany` INSERT into `device_location_history` (`client_install_id`, `user_id`, fix
-  fields; `device_id` left NULL). Return `{"accepted": n, "rejected": m}`.
+As built:
+- `client_install_id` must parse as a UUID (`uuid.UUID`) → 400 otherwise; `fixes` must be a
+  non-empty list → 400 otherwise.
+- Per fix: `latitude`/`longitude`/`captured_at_ms` required and numeric (else that fix is
+  rejected, not fatal); lat ∈ [-90,90] ∧ lon ∈ [-180,180]; `captured_at_ms` no more than 60 s
+  future and not older than the 180-day retention window; `accuracy_m` outside [0, 20 000] is
+  **nulled but the fix is kept**; `provider` truncated to 16 chars.
+- `cursor.executemany` INSERT of the survivors (`source='deck'`, `device_id` NULL). If every
+  fix was rejected, **no DB connection is opened**. Returns `{"accepted": n, "rejected": m}`.
 - No `config` upsert (unlike attention-telemetry) — history-only by design decision #4.
 
-### Tests
-- `tests/` API-route tests: auth required (401 anon), happy-path batch insert, out-of-range
-  reject, future-timestamp reject, empty batch. Follow the existing
-  `tests/` context-route test module layout.
+### Tests — done
+8 tests in `tests/test_api_service.py` (`_fix()` helper + `_INSTALL_ID`), following the
+attention-telemetry / card-interaction layout: 401 anon, 403 guest, 400 bad-UUID, 400
+empty-list, batch insert asserting `user_id` from token not body, mixed-validity batch
+(1 accepted / 3 rejected), all-bad → no `db_connection` call, absurd-accuracy nulled but stored.
 
-### Docs
-- `AGENTS.md` DB section: add `device_location_history` to "Key tables".
-- `README.md` if it enumerates context endpoints / SA data sources.
+### Docs — done
+- `AGENTS.md` `service_api` line now lists `context` + names this endpoint.
+- Table list in `AGENTS.md` left alone — consistent with the other SA tables (documented in
+  their todos, not there).
+- `permissions.py` `"context"` entry got an explanatory comment (no functional change).
+- `README.md` — not touched; it doesn't enumerate context endpoints. **Deck `PRIVACY.md` is
+  the user-facing doc that still needs the retention line — Phase 3.**
 
 ---
 
