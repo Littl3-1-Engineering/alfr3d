@@ -1,10 +1,16 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🟢 Phases 1–3 built 2026-09-10, on branch `feat/device-location-reporting` in both repos, **not merged, not deployed**.
-- **Phase 1 (backend):** migration `0039` + `POST /api/context/device-location` + 8 tests. `alfr3d` PR #197, CI green. Verified up/down on dev DB + live smoke test.
-- **Phase 2 (deck pipeline):** `LocationContextProvider`, `DeviceLocationQueue`, `DeviceLocationCapture` (onResume), `Alfr3dBackgroundSync` drain+upload, `reportDeviceLocation`, `Alfr3d.ensureAuthLoaded`, settings flags. `assembleDebug`/ktlint/detekt/lint green.
-- **Phase 3 (consent):** Settings toggle (off by default, triggers the permission prompt), `PRIVACY.md` + `README` reworked, manifest `ACCESS_COARSE_LOCATION`. Onboarding card deferred.
-- **Open:** merge #197 → deploy backend to NUC (DB backup first); merge deck PR + on-device verify (Phase 4); day-long density pass (spike on-device); Play data-safety form; Deck-auth headcount; onboarding card.
+## Status: 🟢 Phases 1–3 SHIPPED to `main` + deployed to the NUC, 2026-09-10.
+- **Phase 1 (backend):** `alfr3d` PR #197 merged → **deployed to NUC** (`alfr3d@192.168.2.200`):
+  `mysqldump` backup taken (`backup/alfr3d_predeploy_0039_2026-09-10_15-44-48.sql`, 299 MB),
+  migration `0038→0039` applied, `service-api` rebuilt, live authed smoke test lands a row.
+- **Phase 2 (deck pipeline):** `alfr3d_deck` PR #29 merged to `main`.
+- **Phase 3 (consent):** in #29 — Settings toggle, `PRIVACY.md`/`README`, manifest perm.
+- **Onboarding opt-in + Play data-safety doc:** `alfr3d_deck` PR #30 (`docs/PLAY_DATA_SAFETY.md`
+  answers the form; `LocationReportingOptIn` on the Permissions step).
+- **Open:** merge #30; **Phase 4 on-device verification** (blocked until the density-spike build
+  is swapped for a `main` build — after the density pass); day-long density CSV (spike running
+  on the Zenfone); Deck-auth headcount (prod DB); submit the Play data-safety form for real.
 
 Cross-repo: `alfr3d` + `alfr3d_deck`.
 
@@ -397,7 +403,7 @@ _Original plan sketch:_
 
 ---
 
-## Phase 3 — deck, consent surface & privacy — ✅ BUILT 2026-09-10 (onboarding card deferred)
+## Phase 3 — deck, consent surface & privacy — ✅ SHIPPED 2026-09-10 (#29); onboarding + data-safety in #30
 
 As built:
 - `settings/ui/SettingsWindowContent.kt` — new `LocationReportingSection` (a `SettingsCard`
@@ -410,9 +416,15 @@ As built:
   behaviour in Data retention, "Last updated" → 2026-09-10.
 - `README.md` — new Location reporting bullet + Settings-tabs line.
 - Manifest — `ACCESS_COARSE_LOCATION` + `location.network` uses-feature (foreground use only).
-- **Deferred:** onboarding card (the Settings toggle is a complete self-contained opt-in path;
-  onboarding is a "convenience funnel" per `OnboardingPermissions`' own doc — add later); a
-  confirm-on-enable dialog (the OS permission prompt + explicit copy is the consent gate for v1).
+- **Onboarding opt-in (PR #30):** `OnboardingSteps.LocationReportingOptIn` — its own card on the
+  Permissions step, below the special-access rows, *not* in `runtimeBundle()`. Same three-point
+  copy; `ENABLE` requests the permission + sets the toggle. `README` onboarding line updated.
+- **Play data-safety (PR #30):** `docs/PLAY_DATA_SAFETY.md` drafts the whole form (Location =
+  approximate/collected/not-shared/optional/app-functionality; **background-location review NOT
+  triggered** — `ACCESS_BACKGROUND_LOCATION` isn't declared and the sync only uploads
+  foreground fixes; encrypted-in-transit = No, cleartext-to-LAN is common). `docs/PLAY_STORE_PERMISSIONS.md`
+  gets an `ACCESS_COARSE_LOCATION` section. **Still needs a human to submit it in the console.**
+- **Deferred:** confirm-on-enable dialog (the OS permission prompt + explicit copy is the v1 gate).
 - `agents.md` §7 — gitignored in this repo; a local status note was added.
 
 _Original plan:_
