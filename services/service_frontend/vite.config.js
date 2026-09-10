@@ -4,11 +4,6 @@ import svgr from 'vite-plugin-svgr'
 import compression from 'vite-plugin-compression'
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      'lottie-react': 'lottie-react/build/index.es.js',
-    },
-  },
   plugins: [
     react(),
     svgr(),
