@@ -1,8 +1,33 @@
 # Leave-by demo: capture the `travel` card firing on a real event
 
-## Status: 🟢 `check_travel()` fired live on the household NUC for the first time
-2026-09-10 (`Leave by 10:18 AM for test`, real synced test event). Deployed and verified.
-Just needs someone to record ~20–30 s of it. No code/infra blocker left.
+## Status: ✅ Done 2026-09-10 — `check_travel()` fired live, both surfaces recorded,
+hero clip wired into `littl31`.
+
+- **First live fire:** 2026-09-10, real synced Google Calendar event `Dentist`
+  (Port Credit, Mississauga). Card: `Leave by 12:12 PM for Dentist` / `17 min drive to
+  Dentist` — real OSRM route from the household's own routing container, no staging.
+- **Captured both surfaces** while the card was live: the Deck AMBIENT BRIEF
+  ("Time to leave soon — Leave by 12:12 PM for Dentist — 17 min drive (14.4 km)")
+  and the web Nexus dashboard's Situational Awareness panel.
+- **Hero clip = the Deck recording** (24 s). Web dashboard GIF kept as a secondary
+  asset. Transcoded web-optimised (720×1600 H.264, faststart, ~1 MB) + a poster frame.
+- **`littl31` wired:** `src/assets/vid/leave-by-demo.mp4` + `src/assets/images/
+  leave-by-demo-poster.jpg`; `home.demo.clip`/`.poster` set in `content.yml`;
+  `index.pug` `#anticipation` video constrained to phone width (`max-w-xs sm:max-w-sm`,
+  the dormant stub assumed a landscape clip). Built and verified rendering.
+- Copy un-hedged: `alfr3d.html` `intro.lines[0]` → "…already does, today, for free,
+  forever, self-hosted…"; SA-6 hedge comment on `intro.bullets` deleted.
+- Notion Alfr3d Timeline updated (SA-6 row + a new 2026-09-10 row);
+  `littl31/src/assets/data/timeline.json` mirrored (`leave-by-card-live` entry,
+  `self-hosted-routing` → Shipped).
+
+Only open thread: the `littl31` changes are staged in the working tree pending an
+explicit commit/push (per `AGENTS.md`). Same clip still needs dropping into the Play
+Store listing video + waitlist replies (Dial-In Plan A3).
+
+---
+
+_Historical detail below — kept for the "how the card fires" reference._
 
 This is the `alfr3d`-side half of the site's **Dial-In Plan Workstream A3** (the hero
 "anticipation moment" clip on `littl31.com`). The site slot is already built and dormant:
@@ -83,28 +108,21 @@ routing container → no card, never a fabricated estimate). Card renders as
 (`SituationalAwareness.jsx:111`) and Deck (`ContextAwareness.kt` / `ContextRules.kt`).
 Published once per ~60 s daemon cycle to the `situational-awareness` Kafka topic.
 
-## Steps to capture the clip
+## How the capture was done (2026-09-10, for reference)
 
-**Option A — piggyback on a real event that's already on the calendar.**
-As of 2026-09-10 there's a qualifying event synced:
-`Upis dece na folklor`, **2026-09-12 14:00 UTC** (start), `2520 Dixie Rd, Mississauga` (~13 min
-drive), no conference link. Its card will be live roughly **09:17–10:00 EDT on Sat Sep 12**
-(from `leave_by ≈ 13:47 UTC` and the 2 h horizon capping the top of the window). If that time
-works, just have the dashboard/Deck up and record.
-
-**Option B — make a dedicated test event at a convenient time.**
-1. In Google Calendar, on `Family` / `Cassiopeia` / `Armageddion Littl3.1`, create an event:
-   - a real physical `address` in the GTA (any of the six probed destinations works), no Meet link;
-   - start time ≈ *now + the drive time to that address* — e.g. a Mississauga address (~13 min)
-     → start ~13 min out; you have ±30 min of slack so exact timing isn't critical;
-   - keep it inside the next ~90 min so it clears the 2 h horizon with margin.
-2. Trigger a sync: *Sync* on the Integrations → Google card, or
-   `curl -X POST http://<host>/api/integrations/calendar/sync` (needs the `integrations`/
-   `calendar_sync` permission). Once the 15-min job is deployed this is automatic within 15 min.
-3. Within ~60 s of the sync + the leave-by window opening, the `travel` card appears on the
-   dashboard and Deck.
-4. **Record** ~20–30 s on a real device — the card appearing, with enough surrounding UI that it
-   reads as a real dashboard, not a crop.
+- Deployed the 15-min `sync_calendar_routine` first, so a freshly-created Google event lands
+  without a restart or manual *Sync*.
+- Made two throwaway test events (`test`, `test2`) ~2 h out, then renamed `test2` → `Dentist`
+  for a presentable card. `sync_calendar()` picked the rename up on its next 15-min tick.
+- Web dashboard: the NUC's own frontend (`:8000`) hangs on the boot screen unauthenticated and
+  doesn't proxy `/api/situational-awareness` or `/ws`; nginx `:443` proxies fine but has a
+  self-signed-cert interstitial the browser automation can't click through. Worked around by
+  running the frontend **locally** (`VITE_API_BASE_URL`/`VITE_WS_BASE_URL` → `NUC:5001`; the
+  API's CORS is `*`) — full dashboard, live WebSocket.
+- Deck: `adb` over wireless debugging (port rotates on reconnect — rediscover via
+  `adb mdns services`).
+- Recorded during the natural card window (`leave_by` within `TRAVEL_LEAD_MINUTES`, capped by
+  the 2 h `get_upcoming_events` horizon).
 
 ## Deploy / git state — all reconciled 2026-09-10
 
@@ -121,26 +139,8 @@ pull also brought in the frontend Tailwind v4 / ESLint 9 / lottie v3 migrations 
 that were already on `main`; only `service-daemon` was rebuilt this session, so `service-frontend`
 et al. still run their prior images until separately rebuilt.
 
-## Hand the clip to the site (`littl31` repo)
-
-```
-cp <clip>.mp4 src/assets/vid/leave-by-demo.mp4       # + an optional poster frame
-```
-set `home.demo.clip: assets/vid/leave-by-demo.mp4` (+ `.poster`) in `src/content.yml`,
-`npm run build:prod`. Same clip is reused for the Play Store listing video and waitlist
-replies (Dial-In Plan A3).
-
-## Un-hedge the copy
-
-Once `check_travel()` has verifiably fired, restore `alfr3d.html` `intro.lines[0]` in
-`littl31/src/content.yml` to unqualified present tense and delete the hedge comment on
-`intro.bullets` (it currently says "already does" without ", today," because SA-6 has never run
-in a live household).
-
 ## Related
 
 - `todo/todo_self_hosted_routing.md` — SA-6 build + the 2026-08-30 NUC deploy this re-checks
 - `littl31/todo/todo_site_dial_in.md` — the site A1/A2/A3 workstream this feeds
 - Notion "🎯 Dial-In Plan — Positioning, Product & Launch Execution (Sep 2026)"
-- Update the Notion Alfr3d Timeline per `AGENTS.md` Documentation Sync Protocol once the card
-  fires for real (SA-6 Future → Present).
