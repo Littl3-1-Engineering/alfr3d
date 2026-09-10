@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { Moon, Sun } from 'lucide-react';
-import Lottie from 'lottie-react';
+import { Lottie, LottieSubscription } from 'lottie-react';
 import PropTypes from 'prop-types';
 import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
@@ -575,11 +575,11 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       >
         {animationData && (
           <Lottie
-            animationData={animationData}
+            src={animationData}
             loop={false}
             autoplay={true}
-            onComplete={() => setIsIntroFinished(true)}
-            options={{ expressions: false }}
+            subscriptions={{ [LottieSubscription.complete]: () => setIsIntroFinished(true) }}
+            rendererSettings={{ runExpressions: false }}
           />
         )}
       </motion.div>
