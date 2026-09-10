@@ -1,6 +1,6 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🔵 Planned — not started (this doc is the plan). Cross-repo: `alfr3d` + `alfr3d_deck`.
+## Status: 🟡 Planned — Phase 0 code investigation done 2026-09-10 (backend/deck plumbing confirmed); real-device + Play Console + prod-DB checks still open. No implementation started. Cross-repo: `alfr3d` + `alfr3d_deck`.
 
 **Goal (this todo):** ALFR3D Deck reports its own device geolocation to the backend once per
 existing deck↔backend sync window, and the backend persists it as **per-device** location
@@ -88,9 +88,10 @@ Neither is expressible if the phone's track is pre-merged into "the user's locat
 
 **Device identity:** MAC-matching against the arp-scan `device` table is dead on Android 10+
 (randomized, app-unreadable WiFi MAC). So Deck generates a **stable install UUID** on first
-run, persists it in its existing encrypted store (`androidx.security.crypto`, same as
-`Alfr3dAuthStore`), and sends it as `client_install_id` with every batch. That UUID is the
-device key for the history table.
+run and sends it as `client_install_id` with every batch. It lives as a plain
+`stringPreferencesKey` in the existing `alfr3d_settings` DataStore — **not** in
+`Alfr3dAuthStore`, whose `clear()` wipes on logout and would fork the track (see Phase 0
+findings). It's a device identifier, not a secret; regenerates only on reinstall/clear-data.
 
 **User attribution is free and reliable:** the deck authenticates
 (`login`/`claim`/`bootstrap` in `HttpAlfr3dClient`) and `get_current_user_optional()` puts
@@ -152,6 +153,57 @@ Phase-0 discipline):
 5. **Play Console data-safety form.** Check exactly what declaring "Location — Approximate,
    collected, not shared, optional" requires. Confirm foreground-only coarse does **not** pull
    in the background-location review. Screenshot the form state for the PR.
+
+### Phase 0 findings — code investigation (2026-09-10)
+
+Done from the source; items 2, 3, 5 and the headcount half of 1 still need a real device / the
+production DB / Play Console and are **not** yet answered.
+
+- **JWT → `routes/context.py` (item 4): confirmed.** `require_permission(resource, action)` in
+  `services/service_api/auth/dependencies.py` *returns* the `CurrentUser` (`id`, `type`) — the
+  existing context routes just bind it to `_perm` and throw it away. The new route binds it to
+  `user` and reads `user.id`. No new plumbing.
+- **Permission matrix: no change needed, and it does the guest-exclusion for free.**
+  `permissions.py` has `"context": {"*": _TECHNOKING_AND_RESIDENT}`, and `is_allowed` resolves
+  an unlisted action through the `"*"` wildcard. So `require_permission("context",
+  "device_location")` → 200 for technoking/owner/resident, **401 anon, 403 guest**. A
+  guest-typed user running Deck simply can't post location — which is exactly the intended
+  scope (matches [[todo_departure_anomaly]]'s `ut.type IN ('owner','technoking','resident')`
+  filter). Add only a `# device_location: per-device geofix history, per todo_...md` comment.
+- **No existing stable install id in Deck (item 4, second half).** Grepped
+  `UUID`/`randomUUID`/`ANDROID_ID`/`Settings.Secure`/`clientId` across `app/src/main` — nothing
+  persists a device identity. Must add one.
+- **Where the install id must NOT live:** `Alfr3dAuthStore` (the `EncryptedSharedPreferences`
+  "alfr3d_auth" file) has a `clear()` that wipes everything on logout / forced-logout. An
+  install id there would regenerate on every logout→login cycle and **fork the device track**.
+  It identifies the *device*, not the session. Correct home: a plain
+  `stringPreferencesKey("device_install_id")` in the existing **`alfr3d_settings`** DataStore
+  (`Alfr3dSettingsStore`) — not cleared on logout, not cleared by the base-URL RESET path
+  (only `clearBaseUrl()` removes a single key), not a secret, and already the pattern for
+  every non-credential preference. No new store, no `androidx.security.crypto` needed for it
+  (revises design decision #3's "encrypted store" note).
+- **Deck can pre-gate client-side.** `Alfr3d.authState` (`StateFlow<Alfr3dAuthState>`) already
+  exposes `isAuthenticated` and `role` (decoded from the JWT `type` claim at login). So the
+  capture path can skip entirely unless
+  `isAuthenticated && role in {"resident","owner","technoking"}` — never queue fixes that the
+  backend would 403 anyway (e.g. signed in as a guest).
+- **`ttsRelayEnabled` is the exact precedent for the toggle** — `Alfr3dSettingsStore`, default
+  `false`, documented as "an opt-in additive channel, not a replacement". `locationReportingEnabled`
+  is the same shape.
+- **Cadence reality check:** background sync is a `PeriodicWorkRequest` at **30 min**
+  (`SYNC_INTERVAL_MINUTES`), network + battery-not-low constrained, `ExistingPeriodicWorkPolicy.UPDATE`.
+  `runSync()` is already self-sufficient (reads the persisted address itself, no Activity
+  needed) — the location drain/upload slots in after its core-fetch block with no structural
+  change.
+
+### Still open (need a device / prod DB / Play Console)
+- **1 (headcount):** query production — how many non-guest users have a live Deck auth? (No
+  access from here.)
+- **2 (foreground-capture density):** instrument `onResume` fixes on the real device for a day.
+- **3 (coarse-fix quality indoors):** measure `NETWORK_PROVIDER` accuracy at home + on a real
+  departure.
+- **5 (Play data-safety):** confirm approximate-foreground doesn't trigger background-location
+  review; screenshot the declaration.
 
 ---
 
@@ -230,10 +282,14 @@ Payload — batch, with the device identity:
   - `requestSingleFix(context): Fix?` — `getCurrentLocation` (API 30+) / one-shot
     `requestSingleUpdate` fallback, short timeout.
   - `data class Fix(lat, lon, accuracyM, provider, capturedAtMs)`.
-- **Install id:** generate a UUID once on first run, persist via `androidx.security.crypto`
-  (same encrypted store as `Alfr3dAuthStore`); expose `DeckInstallId.get(context)`. Sent as
-  `client_install_id` on every batch. Survives app updates, regenerates only on
-  reinstall/clear-data (acceptable — a reinstall is a new track).
+- **Install id:** `Alfr3dSettingsStore.deviceInstallId` — a `stringPreferencesKey` in the
+  `alfr3d_settings` DataStore; generate + persist a UUID on first read. Sent as
+  `client_install_id` on every batch. Survives app updates and logout, regenerates only on
+  reinstall/clear-data (acceptable — a reinstall is a new track). NOT in `Alfr3dAuthStore`
+  (its `clear()` wipes on logout → forked track).
+- **Client-side pre-gate:** capture only when `Alfr3d.authState` has
+  `isAuthenticated && role in {"resident","owner","technoking"}` — a guest-signed-in Deck would
+  just get 403s.
 - `alfr3d/sync/DeviceLocationQueue.kt` (new, DataStore-backed, bounded ~50, drop-oldest).
   `enqueue(Fix)`, `drain(): List<Fix>`, `restore(List<Fix>)` on upload failure.
 - `MainActivity.onResume()`: if the toggle is on and permission granted, debounced (~10 min via
