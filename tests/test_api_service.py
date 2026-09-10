@@ -521,6 +521,145 @@ def test_attention_telemetry_upserts_for_permitted_resident_token(mock_db_connec
     assert history_calls[0].args[1][1] == 12  # switch_count
 
 
+# --- POST /api/context/device-location (todo_device_location_reporting.md) --
+
+_INSTALL_ID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+def _fix(lat=43.6532, lon=-79.3832, accuracy_m=850.0, provider="network", captured_at_ms=None):
+    import time
+
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "accuracy_m": accuracy_m,
+        "provider": provider,
+        "captured_at_ms": captured_at_ms if captured_at_ms is not None else time.time() * 1000,
+    }
+
+
+def test_device_location_rejects_unauthenticated_request(api_client):
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix()]},
+    )
+    assert response.status_code == 401
+
+
+def test_device_location_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix()]},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_device_location_rejects_non_uuid_install_id(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": "not-a-uuid", "fixes": [_fix()]},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_device_location_rejects_empty_fix_list(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": []},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_device_location_inserts_batch_with_user_from_jwt(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(), _fix(lat=43.70, lon=-79.40)]},
+        headers=_bearer(7, "resident"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 2, "rejected": 0}
+    mock_cursor.executemany.assert_called_once()
+    sql, rows = mock_cursor.executemany.call_args.args
+    assert "INSERT INTO device_location_history" in sql
+    assert len(rows) == 2
+    # (client_install_id, user_id, lat, lon, accuracy, provider, source, captured_at, reported_at)
+    assert rows[0][0] == _INSTALL_ID
+    assert rows[0][1] == 7  # user_id from the token's sub, not the body
+    assert rows[0][6] == "deck"
+    mock_db.commit.assert_called_once()
+
+
+@patch("routes.context.db_connection")
+def test_device_location_drops_out_of_range_and_future_fixes(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    import time
+
+    good = _fix()
+    bad_lat = _fix(lat=120.0)
+    future = _fix(captured_at_ms=(time.time() + 3600) * 1000)
+    ancient = _fix(captured_at_ms=(time.time() - 400 * 86400) * 1000)
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [good, bad_lat, future, ancient]},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 1, "rejected": 3}
+    rows = mock_cursor.executemany.call_args.args[1]
+    assert len(rows) == 1
+
+
+@patch("routes.context.db_connection")
+def test_device_location_all_fixes_bad_makes_no_db_call(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(lat=999.0)]},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 0, "rejected": 1}
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_device_location_nulls_absurd_accuracy_but_keeps_the_fix(mock_db_connection, api_client):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(accuracy_m=999999.0)]},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 1, "rejected": 0}
+    rows = mock_cursor.executemany.call_args.args[1]
+    assert rows[0][4] is None  # accuracy_m nulled, fix still stored
+
+
 def test_card_interaction_rejects_unauthenticated_request(api_client):
     response = api_client.post(
         "/api/context/card-interaction", json={"rule_id": "music", "action": "shown"}
