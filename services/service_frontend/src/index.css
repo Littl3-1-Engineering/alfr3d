@@ -1,4 +1,6 @@
+@import "tailwindcss";
 @import './utils/themes.css';
+@config "../tailwind.config.js";
 
 /* Font faces for self-hosted fonts */
 @font-face {
@@ -120,10 +122,6 @@
   font-style: normal;
   font-display: swap;
 }
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 @layer base {
   :root {
