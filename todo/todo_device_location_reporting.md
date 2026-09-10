@@ -1,6 +1,6 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🟡 Planned — Phase 0 code investigation done 2026-09-10 (backend/deck plumbing confirmed); real-device + Play Console + prod-DB checks still open. No implementation started. Cross-repo: `alfr3d` + `alfr3d_deck`.
+## Status: 🟡 Planned — Phase 0 done 2026-09-10: backend/deck plumbing confirmed from source + coarse-fix behaviour measured on a real device (spike branch, do not merge). Open: Play data-safety form, Deck-auth headcount, optional day-long density pass. No production implementation started. Cross-repo: `alfr3d` + `alfr3d_deck`.
 
 **Goal (this todo):** ALFR3D Deck reports its own device geolocation to the backend once per
 existing deck↔backend sync window, and the backend persists it as **per-device** location
@@ -43,8 +43,11 @@ justification form, and a demo video, with rejection risk. Deck ships on Play
 **v1 approach — no background-location permission:**
 - Request `ACCESS_COARSE_LOCATION` only (city-block granularity ~1–3 km is plenty for
   home/away/travel inference; fine location is a privacy cost with no SA payoff at this stage).
-- Capture a fix **only while the app is in the foreground** — `MainActivity.onResume()` grabs
-  `getLastKnownLocation` / a single `getCurrentLocation` and caches it.
+- Capture a fix **only while the app is in the foreground** — `MainActivity.onResume()` reads
+  `getLastKnownLocation(FUSED)` and, only if that's stale (age > ~15 min), fires one active
+  request (prefer `NETWORK_PROVIDER`, 20–30 s timeout, tolerate `null`). Phase 0 on-device
+  showed last-known is reliably 3–6 min fresh and the active request often times out
+  indoors/stationary — so last-known-first, not active-first.
 - The background **sync worker does not request a fresh fix** — it just uploads whatever
   foreground-captured fix is sitting in the local queue. This is what keeps us out of
   background-location review: we never access location from the background.
@@ -64,10 +67,15 @@ coverage proves too sparse once we have real data to measure it against.
 ### 2. Location API — **platform `LocationManager`, no new dependency**
 
 Deck has no `play-services-location` today (only `billing-ktx`). For coarse, foreground,
-last-known + occasional single-shot fixes, `android.location.LocationManager`
-(`getLastKnownLocation` on `NETWORK_PROVIDER` + `getCurrentLocation`, API 30+) is enough and
-adds zero dependencies. Fused provider is the upgrade-path choice, bundled with the background
-upgrade above.
+last-known + occasional single-shot fixes, `android.location.LocationManager` is enough and
+adds zero dependencies:
+- primary: `getLastKnownLocation(FUSED)` (Phase 0: reliably 3–6 min fresh);
+- stale fallback: one active request on `NETWORK_PROVIDER` (Phase 0: `getCurrentLocation(FUSED)`
+  timed out `null` 2/3 times indoors — don't lean on it).
+
+GMS `FusedLocationProviderClient` is the upgrade-path choice, bundled with the background
+upgrade above — it would make the active fallback more reliable but isn't worth a dependency
+for v1.
 
 ### 3. Grain — **per-device, resolved to a user; NOT pre-aggregated to user**
 
@@ -156,8 +164,8 @@ Phase-0 discipline):
 
 ### Phase 0 findings — code investigation (2026-09-10)
 
-Done from the source; items 2, 3, 5 and the headcount half of 1 still need a real device / the
-production DB / Play Console and are **not** yet answered.
+Done from the source; item 5 and the headcount half of 1 still need Play Console / the
+production DB. Item 3 (and part of 2) answered on-device — see the on-device section below.
 
 - **JWT → `routes/context.py` (item 4): confirmed.** `require_permission(resource, action)` in
   `services/service_api/auth/dependencies.py` *returns* the `CurrentUser` (`id`, `type`) — the
@@ -196,12 +204,42 @@ production DB / Play Console and are **not** yet answered.
   needed) — the location drain/upload slots in after its core-fetch block with no structural
   change.
 
-### Still open (need a device / prod DB / Play Console)
+### Phase 0 findings — on-device (2026-09-10)
+
+Measured on a real device (ASUS Zenfone 9 / AI2202, Android 14) via a throwaway
+`LocationSpikeProbe` wired into `MainActivity.onResume()` — branch `spike/device-location-phase0`
+in `alfr3d_deck` (**do not merge**; delete after). Deck granted `ACCESS_COARSE_LOCATION` only,
+via `adb pm grant`. `dumpsys location` baseline: GPS raw `hAcc≈3.8 m`, network `hAcc≈100 m`,
+GPS provider request `OFF` (nothing driving it).
+
+- **Coarse permission hard-clamps every fix to a ~2 km grid.** network, gps, fused, and a fresh
+  `getCurrentLocation` all came back `acc=2000 m`, including the GPS last-known that was 3.8 m
+  raw. Consecutive reads at one physical spot landed in **different grid cells ~2 km apart**
+  (network vs fused: `43.64,-79.60` vs `43.66,-79.60`). → Enough for home/away, travel origin,
+  and forgotten/lost-phone ("home" vs "40 km away"); **not** enough for driveway-precision
+  "just left". FINE is not needed for any stated SA goal. Any server-side geofence needs a wide
+  band (~3 km) + require N consecutive reads to flip home↔away, or the 2 km jitter will flap it.
+- **`getLastKnownLocation(FUSED)` is the reliable capture path.** Returned a **3–6 min old**
+  fix on every one of 5 probes, with zero active request from us — other apps (weather widget,
+  GMS) keep fused location warm. `NETWORK_PROVIDER` last-known was 8–11 min old; GPS last-known
+  4.5 h old (only refreshed when a nav app runs).
+- **`getCurrentLocation(FUSED)` active request is NOT reliable indoors/stationary.** 3 calls:
+  one succeeded in **10.8 s**, two **timed out at 30 s and returned `null`**. With no provider
+  actively running and a coarse-only client, GMS often can't produce a fresh fix quickly. →
+  Capture logic must be: *use last-known if age < ~15 min; else fire one active request
+  (prefer `NETWORK_PROVIDER`, 20–30 s timeout) and tolerate `null` — skip this capture, get the
+  next one.* Never block on it; it's already async in the probe.
+- **Revised design:** decision #1's "capture a fix ... `getLastKnownLocation` / a single
+  `getCurrentLocation`" → last-known-first, active request only as a stale fallback. The
+  DeviceLocationQueue enqueues whatever comes back (including nothing).
+
+### Still open
 - **1 (headcount):** query production — how many non-guest users have a live Deck auth? (No
   access from here.)
-- **2 (foreground-capture density):** instrument `onResume` fixes on the real device for a day.
-- **3 (coarse-fix quality indoors):** measure `NETWORK_PROVIDER` accuracy at home + on a real
-  departure.
+- **2 (foreground-capture density over a real day):** the probe confirms the *mechanism* fires
+  and last-known stays 3–6 min fresh during use, but a genuine "does the track catch a real
+  departure within ~15 min" answer needs the instrumented build left running through a normal
+  day + a real trip. Probe is ready if we want to do that pass.
 - **5 (Play data-safety):** confirm approximate-foreground doesn't trigger background-location
   review; screenshot the declaration.
 
