@@ -402,6 +402,34 @@ class TestCalendarSync:
         assert published["verb"] == "removed"
 
 
+class TestSyncCalendarRoutine:
+    """Tests for alfr3ddaemon.sync_calendar_routine() -- the scheduled job that keeps
+    calendar_events fresh between daemon restarts so check_travel() (SA-6) can fire on a
+    newly-created event. See todo/todo_leave_by_demo.md."""
+
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    def test_publishes_calendar_sync_message_to_integrations_topic(self, mock_get_producer):
+        from services.service_daemon.alfr3ddaemon import sync_calendar_routine
+
+        mock_producer = MagicMock()
+        mock_get_producer.return_value = mock_producer
+
+        sync_calendar_routine()
+
+        mock_producer.send.assert_called_once()
+        topic, payload = mock_producer.send.call_args.args
+        assert topic == "integrations"
+        assert orjson.loads(payload) == {"type": "calendar", "action": "sync"}
+
+    @patch("services.service_daemon.alfr3ddaemon.get_producer")
+    def test_no_producer_is_a_noop(self, mock_get_producer):
+        from services.service_daemon.alfr3ddaemon import sync_calendar_routine
+
+        mock_get_producer.return_value = None
+
+        sync_calendar_routine()  # must not raise
+
+
 class TestExtractConferenceInfo:
     """Tests for calendar_utils._extract_conference_info() (SA-7)."""
 
