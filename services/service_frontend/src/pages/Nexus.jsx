@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import Lottie from 'lottie-react';
+import { Lottie } from 'lottie-react';
 import { API_BASE_URL } from '../config';
 import Core from '../components/Core';
 import SituationalAwareness from '../components/SituationalAwareness';
@@ -82,7 +82,7 @@ const NexusLoader = () => {
       >
         <div className="w-40 h-40 mb-4">
           {animationData && (
-            <Lottie animationData={animationData} loop autoplay />
+            <Lottie src={animationData} loop autoplay />
           )}
         </div>
         <div className="w-[420px] max-w-full">

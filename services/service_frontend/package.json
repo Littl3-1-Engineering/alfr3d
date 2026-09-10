@@ -21,7 +21,7 @@
     "framer-motion": "^11.18.2",
     "hls.js": "^1.6.17",
     "leaflet": "^1.9.4",
-    "lottie-react": "^2.4.1",
+    "lottie-react": "^3.1.1",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.0",
