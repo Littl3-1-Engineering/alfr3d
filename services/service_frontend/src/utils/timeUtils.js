@@ -117,7 +117,7 @@
      try {
        const date = new Date(isoString);
        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-     } catch (e) {
+     } catch {
        // Fallback if not ISO
        return isoString;
      }
@@ -160,7 +160,7 @@ export const formatTimeWithTimezone = (isoString, timezone) => {
       const wall = new Date(isoString.replace(' ', 'T') + 'Z');
       if (Number.isNaN(wall.getTime())) return isoString;
       return _formatWallClock(wall.getTime());
-    } catch (e) {
+    } catch {
       return isoString;
     }
   };
@@ -175,7 +175,7 @@ export const getCurrentTimeWithTimezone = (timezone) => {
         return new Date(
           now.toLocaleString('en-US', { timeZone: timezone })
         );
-      } catch (e) {
+      } catch {
         return now;
       }
     }

@@ -321,7 +321,7 @@ const Music = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/music/spotify/auth`);
       if (res.ok) setAuth(await res.json());
-    } catch (e) {
+    } catch {
       setError('Failed to check Spotify auth');
     }
   }, []);
@@ -341,7 +341,7 @@ const Music = () => {
       if (playlistsRes.ok) setPlaylists((await playlistsRes.json()).playlists || []);
       if (speakersRes.ok) setCastData(await speakersRes.json());
       setError(null);
-    } catch (e) {
+    } catch {
       setError('Failed to load Spotify state');
     } finally {
       setLoading(false);
@@ -352,7 +352,7 @@ const Music = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/music/recommend?limit=10`);
       if (res.ok) setRecommendations((await res.json()).recommendations || []);
-    } catch (e) {
+    } catch {
       // non-fatal: recommendations can lag behind
     }
   }, []);
@@ -414,7 +414,7 @@ const Music = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/music/spotify/search?q=${encodeURIComponent(query)}`);
       if (res.ok) setResults((await res.json()).tracks || []);
-    } catch (e) {
+    } catch {
       setError('Search failed');
     } finally {
       setSearching(false);
