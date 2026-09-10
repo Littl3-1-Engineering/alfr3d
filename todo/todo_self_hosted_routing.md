@@ -1,7 +1,17 @@
 # SA-6: Self-hosted routing & leave-by guidance
 
 ## Status: 🟢 Fully live in production — routing container started and end-to-end verified
-2026-08-30, with explicit go-ahead
+2026-08-30; `check_travel()` fired on a real calendar event for the first time 2026-09-10
+
+**`check_travel()` fired live 2026-09-10.** A real synced test event (physical address, no
+conference link) produced a real `travel` card on the household dashboard — published to the
+`situational-awareness` topic as `Leave by 10:18 AM for test` / `42 min drive`, `distance_km
+47.6`, `traffic_aware: false`. The full runtime path (`environment` coords → Nominatim geocode →
+OSRM `get_route()` → leave-by within `TRAVEL_LEAD_MINUTES`) ran end to end in production for the
+first time. Two daemon fixes shipped alongside it (commits `65dec9e1`, `ecbdccbe`) — see
+`todo/todo_leave_by_demo.md`: a scheduled 15-min calendar sync (events no longer wait for a
+daemon restart) and household-local card time formatting (`ContextFrame.to_local()` — cards were
+printing UTC wall-clock, not the household's timezone). SA-6 moves Future → Present.
 
 **Code/schema deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to
 `main`). A real `mysqldump` backup was taken first; migrations applied cleanly through 0035
@@ -182,13 +192,19 @@ mode-order list) updated for the 18th registered rule. Full suite: **444 passed,
   `setup/build_routing_extract.sh`'s copy step, the `routing` container started with
   `restart: unless-stopped`, and `utils.routing_utils.get_route()` called from inside the live
   `service-daemon` container returning a real route over the exact network path production code
-  uses. `check_travel()` itself hasn't fired yet only because no upcoming calendar event
-  currently has an address — nothing left to build or verify in the plumbing.
+  uses.
+- **`check_travel()` fired on a real calendar event 2026-09-10** (see Status) — the full path
+  (`environment` coords → Nominatim geocode → OSRM route → leave-by window → published card)
+  ran end to end in the live household for the first time. Re-verified the extract still covers
+  the area after the house move: `get_route()` from the Etobicoke origin to six spread GTA
+  destinations (downtown, Pearson, Mississauga, Vaughan, Scarborough, Oakville) all returned
+  real routes.
 
 ## Not yet done
 
-- **`check_travel()` firing on a real calendar event** — purely a matter of a real event with an
-  address existing; check back next time one does. Not a code or infra gap.
+- ~~**`check_travel()` firing on a real calendar event**~~ -- **fired live 2026-09-10** (see
+  Status above). The only thing left on the leave-by track is capturing a screen recording of
+  the card for the `littl31.com` hero clip — tracked in `todo/todo_leave_by_demo.md`, not here.
 - ~~Deploying the routing container to the household's real production NUC~~ -- **done
   2026-08-30**, explicit go-ahead given; see "Routing container started" above.
 - ~~The 20.83GB of reclaimable Docker build cache found on the production NUC during Phase 0~~ --
