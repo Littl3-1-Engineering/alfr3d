@@ -1,6 +1,8 @@
 # ALFR3D
 
-A containerized microservices project for home automation, featuring Kafka messaging, MySQL database, Redis caching, and Python services. Includes a modern React web frontend with real-time dashboard monitoring, comprehensive user/device management, Spotify music integration with context-aware recommendations and whole-home speaker casting, RTSP camera streaming, and a WHEN/IF/THEN routine automation engine.
+A self-hosted home automation platform that behaves like a butler, not a control panel. ALFR3D learns the shape of an ordinary day in a house, notices the one thing that isn't ordinary, and says so once — instead of firing a wall of alerts. It runs entirely on hardware you own: a situational-awareness engine (19 rule-driven card types), a configurable personality layer, wall-mountable dashboards, Spotify control with context-aware recommendations and whole-home speaker casting, RTSP camera streaming, a WHEN/IF/THEN routine engine, and unified Home Assistant / SmartThings / ESPHome device control.
+
+Under the hood it's a containerized set of Python microservices with a React frontend, Kafka messaging, MySQL, and Redis. The technical shape lives in [Stack](#stack), [Features](#features), and [Architecture Overview](#architecture-overview) below.
 
 [![CI](https://github.com/Littl3-1-Engineering/alfr3d/actions/workflows/ci.yml/badge.svg)](https://github.com/Littl3-1-Engineering/alfr3d/actions/workflows/ci.yml)
 [![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg)](LICENSE)
@@ -17,20 +19,32 @@ A containerized microservices project for home automation, featuring Kafka messa
 
 ## Features
 
-- **Microservices Architecture**: Modular services for users, devices, environment, daemon, music, and frontend.
-- **Music & Spotify**: Full Spotify OAuth integration with playback control (play/pause/next/previous/seek/volume/queue), playlist browsing, device transfer, a context-aware recommendation engine, and whole-home speaker casting to Home Assistant media players.
-- **Context-Aware Music Recommendations**: Collaborative-filtering recommender plus an explainable mood/genre/energy engine (occupancy, guests, time of day, weather) that resolves into specific real Spotify playlists — exposed both on-demand (`/api/music/recommend/playlist`) and as situational-awareness music cards during detected gatherings.
+### What it does
+
 - **Situational Awareness Registry**: Rule-driven engine (`DISPLAY_RULES` in `alfr3ddaemon.py`, 19 registered rules) — new card types register as `(rule_id, priority, check_method)` triples without hardcoding a display slot; cards are additive `{mode, content, priority, data}` (structured facts alongside the display prose) and cover time, upcoming events, gathering music, call focus alerts, unread email, rain advisories, current weather, ambient day mood, per-device/per-resident/household-level rhythm-break anomalies (learned baselines, `entity_baselines`), an empty-house-still-on check, and self-hosted leave-by travel guidance. A dismiss/tap feedback loop (`card_interactions`) suppresses cards nobody engages with. Leave-by travel guidance now runs on self-hosted OSRM routing (no paid Google Maps Directions tier, no external request per route) plus the public Nominatim API for geocoding — replacing the earlier client-side-only "Open Maps" hand-off in `alfr3d_deck`; backend live-verified against real production hardware, gated behind an opt-in `routing` Compose profile (`docker compose --profile routing up -d routing`) since it needs a regional OSRM dataset provisioned first (`setup/build_routing_extract.sh`).
 - **Weather Forecast**: OpenWeatherMap 5-day/3-hour forecast snapshot (rain probability, forecast temp/conditions) persisted to the `environment` table hourly (`forecast_*` columns, migration 019) and consumed by the situational-awareness rain advisory ("Rain likely in the next 6 hours — bring an umbrella").
-- **Camera Streaming**: RTSP cameras streamed to the browser via an ffmpeg proxy (MJPEG) or persistent RTSP→HLS pipelines with hls.js playback and snapshot capture.
-- **Routine Automation (WHEN/IF/THEN)**: Time-, sunrise/sunset-, and event-triggered routines with conditions (occupancy, device state, temperature, mode) and actions (speak, device, email, thermostat, lock, cover, music, cast).
 - **Personality & Quips**: Configurable personality matrix with semantic quip categories, one-click presets, context inputs, and optional LLM configuration for generated responses.
-- **Theme System**: Centralized theme tokens (single source of truth) with five built-in themes (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite) and a live theme picker that persists across sessions.
+- **Routine Automation (WHEN/IF/THEN)**: Time-, sunrise/sunset-, and event-triggered routines with conditions (occupancy, device state, temperature, mode) and actions (speak, device, email, thermostat, lock, cover, music, cast).
+- **IoT Integration**: Home Assistant, SmartThings, and ESPHome device integration with unified API endpoints, periodic sync, blueprint display with MAC-based device linking, and real-time device state updates via WebSocket. ESPHome is local-only (mDNS discovery + Noise-encrypted native API, no cloud account) and runs always-on in parallel with whichever of HA/SmartThings is set as the default provider.
+- **Music & Spotify**: Full Spotify OAuth integration with playback control (play/pause/next/previous/seek/volume/queue), playlist browsing, device transfer, a context-aware recommendation engine, and whole-home speaker casting to Home Assistant media players.
+- **Context-Aware Music Recommendations**: Collaborative-filtering recommender plus an explainable mood/genre/energy engine (occupancy, guests, time of day, weather) that resolves into specific real Spotify playlists — exposed both on-demand (`/api/music/recommend/playlist`) and as situational-awareness music cards during detected gatherings.
+- **Camera Streaming**: RTSP cameras streamed to the browser via an ffmpeg proxy (MJPEG) or persistent RTSP→HLS pipelines with hls.js playback and snapshot capture.
 - **Real-Time Dashboard**: Live monitoring with CPU/memory, user, device, and IoT device metrics via WebSocket (no HTTP polling). Event types broadcast: events, situational awareness, containers, users, devices, IoT devices, weather, environment, calendar events, personality state, project tree.
 - **Project Tree Visualization**: Interactive D3.js force-directed tree (1000x400px) showing the full project structure in the Nexus dashboard. Features animated swaying nodes, click-to-expand/collapse, auto-fit zoom, dark background matching tactical panel styling, and real-time updates when files change.
-- **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`. Includes text-to-speech audio generation.
-- **IoT Integration**: Home Assistant, SmartThings, and ESPHome device integration with unified API endpoints, periodic sync, blueprint display with MAC-based device linking, and real-time device state updates via WebSocket. ESPHome is local-only (mDNS discovery + Noise-encrypted native API, no cloud account) and runs always-on in parallel with whichever of HA/SmartThings is set as the default provider.
+- **Theme System**: Centralized theme tokens (single source of truth) with five built-in themes (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite) and a live theme picker that persists across sessions.
 - **System Management**: In-browser system panel with network info, database table counts/backup, environment config editor, and service health/restart.
+- **Modern UI**: Dark tactical theme with professional styling, responsive design, and intuitive navigation.
+
+### How it's built
+
+- **Microservices Architecture**: Modular services for users, devices, environment, daemon, music, and frontend.
+- **Messaging**: Kafka-based communication between services with topics: `speak`, `user`, `device`, `environment`, `event-stream`, `google`, `situational-awareness`, `integrations`, `personality`. Includes text-to-speech audio generation.
+- **Authentication & RBAC**: JWT access + revocable refresh tokens, a role-based permission matrix (`technoking`/`resident`/`guest`) enforced on all write routes, login/claim rate limiting, no username-enumeration, and self-service/admin-assisted password change and reset. Both the React webapp and the Nexus Launcher (Keystore-backed on Android) have full sign-in UI. See [Authentication & RBAC](#authentication--rbac) below.
+- **Database**: MySQL with optimized, secure queries and comprehensive schema.
+- **Security**: Parameterized SQL queries to prevent injection; password hashing (pbkdf2:sha256); secrets-at-rest encryption for integration credentials; secure API endpoints.
+- **Testing**: Comprehensive unit tests, integration tests, API endpoint testing, and frontend tests (Vitest + React Testing Library).
+- **Containerization**: Docker Compose for local development; Kubernetes manifests for production deployment.
+- **Deployment**: Full Minikube support with ingress configuration and persistent storage.
 - **Optimized Performance**:
   - Python 3.14 + Node 24 LTS base images across all services
   - Redis caching layer (TTLCache with in-memory fallback) for users/devices/weather/environment/personality/quips/routines
@@ -42,13 +56,6 @@ A containerized microservices project for home automation, featuring Kafka messa
   - Alembic migration chain (versions 0001-0035) wrapping all raw SQL migrations
   - Slow-query MySQL config with targeted indexes
   - Multi-stage frontend build and BuildKit pip cache
-- **Authentication & RBAC**: JWT access + revocable refresh tokens, a role-based permission matrix (`technoking`/`resident`/`guest`) enforced on all write routes, login/claim rate limiting, no username-enumeration, and self-service/admin-assisted password change and reset. Both the React webapp and the Nexus Launcher (Keystore-backed on Android) have full sign-in UI. See [Authentication & RBAC](#authentication--rbac) below.
-- **Database**: MySQL with optimized, secure queries and comprehensive schema.
-- **Security**: Parameterized SQL queries to prevent injection; password hashing (pbkdf2:sha256); secrets-at-rest encryption for integration credentials; secure API endpoints.
-- **Modern UI**: Dark tactical theme with professional styling, responsive design, and intuitive navigation.
-- **Testing**: Comprehensive unit tests, integration tests, API endpoint testing, and frontend tests (Vitest + React Testing Library).
-- **Containerization**: Docker Compose for local development; Kubernetes manifests for production deployment.
-- **Deployment**: Full Minikube support with ingress configuration and persistent storage.
 
 ### Screenshot
 
