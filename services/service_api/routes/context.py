@@ -13,6 +13,7 @@ todo/todo_card_feedback_loop.md.
 """
 
 import logging
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -21,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from common import db_connection
 from auth.dependencies import require_permission
+from dependencies import ALFR3D_ENV_NAME, get_producer
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["context"])
@@ -117,6 +119,142 @@ _LOCATION_MAX_ACCURACY_M = 20_000.0  # a fix claiming worse than 20 km is a bad 
 _LOCATION_MAX_FIX_AGE_DAYS = 180  # matches cleanup_device_location_history_event's retention
 _LOCATION_MAX_FUTURE_SKEW_MS = 60_000.0  # tolerate a minute of device-clock skew, no more
 
+# Geofence -> SA-12 household_events producer (todo/todo_transition_learning.md deferred
+# follow-up). "Home" is a circle of this radius around the household's own `environment`
+# coordinates -- a few houses' width, comfortably bigger than GPS jitter, small enough to
+# still catch a real departure.
+_HOME_GEOFENCE_RADIUS_M = 300.0
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    """Great-circle distance in meters between two (lat, lon) points."""
+    r = 6_371_000.0  # Earth mean radius, meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _geofence_state(distance_m, accuracy_m, radius_m=_HOME_GEOFENCE_RADIUS_M):
+    """Classify one fix as confidently "home", confidently "away", or `None` (ambiguous --
+    `accuracy_m` isn't tight enough to place the fix on one side of the radius, so the caller
+    should leave the running state alone rather than flap on a noisy reading). A fix with no
+    reported accuracy falls back to a plain threshold -- less confident, but still usable, the
+    same tradeoff the raw "network" fixes already make elsewhere in this pipeline (see the real
+    ~3h-trip density pass in todo_device_location_reporting.md)."""
+    if accuracy_m is None:
+        return "home" if distance_m <= radius_m else "away"
+    if distance_m + accuracy_m <= radius_m:
+        return "home"
+    if distance_m - accuracy_m > radius_m:
+        return "away"
+    return None
+
+
+def _compute_geofence_transitions(home, baseline_state, fixes, radius_m=_HOME_GEOFENCE_RADIUS_M):
+    """Walk `fixes` (ascending by `captured_at`, each `(lat, lon, accuracy_m, captured_at)`)
+    forward from `baseline_state` ("home"/"away"/`None`) and return the ordered list of
+    `(verb, captured_at)` crossings -- "left_area" on home->away, "entered_area" on away->home.
+
+    Ambiguous fixes (see `_geofence_state`) never move the state, so a run of low-accuracy
+    readings near the boundary can't cause flapping. No baseline (a brand-new install's very
+    first fixes) never itself counts as a transition -- there's nothing to transition *from*,
+    just an initial state being established. A batch that itself spans a full round trip
+    (fixes queued while offline, then flushed together) can yield more than one crossing; each
+    is returned.
+    """
+    home_lat, home_lon = home
+    transitions = []
+    state = baseline_state
+    for lat, lon, accuracy_m, captured_at in fixes:
+        distance_m = _haversine_m(home_lat, home_lon, lat, lon)
+        new_state = _geofence_state(distance_m, accuracy_m, radius_m)
+        if new_state is None or new_state == state:
+            continue
+        if state is not None:
+            verb = "left_area" if new_state == "away" else "entered_area"
+            transitions.append((verb, captured_at))
+        state = new_state
+    return transitions
+
+
+def _fetch_home_coordinates(cursor):
+    """This household's own (latitude, longitude) from the `environment` row for
+    `ALFR3D_ENV_NAME`, or `None` if unset. Same source table/columns as
+    `service_daemon.routing_utils.fetch_home_coordinates()` (SA-6) -- service_api can't import
+    across the service boundary, so this re-reads the same two columns directly."""
+    cursor.execute(
+        "SELECT latitude, longitude FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,)
+    )
+    row = cursor.fetchone()
+    if not row or row[0] is None or row[1] is None:
+        return None
+    return (float(row[0]), float(row[1]))
+
+
+def _emit_geofence_transition_events(cursor, user_id, install_id, fixes):
+    """Detect and record SA-12 (todo_transition_learning.md) `subject_type=user` /
+    `verb=left_area|entered_area` household events from one install's just-accepted batch of
+    location fixes, on the same event-stream -> `service_api._persist_household_events()` path
+    every other structured producer uses (SA-11 / Branch C).
+
+    Tracked per `client_install_id`, matching `device_location_history`'s own per-device design
+    (todo_device_location_reporting.md design decision #3) -- fixes are never merged across a
+    user's other devices, so a phone leaving while a tablet stays home reports as that phone's
+    own transition, not the household's. `fixes` must already be sorted ascending by
+    `captured_at`. Best-effort: any failure here (no home coordinates set yet, a DB hiccup, no
+    Kafka producer) must never affect the location-report response the caller already
+    succeeded at.
+    """
+    if not fixes:
+        return
+    try:
+        home = _fetch_home_coordinates(cursor)
+        if home is None:
+            return
+
+        cursor.execute(
+            "SELECT latitude, longitude, accuracy_m FROM device_location_history "
+            "WHERE client_install_id = %s AND captured_at < %s "
+            "ORDER BY captured_at DESC LIMIT 1",
+            (install_id, fixes[0][3]),
+        )
+        baseline_row = cursor.fetchone()
+        baseline_state = None
+        if baseline_row is not None:
+            b_lat, b_lon, b_accuracy = baseline_row
+            baseline_distance = _haversine_m(home[0], home[1], float(b_lat), float(b_lon))
+            baseline_state = _geofence_state(
+                baseline_distance, float(b_accuracy) if b_accuracy is not None else None
+            )
+
+        transitions = _compute_geofence_transitions(home, baseline_state, fixes)
+        if not transitions:
+            return
+
+        producer = get_producer()
+        if not producer:
+            return
+        for verb, captured_at in transitions:
+            producer.send(
+                "event-stream",
+                {
+                    "id": f"geofence_{verb}_{user_id}_{install_id}_"
+                    f"{captured_at.strftime('%Y%m%d%H%M%S%f')}",
+                    "type": "presence",
+                    "message": f"user {user_id} {verb.replace('_', ' ')}",
+                    "time": captured_at.isoformat(),
+                    "service": "api",
+                    "subject_type": "user",
+                    "subject_id": str(user_id),
+                    "verb": verb,
+                },
+            )
+        producer.flush()
+    except Exception as e:  # noqa: BLE001 -- must never break the location-report response
+        logger.error(f"Failed to emit geofence transition event(s): {e}")
+
 
 @router.post("/context/device-location")
 async def report_device_location(
@@ -130,8 +268,10 @@ async def report_device_location(
     the request body. `device_id` is left NULL -- a later device-linking step ties the install
     to its arp-scan `device` row.
 
-    No DISPLAY_RULES check reads this table yet; it is a data-collection pipeline for later SA
-    work (geofence departures, `check_travel()` origin, transition learning). Returns
+    No DISPLAY_RULES check reads this table yet. It remains a data-collection pipeline for
+    later SA work (`check_travel()` origin, location baselines) beyond the one consumer that
+    now exists: each accepted batch also feeds `_emit_geofence_transition_events()`, the SA-12
+    (todo_transition_learning.md) geofence enter/exit producer. Returns
     `{"accepted": n, "rejected": m}` -- individual bad fixes are dropped, not fatal.
     """
     try:
@@ -208,6 +348,13 @@ async def report_device_location(
                     rows,
                 )
                 db.commit()
+                # (lat, lon, accuracy_m, captured_at) per row -- indices 2/3/4/7 of the tuple
+                # built above. Sorted defensively: a queued-while-offline batch should already
+                # arrive in capture order, but the geofence walk depends on it.
+                fixes_for_geofence = sorted(
+                    ((r[2], r[3], r[4], r[7]) for r in rows), key=lambda f: f[3]
+                )
+                _emit_geofence_transition_events(cursor, user.id, install_id, fixes_for_geofence)
         return {"accepted": len(rows), "rejected": rejected}
     except HTTPException:
         raise
