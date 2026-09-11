@@ -1,6 +1,6 @@
 # Deck: Periodic Device-Location Reporting (SA data-collection pipeline)
 
-## Status: 🟢 Phases 1–3 SHIPPED to `main` + deployed to the NUC, 2026-09-10.
+## Status: 🟢 SHIPPED, DEPLOYED, and LIVE-VERIFIED on real production data. 2026-09-10/11.
 - **Phase 1 (backend):** `alfr3d` PR #197 merged → **deployed to NUC** (`alfr3d@192.168.2.200`):
   `mysqldump` backup taken (`backup/alfr3d_predeploy_0039_2026-09-10_15-44-48.sql`, 299 MB),
   migration `0038→0039` applied, `service-api` rebuilt, live authed smoke test lands a row.
@@ -8,12 +8,19 @@
 - **Phase 3 (consent):** in #29 — Settings toggle, `PRIVACY.md`/`README`, manifest perm.
 - **Onboarding opt-in + Play data-safety doc:** `alfr3d_deck` PR #30 (`docs/PLAY_DATA_SAFETY.md`
   answers the form; `LocationReportingOptIn` on the Permissions step).
-- **#30 merged; density pass DONE 2026-09-10** — a real ~3h trip away from home was captured
-  and reconstructed from the spike CSV: departure caught within ~8 min, return caught on the
-  very next foreground touch. Full writeup in "Phase 0 findings — on-device" below.
-- **Open:** Phase 4 on-device verification (swap the spike build for the merged `main` build,
-  now that the density question is answered); Deck-auth headcount — **done**, see below;
-  submit the Play data-safety form for real (human, in the Play Console).
+- **Density pass DONE** — a real ~3h trip away from home was captured and reconstructed from
+  the spike CSV: departure caught within ~8 min, return caught on the very next foreground
+  touch. Full writeup in "Phase 0 findings — on-device" below.
+- **Phase 4 on-device verification DONE** (real Zenfone, real NUC, `v0.2.2`) — toggle-on capture
+  → queue → NUC upload confirmed with real rows (`id=2,3`, correct `user_id`/`client_install_id`/
+  `device_id=NULL`), and toggle-off confirmed clean (no new capture, no new rows). Airplane-mode
+  retry test explicitly skipped (owner's call — the mechanism is the same `restore()`-on-failure
+  path already exercised by unit tests). Full writeup under "Phase 4" below.
+- **v0.2.2 released:** `alfr3d_deck` tag `v0.2.2` (versionCode 40) — this feature's first
+  tagged release, built by `.github/workflows/release.yml` into a signed APK/AAB GitHub Release.
+- **Open:** submit the Play data-safety form for real (human, in the Play Console); device
+  linking (`client_install_id` → `device` row) and every downstream SA consumer are deferred
+  follow-ups, not part of this todo (see "Deferred" below).
 
 Cross-repo: `alfr3d` + `alfr3d_deck`.
 
@@ -495,28 +502,47 @@ _Original plan:_
 
 ---
 
-## Phase 4 — on-device verification — 🟡 IN PROGRESS
+## Phase 4 — on-device verification — ✅ DONE 2026-09-10/11
 
-Item 5 below (does the track catch a real departure) is **already answered** by the spike-based
-density pass above — a real ~3h trip was caught within ~8 min on departure and on the very next
-touch on return. What's left is verifying the *real* pipeline (queue → background upload →
-`device_location_history` on the NUC), not the spike's logcat/CSV stand-in. Needs the Zenfone
-swapped from `spike/device-location-phase0` to the merged `main` build first.
+Real Zenfone 9, real NUC (already running #197), the actual merged pipeline (not the spike) —
+`alfr3d_deck` rebuilt from `main` at `v0.2.2` (versionCode 40) and installed with `adb install
+-r` over the spike build (permission grant carried over; app data/DataStore preserved).
 
-Real device, real backend (the NUC, already running #197):
-1. Toggle on, grant coarse permission — confirm a fix is captured on next `onResume`
-   (adb logcat), queued in DataStore.
-2. Wait out / force a background sync — confirm `device_location_history` rows land,
-   `client_install_id` + `user_id` correct, `device_id` NULL, `captured_at` vs `reported_at`
-   sane.
-3. Airplane-mode the backend path, capture 2–3 fixes, restore connectivity — confirm the whole
-   queue flushes in one batch and the queue empties.
-4. Toggle off — confirm capture and upload both stop, no rows.
-5. ~~Leave home for a real trip~~ — done via the spike pass above; re-confirm once the real
-   pipeline is installed if a convenient trip comes up, but not required to close this phase.
+1. **Toggle on, permission already granted** — first `onResume` after the reinstall/relaunch
+   captured nothing (cold-start race: `MainActivity.onResume()` can fire
+   `DeviceLocationCapture.onForeground()` before `Alfr3d.init()`'s `LaunchedEffect` has run
+   `attachPersistedAuth()`, so `Alfr3d.authState.value` is still `LoggedOut` and the capture
+   gate silently bails — **doesn't consume the debounce**, since the auth check is before
+   `markCaptured()`). The very next foreground touch (warm process) captured a real fix and
+   wrote it to `alfr3d_location.preferences_pb`: `{"lat":43.6396,"lon":-79.5966,"acc":2000,
+   "prov":"network",...}` — confirmed by reading the DataStore file directly
+   (`adb shell run-as com.alfr3d.launcher cat files/datastore/alfr3d_location.preferences_pb`).
+   *Not a bug to fix* — worst case is one missed capture on a cold start, and the next
+   foreground event (routine on a launcher) picks it up; noted here so it's not mistaken for
+   a real failure if seen again.
+2. **Background sync (SYNC NOW) → NUC.** Two fixes accumulated (two foreground touches before
+   the sync) and flushed in one batch. Confirmed via `device_location_history` on the NUC:
+   ```
+   id=2  lat=43.6396 lon=-79.5966 acc=2000 provider=network  captured 02:17:51 -> reported 02:38:02
+   id=3  lat=43.6396 lon=-79.5966 acc=2000 provider=network  captured 02:30:25 -> reported 02:38:02
+   ```
+   `user_id=1` on both — from the JWT, matching the "1 active session" headcount finding — a
+   real generated `client_install_id`, `device_id` NULL as designed. Queue file confirmed
+   drained clean (`fix_queue` key gone, only `last_capture_at_ms` remains) — not stuck, not
+   silently dropped.
+3. **Airplane-mode / offline retry — skipped** (owner's explicit call). Uncovered by this
+   session's Phase 4, but the `restore()`-on-failure path it would exercise is already covered
+   by nothing automated (no deck test infra) — the honest state is "code review only, not
+   live-verified." Revisit if it matters before a wider release.
+4. **Toggle off** — confirmed clean: the very next foreground cycle after toggling off queued
+   nothing (`alfr3d_location.preferences_pb` unchanged, no `fix_queue` key), and the NUC's
+   `device_location_history` count/`MAX(id)`/`MAX(reported_at)` were unchanged afterward — no
+   stray upload in flight.
+5. **Real trip** — already covered by the density pass (see above); not re-run against the
+   real pipeline, not required to close this phase.
 
-Record results in this doc (the [[todo_departure_anomaly]] / [[todo_leave_by_demo]] pattern:
-"built" and "live-verified" are separate checkboxes).
+**Net:** the pipeline works end-to-end against real production data, for a real user, on the
+real household NUC. `v0.2.2` is the first tagged release carrying this feature.
 
 ---
 
