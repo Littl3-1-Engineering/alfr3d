@@ -224,7 +224,15 @@ Added for SA-12 (Branch C, 2026-09-07, commit `b9e6e36f`) — reuse the existing
 | `device` | `turned_on`, `turned_off`, `toggled`, `set` | `smarthome_devices.id` | `service_api/routes/iot.py` `_emit_device_event()`, called from each `if success:` branch (Home Assistant / ESPHome / SmartThings) of `control_iot_device()` | command→verb: `turn_on`→`turned_on`, `turn_off`→`turned_off`, `toggle`→`toggled`, everything else (brightness/temp/mode/position/lock/media/volume/…)→`set`. Emitted **only** after the command actually succeeds. |
 | `routine` | `executed` | `routines.id` | `service_daemon/utils/util_routines.py` `check_routines()` (scheduled + event-triggered, after `should_trigger` + condition check, before `execute_actions()`); `service_api/routes/routines.py` `run_routine()` (manual "run now") | `source_service` is `daemon` for scheduled fires, `api` for manual runs |
 
-### Collection status (as of 2026-09-08)
+Added 2026-09-11 — the geofence follow-up [[todo_device_location_reporting]]'s "Deferred" section
+named, built directly on top of that pipeline rather than real OS geofencing (no background-
+location permission, matching that feature's coarse/foreground-only design decision):
+
+| subject_type | verb(s) | subject_id | producer(s) | notes |
+|---|---|---|---|---|
+| `user` | `left_area`, `entered_area` | `users.id` | `service_api/routes/context.py` `_emit_geofence_transition_events()`, called from `report_device_location()` (`POST /api/context/device-location`) after each accepted batch commits | Backend-side, not client geofencing: compares each newly-accepted fix's distance from the household's `environment` coordinates against a 300m radius, using `distance ± accuracy_m` to only classify a fix as confidently home/away (ambiguous fixes don't move the state, so poor-accuracy "network" fixes near the boundary can't cause flapping). Tracked per `client_install_id`, not merged across a user's devices — matches `device_location_history`'s own per-device design, so one device leaving while another stays home reports as that device's own transition. Code + unit tests only as of 2026-09-11 — **not yet deployed** (no migration needed, it's a pure route addition) and not yet live-verified against a real departure/arrival. |
+
+### Collection status (as of 2026-09-08, geofence producer added 2026-09-11)
 
 | stream | live rows accumulating? |
 |---|---|
@@ -236,10 +244,12 @@ Added for SA-12 (Branch C, 2026-09-07, commit `b9e6e36f`) — reuse the existing
 | `routine/executed` (manual) | ✅ verified end-to-end (row 14917) |
 | `routine/executed` (scheduled) | ⏳ deployed, awaiting first daemon fire |
 | `device/turned_on|off|toggled|set` | ⚠️ deployed but **near-zero rows**, structurally. The household moved; ~59 HA entities (Google Homes / TVs / tablets) stayed at the old place — some may be recovered, most won't. Only `Moonrise TV` (+`moonrise_tv_2`) followed, so the device-transition stream has ~one controllable device and stays too thin for SA-12 until the new house accumulates real smart devices. (2026-09-08 fixes: `93354114` corrected `sync_ha_devices()`'s `online = state == "on"` bug; an auto-prune `3b10fadb` was tried then reverted `85e6be17` as too aggressive/FK-unsafe; `3dfa3f29` added `DELETE /api/iot/devices/{id}` for deliberate removal instead.) |
+| `user/left_area`, `user/entered_area` | 🆕 not deployed yet — code + unit tests only (2026-09-11). Once live, this is the **presence** half of the presence→device/routine candidate pairs; depends on the household actually having `device-location` reporting toggled on (Deck Settings, default OFF) and real deck↔backend traffic — same opt-in gate as the rest of [[todo_device_location_reporting]]. |
 
 Candidate transition pairs the task doc names — presence→device, routine→device,
-device→device — have **zero** samples until the two Branch C streams accumulate real
-history. That is what the ~2026-09-28 re-check measures.
+device→device — have **zero** samples until the two Branch C streams (and now the geofence
+producer above, once deployed and opted into) accumulate real history. That is what the
+~2026-09-28 re-check measures.
 
 ## Not yet done
 

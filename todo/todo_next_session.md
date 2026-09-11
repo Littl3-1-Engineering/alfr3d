@@ -141,5 +141,16 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   2026-09-08** (`service-api` + `service-device` rebuilt, no migration); post-deploy sync moved
   `online` 1→44, only the ~17 genuinely `unavailable`/`unknown` entities stay hidden.
 
+- **2026-09-11**: built the geofence → SA-12 `household_events` producer that
+  `todo_device_location_reporting.md`'s "Deferred" section named (`user`/`left_area`|
+  `entered_area`, `_emit_geofence_transition_events()` in `routes/context.py`, wired into
+  `POST /api/context/device-location`). Backend-side distance-from-home check against the
+  existing coarse/foreground-only location pipeline, not real OS geofencing — stays inside
+  that feature's no-background-location-permission design decision. 14 new unit tests, full
+  suite green (536 passed), black/flake8 clean. Working tree only — **not committed/pushed**,
+  not deployed, not live-verified (needs real `environment` coordinates set + a resident
+  actually crossing the 300m radius with location reporting toggled on). See the SA-12 doc's
+  "Added 2026-09-11" section for the design and the concrete not-yet-done list.
+
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
