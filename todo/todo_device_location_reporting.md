@@ -574,7 +574,8 @@ Do not build these here. Listed so the pipeline is designed to feed them:
   structured `household_events` (`subject_type=user`, `verb=left_area`/`entered_area`), giving
   SA-12 the presence→X transition pairs its Phase 0b found were completely absent.
   `_emit_geofence_transition_events()` in `routes/context.py`, wired into this todo's own
-  `report_device_location()` — code + unit tests only, not yet deployed or live-verified. See
+  `report_device_location()` — deployed to the NUC 2026-09-11 (`service-api` rebuilt, no
+  migration needed); not yet live-verified against a real crossing. See
   that file's "Added 2026-09-11" section for the design.
 - **[[todo_generalize_entity_baselines]]:** per-user location-rhythm baselines (typical
   location by time-of-day bucket) alongside the existing device/entity baselines.

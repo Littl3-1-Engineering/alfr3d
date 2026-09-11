@@ -147,10 +147,15 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `POST /api/context/device-location`). Backend-side distance-from-home check against the
   existing coarse/foreground-only location pipeline, not real OS geofencing — stays inside
   that feature's no-background-location-permission design decision. 14 new unit tests, full
-  suite green (536 passed), black/flake8 clean. Working tree only — **not committed/pushed**,
-  not deployed, not live-verified (needs real `environment` coordinates set + a resident
-  actually crossing the 300m radius with location reporting toggled on). See the SA-12 doc's
-  "Added 2026-09-11" section for the design and the concrete not-yet-done list.
+  suite green (536 passed), black/flake8 clean. Committed (`e85b4b4d` feat, `567ee98a` docs),
+  pushed to `origin/main`, and **deployed to the NUC** the same day: `git pull --ff-only`
+  (confirmed the only non-doc commits in the fast-forward were this feature's own), `docker
+  compose build service-api` + `docker compose up -d service-api`, verified clean startup
+  (real dashboard/daemon traffic flowing, no import errors) and that
+  `_emit_geofence_transition_events` imports fine inside the running container. Deliberately
+  did **not** inject synthetic location data into production to test the geofence logic
+  end-to-end — still needs a resident actually crossing the 300m radius with location
+  reporting toggled on. See the SA-12 doc's "Added 2026-09-11" section for the design.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
