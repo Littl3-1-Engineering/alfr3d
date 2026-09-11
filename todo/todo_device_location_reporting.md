@@ -8,9 +8,12 @@
 - **Phase 3 (consent):** in #29 — Settings toggle, `PRIVACY.md`/`README`, manifest perm.
 - **Onboarding opt-in + Play data-safety doc:** `alfr3d_deck` PR #30 (`docs/PLAY_DATA_SAFETY.md`
   answers the form; `LocationReportingOptIn` on the Permissions step).
-- **Open:** merge #30; **Phase 4 on-device verification** (blocked until the density-spike build
-  is swapped for a `main` build — after the density pass); day-long density CSV (spike running
-  on the Zenfone); Deck-auth headcount (prod DB); submit the Play data-safety form for real.
+- **#30 merged; density pass DONE 2026-09-10** — a real ~3h trip away from home was captured
+  and reconstructed from the spike CSV: departure caught within ~8 min, return caught on the
+  very next foreground touch. Full writeup in "Phase 0 findings — on-device" below.
+- **Open:** Phase 4 on-device verification (swap the spike build for the merged `main` build,
+  now that the density question is answered); Deck-auth headcount — **done**, see below;
+  submit the Play data-safety form for real (human, in the Play Console).
 
 Cross-repo: `alfr3d` + `alfr3d_deck`.
 
@@ -245,15 +248,41 @@ GPS provider request `OFF` (nothing driving it).
   `getCurrentLocation`" → last-known-first, active request only as a stale fallback. The
   DeviceLocationQueue enqueues whatever comes back (including nothing).
 
+### Phase 0 findings — real-trip density pass (2026-09-10, item 2 resolved)
+
+The spike (with the CSV-logging enhancement, `spike/device-location-phase0` in `alfr3d_deck`)
+was left running through a normal day, then a genuine ~3-hour trip away from home. Pulled
+`loc_spike.csv` afterward and reconstructed the trip from 22 foreground-triggered probe cycles
+over 7h40m (13:36–21:16):
+
+- **Both transitions were caught within one phone-use cycle.** Home through 17:39 (6 straight
+  cycles at home coords); first non-home fix at **17:47** (~2 km out) — departure caught within
+  ~8 min of the last home reading. Return: a **fresh (age=0) home fix at 20:47**, the very next
+  time the phone was opened after walking back in.
+- **The coarse grid traced the shape of a real trip**, not just binary home/away: 17:47/17:52
+  ≈2 km out → 18:07 ≈4 km out → 19:45 ≈6–7 km out (the farthest reading, held steady at 20:28
+  and 20:40 with `age` 4–6 min — genuinely still away, not a stale holdover) → home by 20:47.
+  Away window **~17:43 → ~20:45, ≈3 hours** — matched the real trip almost exactly.
+- **New finding, reverses part of the "not reliable" note above:** away from home, the active
+  `getCurrentLocation` fallback succeeded *instantly* (age=0, no timeout) at both the 17:47 and
+  19:45 cycles — opposite of the stationary-at-home behavior (10.8 s / null / null) from the
+  first pass. A moving/traveling radio locks faster than a stationary indoor one.
+- **Verdict: foreground-only, no-background-permission capture is dense enough for the stated
+  SA goals** (departure timing, rough travel distance, confirming a return) — no design change
+  needed, no case for the `ACCESS_BACKGROUND_LOCATION` upgrade path.
+
+### Deck-auth headcount (2026-09-10, item 1 resolved)
+
+Queried the production NUC DB directly: **exactly 1 user has an active refresh token** (type
+`owner`). 2 non-guest users have passwords set (1 owner + 1 resident) and could sign in; 3
+resident + 1 owner + 10 guest users exist total. → v1's real-world data is effectively **n=1**
+until other residents sign into Deck — don't tune any downstream SA threshold against it yet.
+
 ### Still open
-- **1 (headcount):** query production — how many non-guest users have a live Deck auth? (No
-  access from here.)
-- **2 (foreground-capture density over a real day):** the probe confirms the *mechanism* fires
-  and last-known stays 3–6 min fresh during use, but a genuine "does the track catch a real
-  departure within ~15 min" answer needs the instrumented build left running through a normal
-  day + a real trip. Probe is ready if we want to do that pass.
-- **5 (Play data-safety):** confirm approximate-foreground doesn't trigger background-location
-  review; screenshot the declaration.
+- **Play data-safety:** the form is drafted (`alfr3d_deck/docs/PLAY_DATA_SAFETY.md`, confirms
+  approximate-foreground does **not** trigger the background-location review) but still needs a
+  human to actually submit it in the Play Console and screenshot the result.
+- **Phase 4 on-device verification** (below) — next.
 
 ---
 
@@ -466,9 +495,15 @@ _Original plan:_
 
 ---
 
-## Phase 4 — on-device verification
+## Phase 4 — on-device verification — 🟡 IN PROGRESS
 
-Real device, real backend:
+Item 5 below (does the track catch a real departure) is **already answered** by the spike-based
+density pass above — a real ~3h trip was caught within ~8 min on departure and on the very next
+touch on return. What's left is verifying the *real* pipeline (queue → background upload →
+`device_location_history` on the NUC), not the spike's logcat/CSV stand-in. Needs the Zenfone
+swapped from `spike/device-location-phase0` to the merged `main` build first.
+
+Real device, real backend (the NUC, already running #197):
 1. Toggle on, grant coarse permission — confirm a fix is captured on next `onResume`
    (adb logcat), queued in DataStore.
 2. Wait out / force a background sync — confirm `device_location_history` rows land,
@@ -477,8 +512,8 @@ Real device, real backend:
 3. Airplane-mode the backend path, capture 2–3 fixes, restore connectivity — confirm the whole
    queue flushes in one batch and the queue empties.
 4. Toggle off — confirm capture and upload both stop, no rows.
-5. Leave home for a real trip — eyeball the track: does it show the departure within the
-   Phase-0 target window?
+5. ~~Leave home for a real trip~~ — done via the spike pass above; re-confirm once the real
+   pipeline is installed if a convenient trip comes up, but not required to close this phase.
 
 Record results in this doc (the [[todo_departure_anomaly]] / [[todo_leave_by_demo]] pattern:
 "built" and "live-verified" are separate checkboxes).
