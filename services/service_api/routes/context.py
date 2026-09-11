@@ -121,9 +121,18 @@ _LOCATION_MAX_FUTURE_SKEW_MS = 60_000.0  # tolerate a minute of device-clock ske
 
 # Geofence -> SA-12 household_events producer (todo/todo_transition_learning.md deferred
 # follow-up). "Home" is a circle of this radius around the household's own `environment`
-# coordinates -- a few houses' width, comfortably bigger than GPS jitter, small enough to
-# still catch a real departure.
-_HOME_GEOFENCE_RADIUS_M = 300.0
+# coordinates. 3km, not a few houses' width: todo_device_location_reporting.md's Phase 0
+# on-device investigation found ACCESS_COARSE_LOCATION hard-clamps every fix -- network, gps,
+# fused, a fresh getCurrentLocation, all of them -- to a ~2km grid, with consecutive reads at
+# the *same physical spot* landing up to ~2.2km apart. Its own conclusion: "any server-side
+# geofence needs a wide band (~3km) ... or the 2km jitter will flap it." A radius smaller than
+# the fixes' own accuracy (confirmed live: real production fixes came back accuracy_m=2000
+# almost uniformly) makes confident "home" unreachable -- _geofence_state() can never satisfy
+# `distance + accuracy_m <= radius_m` if accuracy_m alone already exceeds radius_m. First
+# deploy (2026-09-11) shipped with 300m and, checked against real production data the same
+# day, produced zero transitions despite a real ~13.6km trip sitting in the raw fixes -- this
+# is the fix.
+_HOME_GEOFENCE_RADIUS_M = 3_000.0
 
 
 def _haversine_m(lat1, lon1, lat2, lon2):
@@ -193,6 +202,9 @@ def _fetch_home_coordinates(cursor):
     return (float(row[0]), float(row[1]))
 
 
+_BASELINE_LOOKBACK_FIXES = 20  # how far back to search for the last *confidently* classified fix
+
+
 def _emit_geofence_transition_events(cursor, user_id, install_id, fixes):
     """Detect and record SA-12 (todo_transition_learning.md) `subject_type=user` /
     `verb=left_area|entered_area` household events from one install's just-accepted batch of
@@ -214,20 +226,26 @@ def _emit_geofence_transition_events(cursor, user_id, install_id, fixes):
         if home is None:
             return
 
+        # The single most recent prior fix is very often itself ambiguous (coarse-location
+        # accuracy is commonly as wide as the geofence band itself -- see
+        # _HOME_GEOFENCE_RADIUS_M's comment), so walk backward through recent history for the
+        # last one that actually resolves to a confident state rather than silently losing a
+        # known "away"/"home" baseline to one noisy row.
         cursor.execute(
             "SELECT latitude, longitude, accuracy_m FROM device_location_history "
             "WHERE client_install_id = %s AND captured_at < %s "
-            "ORDER BY captured_at DESC LIMIT 1",
-            (install_id, fixes[0][3]),
+            "ORDER BY captured_at DESC LIMIT %s",
+            (install_id, fixes[0][3], _BASELINE_LOOKBACK_FIXES),
         )
-        baseline_row = cursor.fetchone()
         baseline_state = None
-        if baseline_row is not None:
-            b_lat, b_lon, b_accuracy = baseline_row
+        for b_lat, b_lon, b_accuracy in cursor.fetchall():
             baseline_distance = _haversine_m(home[0], home[1], float(b_lat), float(b_lon))
-            baseline_state = _geofence_state(
+            candidate_state = _geofence_state(
                 baseline_distance, float(b_accuracy) if b_accuracy is not None else None
             )
+            if candidate_state is not None:
+                baseline_state = candidate_state
+                break
 
         transitions = _compute_geofence_transitions(home, baseline_state, fixes)
         if not transitions:

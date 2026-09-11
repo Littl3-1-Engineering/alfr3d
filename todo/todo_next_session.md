@@ -154,8 +154,23 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   (real dashboard/daemon traffic flowing, no import errors) and that
   `_emit_geofence_transition_events` imports fine inside the running container. Deliberately
   did **not** inject synthetic location data into production to test the geofence logic
-  end-to-end — still needs a resident actually crossing the 300m radius with location
-  reporting toggled on. See the SA-12 doc's "Added 2026-09-11" section for the design.
+  end-to-end.
+
+- **2026-09-11 (later, same day)**: checked `household_events` for a real crossing — zero
+  rows, but the raw `device_location_history` already had a genuine ~13.6km trip in it from
+  earlier that day. That's a real bug, not "hasn't happened yet": the shipped 300m radius was
+  smaller than the ~2000m accuracy `todo_device_location_reporting.md`'s own Phase 0 already
+  documented coarse-location fixes get clamped to, making "home" structurally unreachable — so
+  no baseline, so no transition, ever, regardless of real travel distance. Fixed
+  `_HOME_GEOFENCE_RADIUS_M` 300→3000m (matching that doc's own "~3km" recommendation, missed
+  on the first pass) and, since the fix also exposed that the baseline lookup only checked the
+  single most recent prior fix (itself often ambiguous at this accuracy), changed it to walk
+  back up to 20 prior fixes for the last confidently-classified one. Re-verified against the
+  same real production fixes (not mocks): now correctly resolves one `left_area` transition.
+  1 new test, 68 total, all green; redeployed to the NUC same day. See
+  `todo_transition_learning.md`'s "First real-data check" section for the full writeup. Still
+  zero rows in `household_events` — the fix doesn't retroactively backfill events for fixes
+  already stored before the fix landed; needs a fresh crossing to produce a live row.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*

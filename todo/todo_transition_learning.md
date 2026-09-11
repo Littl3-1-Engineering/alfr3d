@@ -230,9 +230,47 @@ location permission, matching that feature's coarse/foreground-only design decis
 
 | subject_type | verb(s) | subject_id | producer(s) | notes |
 |---|---|---|---|---|
-| `user` | `left_area`, `entered_area` | `users.id` | `service_api/routes/context.py` `_emit_geofence_transition_events()`, called from `report_device_location()` (`POST /api/context/device-location`) after each accepted batch commits | Backend-side, not client geofencing: compares each newly-accepted fix's distance from the household's `environment` coordinates against a 300m radius, using `distance ± accuracy_m` to only classify a fix as confidently home/away (ambiguous fixes don't move the state, so poor-accuracy "network" fixes near the boundary can't cause flapping). Tracked per `client_install_id`, not merged across a user's devices — matches `device_location_history`'s own per-device design, so one device leaving while another stays home reports as that device's own transition. Shipped and **deployed to the NUC 2026-09-11** (`service-api` rebuilt/recreated, no migration needed — pure route addition; import + live-traffic sanity check passed post-deploy). Not yet live-verified against a real departure/arrival — needs a resident with location reporting toggled on to actually cross the radius. |
+| `user` | `left_area`, `entered_area` | `users.id` | `service_api/routes/context.py` `_emit_geofence_transition_events()`, called from `report_device_location()` (`POST /api/context/device-location`) after each accepted batch commits | Backend-side, not client geofencing: compares each newly-accepted fix's distance from the household's `environment` coordinates against a radius, using `distance ± accuracy_m` to only classify a fix as confidently home/away (ambiguous fixes don't move the state). Tracked per `client_install_id`, not merged across a user's devices — matches `device_location_history`'s own per-device design, so one device leaving while another stays home reports as that device's own transition. Baseline lookup walks back through up to `_BASELINE_LOOKBACK_FIXES` (20) prior fixes for the last *confidently* classified one, rather than trusting only the single most recent row. Shipped and **deployed to the NUC 2026-09-11**, no migration needed. See "First real-data check" below for the radius bug this deploy's own production data caught and fixed same-day. |
 
-### Collection status (as of 2026-09-08, geofence producer added 2026-09-11)
+### First real-data check (2026-09-11) — 300m radius shipped broken, found same day
+
+First deploy shipped with `_HOME_GEOFENCE_RADIUS_M = 300.0`, picked without re-reading
+[[todo_device_location_reporting]]'s own Phase 0 on-device findings first. Checked
+`household_events` right after deploy: **zero** `left_area`/`entered_area` rows. That's
+suspicious on its own, so the raw `device_location_history` was checked directly — 10 real
+fixes existed, including one **~13.6km from home**, a genuine trip. Zero events for a real
+13.6km departure meant a real bug, not "just hasn't happened yet."
+
+Root cause, both already on record in `todo_device_location_reporting.md` and missed when
+this feature was designed:
+- **"Coarse permission hard-clamps every fix to a ~2km grid"** (that doc's Phase 0 on-device
+  section) — confirmed again in the live data: every one of the 10 real fixes reported
+  `accuracy_m=2000.0` regardless of provider (`network`/`gps`/`fused`). `_geofence_state()`
+  requires `distance + accuracy_m <= radius_m` to call a fix confidently "home" — impossible
+  whenever `accuracy_m` alone exceeds `radius_m`, which 2000 always does against 300. "Home"
+  was structurally unreachable, so no baseline could ever form, so no transition could ever
+  fire, regardless of how far anyone actually traveled.
+- The same doc's own conclusion: **"any server-side geofence needs a wide band (~3km) ... or
+  the 2km jitter will flap it."** Not followed on the first pass.
+
+Fix: `_HOME_GEOFENCE_RADIUS_M` 300 → **3,000m**. Re-run against the same real fixes
+(`_haversine_m`/`_geofence_state` called directly, real coordinates, no mocking): the near-home
+fixes (782m from `environment`'s coordinates) now resolve `"home"`, the 13.6km and 9.8km fixes
+resolve `"away"`, and `_compute_geofence_transitions` correctly emits exactly one
+`left_area` at the 13.6km fix. A second, related gap surfaced in the same check: the row
+immediately after the trip (1612m out, still `accuracy_m=2000`) is itself ambiguous under the
+new radius, and the original code only ever looked at the single most recent prior row as
+baseline — meaning the very next request after a real departure would have silently "lost"
+the away state. Fixed by walking back through up to 20 prior fixes for the last confidently
+classified one (`_BASELINE_LOOKBACK_FIXES`) instead. Both fixes shipped and redeployed
+2026-09-11, same day, before the feature had produced a single row against real data.
+
+**Lesson for next time**: when a feature builds directly on top of another feature's own
+Phase 0 investigation, re-read that investigation's *concrete numbers* (not just the
+one-line summary) before picking a constant — the exact guidance needed ("~3km band") was
+already written down.
+
+### Collection status (as of 2026-09-08, geofence producer added 2026-09-11, radius fixed 2026-09-11)
 
 | stream | live rows accumulating? |
 |---|---|
@@ -244,7 +282,7 @@ location permission, matching that feature's coarse/foreground-only design decis
 | `routine/executed` (manual) | ✅ verified end-to-end (row 14917) |
 | `routine/executed` (scheduled) | ⏳ deployed, awaiting first daemon fire |
 | `device/turned_on|off|toggled|set` | ⚠️ deployed but **near-zero rows**, structurally. The household moved; ~59 HA entities (Google Homes / TVs / tablets) stayed at the old place — some may be recovered, most won't. Only `Moonrise TV` (+`moonrise_tv_2`) followed, so the device-transition stream has ~one controllable device and stays too thin for SA-12 until the new house accumulates real smart devices. (2026-09-08 fixes: `93354114` corrected `sync_ha_devices()`'s `online = state == "on"` bug; an auto-prune `3b10fadb` was tried then reverted `85e6be17` as too aggressive/FK-unsafe; `3dfa3f29` added `DELETE /api/iot/devices/{id}` for deliberate removal instead.) |
-| `user/left_area`, `user/entered_area` | 🆕 deployed 2026-09-11, **zero rows yet** — this is the **presence** half of the presence→device/routine candidate pairs; depends on the household actually having `device-location` reporting toggled on (Deck Settings, default OFF) and a real geofence crossing, same opt-in gate as the rest of [[todo_device_location_reporting]]. |
+| `user/left_area`, `user/entered_area` | 🆕 deployed 2026-09-11 (300m radius, then same-day fixed to 3km — see "First real-data check" above); still **zero rows in `household_events`** as of the fix, since the geofence check only runs on newly-accepted batches, not retroactively against fixes already in `device_location_history`. This is the **presence** half of the presence→device/routine candidate pairs. Depends on `device-location` reporting being toggled on (Deck Settings, default OFF) and a real subsequent crossing. |
 
 Candidate transition pairs the task doc names — presence→device, routine→device,
 device→device — have **zero** samples until the two Branch C streams (and now the geofence

@@ -761,15 +761,17 @@ class TestComputeGeofenceTransitions:
 _HOME_ROW = (43.6532, -79.3832)
 
 
-def _configure_geofence_mocks(mock_db_connection, home_row=_HOME_ROW, baseline_row=None):
-    """Wires a mock cursor whose first fetchone() (home coordinates) returns `home_row` and
-    whose second fetchone() (baseline fix) returns `baseline_row` -- the two SELECTs
-    _emit_geofence_transition_events() issues, in that order."""
+def _configure_geofence_mocks(mock_db_connection, home_row=_HOME_ROW, baseline_rows=()):
+    """Wires a mock cursor whose fetchone() (home coordinates) returns `home_row` and whose
+    fetchall() (the baseline lookback -- _BASELINE_LOOKBACK_FIXES most recent prior fixes,
+    newest first) returns `baseline_rows` -- the two SELECTs _emit_geofence_transition_events()
+    issues."""
     mock_db = MagicMock()
     mock_cursor = MagicMock()
     mock_db_connection.return_value.__enter__.return_value = mock_db
     mock_db.cursor.return_value = mock_cursor
-    mock_cursor.fetchone.side_effect = [home_row, baseline_row]
+    mock_cursor.fetchone.return_value = home_row
+    mock_cursor.fetchall.return_value = list(baseline_rows)
     return mock_db, mock_cursor
 
 
@@ -778,7 +780,9 @@ def _configure_geofence_mocks(mock_db_connection, home_row=_HOME_ROW, baseline_r
 def test_device_location_emits_left_area_event_on_home_to_away_crossing(
     mock_db_connection, mock_get_producer, api_client
 ):
-    _configure_geofence_mocks(mock_db_connection, baseline_row=(_HOME_ROW[0], _HOME_ROW[1], 10.0))
+    _configure_geofence_mocks(
+        mock_db_connection, baseline_rows=[(_HOME_ROW[0], _HOME_ROW[1], 10.0)]
+    )
     mock_producer = MagicMock()
     mock_get_producer.return_value = mock_producer
 
@@ -823,7 +827,7 @@ def test_device_location_emits_no_event_without_home_coordinates_set(
 def test_device_location_emits_no_event_for_a_brand_new_install_with_no_baseline(
     mock_db_connection, mock_get_producer, api_client
 ):
-    _configure_geofence_mocks(mock_db_connection, baseline_row=None)
+    _configure_geofence_mocks(mock_db_connection, baseline_rows=[])
     mock_producer = MagicMock()
     mock_get_producer.return_value = mock_producer
 
@@ -835,6 +839,37 @@ def test_device_location_emits_no_event_for_a_brand_new_install_with_no_baseline
 
     assert response.status_code == 200
     mock_producer.send.assert_not_called()
+
+
+@patch("routes.context.get_producer")
+@patch("routes.context.db_connection")
+def test_device_location_baseline_walks_back_past_an_ambiguous_row(
+    mock_db_connection, mock_get_producer, api_client
+):
+    """Real production data (2026-09-11) hit exactly this: the single most recent prior fix
+    was itself ambiguous (coarse-location accuracy this wide is routine), which silently lost
+    a real "away" state until the lookback fix. Newest-first: an ambiguous row, then a
+    confidently-away one -- the confidently-away one must still seed the baseline."""
+    _configure_geofence_mocks(
+        mock_db_connection,
+        baseline_rows=[
+            (43.66, -79.40, 2000.0),  # ~1.6km out with 2km accuracy -- ambiguous
+            (43.70, -79.40, 2000.0),  # ~5.5km out with 2km accuracy -- confidently away
+        ],
+    )
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(lat=43.6532, lon=-79.3832)]},
+        headers=_bearer(9, "resident"),
+    )
+
+    assert response.status_code == 200
+    mock_producer.send.assert_called_once()
+    _topic, event = mock_producer.send.call_args.args
+    assert event["verb"] == "entered_area"
 
 
 def test_card_interaction_rejects_unauthenticated_request(api_client):
