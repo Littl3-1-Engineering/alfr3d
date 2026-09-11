@@ -660,6 +660,183 @@ def test_device_location_nulls_absurd_accuracy_but_keeps_the_fix(mock_db_connect
     assert rows[0][4] is None  # accuracy_m nulled, fix still stored
 
 
+# --- SA-12 geofence -> household_events producer (todo_transition_learning.md) ------------
+
+
+class TestHaversineM:
+    """Tests for routes.context._haversine_m()."""
+
+    def test_same_point_is_zero(self, api_app):
+        from routes.context import _haversine_m
+
+        assert _haversine_m(43.6532, -79.3832, 43.6532, -79.3832) == 0.0
+
+    def test_one_degree_latitude_is_roughly_111km(self, api_app):
+        """Sanity-checks the formula against a well-known constant rather than a fixed-up
+        expected value -- 1 degree of latitude is ~111.2km everywhere on Earth."""
+        from routes.context import _haversine_m
+
+        distance = _haversine_m(43.0, -79.0, 44.0, -79.0)
+        assert 110_500 < distance < 111_500
+
+
+class TestGeofenceState:
+    """Tests for routes.context._geofence_state()."""
+
+    def test_confidently_home_when_worst_case_still_inside_radius(self, api_app):
+        from routes.context import _geofence_state
+
+        assert _geofence_state(distance_m=50.0, accuracy_m=20.0, radius_m=300.0) == "home"
+
+    def test_confidently_away_when_best_case_still_outside_radius(self, api_app):
+        from routes.context import _geofence_state
+
+        assert _geofence_state(distance_m=1000.0, accuracy_m=50.0, radius_m=300.0) == "away"
+
+    def test_ambiguous_when_accuracy_straddles_the_radius(self, api_app):
+        from routes.context import _geofence_state
+
+        assert _geofence_state(distance_m=310.0, accuracy_m=100.0, radius_m=300.0) is None
+
+    def test_no_accuracy_falls_back_to_a_plain_threshold(self, api_app):
+        from routes.context import _geofence_state
+
+        assert _geofence_state(distance_m=100.0, accuracy_m=None, radius_m=300.0) == "home"
+        assert _geofence_state(distance_m=500.0, accuracy_m=None, radius_m=300.0) == "away"
+
+
+class TestComputeGeofenceTransitions:
+    """Tests for routes.context._compute_geofence_transitions()."""
+
+    _HOME = (43.6532, -79.3832)
+    _AWAY = (43.70, -79.40)  # ~5.5km from _HOME -- confidently "away" at any sane accuracy
+
+    def test_no_baseline_establishes_state_without_emitting(self, api_app):
+        """A brand-new install's very first fix has nothing to transition *from*."""
+        from routes.context import _compute_geofence_transitions
+
+        fixes = [(*self._AWAY, 50.0, "t1")]
+        assert _compute_geofence_transitions(self._HOME, None, fixes) == []
+
+    def test_home_to_away_emits_left_area(self, api_app):
+        from routes.context import _compute_geofence_transitions
+
+        fixes = [(*self._AWAY, 50.0, "t1")]
+        assert _compute_geofence_transitions(self._HOME, "home", fixes) == [("left_area", "t1")]
+
+    def test_away_to_home_emits_entered_area(self, api_app):
+        from routes.context import _compute_geofence_transitions
+
+        fixes = [(*self._HOME, 20.0, "t1")]
+        assert _compute_geofence_transitions(self._HOME, "away", fixes) == [("entered_area", "t1")]
+
+    def test_ambiguous_fix_does_not_flap_the_state(self, api_app):
+        """A fix right on the boundary with poor accuracy is skipped entirely -- the next
+        confidently-classified fix still compares against the last confident state, not the
+        ambiguous one."""
+        from routes.context import _compute_geofence_transitions
+
+        fixes = [
+            (43.6532, -79.3832 + 0.0027, 200.0, "ambiguous"),  # ~310m out, ±200m -- ambiguous
+            (*self._AWAY, 50.0, "t2"),  # confidently away
+        ]
+        assert _compute_geofence_transitions(self._HOME, "home", fixes) == [("left_area", "t2")]
+
+    def test_a_batch_spanning_a_round_trip_yields_both_crossings_in_order(self, api_app):
+        """Fixes queued while offline and flushed together in one batch (e.g. a real short
+        trip) must not collapse into "nothing changed" just because the last fix matches the
+        starting state."""
+        from routes.context import _compute_geofence_transitions
+
+        fixes = [
+            (*self._AWAY, 50.0, "left"),
+            (*self._HOME, 20.0, "returned"),
+        ]
+        assert _compute_geofence_transitions(self._HOME, "home", fixes) == [
+            ("left_area", "left"),
+            ("entered_area", "returned"),
+        ]
+
+
+_HOME_ROW = (43.6532, -79.3832)
+
+
+def _configure_geofence_mocks(mock_db_connection, home_row=_HOME_ROW, baseline_row=None):
+    """Wires a mock cursor whose first fetchone() (home coordinates) returns `home_row` and
+    whose second fetchone() (baseline fix) returns `baseline_row` -- the two SELECTs
+    _emit_geofence_transition_events() issues, in that order."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [home_row, baseline_row]
+    return mock_db, mock_cursor
+
+
+@patch("routes.context.get_producer")
+@patch("routes.context.db_connection")
+def test_device_location_emits_left_area_event_on_home_to_away_crossing(
+    mock_db_connection, mock_get_producer, api_client
+):
+    _configure_geofence_mocks(mock_db_connection, baseline_row=(_HOME_ROW[0], _HOME_ROW[1], 10.0))
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(lat=43.70, lon=-79.40)]},
+        headers=_bearer(9, "resident"),
+    )
+
+    assert response.status_code == 200
+    mock_producer.send.assert_called_once()
+    topic, event = mock_producer.send.call_args.args
+    assert topic == "event-stream"
+    assert event["subject_type"] == "user"
+    assert event["subject_id"] == "9"
+    assert event["verb"] == "left_area"
+    assert event["service"] == "api"
+    mock_producer.flush.assert_called_once()
+
+
+@patch("routes.context.get_producer")
+@patch("routes.context.db_connection")
+def test_device_location_emits_no_event_without_home_coordinates_set(
+    mock_db_connection, mock_get_producer, api_client
+):
+    _configure_geofence_mocks(mock_db_connection, home_row=(None, None))
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(lat=43.70, lon=-79.40)]},
+        headers=_bearer(9, "resident"),
+    )
+
+    assert response.status_code == 200
+    mock_producer.send.assert_not_called()
+
+
+@patch("routes.context.get_producer")
+@patch("routes.context.db_connection")
+def test_device_location_emits_no_event_for_a_brand_new_install_with_no_baseline(
+    mock_db_connection, mock_get_producer, api_client
+):
+    _configure_geofence_mocks(mock_db_connection, baseline_row=None)
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/device-location",
+        json={"client_install_id": _INSTALL_ID, "fixes": [_fix(lat=43.70, lon=-79.40)]},
+        headers=_bearer(9, "resident"),
+    )
+
+    assert response.status_code == 200
+    mock_producer.send.assert_not_called()
+
+
 def test_card_interaction_rejects_unauthenticated_request(api_client):
     response = api_client.post(
         "/api/context/card-interaction", json={"rule_id": "music", "action": "shown"}
