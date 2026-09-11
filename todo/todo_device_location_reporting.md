@@ -570,9 +570,12 @@ Do not build these here. Listed so the pipeline is designed to feed them:
 - **[[todo_self_hosted_routing]] / `check_travel()`:** use the resident's latest fix as the
   routing **origin** instead of always originating from home — real ETA when someone's already
   out. Feeds [[todo_leave_by_demo]].
-- **[[todo_transition_learning]] (SA-12):** geofence enter/exit as structured `household_events`
-  (`subject_type=user`, `verb=left_area`/`entered_area`) — gives SA-12 the presence→X
-  transition pairs its Phase 0b found were completely absent.
+- **[[todo_transition_learning]] (SA-12) — 🆕 built 2026-09-11:** geofence enter/exit as
+  structured `household_events` (`subject_type=user`, `verb=left_area`/`entered_area`), giving
+  SA-12 the presence→X transition pairs its Phase 0b found were completely absent.
+  `_emit_geofence_transition_events()` in `routes/context.py`, wired into this todo's own
+  `report_device_location()` — code + unit tests only, not yet deployed or live-verified. See
+  that file's "Added 2026-09-11" section for the design.
 - **[[todo_generalize_entity_baselines]]:** per-user location-rhythm baselines (typical
   location by time-of-day bucket) alongside the existing device/entity baselines.
 - **[[todo_context_frame]] (SA-4):** add "resident is ~Nkm from home, heading away/back" to the
