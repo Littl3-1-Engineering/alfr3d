@@ -4918,3 +4918,123 @@ class TestCheckSituationalAwareness:
         daemon.check_situational_awareness()
 
         daemon.publish_sa.assert_not_called()
+
+
+# --- Phase 2: device-context uplink consumption (todo_context_exchange_protocol.md) --
+
+
+class TestDeviceContextRollup:
+    """MyDaemon._read_fresh_device_contexts() / ._any_device_in_dnd() -- the staleness gate
+    and the household reduce over N reporting Decks."""
+
+    def _daemon(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        return MyDaemon()
+
+    def _stored(self, devices):
+        return {"schema_version": 1, "devices": devices}
+
+    def _entry(self, facets, age_minutes=0):
+        observed = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+        return {"facets": facets, "observed_at": observed.isoformat()}
+
+    def test_fresh_device_is_returned(self):
+        daemon = self._daemon()
+        stored = self._stored({"dev-a": self._entry({"interruption": {"dnd_active": True}})})
+        with patch.object(daemon, "_read_config_json", return_value=stored):
+            assert "dev-a" in daemon._read_fresh_device_contexts()
+
+    def test_stale_device_is_dropped(self):
+        """A stale DND reading is worse than none -- it would keep claiming the user is
+        silenced long after they stopped being."""
+        daemon = self._daemon()
+        stored = self._stored(
+            {"dev-a": self._entry({"interruption": {"dnd_active": True}}, age_minutes=99)}
+        )
+        with patch.object(daemon, "_read_config_json", return_value=stored):
+            assert daemon._read_fresh_device_contexts() == {}
+
+    def test_nothing_reported_is_empty_not_an_error(self):
+        daemon = self._daemon()
+        with patch.object(daemon, "_read_config_json", return_value={}):
+            assert daemon._read_fresh_device_contexts() == {}
+
+    def test_unparseable_timestamp_is_skipped(self):
+        daemon = self._daemon()
+        stored = self._stored(
+            {"dev-a": {"facets": {"power": {"is_charging": True}}, "observed_at": "nonsense"}}
+        )
+        with patch.object(daemon, "_read_config_json", return_value=stored):
+            assert daemon._read_fresh_device_contexts() == {}
+
+    def test_dnd_rollup_is_any_not_last_writer(self):
+        """The stated reduce: one Deck in DND means the household has silenced
+        interruptions somewhere, regardless of what the other Deck says."""
+        daemon = self._daemon()
+        contexts = {
+            "dev-a": {"interruption": {"dnd_active": False}},
+            "dev-b": {"interruption": {"dnd_active": True}},
+        }
+        assert daemon._any_device_in_dnd(contexts) is True
+
+    def test_dnd_rollup_false_when_every_device_reports_off(self):
+        daemon = self._daemon()
+        contexts = {"dev-a": {"interruption": {"dnd_active": False}}}
+        assert daemon._any_device_in_dnd(contexts) is False
+
+    def test_dnd_rollup_none_when_facet_never_reported(self):
+        """Tri-state: "nobody told us" must stay distinguishable from "told us it's off",
+        or a rule softens its advice on the strength of a device nobody asked about."""
+        daemon = self._daemon()
+        assert daemon._any_device_in_dnd({}) is None
+        assert daemon._any_device_in_dnd({"dev-a": {"power": {"is_charging": True}}}) is None
+
+
+class TestFocusNeededDndCorrelation:
+    """check_focus_needed()'s Phase 2 consumer behavior -- the deferred follow-up
+    todo_attention_telemetry.md asked for."""
+
+    def _event(self, minutes_out=5):
+        start = datetime.now(timezone.utc) + timedelta(minutes=minutes_out)
+        return {
+            "title": "Design review",
+            "address": "https://meet.google.com/abc-defg-hij",
+            "notes": "",
+            "conference_uri": "https://meet.google.com/abc-defg-hij",
+            "start_time": start,
+        }
+
+    def _card(self, device_contexts):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        frame = _make_frame(
+            upcoming_events=[self._event()],
+            launcher_context=_make_launcher_context(device_contexts=device_contexts),
+        )
+        return MyDaemon().check_focus_needed(frame)
+
+    def test_dnd_off_keeps_the_quiet_spot_advice(self):
+        card = self._card({"dev-a": {"interruption": {"dnd_active": False}}})
+        assert card is not None
+        assert "Find a quiet spot." in card["content"]
+        assert card["dnd_active"] is False
+
+    def test_dnd_on_replaces_advice_the_user_already_took(self):
+        card = self._card({"dev-a": {"interruption": {"dnd_active": True}}})
+        assert "Do Not Disturb is already on." in card["content"]
+        assert "Find a quiet spot." not in card["content"]
+        assert "a Deck reports Do Not Disturb on" in card["data"]["because"]
+
+    def test_dnd_on_still_fires_the_card(self):
+        """The useful part is "your call starts in N minutes" -- silencing that because the
+        phone is silenced would throw away the alert to preserve the footnote."""
+        card = self._card({"dev-a": {"interruption": {"dnd_active": True}}})
+        assert card is not None
+        assert card["mode"] == "focus_needed"
+        assert "Design review" in card["content"]
+
+    def test_no_device_reporting_is_unchanged_from_before_phase_2(self):
+        card = self._card({})
+        assert "Find a quiet spot." in card["content"]
+        assert card["dnd_active"] is None

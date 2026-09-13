@@ -1087,3 +1087,244 @@ def test_persist_household_events_noop_on_empty_list(api_app):
     from app import _persist_household_events
 
     asyncio.run(_persist_household_events([]))
+
+
+# --- GET /api/context/day-context (todo_context_exchange_protocol.md Phase 1) --
+
+
+def _day_context_at(hour, minute=0, wake=None, bed=None):
+    """Build a real DayContext through day_context._assemble, same helper shape as
+    tests/test_day_context.py's own dc() -- the point of these tests is the route's
+    serialization, not the classification logic (already covered there)."""
+    from datetime import datetime, time as dtime
+    from services.common import day_context
+
+    now = datetime(2026, 9, 12, hour, minute)  # a Saturday -- the day the bug was reported
+    sunrise = now.replace(hour=6, minute=44, second=0, microsecond=0)
+    sunset = now.replace(hour=19, minute=51, second=0, microsecond=0)
+    return day_context._assemble(now, wake or dtime(7, 30), bed or dtime(22, 0), sunrise, sunset)
+
+
+def test_day_context_route_is_readable_without_auth(api_client):
+    """Ungated like every other GET in this codebase -- a guest-typed Deck user still needs a
+    correct greeting. If this ever starts 401ing, the read-route convention changed."""
+    with patch("routes.context.get_day_context", return_value=_day_context_at(18, 18)):
+        response = api_client.get("/api/context/day-context")
+    assert response.status_code == 200
+
+
+def test_day_context_route_serializes_every_field(api_client):
+    with patch("routes.context.get_day_context", return_value=_day_context_at(18, 18)):
+        response = api_client.get("/api/context/day-context")
+
+    body = response.json()
+    assert body["schema_version"] == 1
+    # Note "afternoon", not "evening": _classify() starts evening at *sunset* (19:51 here), so
+    # at the reported bug time the backend wasn't even calling it evening yet -- the Deck's
+    # fixed 17:00 bucket was two whole parts ahead of the household's real state.
+    assert body["part_of_day"] == "afternoon"
+    assert body["greeting"] == "Good afternoon"
+    assert body["is_waking_hours"] is True
+    assert body["is_daylight"] is True
+    assert body["in_wind_down"] is False
+    assert body["minutes_to_bedtime"] == 222  # 18:18 -> 22:00
+    assert body["wake_time"] == "07:30"
+    assert body["bed_time"] == "22:00"
+    assert body["server_now_local"].startswith("2026-09-12T18:18")
+    assert body["generated_at"].endswith("+00:00")  # UTC, for the client staleness check
+
+
+def test_day_context_route_reports_wind_down_inside_the_bedtime_margin(api_client):
+    """21:20 with a 22:00 bedtime is inside WIND_DOWN_MARGIN_MIN -- this is the fact the Deck
+    subscribes to instead of guessing, so it has to survive serialization intact."""
+    with patch("routes.context.get_day_context", return_value=_day_context_at(21, 20)):
+        response = api_client.get("/api/context/day-context")
+
+    body = response.json()
+    assert body["part_of_day"] == "wind_down"
+    assert body["in_wind_down"] is True
+    assert body["is_waking_hours"] is True
+
+
+def test_day_context_route_at_the_reported_bug_time_is_not_wind_down(api_client):
+    """The regression this whole protocol phase exists for: Saturday 18:18 with a normal 22:00
+    bedtime is plain evening. The Deck's own fixed-hour bucket called it wind-down."""
+    with patch("routes.context.get_day_context", return_value=_day_context_at(18, 18)):
+        response = api_client.get("/api/context/day-context")
+
+    assert response.json()["in_wind_down"] is False
+
+
+def test_day_context_route_carries_a_late_bedtime_through(api_client):
+    """A household that goes to bed at 01:00 must not be told it's night at 23:00 -- the exact
+    case a fixed client-side clock bucket gets wrong and the routine-driven answer gets right."""
+    from datetime import time as dtime
+
+    ctx = _day_context_at(23, 0, bed=dtime(1, 0))
+    with patch("routes.context.get_day_context", return_value=ctx):
+        response = api_client.get("/api/context/day-context")
+
+    body = response.json()
+    assert body["is_waking_hours"] is True
+    assert body["part_of_day"] in ("evening", "wind_down")
+    assert body["bed_time"] == "01:00"
+
+
+def test_day_context_route_500s_on_unexpected_failure(api_client):
+    """get_day_context() already self-heals a DB failure into clock-only defaults, so a raise
+    here is genuinely unexpected -- and a non-200 is exactly what the Deck treats as 'stale,
+    use the local estimate'."""
+    with patch("routes.context.get_day_context", side_effect=RuntimeError("boom")):
+        response = api_client.get("/api/context/day-context")
+
+    assert response.status_code == 500
+
+
+# --- POST /api/context/device-snapshot (todo_context_exchange_protocol.md Phase 2) --
+
+_DEV_A = "11111111-1111-4111-8111-111111111111"
+_DEV_B = "22222222-2222-4222-8222-222222222222"
+
+
+def _snapshot_cursor(mock_db_connection, stored_value=None):
+    """Wire a cursor whose fetchone() returns the current `config` row (or None)."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (stored_value,) if stored_value else None
+    return mock_cursor
+
+
+def _stored_blob(mock_cursor):
+    """The JSON written to the launcher_device_context config row."""
+    import orjson
+
+    for call in mock_cursor.execute.call_args_list:
+        sql = call.args[0]
+        params = call.args[1] if len(call.args) > 1 else None
+        # Only the UPDATE/INSERT carry the blob; the SELECT that reads the current row is
+        # parameterized by the same key name and would otherwise match first.
+        if not params or "SELECT" in sql:
+            continue
+        if "launcher_device_context" in params:
+            return orjson.loads(params[0])
+    raise AssertionError("no device-context write found")
+
+
+def test_device_snapshot_rejects_unauthenticated_request(api_client):
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": _DEV_A, "facets": {"power": {"battery_percent": 63}}},
+    )
+    assert response.status_code == 401
+
+
+def test_device_snapshot_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": _DEV_A, "facets": {"power": {"battery_percent": 63}}},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.db_connection")
+def test_device_snapshot_rejects_non_uuid_device_id(mock_db_connection, api_client):
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": "not-a-uuid", "facets": {"power": {"battery_percent": 10}}},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_device_snapshot_rejects_payload_with_no_known_facet(mock_db_connection, api_client):
+    """Unknown facets aren't silently stored -- this endpoint accepts a known shape, not
+    arbitrary client JSON, so a payload of only unknown facets is a 400 rather than a write
+    of nothing."""
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": _DEV_A, "facets": {"telepathy": {"mood": "pensive"}}},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_device_snapshot_stores_facets_keyed_by_device(mock_db_connection, api_client):
+    cursor = _snapshot_cursor(mock_db_connection)
+
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={
+            "device_id": _DEV_A,
+            "facets": {
+                "interruption": {"dnd_active": True, "headset_connected": False},
+                "form": {"orientation": "portrait"},
+            },
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    stored = _stored_blob(cursor)
+    assert stored["schema_version"] == 1
+    facets = stored["devices"][_DEV_A]["facets"]
+    assert facets["interruption"] == {"dnd_active": True, "headset_connected": False}
+    # Regression: `("orientation")` is a str, not a tuple -- iterating it drops the field.
+    assert facets["form"] == {"orientation": "portrait"}
+
+
+@patch("routes.context.db_connection")
+def test_device_snapshot_preserves_other_devices(mock_db_connection, api_client):
+    """Two Decks must not overwrite each other -- the disagreement between them is exactly
+    what the household roll-up needs to see."""
+    import orjson
+
+    existing = orjson.dumps(
+        {
+            "schema_version": 1,
+            "devices": {
+                _DEV_B: {
+                    "facets": {"interruption": {"dnd_active": False}},
+                    "observed_at": "2026-09-12T18:00:00+00:00",
+                }
+            },
+        }
+    ).decode()
+    cursor = _snapshot_cursor(mock_db_connection, existing)
+
+    api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": _DEV_A, "facets": {"interruption": {"dnd_active": True}}},
+        headers=_bearer(2, "resident"),
+    )
+
+    devices = _stored_blob(cursor)["devices"]
+    assert set(devices) == {_DEV_A, _DEV_B}
+    assert devices[_DEV_B]["facets"]["interruption"]["dnd_active"] is False
+    assert devices[_DEV_A]["facets"]["interruption"]["dnd_active"] is True
+
+
+@patch("routes.context.db_connection")
+def test_device_snapshot_drops_null_facet_values(mock_db_connection, api_client):
+    """`null` means "not known" and must not be stored -- otherwise the roll-up can't tell
+    "nobody reported DND" from "somebody reported DND is off"."""
+    cursor = _snapshot_cursor(mock_db_connection)
+
+    api_client.post(
+        "/api/context/device-snapshot",
+        json={
+            "device_id": _DEV_A,
+            "facets": {"interruption": {"dnd_active": None, "headset_connected": True}},
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    facets = _stored_blob(cursor)["devices"][_DEV_A]["facets"]
+    assert "dnd_active" not in facets["interruption"]
+    assert facets["interruption"]["headset_connected"] is True
