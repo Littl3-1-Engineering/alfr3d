@@ -1,6 +1,6 @@
 # Backend↔Deck Context Exchange Protocol
 
-## Status: 🟡 Phases 1 and 2 built (uncommitted, not yet on-device verified); Phases 3-5 designed
+## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phases 3-5 designed
 
 Prompted by a real bug (Deck showed a "Wind down" card on a Saturday at 18:18) that turned out to
 be one symptom of a structural gap: **both sides run a situational-awareness engine, and neither
@@ -311,3 +311,63 @@ intentional — 3–5 are the expensive half, and they should be justified by wh
   as everything else in `DISPLAY_RULES` today.
 
 See also: `alfr3d_deck/todo/todo_context_exchange_protocol.md` (stub).
+
+## Live verification (2026-09-12, real household + real device `NAAIB7004279WZB`)
+
+Deployed from `feat/context-exchange-protocol` with `docker compose up -d --build service-api
+service-daemon` (v2 for build *and* recreate together, per the v1/v2 trap). Confirmed no
+stale-image trap: each container's `.Image` matched the image id compose had just built, and no
+unrelated service was taken down.
+
+**Phase 1 downlink, against the household's own routine rows:**
+
+```
+GET /api/context/day-context
+{"part_of_day":"evening","in_wind_down":false,"minutes_to_bedtime":100,
+ "wake_time":"07:30","bed_time":"22:00","server_now_local":"2026-09-12T20:19:02", ...}
+```
+
+The real Bedtime routine is 22:00, so the authoritative wind-down window is 21:15-22:00.
+`minutes_to_bedtime` checks out (20:19 + 100 min = 21:59). The Deck's old fixed-hour bucket
+would have been claiming wind-down since 17:00 -- a 3h15m error against the household's own
+configured intent, which is the whole reason this facet is backend-owned.
+
+**Phase 2 uplink, real device state round-tripping:**
+
+```json
+"39bef6ad-…": {"facets": {
+  "power": {"battery_percent": 83, "is_charging": true},
+  "interruption": {"dnd_active": false, "headset_connected": false},
+  "network": {"type": "wifi", "quality": "unknown"},
+  "form": {"orientation": "portrait"}}}
+```
+
+Device id matches the Deck's own install id, and power/charging matched the phone's real state.
+Note `form.orientation` is present: that is the tuple-vs-string bug (`("orientation")` is a
+`str`) caught during implementation -- without the fix this facet would be silently absent in
+production rather than failing loudly.
+
+Toggling real DND on the phone flipped `dnd_active` to `true` on the next report, and the
+daemon's own consumer path, run read-only against the live row, resolved it:
+
+```
+fresh device contexts: 1
+  device 39bef6ad -> {'dnd_active': True, 'headset_connected': False}
+_any_device_in_dnd -> True
+```
+
+So `check_focus_needed()` would now say "Do Not Disturb is already on." instead of "Find a quiet
+spot." DND was restored to off afterwards. `service-api` logs confirm both directions are live
+from the real Deck: `GET /api/context/day-context` and `POST /api/context/device-snapshot`.
+
+**Verified earlier the same evening, before deploy -- the version-skew path.** With the route
+still 404ing in production, `alfr3d context` on-device rendered 8 cards across 4 tiers including
+two in ATMOSPHERE & MEDIA, with no wind-down card at Saturday 20:05 (inside the window the bug
+used to fire in). The tier renders and its other rules fire, so the absence is a targeted
+exclusion rather than a broken rule, and the 404 degraded to the local estimate with no crash and
+no error card.
+
+**Not yet verified:** the authoritative branch actually *firing* the wind-down card. That needs a
+weekday between bedtime-45min and bedtime (21:15-22:00 here); the verification evening was a
+Saturday, which the weekend guard correctly excludes regardless of what the backend says. Worth a
+deliberate check on a weeknight.
