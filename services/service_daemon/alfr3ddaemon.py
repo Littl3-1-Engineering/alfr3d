@@ -138,6 +138,21 @@ ATTENTION_TELEMETRY_CONFIG_KEY = "launcher_attention_telemetry"
 # offline/asleep) rather than fed into either check below.
 ATTENTION_TELEMETRY_STALENESS_MINUTES = 30
 
+# `config` table key POST /api/context/device-snapshot writes each Deck's own
+# current device context under (todo/todo_context_exchange_protocol.md Phase 2)
+# -- battery/charging, DND/headset, network, orientation, foreground activity.
+# These are facets the *launcher* owns: nothing else in this system can observe
+# them, so before this the daemon had no way to know the phone was silenced.
+# Mirrors routes/context.py's DEVICE_CONTEXT_CONFIG_KEY, kept in sync manually
+# for the same reason SURFACE_STATE_CONFIG_KEY above is.
+DEVICE_CONTEXT_CONFIG_KEY = "launcher_device_context"
+
+# A Deck reports its device context on its own ~60s foreground tick, so
+# anything older than this means that device is backgrounded, asleep, or gone
+# -- and a stale DND reading is worse than none, since it would keep claiming
+# the user is silenced long after they stopped being.
+DEVICE_CONTEXT_STALENESS_MINUTES = 15
+
 # check_attention_focus() fires when the reported window-switch count is at
 # least this high -- a conservative starting point (roughly one switch per
 # minute sustained over a ~15-minute report window) with no real telemetry
@@ -700,6 +715,7 @@ class MyDaemon:
             launcher.surface_state = self._read_config_json(SURFACE_STATE_CONFIG_KEY)
             launcher.attention_snapshot = self._read_fresh_attention_telemetry()
             launcher.attention_trend = self._attention_telemetry_trend()
+            launcher.device_contexts = self._read_fresh_device_contexts()
             frame.launcher_context = launcher
         except Exception as e:
             logger.error(f"Context frame: launcher_context build failed: {e}")
@@ -929,6 +945,17 @@ class MyDaemon:
         `focus_utils.PROBABLE` when only the text heuristic over address/notes matches. See
         focus_utils' module docstring for the full tier breakdown and known false-positive
         shape of the probable tier. Only fires within FOCUS_LEAD_MINUTES of the event's start.
+
+        DND correlation (todo/todo_context_exchange_protocol.md Phase 2, and the deferred
+        follow-up todo_attention_telemetry.md asked for): when a Deck reports Do Not Disturb
+        already on, "Find a quiet spot." is advice the user has visibly already taken, so the
+        card drops it and says so instead. It deliberately still *fires* -- the useful part of
+        this card is "your call starts in N minutes," and silencing that because the phone is
+        silenced would throw away the alert to preserve the footnote.
+
+        Note the tri-state: only an explicit `True` changes the wording. A household with no
+        Deck reporting (None) gets exactly the pre-Phase-2 card, rather than being treated as
+        "DND off" and told something subtly wrong about a device nobody asked about.
         """
         events = frame.upcoming_events
         if not events:
@@ -949,26 +976,33 @@ class MyDaemon:
             lead = f"{solution} starting soon"
         else:
             lead = "Looks like a call starting soon"
-        content = f"{lead}: {title} at {start_label}. Find a quiet spot."
+        device_contexts = (frame.launcher_context and frame.launcher_context.device_contexts) or {}
+        in_dnd = self._any_device_in_dnd(device_contexts)
+        advice = "Do Not Disturb is already on." if in_dnd else "Find a quiet spot."
+        content = f"{lead}: {title} at {start_label}. {advice}"
         minutes_until = int((start_time - frame.now).total_seconds() / 60)
+        because = [
+            f"{title} starts in {minutes_until} min",
+            (
+                "confirmed conferencing data"
+                if confidence == focus_utils.CONFIRMED
+                else "text looks like a call"
+            ),
+        ]
+        if in_dnd:
+            because.append("a Deck reports Do Not Disturb on")
         return {
             "mode": "focus_needed",
             "content": content,
             "priority": 3.5,
             "confidence": confidence,
             "conference_uri": event.get("conference_uri"),
+            "dnd_active": in_dnd,
             "data": {
                 "title": title,
                 "start_time": start_time.isoformat(),
                 "minutes_until": minutes_until,
-                "because": [
-                    f"{title} starts in {minutes_until} min",
-                    (
-                        "confirmed conferencing data"
-                        if confidence == focus_utils.CONFIRMED
-                        else "text looks like a call"
-                    ),
-                ],
+                "because": because,
             },
         }
 
@@ -1793,6 +1827,64 @@ class MyDaemon:
         if age > timedelta(minutes=ATTENTION_TELEMETRY_STALENESS_MINUTES):
             return None
         return snapshot
+
+    def _read_fresh_device_contexts(self):
+        """Every Deck-reported device context that's still fresh, as
+        {device_id: facets}. Stale entries are dropped rather than returned --
+        see DEVICE_CONTEXT_STALENESS_MINUTES.
+
+        Returns {} when nothing has ever been reported, which is deliberately
+        indistinguishable from "every reporting device is stale": both mean the
+        household has no current device evidence, and no rule should branch
+        differently between those two cases.
+        """
+        stored = self._read_config_json(DEVICE_CONTEXT_CONFIG_KEY)
+        devices = stored.get("devices")
+        if not isinstance(devices, dict):
+            return {}
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=DEVICE_CONTEXT_STALENESS_MINUTES)
+        fresh = {}
+        for device_id, entry in devices.items():
+            if not isinstance(entry, dict):
+                continue
+            observed_at = entry.get("observed_at")
+            if not observed_at:
+                continue
+            try:
+                observed_dt = datetime.fromisoformat(observed_at)
+            except ValueError:
+                continue
+            if observed_dt < cutoff:
+                continue
+            facets = entry.get("facets")
+            if isinstance(facets, dict) and facets:
+                fresh[device_id] = facets
+        return fresh
+
+    @staticmethod
+    def _any_device_in_dnd(device_contexts):
+        """The household roll-up for the DND facet: True if any fresh device
+        reports Do Not Disturb on, False if at least one reports it off, None
+        if no fresh device reported the facet at all.
+
+        **The reduce is "any", stated explicitly** because multi-device
+        disagreement is real and last-writer-wins would hide it: with a wall
+        tablet and a phone, the question a consumer actually asks is "has the
+        user silenced interruptions anywhere," not "what did the most recent
+        device to check in happen to say." Tri-state rather than a bare bool so
+        "nobody told us" stays distinguishable from "somebody told us it's off"
+        -- a rule that wants to *soften* its advice on DND must not soften it
+        just because no Deck is reporting.
+        """
+        seen = False
+        for facets in device_contexts.values():
+            dnd = (facets.get("interruption") or {}).get("dnd_active")
+            if dnd is None:
+                continue
+            seen = True
+            if dnd:
+                return True
+        return False if seen else None
 
     @staticmethod
     def _media_dwell_fraction(dwell_by_category_ms):
