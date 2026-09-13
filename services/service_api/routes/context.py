@@ -592,3 +592,95 @@ async def report_device_snapshot(
     except Exception as e:
         logger.error(f"Error recording device context: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+_NOTIFICATION_CATEGORIES = {"message", "call"}
+_NOTIFICATION_FIELD_MAX_LEN = 128
+
+
+@router.post("/context/notification-event")
+async def report_notification_event(
+    data: dict = None, user=Depends(require_permission("context", "notification_event"))
+):
+    """Record one phone notification the Deck read metadata from (todo_spoken_notifications.md).
+
+    Sender resolution against `GET /api/users` happens Deck-side, not here -- this route just
+    trusts whatever `resident_id`/`sender_display` it's handed. Two things happen, both
+    best-effort against the same `event-stream` -> `_persist_household_events()` path every
+    other structured producer uses (SA-11 / Branch C, see `_emit_geofence_transition_events`
+    above for the precedent this mirrors):
+
+    1. Always: a `household_events` row logging who contacted this resident and how -- the
+       durable, queryable log this feature exists for. `subject_id` is the resident id when
+       the sender matched one, else the raw sender string itself (never scrubbed, per the
+       todo's corrected scope).
+    2. Only for `category == "message"`: a plain template sentence published onto the `speak`
+       Kafka topic, so `service_speak`'s existing personality/LLM rewrite + TTS + `audio` event
+       pipeline gives it real ALFR3D cadence -- the same pipe every other spoken line already
+       uses, and `service_speak.check_mute()` already gates it for quiet hours.
+       `category == "call"` deliberately skips this: `service_speak`'s pipeline round-trips
+       through a ~20s poll on the Deck side, far too slow to announce a call while it's still
+       ringing, so the Deck already spoke a local template itself before this call ever landed.
+
+    Never receives (and this route has nothing to forward even if it tried) the notification
+    body -- only category/app/sender metadata ever leaves the device for this feature.
+    """
+    try:
+        data = data or {}
+        category = data.get("category")
+        if category not in _NOTIFICATION_CATEGORIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"category must be one of {sorted(_NOTIFICATION_CATEGORIES)}",
+            )
+
+        app_name = str(data.get("app") or "").strip()[:_NOTIFICATION_FIELD_MAX_LEN]
+        sender_raw = str(data.get("sender_raw") or "").strip()[:_NOTIFICATION_FIELD_MAX_LEN]
+        if not app_name or not sender_raw:
+            raise HTTPException(status_code=400, detail="app and sender_raw are required")
+
+        sender_display = str(data.get("sender_display") or sender_raw).strip()[
+            :_NOTIFICATION_FIELD_MAX_LEN
+        ]
+        resident_id = data.get("resident_id")
+        try:
+            resident_id = int(resident_id) if resident_id is not None else None
+        except (TypeError, ValueError):
+            resident_id = None
+
+        verb = "messaged" if category == "message" else "called"
+        subject_type = "resident" if resident_id is not None else "sender"
+        subject_id = str(resident_id) if resident_id is not None else sender_raw
+
+        producer = get_producer()
+        if not producer:
+            raise HTTPException(status_code=500, detail="Kafka not available")
+
+        now = datetime.now(timezone.utc)
+        producer.send(
+            "event-stream",
+            {
+                "id": f"notif_{category}_{user.id}_{now.strftime('%Y%m%d%H%M%S%f')}",
+                "type": "notification",
+                "message": f"{app_name} {category} from {sender_display}",
+                "time": now.isoformat(),
+                "service": "api",
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "verb": verb,
+            },
+        )
+
+        if category == "message":
+            producer.send(
+                "speak",
+                {"text": f"New {app_name} message from {sender_display}.", "engine": "Coqui"},
+            )
+
+        producer.flush()
+        return {"message": "Notification event recorded"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recording notification event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
