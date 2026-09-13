@@ -1328,3 +1328,127 @@ def test_device_snapshot_drops_null_facet_values(mock_db_connection, api_client)
     facets = _stored_blob(cursor)["devices"][_DEV_A]["facets"]
     assert "dnd_active" not in facets["interruption"]
     assert facets["interruption"]["headset_connected"] is True
+
+
+# --- POST /api/context/notification-event (todo_spoken_notifications.md) --
+
+
+def test_notification_event_rejects_unauthenticated_request(api_client):
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "message", "app": "WhatsApp", "sender_raw": "Jane Doe"},
+    )
+    assert response.status_code == 401
+
+
+def test_notification_event_rejects_guest_role_token(api_client):
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "message", "app": "WhatsApp", "sender_raw": "Jane Doe"},
+        headers=_bearer(3, "guest"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_rejects_bad_category(mock_get_producer, api_client):
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "video-call", "app": "WhatsApp", "sender_raw": "Jane Doe"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_get_producer.assert_not_called()
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_rejects_missing_app_or_sender(mock_get_producer, api_client):
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "message", "app": "", "sender_raw": "Jane Doe"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 400
+    mock_get_producer.assert_not_called()
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_logs_message_and_publishes_to_speak(mock_get_producer, api_client):
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={
+            "category": "message",
+            "app": "WhatsApp",
+            "sender_raw": "Jane Doe",
+            "sender_display": "your wife",
+            "resident_id": 4,
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    assert mock_producer.send.call_count == 2
+    topics = [call.args[0] for call in mock_producer.send.call_args_list]
+    assert topics == ["event-stream", "speak"]
+
+    household_event = mock_producer.send.call_args_list[0].args[1]
+    assert household_event["type"] == "notification"
+    assert household_event["subject_type"] == "resident"
+    assert household_event["subject_id"] == "4"
+    assert household_event["verb"] == "messaged"
+
+    speak_message = mock_producer.send.call_args_list[1].args[1]
+    assert speak_message["text"] == "New WhatsApp message from your wife."
+    mock_producer.flush.assert_called_once()
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_call_skips_speak_topic(mock_get_producer, api_client):
+    """A call announcement is already spoken locally on-device (too latency-sensitive for the
+    ~20s TTS-relay poll) -- the backend only needs the household-history row for a call."""
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "call", "app": "Phone", "sender_raw": "+15551234567"},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    mock_producer.send.assert_called_once()
+    topic, event = mock_producer.send.call_args.args
+    assert topic == "event-stream"
+    assert event["verb"] == "called"
+    assert event["subject_type"] == "sender"
+    assert event["subject_id"] == "+15551234567"
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_falls_back_to_raw_sender_when_unmatched(mock_get_producer, api_client):
+    mock_producer = MagicMock()
+    mock_get_producer.return_value = mock_producer
+
+    api_client.post(
+        "/api/context/notification-event",
+        json={"category": "message", "app": "SMS", "sender_raw": "+15559876543"},
+        headers=_bearer(2, "resident"),
+    )
+
+    speak_message = mock_producer.send.call_args_list[1].args[1]
+    assert speak_message["text"] == "New SMS message from +15559876543."
+
+
+@patch("routes.context.get_producer")
+def test_notification_event_500s_when_kafka_unavailable(mock_get_producer, api_client):
+    mock_get_producer.return_value = None
+
+    response = api_client.post(
+        "/api/context/notification-event",
+        json={"category": "message", "app": "WhatsApp", "sender_raw": "Jane Doe"},
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 500
