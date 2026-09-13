@@ -1,31 +1,39 @@
 # Situational-Awareness Data Retention — 3-Year Horizon & Disk Sizing
 
-## Status: 🔲 Not started — exploration requested 2026-09-12, grounded in live production data
+## Status: 🟢 Implemented and deployed 2026-09-13. All SA event-log tables now retain 2 years; correction below to a claim in the original version of this doc.
 
 **The ask:** the current 180-day retention doesn't span a full year of seasons (winter through
 summer), across which household dynamics shift drastically — arrival/departure times move with
 daylight, presence patterns change with school/work calendars, energy use shifts. Explore what a
 3-year retention horizon would actually cost in disk, based on today's real growth rate.
 
+**Correction to this doc's original version:** it claimed `device_location_history` had "grown
+unbounded since it shipped" with no cleanup mechanism. That was wrong, and the error was mine —
+found by grepping only Python source for `DELETE`/cleanup, which missed a MySQL-native scheduled
+`EVENT` created directly in the table's own migration SQL. Checked against the live production
+DB before writing this correction: `cleanup_device_location_history_event` exists, is `ENABLED`,
+and has actually executed (`SHOW EVENTS`/`information_schema.EVENTS` confirmed it). The table
+already had real 180-day retention. The table that was **genuinely** unbounded — no mechanism of
+any kind, in Python or SQL — turned out to be `card_interactions`. See the corrected table below.
+
 ## First finding: "180 days" is not one policy — it's three different things, one of them fictional
 
 Checked every retention mechanism in the codebase and the live production DB rather than trusting
 comments. The real state, per table:
 
-| Table | Stated policy | Actual mechanism | Real cadence |
+| Table | Stated policy | Actual mechanism (as of 2026-09-12) | Now (2026-09-13) |
 |---|---|---|---|
-| `device_history` | 180 days | **Real** — monthly RANGE partitions, `DROP PARTITION` via a daily scheduled event (`maintain_device_history_partitions_event`, migration 025) | Enforced |
-| `household_events` | 90 days | Real — row-by-row `DELETE ... WHERE occurred_at < cutoff` in the daemon's daily maintenance pass | Enforced |
-| `attention_telemetry_history` | 90 days | Real — same row-by-row `DELETE` pattern | Enforced |
-| `device_location_history` | **"180 days" per the migration's own comment** | **Does not exist.** `_LOCATION_MAX_FIX_AGE_DAYS = 180` in `routes/context.py` only rejects an *incoming* fix claiming to be older than 180 days at ingest time — it has never deleted a row. This table has grown unbounded since it shipped. | **None** |
-| `card_interactions` | (none stated) | None | **None** |
-| `entity_baselines` | (none stated) | None | **None** |
+| `device_history` | 180 days | Real — monthly RANGE partitions, `DROP PARTITION` via a daily scheduled event (`maintain_device_history_partitions_event`, migration 025) | **Unchanged** — out of scope, see "What was deliberately not touched" below |
+| `household_events` | 90 days | Real — row-by-row `DELETE ... WHERE occurred_at < cutoff` in the daemon's daily maintenance pass | **730 days** |
+| `attention_telemetry_history` | 90 days | Real — same row-by-row `DELETE` pattern | **730 days** |
+| `device_location_history` | 180 days | Real — a MySQL-native scheduled `EVENT` (`cleanup_device_location_history_event`, migration 036), confirmed `ENABLED` and actually executing on the live NUC | **730 days** (migration 038/041) |
+| `card_interactions` | (none stated) | **None — genuinely unbounded**, the one table this label actually fit | **730 days**, new `prune_card_interactions()` (migration-free, pure Python + schedule) |
+| `entity_baselines` | (none stated) | None | **Deliberately still none — see below, this table doesn't need it** |
 
-So two of the tables most relevant to "situational awareness" already have no ceiling at all —
-extending retention on those costs nothing extra to implement, because there is nothing currently
-capping them. The one table whose comment claims a 180-day policy that would matter here
-(`device_location_history`) turns out to have never had one; worth fixing that gap regardless of
-what this todo decides, since "documented but not implemented" is worse than either extreme.
+`entity_baselines` is an **upsert** table (`UNIQUE KEY (entity_type, entity_id)`, recomputed in
+place every 6 hours by `compute_entity_baselines()`) — one row per tracked entity, not one row
+per event. Its size is bounded by how many entities the household has, not by time, so it was
+never actually part of the "unbounded growth" problem and gets no retention added.
 
 ## Real growth rate, pulled from the live NUC database (2026-09-13)
 
@@ -131,3 +139,59 @@ of the options below.
   `entity_baselines`) get *any* ceiling, even a generous one, purely so "uncapped" never becomes
   "unbounded and forgotten" the way `device_location_history`'s stale migration comment already
   did once?
+
+## Implemented 2026-09-13
+
+**`prune_card_interactions()`** — new function in `alfr3ddaemon.py`, identical shape to
+`prune_household_events`/`prune_attention_telemetry_history`, scheduled on the same 6-hourly
+cadence. `decide_displays()`'s suppression pass only ever reads the most recent
+`CARD_SUPPRESSION_HISTORY_LIMIT` rows per card identity, so pruning older rows changes nothing
+about suppression behavior — this exists purely to bound disk, same as its two siblings.
+
+**Retention raised to 730 days (2 years)** for `household_events`,
+`attention_telemetry_history`, and `card_interactions`, all off one new shared constant
+(`SA_EVENT_LOG_RETENTION_DAYS_DEFAULT = 730`) so the three don't drift independently. Each
+remains individually overridable via its own existing env var
+(`HOUSEHOLD_EVENTS_RETENTION_DAYS`, etc.).
+
+**`device_location_history` raised to 730 days** via migrations 037/038 (raw SQL) wrapped by
+alembic 0040/0041 — `DROP EVENT` + `CREATE EVENT` with `INTERVAL 730 DAY` replacing `180 DAY`.
+This table's retention lives in a MySQL-native scheduled event, not a Python constant like its
+three siblings; that asymmetry is real and this fix didn't try to unify it, since doing so would
+mean moving the mechanism itself, a bigger change than the number this todo was asked to change.
+Confirmed the event is owned by this deployment's own migration user (not `root`/`SYSTEM_USER`,
+unlike `device_history`'s original event), so `DROP`+`CREATE` from a normal migration is safe.
+
+**`sa_storage_metrics`** (migration 040) — a new table, and `record_sa_storage_metrics()`
+scheduled once daily, snapshotting row count + data/index bytes for
+`household_events`/`card_interactions`/`attention_telemetry_history`/`device_location_history`/
+`entity_baselines`/`device_history` (the last two included for context — the actual growth
+driver and the deliberately-excluded upsert table, respectively). This is the "track disk usage
+growth" ask: rather than re-deriving a projection from a short window again later, the real
+numbers are now a running time series —
+
+```sql
+SELECT table_name, recorded_at, row_count,
+       ROUND((data_bytes+index_bytes)/1024/1024, 2) AS size_mb
+FROM sa_storage_metrics ORDER BY table_name, recorded_at;
+```
+
+— which is exactly what will let ALFR3D's own future SA rules eventually reason about
+multi-season baselines using data that was actually retained long enough to compare against,
+which is the stated point of doing any of this.
+
+**Verified before deploying**, not just unit-mocked: applied migrations 040/041 against a real
+local MySQL 8.0 (via this repo's own `docker-compose.yml`), confirmed `sa_storage_metrics`'s
+schema and the recreated event's `SHOW CREATE EVENT` text directly, tested the downgrade path
+(correctly restores `180 DAY` and drops the table), seeded real stale/fresh rows in
+`card_interactions` and ran `prune_card_interactions()`/`record_sa_storage_metrics()` against
+them directly (not mocked) to confirm the cutoff logic and the metrics insert both do what their
+tests assert. 568 tests pass (6 new), ruff/black clean.
+
+## What was deliberately not touched
+
+**`device_history` stays at 180 days.** It is presence/online-status polling, not narrowly
+"situational awareness," and it is the one table where extending retention is a real multi-GB
+decision (~7.1 GB at 3 years unbounded, per the projection above) rather than the ~500 MB the
+four SA tables cost combined. The user's instruction was scoped to "SA tables"; this one wasn't
+named, and changing it needs a separate, explicit decision given the cost difference.
