@@ -193,28 +193,6 @@ ATTENTION_TREND_LOOKBACK_DAYS = 14
 ATTENTION_FOCUS_TREND_GRACE_SWITCHES = 5
 WIND_DOWN_TREND_GRACE_UNLOCKS = 2
 
-# Shared default retention horizon for the SA event-log tables (household_events,
-# attention_telemetry_history, card_interactions) -- two years, raised 2026-09-13 from each
-# table's original 90-day default so rhythm/anomaly baselines that read this history can compare
-# across a full year of seasons (winter through summer) rather than a rolling window that can
-# never contain both. See todo/todo_sa_data_retention_3yr.md for the real production growth-rate
-# numbers behind this figure: at current rates the three tables combined cost on the order of
-# half a gigabyte at this horizon, which is what makes this a relevance decision rather than a
-# storage one. device_location_history (a MySQL-native scheduled EVENT, not Python-driven -- see
-# migration 041) and device_history (presence polling, not narrowly SA, and the one table where
-# disk cost is actually real) are deliberately not tied to this constant.
-SA_EVENT_LOG_RETENTION_DAYS_DEFAULT = 730
-
-# How long an attention_telemetry_history row survives before
-# prune_attention_telemetry_history() deletes it -- same reasoning and default as
-# HOUSEHOLD_EVENTS_RETENTION_DAYS, much lower actual volume (one row per launcher report, ~15
-# min cadence, vs. one per event-stream message).
-ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS = int(
-    os.environ.get(
-        "ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS", str(SA_EVENT_LOG_RETENTION_DAYS_DEFAULT)
-    )
-)
-
 
 # decide_displays()'s suppression pass (SA-1) identifies a card as (rule_id, subject_key) --
 # DISPLAY_RULES' own id, not the card's own "mode" field (which collides: check_gatherings,
@@ -270,39 +248,11 @@ ENTITY_BASELINE_LOOKBACK_DAYS = 30
 # publishing one would produce noisy false-positive anomalies.
 ENTITY_BASELINE_MIN_SAMPLES = 5
 
-# How long a household_events row survives before prune_household_events()
-# deletes it. household_events is written to on every event-stream message
-# (see service_api's consume_events()), making it the highest-volume table
-# in the schema -- see todo/todo_household_event_log.md for the original row-growth numbers and
-# todo/todo_sa_data_retention_3yr.md for the 2026-09-13 case for this default's current value.
-HOUSEHOLD_EVENTS_RETENTION_DAYS = int(
-    os.environ.get("HOUSEHOLD_EVENTS_RETENTION_DAYS", str(SA_EVENT_LOG_RETENTION_DAYS_DEFAULT))
-)
-
-# How long a card_interactions row survives before prune_card_interactions() deletes it. Unlike
-# household_events/attention_telemetry_history, this table had no retention mechanism at all
-# before 2026-09-13 -- it grew unbounded since it shipped (migration 029). Same default and same
-# reasoning as the other two: see SA_EVENT_LOG_RETENTION_DAYS_DEFAULT above.
-CARD_INTERACTIONS_RETENTION_DAYS = int(
-    os.environ.get("CARD_INTERACTIONS_RETENTION_DAYS", str(SA_EVENT_LOG_RETENTION_DAYS_DEFAULT))
-)
-
-# Tables whose row count and on-disk size record_sa_storage_metrics() snapshots daily, so
-# real growth (not a one-time estimate) is directly queryable over the life of the deployment.
-# The four SA-specific tables this constant's siblings retain, plus device_history and
-# entity_baselines for context -- device_history because it is the actual multi-GB cost driver
-# among everything this daemon writes (see todo/todo_sa_data_retention_3yr.md), entity_baselines
-# to make its *lack* of growth (it is upserted per entity, not appended to) visible rather than
-# assumed. Deliberately a fixed list, not "every table" -- this is meant to answer "is my
-# retention choice costing what I expected," not to be a general DB-monitoring tool.
-SA_STORAGE_METRICS_TRACKED_TABLES = (
-    "household_events",
-    "card_interactions",
-    "attention_telemetry_history",
-    "device_location_history",
-    "entity_baselines",
-    "device_history",
-)
+# household_events/attention_telemetry_history/card_interactions retention, and the daily SA
+# storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
+# in migration 039 (2026-09-13) -- see that migration's own comment for why. No Python constant
+# for their retention window lives here any more; it's in the EVENT bodies themselves, same as
+# device_location_history's own event already was.
 
 # check_rhythm_break_anomaly() only fires this many minutes past a device's
 # typical_daily_max on-duration -- a small grace window so a session that's
@@ -2701,141 +2651,6 @@ def compute_entity_baselines():
             db.close()
 
 
-def prune_household_events():
-    """Delete household_events rows older than HOUSEHOLD_EVENTS_RETENTION_DAYS.
-
-    household_events is written to on every event-stream message (see
-    service_api's consume_events(), SA-11 Phase 1) -- the highest-volume
-    table in the schema by a wide margin. Run on the same cadence as
-    compute_entity_baselines() rather than a separate schedule.
-    """
-    logger.info("Pruning old household_events rows")
-    db = None
-    try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-        cursor = db.cursor()
-        cutoff = datetime.now(timezone.utc) - timedelta(days=HOUSEHOLD_EVENTS_RETENTION_DAYS)
-        cursor.execute("DELETE FROM household_events WHERE occurred_at < %s", (cutoff,))
-        deleted = cursor.rowcount
-        db.commit()
-        logger.info(f"Pruned {deleted} household_events rows older than {cutoff.isoformat()}")
-    except pymysql.Error as e:
-        logger.error(f"Household events prune error: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
-
-
-def prune_attention_telemetry_history():
-    """Delete attention_telemetry_history rows older than
-    ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS (SA-2). Run on the same cadence
-    as compute_entity_baselines()/prune_household_events() rather than a
-    separate schedule.
-    """
-    logger.info("Pruning old attention_telemetry_history rows")
-    db = None
-    try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-        cursor = db.cursor()
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            days=ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS
-        )
-        cursor.execute("DELETE FROM attention_telemetry_history WHERE reported_at < %s", (cutoff,))
-        deleted = cursor.rowcount
-        db.commit()
-        logger.info(
-            f"Pruned {deleted} attention_telemetry_history rows older than {cutoff.isoformat()}"
-        )
-    except pymysql.Error as e:
-        logger.error(f"Attention telemetry history prune error: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
-
-
-def prune_card_interactions():
-    """Delete card_interactions rows older than CARD_INTERACTIONS_RETENTION_DAYS.
-
-    Unlike household_events/attention_telemetry_history, this table (migration 029, SA-1) had no
-    retention mechanism at all before 2026-09-13 -- it grew unbounded for as long as it existed.
-    decide_displays()'s suppression pass only ever reads the most recent CARD_SUPPRESSION_HISTORY_
-    LIMIT rows per card identity, so pruning old rows changes nothing about suppression behavior;
-    this exists purely to bound disk, same reasoning as its two siblings. Run on the same cadence
-    as compute_entity_baselines()/prune_household_events() rather than a separate schedule.
-    """
-    logger.info("Pruning old card_interactions rows")
-    db = None
-    try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-        cursor = db.cursor()
-        cutoff = datetime.now(timezone.utc) - timedelta(days=CARD_INTERACTIONS_RETENTION_DAYS)
-        cursor.execute("DELETE FROM card_interactions WHERE occurred_at < %s", (cutoff,))
-        deleted = cursor.rowcount
-        db.commit()
-        logger.info(f"Pruned {deleted} card_interactions rows older than {cutoff.isoformat()}")
-    except pymysql.Error as e:
-        logger.error(f"Card interactions prune error: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
-
-
-def record_sa_storage_metrics():
-    """Snapshot row count and on-disk size for SA_STORAGE_METRICS_TRACKED_TABLES into
-    sa_storage_metrics (migration 040), once per day.
-
-    This is the answer to "how much is retention actually costing," kept as real, queryable
-    history rather than a one-time estimate: todo/todo_sa_data_retention_3yr.md projected these
-    tables' 3-year cost from ~2 weeks of production data. This function is what lets that
-    projection be checked against reality months later instead of re-derived from scratch.
-
-    information_schema.TABLES' row/size figures are InnoDB estimates, not exact counts -- fine
-    for a growth trend, not meant for anything that needs a precise number. A table this cycle
-    can't read (renamed, dropped, a transient information_schema hiccup) is simply skipped for
-    that table this cycle rather than aborting the whole snapshot.
-    """
-    logger.info("Recording SA storage metrics")
-    db = None
-    try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-        cursor = db.cursor()
-        recorded_at = datetime.now(timezone.utc)
-        rows_written = 0
-        for table_name in SA_STORAGE_METRICS_TRACKED_TABLES:
-            cursor.execute(
-                "SELECT TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH FROM information_schema.TABLES "
-                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-                (MYSQL_DB, table_name),
-            )
-            row = cursor.fetchone()
-            if not row:
-                logger.warning(f"SA storage metrics: {table_name} not found this cycle, skipping")
-                continue
-            table_rows, data_length, index_length = row
-            cursor.execute(
-                "INSERT INTO sa_storage_metrics "
-                "(table_name, row_count, data_bytes, index_bytes, recorded_at) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (table_name, table_rows or 0, data_length or 0, index_length or 0, recorded_at),
-            )
-            rows_written += 1
-        db.commit()
-        logger.info(f"Recorded SA storage metrics for {rows_written} table(s)")
-    except pymysql.Error as e:
-        logger.error(f"SA storage metrics recording error: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
-
-
 def init_daemon():
     """
     Description:
@@ -2892,10 +2707,11 @@ def init_daemon():
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)
         schedule.every(6).hours.do(compute_entity_baselines)
-        schedule.every(6).hours.do(prune_household_events)
-        schedule.every(6).hours.do(prune_attention_telemetry_history)
-        schedule.every(6).hours.do(prune_card_interactions)
-        schedule.every().day.at("03:15").do(record_sa_storage_metrics)
+        # household_events/attention_telemetry_history/card_interactions retention and the daily
+        # SA storage-metrics snapshot moved to DB-native scheduled EVENTs (migration 039,
+        # 2026-09-13) -- see that migration's own comment. Nothing schedules them from here any
+        # more; they run inside MySQL's own event scheduler regardless of whether this service
+        # is up.
         # schedule.every().day.at(str(bed_time.hour)+":"+str(bed_time.minute)).do(bedtime_routine)
     except Exception as e:
         logger.error("Failed to set schedules")
