@@ -1,5 +1,6 @@
 """Launcher-reported context signals: surface state, attention telemetry, and
-situational-awareness card interactions.
+situational-awareness card interactions -- plus, in the other direction, the
+backend's own derived day context.
 
 Deliberately separate from routes/devices.py or routes/music.py: this isn't
 about a specific ALFR3D-owned resource, it's consumers (the React dashboard,
@@ -10,6 +11,12 @@ check_attention_focus()/check_wind_down_signal() (attention telemetry), and
 decide_displays()'s suppression pass (card interactions).
 See todo/todo_cross_surface_continuity.md, todo/todo_attention_telemetry.md,
 todo/todo_card_feedback_loop.md.
+
+GET /context/day-context is the first downlink in the same file: Phase 1 of
+todo/todo_context_exchange_protocol.md, which makes each context facet owned by
+whichever side has the better evidence for it. Part-of-day is backend-owned
+(it comes from this household's real Morning/Bedtime routine rows), so the
+Deck subscribes to it here instead of re-deriving it from a fixed clock bucket.
 """
 
 import logging
@@ -20,7 +27,7 @@ from datetime import datetime, timezone
 import orjson
 from fastapi import APIRouter, Depends, HTTPException
 
-from common import db_connection
+from common import db_connection, get_day_context
 from auth.dependencies import require_permission
 from dependencies import ALFR3D_ENV_NAME, get_producer
 
@@ -427,4 +434,161 @@ async def report_card_interaction(
         raise
     except Exception as e:
         logger.error(f"Error recording card interaction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Bumped when this payload's shape changes in a way a client must notice. Additive fields do
+# NOT bump it -- clients ignore unknown keys -- so this only moves if an existing field changes
+# meaning or disappears. todo/todo_context_exchange_protocol.md's version-skew rule: an older
+# client against a newer backend (or the reverse) degrades to its own local estimate rather
+# than breaking, and a 404 from a backend too old to have this route is indistinguishable from
+# a stale payload -- both mean "fall back to local."
+DAY_CONTEXT_SCHEMA_VERSION = 1
+
+
+@router.get("/context/day-context")
+async def get_day_context_route():
+    """This household's current day context -- the backend-owned answer to "what part of the day
+    is it," derived from the real Morning/Bedtime routine rows plus sunrise/sunset.
+
+    Ungated, matching every other read route in this codebase (GET /api/weather,
+    /api/environment, /api/routines, /api/events): auth/permissions.py's matrix grants *write*
+    access, and a guest-typed Deck user must still be able to render a correct greeting.
+
+    Cheap by construction -- common.day_context.get_day_context() is already ~20s-cached and
+    costs one small query on a miss, so this adds no meaningful load at the Deck's 60s poll.
+
+    `generated_at` (UTC) is what the client's staleness check compares against;
+    `server_now_local` is the household's own wall clock, so a client with a skewed device clock
+    can still render countdowns against the time the house actually reads.
+    """
+    try:
+        ctx = get_day_context(ALFR3D_ENV_NAME)
+        return {
+            "schema_version": DAY_CONTEXT_SCHEMA_VERSION,
+            "part_of_day": ctx.part_of_day,
+            "greeting": ctx.greeting,
+            "is_waking_hours": ctx.is_waking_hours,
+            "is_daylight": ctx.is_daylight,
+            "in_wind_down": ctx.in_wind_down,
+            "minutes_to_bedtime": ctx.minutes_to_bedtime,
+            "wake_time": ctx.wake_time.strftime("%H:%M"),
+            "bed_time": ctx.bed_time.strftime("%H:%M"),
+            "server_now_local": ctx.now.isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        # get_day_context() already falls back to clock-only defaults on a DB failure, so this
+        # only fires on something genuinely unexpected. A 500 here is correct: the Deck treats
+        # any non-200 exactly like a stale payload and uses its own local estimate.
+        logger.error(f"Error building day context: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- POST /api/context/device-snapshot (todo_context_exchange_protocol.md Phase 2) ---
+#
+# The uplink half of the exchange. Everything above this line is either a launcher-reported
+# *event stream* (surface state, attention telemetry, location fixes) or the backend's own
+# derived answer going down; this is the launcher reporting its own current *state* -- the
+# facets it owns because no other part of the system can observe them at all.
+#
+# Mirrors alfr3ddaemon.DEVICE_CONTEXT_CONFIG_KEY, kept in sync manually for the same reason
+# SURFACE_STATE_CONFIG_KEY above is (separate deployables, no shared constants module).
+DEVICE_CONTEXT_CONFIG_KEY = "launcher_device_context"
+DEVICE_CONTEXT_SCHEMA_VERSION = 1
+
+# A household has a handful of Decks, not hundreds. Bounding the blob keeps one `config` row
+# from growing without limit if install ids ever churn (a reinstall mints a new one), and the
+# eviction is oldest-observation-first so the devices actually in use survive.
+_DEVICE_CONTEXT_MAX_DEVICES = 8
+
+# Facets the launcher owns, and the keys each carries. Anything not listed is dropped rather
+# than stored -- this endpoint accepts a known shape, not arbitrary client JSON.
+_DEVICE_CONTEXT_FACETS = {
+    "power": ("battery_percent", "is_charging"),
+    "interruption": ("dnd_active", "headset_connected"),
+    "network": ("type", "quality"),
+    "form": ("orientation",),  # trailing comma is load-bearing -- without it this is a str
+    "activity": ("active_surface", "top_app", "terminal_session_active"),
+}
+
+
+def _clean_facets(raw):
+    """Keep only known facet keys, and preserve the tri-state: a key the client omitted stays
+    absent rather than becoming False/0. `null` means "not known", never "no" -- the same
+    discipline ContextSnapshot.isUserHome and _geofence_state() already follow, and the reason
+    a consumer can distinguish "no device reported DND" from "a device reported DND is off"."""
+    if not isinstance(raw, dict):
+        return {}
+    cleaned = {}
+    for facet, keys in _DEVICE_CONTEXT_FACETS.items():
+        block = raw.get(facet)
+        if not isinstance(block, dict):
+            continue
+        kept = {k: block[k] for k in keys if k in block and block[k] is not None}
+        if kept:
+            cleaned[facet] = kept
+    return cleaned
+
+
+@router.post("/context/device-snapshot")
+async def report_device_snapshot(
+    data: dict = None, _perm=Depends(require_permission("context", "device_snapshot"))
+):
+    """Upsert one Deck's current device context, keyed by its install id.
+
+    Per-device rather than one shared blob (unlike surface-state/attention-telemetry above,
+    which predate this and assume a single launcher): two Decks genuinely disagree -- one
+    charging and one not, one in DND and one not -- and collapsing that to last-writer-wins
+    would silently destroy the disagreement a consumer needs to see. Rolling N device contexts
+    up into a single household answer is the *consumer's* job, with a reduce it states
+    explicitly (see alfr3ddaemon._any_device_in_dnd()).
+    """
+    try:
+        data = data or {}
+        device_id = str(data.get("device_id") or "").strip()
+        try:
+            uuid.UUID(device_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="device_id must be a UUID")
+
+        facets = _clean_facets(data.get("facets"))
+        if not facets:
+            raise HTTPException(status_code=400, detail="at least one known facet is required")
+
+        observed_at = datetime.now(timezone.utc)
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT value FROM config WHERE name = %s", (DEVICE_CONTEXT_CONFIG_KEY,))
+            row = cursor.fetchone()
+            try:
+                stored = orjson.loads(row[0]) if row and row[0] else {}
+            except orjson.JSONDecodeError:
+                stored = {}  # a corrupt row is replaced, not propagated
+            devices = stored.get("devices")
+            if not isinstance(devices, dict):
+                devices = {}
+
+            devices[device_id] = {
+                "facets": facets,
+                "observed_at": observed_at.isoformat(),
+            }
+
+            if len(devices) > _DEVICE_CONTEXT_MAX_DEVICES:
+                ordered = sorted(
+                    devices.items(), key=lambda kv: kv[1].get("observed_at") or "", reverse=True
+                )
+                devices = dict(ordered[:_DEVICE_CONTEXT_MAX_DEVICES])
+
+            _upsert_config_json(
+                cursor,
+                DEVICE_CONTEXT_CONFIG_KEY,
+                {"schema_version": DEVICE_CONTEXT_SCHEMA_VERSION, "devices": devices},
+            )
+            db.commit()
+        return {"message": "Device context recorded"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recording device context: {e}")
         raise HTTPException(status_code=500, detail=str(e))

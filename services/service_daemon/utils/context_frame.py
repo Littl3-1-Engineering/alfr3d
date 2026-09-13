@@ -98,6 +98,10 @@ class LauncherContext:
         self.surface_state = None
         self.attention_snapshot = None
         self.attention_trend = None
+        # {device_id: facets} for every Deck whose reported device context is still fresh
+        # (todo/todo_context_exchange_protocol.md Phase 2). {} when none are -- see
+        # MyDaemon._read_fresh_device_contexts(), which owns the staleness gate.
+        self.device_contexts = {}
 
 
 def fetch_online_devices():
