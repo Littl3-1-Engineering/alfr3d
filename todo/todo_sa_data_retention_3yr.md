@@ -195,3 +195,44 @@ tests assert. 568 tests pass (6 new), ruff/black clean.
 decision (~7.1 GB at 3 years unbounded, per the projection above) rather than the ~500 MB the
 four SA tables cost combined. The user's instruction was scoped to "SA tables"; this one wasn't
 named, and changing it needs a separate, explicit decision given the cost difference.
+
+## Moved fully DB-native, 2026-09-13
+
+User instruction after the above shipped: keep retention enforcement at the database level, not
+the service level — "what can be done in db should be solved in [db]," not left depending on a
+long-running application process. Concretely: the three Python `schedule`-job prune functions
+this todo added a few hours earlier (`prune_household_events`, `prune_attention_telemetry_history`,
+`prune_card_interactions`) and the daily `record_sa_storage_metrics()` were all deleted from
+`alfr3ddaemon.py` entirely, along with their scheduling and their four Python retention
+constants — no dead code, no leftover configuration knob for something the database now owns.
+
+In their place, migration 039 (alembic 0042) creates four scheduled `EVENT`s living inside MySQL
+itself — `cleanup_household_events_event`, `cleanup_attention_telemetry_history_event`,
+`cleanup_card_interactions_event`, and `record_sa_storage_metrics_event` (which calls a new
+`record_sa_storage_metrics_proc()` stored procedure, since the metrics recording loops over a
+fixed table list — the same cursor-over-a-derived-table shape
+`maintain_device_history_partitions()` already uses for its own partition list). This brings all
+four in line with what `device_location_history`'s own retention already was from the start: a
+MySQL-native EVENT, not application code.
+
+**The real win, not just a style preference**: these now run inside the database engine's own
+scheduler, so retention and growth-tracking both keep working through a `service-daemon`
+redeploy, crash, or extended downtime — previously, every one of the four silently stopped the
+moment that one container was unhealthy, with nothing else in the stack aware it had happened.
+
+**The accepted tradeoff, stated plainly**: the 730-day windows are now literals in each EVENT
+body, the same way `device_location_history`'s always was. There is no more env-var override —
+changing any of these four numbers is a migration from here on, not a config change. Given the
+choice was explicitly "push it to the layer that can enforce it without depending on a service
+being alive," this is the correct trade, but it is a real one and worth remembering next time a
+retention window needs tuning.
+
+**Verified against real local MySQL 8.0, not just the SQL text**: applied migration 042, called
+`record_sa_storage_metrics_proc()` directly and confirmed real rows landed in
+`sa_storage_metrics`, seeded a genuinely stale `card_interactions` row and confirmed the exact
+`DELETE` each event body runs removes it while leaving a fresh row untouched, tested the
+downgrade path removes all four events and the procedure, then re-upgraded to head. Also directly
+observed (not assumed) that `CREATE EVENT ... ON SCHEDULE EVERY 1 DAY` with no explicit `STARTS`
+fires once immediately at creation before its first real 24-hour interval — useful to know before
+reading a "why did this table already have a row right after I ran the migration" question later.
+558 tests pass (10 removed with the deleted Python functions), ruff/black clean.
