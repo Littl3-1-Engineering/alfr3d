@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import (
     db_connection,
-    docker_available,
+    is_docker_available,
     run_docker_command,
     MYSQL_DATABASE,
     MYSQL_USER,
@@ -185,7 +185,7 @@ async def save_config(data: dict, _perm=Depends(require_permission("system", "up
 @router.get("/system/services")
 async def get_services():
     try:
-        if not docker_available:
+        if not is_docker_available():
             return [
                 {"name": "api", "status": "running"},
                 {"name": "daemon", "status": "running"},
@@ -219,7 +219,7 @@ async def restart_service(
     if not SERVICE_NAME_RE.match(service_name):
         raise HTTPException(status_code=400, detail="Invalid service name")
     try:
-        if not docker_available:
+        if not is_docker_available():
             return {"message": f"Restart requested for {service_name} (docker unavailable)"}
         env = os.environ.copy()
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
 
-from dependencies import docker_available, run_docker_command
+from dependencies import is_docker_available, run_docker_command
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["health"])
@@ -66,7 +66,7 @@ def _parse_uptime(status: str) -> float | None:
 
 
 def _fetch_service_uptimes() -> list:
-    if not docker_available:
+    if not is_docker_available():
         return [
             {"name": "alfr3d-service-api-1", "uptime_seconds": 259200},
             {"name": "alfr3d-service-frontend-1", "uptime_seconds": 259200},

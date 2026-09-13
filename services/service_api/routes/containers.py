@@ -4,14 +4,14 @@ import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 
-from dependencies import docker_available, manager, run_docker_command, parse_docker_json
+from dependencies import is_docker_available, manager, run_docker_command, parse_docker_json
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["containers"])
 
 
 def fetch_container_metrics() -> list:
-    if not docker_available:
+    if not is_docker_available():
         import random
 
         return [
