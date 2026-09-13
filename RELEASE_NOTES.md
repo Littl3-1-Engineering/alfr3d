@@ -1,3 +1,24 @@
+# Release v0.4.3
+
+## Release Name: Context Exchange
+
+### Notes:
+- **Feature:** Backend<->Deck context exchange protocol, phases 1-2 -- the backend's `DayContext` now flows down to the Deck launcher, and the Deck's device signals (battery/charging/DND/headset/network/foreground app) flow up, so household-awareness state and device state stop being independently re-derived on each side.
+- **Feature:** `POST /api/context/notification-event` -- lets the Deck report spoken notifications back to the backend for context-aware follow-up behavior.
+- **Feature:** Geofence-driven SA-12 household-events producer, plus structured `device-control` and `routine-executed` household events, feeding transition learning.
+- **Feature:** Device-location reporting pipeline, backend Phase 1 (coarse, foreground-only, opt-in, per-device).
+- **Feature:** `DELETE /api/iot/devices/{id}` to remove a synced smarthome device that no longer exists in Home Assistant.
+- **Feature:** Scheduled 15-minute Google Calendar sync daemon.
+- **Fix:** Geofence radius was smaller than the real GPS fix accuracy, causing false "left home" events.
+- **Fix:** Home Assistant devices are now marked online unless HA explicitly reports them unreachable, instead of reading stale state as offline.
+- **Fix:** Presence tracking no longer reads the user row by a stale index.
+- **Fix:** Calendar cards render times in the household's timezone instead of UTC.
+- **Fix:** The Nexus frontend renders every SA card the backend sends instead of a hardcoded cap of 9.
+- **Fix:** Frontend migrated to Tailwind v4, lottie-react v3, and ESLint v9 flat config.
+- **Fix:** Docker socket availability is re-checked periodically instead of only once at boot.
+- **Retention:** SA event-log tables (`household_events`, `attention_telemetry_history`, `card_interactions`, `device_location_history`) retained for 2 years, moved to DB-native MySQL `EVENT`s instead of a Python delete loop, with daily growth tracking; `card_interactions` is now bounded.
+- **Chore:** Dependency updates across services (alembic, pydantic, cryptography, zeroconf, autoprefixer).
+
 # Release v0.4.2
 
 ## Release Name: Unified Day Context
