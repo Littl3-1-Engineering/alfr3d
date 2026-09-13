@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import subprocess
+import time
 from typing import Any, Dict, List
 
 import orjson
@@ -72,20 +73,37 @@ recent_events: List[Any] = []
 recent_sa: List[Any] = []
 
 
-docker_available = False
-try:
-    env = os.environ.copy()
-    env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-    result = subprocess.run(
-        ["docker", "version"], capture_output=True, text=True, timeout=5, env=env
-    )
-    if result.returncode == 0:
-        docker_available = True
-        logger.info("Docker CLI is available via socket")
-    else:
-        logger.warning("Docker CLI not available")
-except subprocess.SubprocessError as e:
-    logger.warning(f"Docker check failed: {str(e)}")
+# Re-checked periodically rather than once at import time -- a transient failure racing the
+# Docker daemon at container boot used to wedge container metrics into fallback/mock data for
+# the rest of the process's life, with no way to recover short of a manual restart.
+_DOCKER_CHECK_TTL = 30
+_docker_check_state = {"available": False, "checked_at": 0.0}
+
+
+def is_docker_available() -> bool:
+    now = time.monotonic()
+    if now - _docker_check_state["checked_at"] < _DOCKER_CHECK_TTL:
+        return _docker_check_state["available"]
+
+    available = False
+    try:
+        env = os.environ.copy()
+        env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+        result = subprocess.run(
+            ["docker", "version"], capture_output=True, text=True, timeout=5, env=env
+        )
+        if result.returncode == 0:
+            available = True
+        else:
+            logger.warning("Docker CLI not available")
+    except subprocess.SubprocessError as e:
+        logger.warning(f"Docker check failed: {str(e)}")
+
+    if available != _docker_check_state["available"]:
+        logger.info("Docker CLI is available via socket" if available else "Docker CLI became unavailable")
+    _docker_check_state["available"] = available
+    _docker_check_state["checked_at"] = now
+    return available
 
 
 def normalize_time(time_str):
