@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY service_device/ ./
 COPY common/ ./common/
 
+# checkov:skip=CKV_DOCKER_8:arp-scan needs raw sockets on the host network (network_mode: host); no non-root path available
 # Run as root to allow arp-scan
 USER root
 

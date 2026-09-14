@@ -4,6 +4,8 @@ metadata:
   name: alfr3d-service-speak
   labels:
     app: alfr3d-service-speak
+  annotations:
+    checkov.io/skip1: CKV_K8S_23=entrypoint.sh needs root briefly to chown /tmp/audio before dropping to alfr3d via gosu; capabilities are restricted to CHOWN/SETUID/SETGID
 spec:
   replicas: 1
   selector:
@@ -18,6 +20,13 @@ spec:
       - name: speak
         image: alfr3d-service-speak:v0.2.0
         imagePullPolicy: Never
+        # entrypoint.sh chowns /tmp/audio then drops to a non-root user via gosu,
+        # so it needs to start as root -- not eligible for runAsNonRoot at the pod level.
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+            add: ["CHOWN", "SETUID", "SETGID"]
         env:
         - name: MYSQL_DATABASE
           valueFrom:

@@ -13,7 +13,7 @@ aioesphomeapi==46.2.1
 zeroconf==0.151.1
 pydantic>=2.13.5
 websockets
-anyio>=4.4.0 # not directly required, pinned by Snyk to avoid a vulnerability
+anyio>=4.15.1 # not directly required, pinned to avoid known vulnerabilities (was 4.4.0)
 starlette==1.3.1
 zipp>=4.1.0 # not directly required, pinned by Snyk to avoid a vulnerability
 redis[hiredis]>=8.1.0

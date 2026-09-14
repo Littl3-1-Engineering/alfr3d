@@ -17,6 +17,7 @@ COPY common/ ./common/
 COPY service_speak/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# checkov:skip=CKV_DOCKER_8:entrypoint.sh chowns the mounted audio volume then drops to alfr3d via gosu; root is only held for that one step
 USER root
 
 ENTRYPOINT ["/entrypoint.sh"]

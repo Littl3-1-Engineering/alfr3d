@@ -16,6 +16,12 @@ spec:
        containers:
        - name: zookeeper
          image: confluentinc/cp-zookeeper:7.4.0
+         # Third-party image; its own entrypoint may need root for volume setup,
+         # so runAsNonRoot/capability drops aren't applied here without further testing.
+         securityContext:
+           allowPrivilegeEscalation: false
+           capabilities:
+             drop: ["NET_RAW"]
          envFrom:
          - configMapRef:
              name: alfr3d-k8s-env

@@ -17,6 +17,8 @@ jobs:
         working-directory: services/service_frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -39,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -60,7 +64,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: testrootpassword
+          MYSQL_ROOT_PASSWORD: testrootpassword  # pragma: allowlist secret -- ephemeral CI-only db, not a real credential
           MYSQL_DATABASE: test_alfr3d_db
         ports:
           - 3306:3306
@@ -72,10 +76,12 @@ jobs:
     env:
       MYSQL_DATABASE: localhost
       MYSQL_USER: root
-      MYSQL_PSWD: testrootpassword
+      MYSQL_PSWD: testrootpassword  # pragma: allowlist secret -- ephemeral CI-only db, not a real credential
       MYSQL_NAME: test_alfr3d_db
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -102,7 +108,7 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: testrootpassword
+          MYSQL_ROOT_PASSWORD: testrootpassword  # pragma: allowlist secret -- ephemeral CI-only db, not a real credential
           MYSQL_DATABASE: test_alfr3d_db
         ports:
           - 3306:3306
@@ -140,16 +146,18 @@ jobs:
       MYSQL_TEST_HOST: localhost
       MYSQL_TEST_PORT: 3306
       MYSQL_TEST_USER: root
-      MYSQL_TEST_PASSWORD: testrootpassword
+      MYSQL_TEST_PASSWORD: testrootpassword  # pragma: allowlist secret -- ephemeral CI-only db, not a real credential
       MYSQL_TEST_DB: test_alfr3d_db
       KAFKA_BOOTSTRAP_SERVERS: localhost:9092
       MYSQL_DATABASE: localhost
       MYSQL_USER: root
-      MYSQL_PSWD: testrootpassword
+      MYSQL_PSWD: testrootpassword  # pragma: allowlist secret -- ephemeral CI-only db, not a real credential
       MYSQL_NAME: test_alfr3d_db
       ALFR3D_ENV_NAME: test
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
