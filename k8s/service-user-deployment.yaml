@@ -12,10 +12,19 @@ spec:
       labels:
         app: service-user
     spec:
+       securityContext:
+         runAsNonRoot: true
+         runAsUser: 1000
+         runAsGroup: 1000
        containers:
        - name: service-user
          image: alfr3d/service-user:v0.2.0
          imagePullPolicy: Never
+         securityContext:
+           allowPrivilegeEscalation: false
+           readOnlyRootFilesystem: true
+           capabilities:
+             drop: ["ALL"]
          envFrom:
          - configMapRef:
              name: alfr3d-k8s-env

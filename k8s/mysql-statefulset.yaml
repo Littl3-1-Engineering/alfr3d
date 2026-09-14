@@ -16,6 +16,12 @@ spec:
       containers:
       - name: mysql
         image: mysql:8.0
+        # Third-party image; its own entrypoint needs root to chown the data dir
+        # before dropping privileges, so runAsNonRoot isn't applied here.
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["NET_RAW"]
         envFrom:
         - configMapRef:
             name: alfr3d-k8s-env

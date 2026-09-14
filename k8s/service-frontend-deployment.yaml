@@ -12,10 +12,19 @@ spec:
       labels:
         app: service-frontend
     spec:
+       securityContext:
+         runAsNonRoot: true
+         runAsUser: 1001
+         runAsGroup: 1001
        containers:
        - name: service-frontend
          image: alfr3d/service-frontend:v0.2.0
          imagePullPolicy: Never
+         securityContext:
+           allowPrivilegeEscalation: false
+           readOnlyRootFilesystem: true
+           capabilities:
+             drop: ["ALL"]
          envFrom:
          - configMapRef:
              name: alfr3d-k8s-env

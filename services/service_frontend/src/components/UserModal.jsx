@@ -8,7 +8,10 @@ Modal.setAppElement('#root');
 
 // Unambiguous charset (no 0/O/1/l/I) so a copied-then-retyped password isn't misread.
 const PASSWORD_CHARS =
-  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
+  'ABCDEFGHJKLMNPQRSTUVWXYZ' + // uppercase, no O/I  pragma: allowlist secret
+  'abcdefghijkmnopqrstuvwxyz' + // lowercase, no l  pragma: allowlist secret
+  '23456789' + // digits, no 0/1
+  '!@#$%^&*'; // symbols
 
 function generatePassword(length = 16) {
   const values = new Uint32Array(length);
