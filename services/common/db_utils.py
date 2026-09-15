@@ -95,14 +95,21 @@ def clear_cache():
     _cached_env_name = None
 
 
-def check_mute_optimized(env_name) -> bool:
-    """Return True when Alfr3d should stay quiet: outside the household's waking
-    hours (the Morning..Bedtime routine window, via day_context) or with no
-    owner/technoking/resident currently online to hear it.
+def get_mute_state(env_name) -> tuple[bool, bool]:
+    """Return (is_sleeping, is_empty_house) as independent signals instead of one
+    collapsed bool, so a caller can react differently to each (service_speak uses
+    this to still emit an event -- for the Deck phone-speech relay -- when the
+    house is merely empty, while staying fully silent when it's sleeping hours).
+
+    is_sleeping: outside the household's waking hours (the Morning..Bedtime
+    routine window, via day_context).
+    is_empty_house: no owner/technoking/resident currently online to hear it.
+    Checked independently of is_sleeping (not short-circuited) so a caller that
+    bypasses the sleeping gate still gets an accurate empty-house read.
     """
     if not env_name:
         logger.error("Environment name not provided")
-        return False
+        return False, False
 
     # "Are we inside waking hours" is the Morning..Bedtime routine window -- now
     # owned by day_context so every consumer (this, service_speak, the daemon's
@@ -110,16 +117,16 @@ def check_mute_optimized(env_name) -> bool:
     # rather than at module scope to avoid a common<->day_context import cycle.
     from .day_context import get_day_context
 
-    if not get_day_context(env_name).is_waking_hours:
+    is_sleeping = not get_day_context(env_name).is_waking_hours
+    if is_sleeping:
         logger.info("Alfr3d should be quiet while we're sleeping")
-        return True
 
     try:
         db = get_db_connection()
         cursor = db.cursor()
     except pymysql.Error as e:
         logger.error(f"Database connection error: {e}")
-        return False
+        return is_sleeping, False
 
     try:
         cursor.execute(
@@ -133,19 +140,18 @@ def check_mute_optimized(env_name) -> bool:
             """
         )
         online_users = cursor.fetchall()
+        db.close()
 
         if not online_users:
             logger.info("Alfr3d should be quiet when no worthy ears are around")
-            db.close()
-            return True
+            return is_sleeping, True
 
         logger.info("Alfr3d is free to speak during this time of day")
         logger.info("Alfr3d has worthy listeners:")
         for user in online_users:
             logger.info(f"    - {user[0]}")
 
-        db.close()
-        return False
+        return is_sleeping, False
 
     except Exception as e:
         logger.error(f"Error in check_mute: {e}")
@@ -153,7 +159,16 @@ def check_mute_optimized(env_name) -> bool:
             db.close()
         except Exception:
             pass
-        return False
+        return is_sleeping, False
+
+
+def check_mute_optimized(env_name) -> bool:
+    """Return True when Alfr3d should stay quiet: outside the household's waking
+    hours or with no owner/technoking/resident currently online to hear it.
+    See get_mute_state() for the two signals broken out separately.
+    """
+    is_sleeping, is_empty_house = get_mute_state(env_name)
+    return is_sleeping or is_empty_house
 
 
 def get_lookup_ids(cursor, state_name=None, user_type_name=None, env_name=None):
