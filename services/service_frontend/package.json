@@ -19,7 +19,7 @@
     "crypto-js": "^4.2.0",
     "d3": "^7.9.0",
     "framer-motion": "^11.18.2",
-    "hls.js": "^1.6.17",
+    "hls.js": "^1.7.3",
     "leaflet": "^1.9.4",
     "lottie-react": "^3.1.1",
     "lucide-react": "^1.33.0",
