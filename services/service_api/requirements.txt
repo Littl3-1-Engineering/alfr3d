@@ -10,7 +10,7 @@ PyJWT==2.13.0
 requests==2.34.2
 orjson==3.12.0
 aioesphomeapi==46.4.1
-zeroconf==0.151.1
+zeroconf==0.151.3
 pydantic>=2.13.5
 websockets
 anyio>=4.15.1 # not directly required, pinned to avoid known vulnerabilities (was 4.4.0)
