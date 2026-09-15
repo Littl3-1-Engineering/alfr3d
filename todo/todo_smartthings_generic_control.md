@@ -2,6 +2,12 @@
 
 ## Status: 🟡 Fixed 2026-08-24 (found the same day during the IoT central-control audit, split out from `todo_iot_central_control.md`) — needs live SmartThings device verification
 
+**2026-09-15**: confirmed with the household — no SmartThings account/device exists here. No
+`SMARTTHINGS`/`ST_*` credentials in `.env` either. This moves into the same bucket as SA-7/SA-9/
+SA-8 in `todo_next_session.md` — genuinely blocked on real hardware/account the household doesn't
+have, not a "just needs a session" item. Revisit only if a SmartThings device actually enters the
+household.
+
 Both parts of the suggested approach below are implemented:
 - `control_iot_device()` (`routes/iot.py`) now has a `source == "smartthings"` branch, using a
   new `st_utils.translate_generic_control_params(device_type, command, params)` that mirrors
