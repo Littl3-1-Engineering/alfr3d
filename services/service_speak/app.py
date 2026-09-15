@@ -72,7 +72,7 @@ os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
 tts_instances = {}
 
 
-def check_mute() -> bool:
+def get_mute_state() -> tuple[bool, bool]:
     """
     Description:
              checks what time it is and decides if Alfr3d should be quiet
@@ -81,15 +81,16 @@ def check_mute() -> bool:
 
     Delegates to the shared implementation in common.db_utils so the waking-hours
     window comes from one place (day_context) -- this used to be a ~110-line
-    duplicate of check_mute_optimized().
+    duplicate of check_mute_optimized(). Returns (is_sleeping, is_empty_house)
+    separately -- see process_speak_message for why that split matters here.
     """
     logger.info("Checking if Alfr3d should be mute")
 
     if not ENV_NAME:
         logger.error("ALFR3D_ENV_NAME environment variable not set")
-        return False
+        return False, False
 
-    return db_utils.check_mute_optimized(ENV_NAME)
+    return db_utils.get_mute_state(ENV_NAME)
 
 
 def list_available_speakers(model_name="tts_models/multilingual/multi-dataset/xtts_v2"):
@@ -275,6 +276,7 @@ def process_speak_message(message):
             speaker = message_data.get("speaker")
             speaker_wav = message_data.get("speaker_wav")
             skip_personality = message_data.get("skip_personality", False)
+            bypass_sleeping_gate = message_data.get("bypass_sleeping_gate", False)
         except (orjson.JSONDecodeError, TypeError):
             text = str(raw_value)
             engine = "Coqui"
@@ -282,15 +284,24 @@ def process_speak_message(message):
             speaker = None
             speaker_wav = None
             skip_personality = False
+            bypass_sleeping_gate = False
 
         logger.info(
             f"Processing speak message: {text[:50]}... "
             f"(engine: {engine}, model: {model}, speaker: {speaker}, speaker_wav: {speaker_wav})"
         )
 
-        if check_mute():
-            logger.info("Alfr3d is muted, discarding speak request")
+        is_sleeping, is_empty_house = get_mute_state()
+        if is_sleeping and not bypass_sleeping_gate:
+            logger.info("Alfr3d is in quiet hours, discarding speak request")
             return
+        if is_empty_house:
+            # Don't discard: still generate + emit the event so the Deck app's
+            # phone-speech relay (Alfr3dTtsRelay, off by default, opt-in per
+            # device) can speak it to whichever away resident has it enabled --
+            # it already self-suppresses when its owner is confirmed home, so
+            # this is the one case it actually needs the event for.
+            logger.info("No one home to hear this locally, still emitting for the Deck relay")
 
         track_speak_text(text)
 

@@ -538,7 +538,14 @@ def check_routines() -> bool:
                     if producer:
                         producer.send(
                             "speak",
-                            orjson.dumps({"text": quip}),
+                            # These 4 quips *are* the Morning/Bedtime boundary that
+                            # service_speak's sleeping gate is built from -- Sunrise
+                            # fires before Morning opens the window and Bedtime fires
+                            # right as it closes, so without this flag they'd always
+                            # land on the wrong side of their own boundary and get
+                            # silently discarded. bypass_sleeping_gate skips only
+                            # that check; the "is anyone home" check still applies.
+                            orjson.dumps({"text": quip, "bypass_sleeping_gate": True}),
                         )
                         producer.flush()
                         logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")
