@@ -243,8 +243,13 @@ async def test_esphome_node_async(host, port, psk):
         device_info, entities, _states = await _fetch_node_snapshot(host, port, psk)
         return True, f"Connected ({len(entities)} entities)", device_info, entities
     except Exception as e:
-        logger.error(f"Error connecting to ESPHome node {host}: {e}")
-        return False, str(e), None, []
+        # str(e) is empty for some exceptions (e.g. a bare asyncio.TimeoutError from the
+        # connect_timeout in _fetch_node_snapshot), which otherwise surfaces as a blank
+        # "Failed to accept node: " alert in Integrations.jsx -- fall back to the exception's
+        # own type name so there's always something to show.
+        message = str(e) or type(e).__name__
+        logger.error(f"Error connecting to ESPHome node {host}: {message}")
+        return False, message, None, []
 
 
 async def accept_esphome_node_async(hostname, psk=None, name=None):

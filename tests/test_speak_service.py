@@ -117,7 +117,7 @@ class TestSpeakService:
         from contextlib import ExitStack
 
         defaults = {
-            "check_mute": lambda: False,
+            "get_mute_state": lambda: (False, False),
             "track_speak_text": MagicMock(),
             "get_blended_personality": lambda: {"name": "test", "mood": "happy", "blended": {}},
             "get_claude_config": lambda: {},
