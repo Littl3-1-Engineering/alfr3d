@@ -1,6 +1,26 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟡 Phase 0's blocker resolved 2026-09-16 — real hardware now exists, Phase 1 not yet started
+## Status: 🟢 Phase 1 shipped 2026-09-16 — `climate_advisory` rule live; `ambient_occupancy` still blocked on hardware
+
+**Update 2026-09-16 (later same day)**: Phase 1 built and unit-tested. New
+`context_frame.fetch_esphome_climate_snapshot()` reads the accepted node's temperature/humidity
+entities out of `smarthome_devices.last_state` each cycle into `frame.esphome_climate`; new
+`MyDaemon.check_climate_advisory()` (`alfr3ddaemon.py`, registered in `DISPLAY_RULES` at priority
+5.3, between `weather` and `cross_surface_continuity`) fires a fixed-threshold comfort advisory
+when temperature/humidity cross a hardcoded comfort band, gated on that reading's `online` flag
+(the only freshness signal available -- `smarthome_devices` has no `updated_at` column) so a stale
+reading from the sensor's flaky Wi-Fi link can't fire a card. Not baseline-learned -- no
+`entity_baselines` support exists yet for smarthome/ESPHome entities. No frontend/Deck changes
+needed -- both render it automatically through the existing generic card path. Full detail in the
+session's implementation; see `services/service_daemon/utils/context_frame.py` and
+`alfr3ddaemon.py`'s `check_climate_advisory`/`CLIMATE_ADVISORY_*` constants.
+
+`ambient_occupancy` remains explicitly out of scope -- the only accepted ESPHome node has no
+presence/motion-capable entity (temperature, humidity, wifi signal, status, light, power button
+only). Stays blocked until a occupancy-capable sensor exists, unchanged from the original call
+below.
+
+## Status (previous, 2026-09-16 morning): 🟡 Phase 0's blocker resolved — real hardware now exists, Phase 1 not yet started
 
 **Update 2026-09-16**: a real ESPHome node (Athom ESP32-C3 temp/humidity sensor) joined the
 household LAN. `todo/todo_esphome.md`'s "Live-verified 2026-09-16" section confirms the base
