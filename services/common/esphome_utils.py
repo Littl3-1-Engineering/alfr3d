@@ -25,6 +25,7 @@ import asyncio
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 
 import orjson
 import pymysql
@@ -432,6 +433,26 @@ def _entity_last_state(domain, entity, state):
     }
 
 
+def _record_sensor_history(cursor, smarthome_device_id, domain, state):
+    """Best-effort append to smarthome_sensor_history (SA-9 Phase 2) -- one row per numeric
+    `sensor` reading, so compute_entity_baselines() has something to learn "typical for this
+    time of day" from. binary_sensor is skipped (no numeric range to learn); a missing/non-
+    numeric state is skipped too. Shares the caller's connection/cursor, but a failure here must
+    never break the smarthome_devices upsert it's riding along with -- same "must never affect
+    the thing that already succeeded" discipline service_api._persist_household_events() uses.
+    """
+    if domain != "sensor" or state is None or not isinstance(state.state, (int, float)):
+        return
+    try:
+        cursor.execute(
+            "INSERT INTO smarthome_sensor_history (smarthome_device_id, value, recorded_at) "
+            "VALUES (%s, %s, %s)",
+            (smarthome_device_id, state.state, datetime.now(timezone.utc)),
+        )
+    except Exception as e:
+        logger.error(f"Failed to record sensor history for device {smarthome_device_id}: {e}")
+
+
 def _upsert_node_entities(hostname, device_info, entities, states):
     """Shared by accept_esphome_node_async (initial sync of one node) and
     sync_esphome_devices_async (periodic sync of all accepted nodes). Mirrors
@@ -483,6 +504,7 @@ def _upsert_node_entities(hostname, device_info, entities, states):
                 """,
                 (name, mac_address, domain, online, last_state, device_id, existing[0]),
             )
+            smarthome_device_id = existing[0]
         else:
             cursor.execute(
                 """
@@ -493,6 +515,8 @@ def _upsert_node_entities(hostname, device_info, entities, states):
                 """,
                 (name, esp_entity_id, mac_address, domain, online, last_state, env_id, device_id),
             )
+            smarthome_device_id = cursor.lastrowid
+        _record_sensor_history(cursor, smarthome_device_id, domain, state)
         synced += 1
 
     db.commit()
@@ -566,10 +590,17 @@ def _handle_state_push(hostname, entity_map, state):
     db = get_connection()
     cursor = db.cursor()
     cursor.execute(
+        "SELECT id FROM smarthome_devices WHERE source = 'esphome' AND esp_entity_id = %s",
+        (esp_entity_id,),
+    )
+    row = cursor.fetchone()
+    cursor.execute(
         "UPDATE smarthome_devices SET online = TRUE, last_state = %s "
         "WHERE source = 'esphome' AND esp_entity_id = %s",
         (last_state, esp_entity_id),
     )
+    if row:
+        _record_sensor_history(cursor, row[0], domain, state)
     db.commit()
     db.close()
 

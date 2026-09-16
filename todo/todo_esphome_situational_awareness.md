@@ -1,6 +1,39 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟢 Phase 1 shipped 2026-09-16 — `climate_advisory` rule live; `ambient_occupancy` still blocked on hardware
+## Status: 🟢 Phase 2 shipped 2026-09-16 — baseline-learned `climate_deviation` rule added; `ambient_occupancy` still blocked on hardware
+
+**Update 2026-09-16 (Phase 2, same day as Phase 1)**: `climate_advisory` (Phase 1) fired on fixed
+absolute thresholds because there was no history to learn "typical" from. This phase builds that:
+- New `smarthome_sensor_history` table (migration 040/0043) -- durable numeric-reading history,
+  populated from `esphome_utils._upsert_node_entities()`/`_handle_state_push()` via the new
+  `_record_sensor_history()` helper (best-effort, never breaks the state upsert it rides along
+  with). Nothing existed before this; both the poll and push paths only ever overwrote
+  `smarthome_devices.last_state` in place.
+- `entity_baselines` gains `time_of_day_bucket` (`'all'/'morning'/'day'/'evening'/'night'`, reusing
+  `common/timeofday.py`'s existing vocabulary) and `typical_median_value` (migration 041/0044).
+  Room baselines (`entity_type='room'`, reserved since migration 033) key on the sensor entity's
+  own `smarthome_devices.id`, documented as a deviation from a literal "room" since that column is
+  never populated for any source (HA/ST/ESPHome).
+- `compute_entity_baselines()` gains a fourth block computing per-sensor-entity,
+  per-time-of-day-bucket baselines from the new history table (30-day lookback, 10-sample floor
+  per bucket).
+- New `context_frame.fetch_esphome_climate_baselines(bucket)` + `frame.esphome_climate_baselines`.
+- New sibling rule `MyDaemon.check_climate_deviation()` (`DISPLAY_RULES` priority 5.4, right after
+  `climate_advisory`) -- fires only when the current reading is outside the learned
+  [min,max]±margin range for the current time-of-day bucket, and only once that bucket's baseline
+  clears its own sample-count floor. Deliberately a new `rule_id`/mode, not a rewrite of
+  `climate_advisory` -- same split as `weather`/`weather_advisory`, so dismissing one doesn't
+  suppress the other and nothing about the already-shipped rule changed.
+
+607 tests pass (24 new), `black --line-length=100`/`flake8 --max-line-length=100` clean. No
+live-hardware verification this pass -- the baseline needs real accumulated history before it can
+fire meaningfully; expected to stay silent on the real household for a while after deploy, not a
+bug. No migration has been run against a real/disposable DB this pass either (no MySQL available
+in this environment) -- run `alembic upgrade head` against a real or disposable DB before deploying
+to confirm 0043/0044 apply cleanly, same verification gap flagged for the original ESPHome
+migration until a prior session closed it.
+
+## Status (previous): 🟢 Phase 1 shipped 2026-09-16 — `climate_advisory` rule live; `ambient_occupancy` still blocked on hardware
 
 **Update 2026-09-16 (later same day)**: Phase 1 built and unit-tested. New
 `context_frame.fetch_esphome_climate_snapshot()` reads the accepted node's temperature/humidity
