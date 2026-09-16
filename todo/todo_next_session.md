@@ -47,10 +47,12 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
 - **SA-9** (`todo_esphome_situational_awareness.md`, stopped at Phase 0): revisit only if the
   household actually gets a real ESPHome node (a live mDNS scan of the real LAN found none as of
   2026-08-30).
-- **SA-8** (`todo_ble_presence_sensing.md`, dead at Phase 0): revisit only if a BLE
-  wearable/tracker with a genuinely stable, resolvable address enters the household — the
-  adapter itself is confirmed capable, the problem was zero stably-identifiable personal devices
-  in the real scan.
+- **SA-8** (`todo_ble_presence_sensing.md`, dead at Phase 0, re-verified 2026-09-16 with the same
+  result): revisit only if a BLE wearable/tracker with a genuinely stable, resolvable address
+  enters the household — the adapter itself is confirmed capable, the problem was zero
+  stably-identifiable personal devices in the real scan, and that held again on re-check. (This
+  doc was briefly, wrongly deleted as "completed" by commit `3282a3c9` — restored 2026-09-16;
+  "dead" is a terminal state, not a completed one.)
 
 **Could just be done, no permission needed, just wasn't finished:**
 - **SA-9/SA-8's stopped conditions**: both could be retried in a differently-configured
