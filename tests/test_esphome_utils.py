@@ -176,6 +176,65 @@ def test_accept_esphome_node_async_fails_fast_when_node_unknown():
     assert device_info is None
 
 
+# --- Manual add-by-IP fallback (mDNS discovery can't reach every LAN) ----------------------
+
+
+def test_add_esphome_node_manual_async_fails_fast_on_bad_connection():
+    """Manual add must not write any esphome_nodes row if the direct connection fails -- same
+    fail-closed shape as discovery-based accept."""
+    with patch.object(
+        esphome_utils,
+        "test_esphome_node_async",
+        new=AsyncMock(return_value=(False, "timed out", None, [])),
+    ):
+        success, message, device_info = asyncio.run(
+            esphome_utils.add_esphome_node_manual_async("192.168.2.251", psk=None)
+        )
+
+    assert success is False
+    assert message == "timed out"
+    assert device_info is None
+
+
+def test_add_esphome_node_manual_async_derives_hostname_from_device_info_and_accepts():
+    """The upserted esphome_nodes row must use the node's own device_info().name (the same value
+    mDNS discovery would have produced), not something derived from the IP -- sync/control/push
+    are all keyed on hostname, so a manually-added node needs to behave identically to a
+    discovered-then-accepted one from this point on."""
+    fake_device_info = MagicMock()
+    fake_device_info.name = "athom-tem-hum-sensor-4a4734"
+    mock_db = MagicMock()
+
+    with patch.object(
+        esphome_utils,
+        "test_esphome_node_async",
+        new=AsyncMock(return_value=(True, "Connected (1 entities)", fake_device_info, [])),
+    ), patch.object(esphome_utils, "get_connection", return_value=mock_db), patch.object(
+        esphome_utils,
+        "accept_esphome_node_async",
+        new=AsyncMock(return_value=(True, "Connected (1 entities)", fake_device_info)),
+    ) as mock_accept:
+        success, message, device_info = asyncio.run(
+            esphome_utils.add_esphome_node_manual_async(
+                "192.168.2.251", psk="secret", name="Bedroom Sensor"
+            )
+        )
+
+    assert success is True
+    mock_accept.assert_called_once_with(
+        "athom-tem-hum-sensor-4a4734.local", psk="secret", name="Bedroom Sensor"
+    )
+    insert_call = mock_db.cursor.return_value.execute.call_args_list[0]
+    assert "INSERT INTO esphome_nodes" in insert_call.args[0]
+    assert insert_call.args[1] == (
+        "athom-tem-hum-sensor-4a4734.local",
+        "192.168.2.251",
+        6053,
+        "Bedroom Sensor",
+    )
+    mock_db.commit.assert_called_once()
+
+
 # --- Push (persistent, Phase 5) --------------------------------------------------------------
 
 

@@ -20,6 +20,7 @@ from models import (
     ESPHomeAccept,
     ESPHomeControl,
     ESPHomeConfig,
+    ESPHomeManualAdd,
 )
 from auth.dependencies import CurrentUser, require_auth, require_permission
 
@@ -368,22 +369,66 @@ async def get_esphome_nodes(accepted: bool | None = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_ESPHOME_DISCOVERY_WAIT_SECONDS = 10  # discover_esphome_nodes()'s 8s zeroconf timeout + buffer
+
+
 @router.post("/iot/esphome/discover")
 async def trigger_esphome_discovery(
     _perm=Depends(require_permission("iot", "esphome_discover")),
 ):
-    """Runs a blocking ~8s mDNS scan, so it's offloaded to a worker thread rather than run
-    directly in this coroutine (unlike HA/ST's sub-second calls, this would otherwise stall
-    every other request being served by this event loop for the scan's duration)."""
+    """Dispatches the mDNS scan to service_device via Kafka rather than running it here --
+    service_api is on the bridge network (alfr3d_default) and can't see LAN multicast traffic at
+    all, but service_device can (host network mode, the same reason it handles arp-scan). This
+    previously called esphome_utils.discover_esphome_nodes() directly in a worker thread, which
+    silently found nothing on a real LAN since the scan never left this container's network
+    namespace. Waits _ESPHOME_DISCOVERY_WAIT_SECONDS (matching the scan's own ~8s zeroconf
+    timeout) before reading esphome_nodes back, so the HTTP response stays synchronous and
+    Integrations.jsx's existing await-then-refresh flow needs no changes."""
     try:
         from common import esphome_utils
 
+        producer = get_producer()
+        if not producer:
+            raise HTTPException(status_code=500, detail="Failed to connect to Kafka")
+        producer.send("device", {"action": "iot_esphome_discover"})
+        producer.flush()
+
+        await asyncio.sleep(_ESPHOME_DISCOVERY_WAIT_SECONDS)
         nodes = await asyncio.get_event_loop().run_in_executor(
-            None, esphome_utils.discover_esphome_nodes
+            None, esphome_utils.get_esphome_nodes
         )
-        return {"message": f"Discovery found {len(nodes)} node(s)", "nodes": nodes}
+        return {"message": f"Discovery scan complete ({len(nodes)} known node(s))", "nodes": nodes}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error running ESPHome discovery: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/iot/esphome/nodes/manual")
+async def add_esphome_node_manual(
+    data: ESPHomeManualAdd,
+    _perm=Depends(require_permission("iot", "esphome_accept")),
+):
+    """Fallback for when mDNS discovery can't reach a node (client isolation on the Wi-Fi, a
+    VLAN, an AP that blocks multicast) -- lets a known IP be onboarded directly instead of
+    depending on the /discover scan finding it first."""
+    try:
+        from common import esphome_utils
+
+        success, message, _device_info = await esphome_utils.add_esphome_node_manual_async(
+            data.ip_address, data.port, psk=data.psk, name=data.name
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail=message)
+
+        devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+        await manager.broadcast("iot_devices", devices)
+        return {"message": message}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding ESPHome node manually at {data.ip_address}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

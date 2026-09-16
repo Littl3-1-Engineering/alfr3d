@@ -1,3 +1,18 @@
+# Release v0.4.4
+
+## Release Name: First Light
+
+### Notes:
+- **Fix:** ESPHome node discovery (`POST /api/iot/esphome/discover`) ran its mDNS scan inside
+  `service-api`, which is on the bridge network and can never see LAN multicast traffic — it would
+  silently report "0 nodes found" on any real household LAN. Now dispatches to `service-device`
+  (host network mode) via Kafka, matching the original design.
+- **Feature:** Manual "add by IP" fallback for onboarding an ESPHome node when mDNS discovery
+  can't reach it (Wi-Fi client isolation, a VLAN, an AP that blocks multicast) — connects directly
+  by IP and feeds into the same accept pipeline discovery-based onboarding uses.
+- **Verified:** ESPHome's base integration (discovery, accept, poll sync) confirmed end-to-end
+  against real hardware for the first time since it shipped.
+
 # Release v0.4.3
 
 ## Release Name: Context Exchange
