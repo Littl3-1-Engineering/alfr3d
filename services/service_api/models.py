@@ -163,6 +163,13 @@ class ESPHomeAccept(BaseModel):
     name: Optional[str] = None
 
 
+class ESPHomeManualAdd(BaseModel):
+    ip_address: str
+    port: int = 6053
+    psk: Optional[str] = None
+    name: Optional[str] = None
+
+
 class ESPHomeControl(BaseModel):
     command: str
     params: Dict[str, Any] = {}

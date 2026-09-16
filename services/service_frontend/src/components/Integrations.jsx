@@ -31,6 +31,9 @@ const Integrations = () => {
   const [espLoading, setEspLoading] = useState(false);
   const [espScanning, setEspScanning] = useState(false);
   const [espAcceptForm, setEspAcceptForm] = useState({});
+  const [espManualOpen, setEspManualOpen] = useState(false);
+  const [espManualForm, setEspManualForm] = useState({ ip_address: '', port: '6053', psk: '', name: '' });
+  const [espManualSubmitting, setEspManualSubmitting] = useState(false);
 
   const fetchEspNodes = useCallback(async () => {
     setEspLoading(true);
@@ -56,6 +59,35 @@ const Integrations = () => {
       alert(`Error running ESPHome discovery: ${error.message}`);
     } finally {
       setEspScanning(false);
+    }
+  };
+
+  const handleEspManualAdd = async () => {
+    if (!espManualForm.ip_address) return;
+    setEspManualSubmitting(true);
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/iot/esphome/nodes/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip_address: espManualForm.ip_address,
+          port: parseInt(espManualForm.port, 10) || 6053,
+          psk: espManualForm.psk || null,
+          name: espManualForm.name || null,
+        }),
+      });
+      if (response.ok) {
+        setEspManualForm({ ip_address: '', port: '6053', psk: '', name: '' });
+        setEspManualOpen(false);
+        await fetchEspNodes();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        alert(`Failed to add node: ${data.detail || response.statusText}`);
+      }
+    } catch (error) {
+      alert(`Error adding node: ${error.message}`);
+    } finally {
+      setEspManualSubmitting(false);
     }
   };
 
@@ -371,6 +403,57 @@ const Integrations = () => {
                   <Radar className={`w-4 h-4 ${espScanning ? 'animate-spin' : ''}`} />
                   {espScanning ? 'Scanning (~8s)...' : 'Scan for ESPHome devices'}
                 </button>
+
+                <button
+                  onClick={() => setEspManualOpen(!espManualOpen)}
+                  className="text-xs text-text-tertiary hover:text-text-secondary mb-4 underline"
+                >
+                  {espManualOpen ? 'Cancel' : "Can't find your device? Add it by IP"}
+                </button>
+
+                {espManualOpen && (
+                  <div className="bg-card/50 rounded-lg p-3 mb-4">
+                    <p className="text-xs text-text-tertiary mb-2">
+                      Use this if the scan can&apos;t reach the node (Wi-Fi client isolation, a VLAN, or an
+                      access point that blocks mDNS/multicast). ALFR3D connects to it directly by IP instead.
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="IP address (e.g. 192.168.2.251)"
+                      value={espManualForm.ip_address}
+                      className="w-full bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary mb-2"
+                      onChange={(e) => setEspManualForm({ ...espManualForm, ip_address: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Port (default 6053)"
+                      value={espManualForm.port}
+                      className="w-full bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary mb-2"
+                      onChange={(e) => setEspManualForm({ ...espManualForm, port: e.target.value })}
+                    />
+                    <input
+                      type="password"
+                      placeholder="PSK (optional)"
+                      value={espManualForm.psk}
+                      className="w-full bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary mb-2"
+                      onChange={(e) => setEspManualForm({ ...espManualForm, psk: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Name (optional)"
+                      value={espManualForm.name}
+                      className="w-full bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary mb-2"
+                      onChange={(e) => setEspManualForm({ ...espManualForm, name: e.target.value })}
+                    />
+                    <button
+                      onClick={handleEspManualAdd}
+                      disabled={espManualSubmitting || !espManualForm.ip_address || !isAuthenticated}
+                      className="w-full py-1.5 bg-success/20 text-success rounded-lg text-xs hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {espManualSubmitting ? 'Connecting...' : 'Add & Accept'}
+                    </button>
+                  </div>
+                )}
 
                 {espLoading && <p className="text-sm text-text-tertiary">Loading nodes...</p>}
 

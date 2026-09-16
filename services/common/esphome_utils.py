@@ -285,6 +285,39 @@ async def accept_esphome_node_async(hostname, psk=None, name=None):
     return True, message, device_info
 
 
+async def add_esphome_node_manual_async(ip_address, port=DEFAULT_PORT, psk=None, name=None):
+    """Manual fallback for onboarding a node by IP when mDNS can't reach it (client isolation on
+    the Wi-Fi, a VLAN, an AP that blocks multicast -- discover_esphome_nodes() finds nothing in
+    that case, with no way to link the node otherwise). Connects directly to read the node's own
+    hostname from its device_info(), upserts an esphome_nodes row exactly as discovery would have
+    (same hostname it would get via mDNS, so entity IDs/sync behave identically either way), then
+    hands off to accept_esphome_node_async() -- every downstream function (sync, control, push
+    state) is keyed on hostname, not IP, so this avoids a second accept/sync code path."""
+    success, message, device_info, _entities = await test_esphome_node_async(ip_address, port, psk)
+    if not success:
+        return False, message, None
+
+    hostname = f"{device_info.name}.local"
+
+    db = get_connection()
+    cursor = db.cursor()
+    cursor.execute(
+        """
+        INSERT INTO esphome_nodes (hostname, ip_address, port, name)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            ip_address = VALUES(ip_address),
+            port = VALUES(port),
+            last_seen = CURRENT_TIMESTAMP
+        """,
+        (hostname, ip_address, port, name),
+    )
+    db.commit()
+    db.close()
+
+    return await accept_esphome_node_async(hostname, psk=psk, name=name)
+
+
 def _fan_speed_command(params):
     speed = str(params.get("speed", "")).lower()
     if speed in ("off", ""):

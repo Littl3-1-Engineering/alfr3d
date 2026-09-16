@@ -1,11 +1,12 @@
 # Plan: ESPHome Integration
 
-## Status: 🟡 Phases 0-4 shipped (2026-08-21); Phase 5 (push-based state) shipped 2026-08-30, not yet exercised against a real device
+## Status: 🟢 Phases 0-5 shipped and live-verified against a real device (2026-09-16)
 
 Backend (discovery, client, sync, API routes) and a frontend discovery/accept panel in
-`Integrations.jsx` are implemented and passing lint/tests/build. Not yet exercised against a real
-ESPHome device on a live LAN — see "Verified so far" below for exactly what has and hasn't been
-tested. Decisions below were made explicitly by the user (2026-08-21), not assumed:
+`Integrations.jsx` are implemented and passing lint/tests/build. First real hardware became
+available 2026-09-16 (an Athom ESP32-C3 temp/humidity sensor) — see "Live-verified 2026-09-16"
+below for exactly what that confirmed, what it found broken, and what's still open. Decisions
+below were made explicitly by the user (2026-08-21), not assumed:
 - **PSK storage: plaintext for v1** (Design §3) — see the new companion doc
   `todo/todo_encrypt_secrets_at_rest.md`, created at the same time per the user's explicit request
   to track the broader secrets-at-rest problem separately rather than solve it piecemeal here.
@@ -29,14 +30,43 @@ tested. Decisions below were made explicitly by the user (2026-08-21), not assum
   `list_entities_services()`/`subscribe_states()`, per-domain `*_command()` signatures, the
   `_esphomelib._tcp.local.` mDNS service type) were checked against the actual installed library
   source (v45.12.1 / v0.150.0), not written from memory.
-- **Not yet verified**: an actual connection to a real ESPHome device (no physical/simulated
-  device was available this session), the frontend accept/discover flow driven end-to-end in a
-  browser, and the two pre-existing `docker exec`-batch-load quirks hit while constructing the
-  test database (a `DELIMITER`-block parsing issue in `createTables.sql` when piped via
-  `docker exec -i mysql < file`, and migrations 011/017 erroring as "duplicate" when replayed raw
-  against a fresh `createTables.sql` load) — both were worked around for this session's validation
-  and are pre-existing repo characteristics unrelated to this change, not something this plan
-  introduced, but worth the user's awareness since they weren't previously documented anywhere.
+- The two pre-existing `docker exec`-batch-load quirks hit while constructing the test database (a
+  `DELIMITER`-block parsing issue in `createTables.sql` when piped via `docker exec -i mysql <
+  file`, and migrations 011/017 erroring as "duplicate" when replayed raw against a fresh
+  `createTables.sql` load) — both were worked around for that session's validation and are
+  pre-existing repo characteristics unrelated to this change, not something this plan introduced,
+  but worth the user's awareness since they weren't previously documented anywhere.
+
+### Live-verified 2026-09-16, against a real device (Athom ESP32-C3 temp/humidity sensor)
+- **Found and fixed a real bug**: `POST /api/iot/esphome/discover` ran the mDNS scan directly
+  inside `service-api`, which is on the bridge network (`alfr3d_default`) and cannot see LAN
+  multicast traffic at all — the endpoint would silently return "0 nodes found" on every real
+  household LAN, regardless of what's actually broadcasting. `service-device` (host network mode,
+  same reason it runs `arp-scan`) already had the matching Kafka action (`iot_esphome_discover`)
+  wired up and unused. Fixed by having the route dispatch to Kafka instead of running in-process;
+  confirmed by running `esphome_utils.discover_esphome_nodes()` directly inside `service-device`
+  and getting a real result back (`athom-tem-hum-sensor-4a4734.local`, 192.168.2.251:6053).
+- **Confirmed end-to-end against real hardware**: discovery (mDNS found the real node) → accept
+  (`accept_esphome_node_async`, real Noise/API handshake, `api_encryption_supported=False` so no
+  PSK needed for this device, 17 raw entities → 8 mapped into `smarthome_devices`) → a full poll
+  sync cycle (`sync_esphome_devices()`) populated real live state (24.9°C, 60.9% humidity, WiFi
+  -43dB/100%, plus status/light/power-button entities), all confirmed by querying `alfr3d_db`
+  directly, not just trusting the function's return value.
+- **Added a manual "add by IP" fallback** (`POST /api/iot/esphome/nodes/manual`,
+  `esphome_utils.add_esphome_node_manual_async`) for the known gap where mDNS can't reach a node
+  (Wi-Fi client isolation, a VLAN, an AP that blocks multicast) — connects directly by IP, reads
+  the node's real hostname from its own `device_info()`, and feeds into the same accept pipeline
+  discovery-based onboarding uses, so a manually-added node behaves identically downstream.
+- **Not fully confirmed**: Phase 5's persistent push connection (`subscribe_states()` via
+  `ReconnectLogic`) — the device dropped off the LAN (Wi-Fi power-save or a reboot on its side, not
+  an ALFR3D issue; ARP went `INCOMPLETE`, ping/TCP connect both started failing) before this could
+  be directly confirmed. One poll-cycle log line was captured during that window
+  (`Error syncing ESPHome node ...: Connect call failed`), which is the *expected* self-healing
+  behavior, not a new bug. Re-confirm the push connection specifically next time the device (or
+  another real node) is online for a few minutes.
+- The frontend accept/discover flow was exercised via direct API/backend calls this session, not
+  driven through an actual browser session against `Integrations.jsx` — the new manual-add form
+  there is untested in a live browser (build/lint pass, not visually confirmed).
 
 ### Implementation deviated from the original sketch in one way (schema, Design §3)
 Rather than adding `esp_node_id`/`esp_psk` columns directly to `smarthome_devices` (which is

@@ -1,6 +1,18 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🔴 Stopped at Phase 0 — no real ESPHome node available to validate against
+## Status: 🟡 Phase 0's blocker resolved 2026-09-16 — real hardware now exists, Phase 1 not yet started
+
+**Update 2026-09-16**: a real ESPHome node (Athom ESP32-C3 temp/humidity sensor) joined the
+household LAN. `todo/todo_esphome.md`'s "Live-verified 2026-09-16" section confirms the base
+integration (discovery, accept, poll sync) against this real device — the hard prerequisite this
+doc's Phase 0 was blocked on. This doc's own Phase 1 (using it as an SA signal:
+`climate_advisory`/`ambient_occupancy` rules, context-frame sensor fields) has **not** been
+started — that's separate scope from validating the base integration, not done as a side effect of
+this session's onboarding/bug-fix work. Revisit deliberately when picking this back up, and note
+the device is a single sensor with an intermittent Wi-Fi presence (dropped offline mid-session) —
+worth factoring into how much confidence any resulting SA rule should carry.
+
+## Status (original): 🔴 Stopped at Phase 0 — no real ESPHome node available to validate against
 
 Second item of Wave 3, following SA-6 (self-hosted routing, in progress). Builds on
 `todo/todo_esphome.md` (Phases 0-4 shipped 2026-08-21) — the integration itself (discovery,
