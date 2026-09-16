@@ -57,16 +57,33 @@ below were made explicitly by the user (2026-08-21), not assumed:
   (Wi-Fi client isolation, a VLAN, an AP that blocks multicast) — connects directly by IP, reads
   the node's real hostname from its own `device_info()`, and feeds into the same accept pipeline
   discovery-based onboarding uses, so a manually-added node behaves identically downstream.
-- **Not fully confirmed**: Phase 5's persistent push connection (`subscribe_states()` via
-  `ReconnectLogic`) — the device dropped off the LAN (Wi-Fi power-save or a reboot on its side, not
-  an ALFR3D issue; ARP went `INCOMPLETE`, ping/TCP connect both started failing) before this could
-  be directly confirmed. One poll-cycle log line was captured during that window
-  (`Error syncing ESPHome node ...: Connect call failed`), which is the *expected* self-healing
-  behavior, not a new bug. Re-confirm the push connection specifically next time the device (or
-  another real node) is online for a few minutes.
-- The frontend accept/discover flow was exercised via direct API/backend calls this session, not
-  driven through an actual browser session against `Integrations.jsx` — the new manual-add form
-  there is untested in a live browser (build/lint pass, not visually confirmed).
+- **Not fully confirmed, and now with a likely root cause**: Phase 5's persistent push connection
+  (`subscribe_states()` via `ReconnectLogic`) never logged a successful connect on the production
+  NUC either, across two separate windows (this session's dev-laptop testing and, later, the real
+  deploy on `Alfr3d-Gorsion`) — confirmed the background thread itself is alive and unexceptioned
+  (`/proc/1/task/*/comm` shows `esphome-push-st` running; zero tracebacks in `service-device`
+  logs), so this isn't a crash. A direct ping sample from the NUC to the sensor
+  (`ping -c 10 -i 0.3 192.168.2.251`) came back **70% packet loss, RTT up to ~4 seconds** on a
+  same-subnet LAN hop — that's almost certainly why: a Noise-protocol handshake needs several
+  clean round-trips to complete, and this link isn't reliably providing them, while the one-shot
+  poll path (`_fetch_node_snapshot`'s 10s `connect_timeout`) has just enough slack to occasionally
+  succeed anyway (which is how accept/sync landed real data despite this). This reads as the
+  physical device's Wi-Fi being the limiting factor, not an ALFR3D bug — and is exactly the
+  scenario the poll-based reconciliation fallback (kept running deliberately alongside Phase 5,
+  see below) was designed to cover. Re-confirm the push connection specifically once this sensor
+  (or another real node) has a materially better link, or investigate that device's Wi-Fi
+  environment directly (channel congestion, distance/antenna, 2.4GHz interference) if it matters
+  enough to chase.
+- **Update, same day**: the user drove the Scan/Accept flow through the actual deployed
+  `Integrations.jsx` in a browser against the production NUC after this was live — the Kafka-
+  routed discovery fix worked end-to-end for real (found the node), and the node is now genuinely
+  accepted in production (not just this session's disposable dev-laptop test). The first Accept
+  attempt failed with a blank `"Failed to accept node: "` alert (a bare `asyncio.TimeoutError`
+  stringifies to nothing); root-caused to the same poor-link issue as the Phase 5 note above and
+  fixed by falling back to the exception's type name so the message is never empty. Accept
+  succeeded on retry once the link cooperated. The new manual-add-by-IP form has still not been
+  exercised in a browser (this device onboarded via discovery, not that path) — remains
+  build/lint-verified only.
 
 ### Implementation deviated from the original sketch in one way (schema, Design §3)
 Rather than adding `esp_node_id`/`esp_psk` columns directly to `smarthome_devices` (which is
