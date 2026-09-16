@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import orjson
-import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -193,19 +192,6 @@ async def consume_events():
                 logger.info(f"Received events: {data}")
                 await manager.broadcast("events", recent_events)
                 await _persist_household_events(events_to_send)
-                for event in events_to_send:
-                    try:
-                        headers = {"Content-Type": "application/json"}
-                        url = "https://ntfy.sh/alfr3d-event-stream"
-                        await asyncio.to_thread(
-                            requests.post,
-                            url,
-                            json=event,
-                            headers=headers,
-                            timeout=3,
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to send event to nfty.sh: {e}")
             except orjson.JSONDecodeError as e:
                 logger.error(f"Error processing event message: {str(e)}")
             except Exception as e:
