@@ -44,9 +44,9 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   row + its command history; the earlier auto-prune `3b10fadb` was reverted as too aggressive
   and FK-unsafe). Net for SA-12: the device-transition stream has ~one controllable device
   until the new house accumulates real smart devices — structurally thin, SA-12 stays stopped.
-- **SA-9** (`todo_esphome_situational_awareness.md`, stopped at Phase 0): revisit only if the
-  household actually gets a real ESPHome node (a live mDNS scan of the real LAN found none as of
-  2026-08-30).
+- **SA-9** (`todo_esphome_situational_awareness.md`): no longer waiting — a real ESPHome node
+  joined the household 2026-09-16 and Phase 1+2 shipped, migrated, and deployed the same day.
+  See "Since this was written" below.
 - **SA-8** (`todo_ble_presence_sensing.md`, dead at Phase 0, re-verified 2026-09-16 with the same
   result): revisit only if a BLE wearable/tracker with a genuinely stable, resolvable address
   enters the household — the adapter itself is confirmed capable, the problem was zero
@@ -173,6 +173,20 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `todo_transition_learning.md`'s "First real-data check" section for the full writeup. Still
   zero rows in `household_events` — the fix doesn't retroactively backfill events for fixes
   already stored before the fix landed; needs a fresh crossing to produce a live row.
+
+- **2026-09-16**: SA-9's real-hardware blocker resolved and both remaining phases shipped the
+  same day. Phase 1: `check_climate_advisory()` (fixed-threshold comfort card) reading the real
+  ESPHome sensor via a new `context_frame.fetch_esphome_climate_snapshot()`. Phase 2: a new
+  `smarthome_sensor_history` table + `entity_baselines.time_of_day_bucket` back a baseline-learned
+  sibling rule, `check_climate_deviation()`. Migrated (0042→0044) and deployed to the production
+  NUC after a real `mysqldump` backup; `climate_advisory` fired live within minutes
+  ("It's warmer than usual indoors, 27.09°C"), and `smarthome_sensor_history` started collecting
+  real rows immediately. `ambient_occupancy` (SA-9's other named rule) stays out of scope — no
+  presence/motion-capable entity on the one accepted node. Same session: re-verified SA-8 dead
+  (identical result to the original scan, doc restored after being wrongly deleted as
+  "completed"), and removed a dead `ntfy.sh` event relay that had been posting household SA data
+  to a public unauthenticated topic. Notion Timeline + `littl31.com`'s public timeline JSON both
+  updated and rebuilt to reflect all of the above.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
