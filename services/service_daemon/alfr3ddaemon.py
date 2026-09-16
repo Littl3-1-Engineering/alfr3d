@@ -89,6 +89,13 @@ RAIN_ADVISORY_THRESHOLD = 30
 # How far ahead the forecast checked by check_weather_advisory() looks.
 FORECAST_HOURS_AHEAD = 6
 
+# Indoor comfort band for check_climate_advisory() (SA-9 Phase 1) -- placeholder defaults, not a
+# considered-final household calibration.
+CLIMATE_ADVISORY_COLD_THRESHOLD_C = 18.0
+CLIMATE_ADVISORY_HOT_THRESHOLD_C = 27.0
+CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT = 65
+CLIMATE_ADVISORY_HUMIDITY_LOW_PCT = 30
+
 # Spotify's own 0.0-1.0 "energy" audio feature above which check_party_advisory()
 # considers what's actually playing to be genuinely high-energy, independent
 # of ALFR3D's own (capped, on weeknights) recommendation.
@@ -611,6 +618,10 @@ class MyDaemon:
         # email.
         ("weather_advisory", 4.5, "check_weather_advisory"),
         ("weather", 5, "check_weather"),
+        # SA-9 Phase 1: ambient, low-urgency observation, same tier as weather but
+        # device-sourced from a single intermittent ESPHome sensor -- lower confidence than the
+        # forecast-backed weather cards, so it sits just below them rather than competing.
+        ("climate_advisory", 5.3, "check_climate_advisory"),
         # mood is lower-urgency ambient context, not an actionable alert —
         # slotted just below weather rather than competing with priorities 1-5.
         ("mood", 6, "check_mood"),
@@ -683,6 +694,11 @@ class MyDaemon:
             frame.smarthome_online = context_frame.fetch_smarthome_online()
         except Exception as e:
             logger.error(f"Context frame: smarthome_online build failed: {e}")
+
+        try:
+            frame.esphome_climate = context_frame.fetch_esphome_climate_snapshot()
+        except Exception as e:
+            logger.error(f"Context frame: esphome_climate build failed: {e}")
 
         try:
             frame.environment = context_frame.fetch_environment_snapshot(ENV_NAME)
@@ -2164,6 +2180,66 @@ class MyDaemon:
                     ],
                 },
             }
+        return None
+
+    def check_climate_advisory(self, frame):
+        """Fixed-threshold indoor comfort advisory from the household's one accepted ESPHome
+        temp/humidity sensor (SA-9 Phase 1). Not baseline-learned -- no entity_baselines support
+        exists yet for smarthome/ESPHome entities (see compute_entity_baselines()'s own
+        docstring). Single intermittent sensor, no room scoping (smarthome_devices.room is never
+        populated for ESPHome entities) -- content stays generic ("indoors") rather than naming
+        a room.
+        """
+        climate = frame.esphome_climate
+        if not climate:
+            return None
+
+        if climate["temperature_online"] and climate["temperature_c"] is not None:
+            temp = climate["temperature_c"]
+            if temp < CLIMATE_ADVISORY_COLD_THRESHOLD_C:
+                return {
+                    "mode": "climate_advisory",
+                    "content": f"It's cooler than usual indoors ({temp}°C)",
+                    "priority": 5.3,
+                    "data": {
+                        "temperature_c": temp,
+                        "because": [f"{temp}°C < {CLIMATE_ADVISORY_COLD_THRESHOLD_C}°C"],
+                    },
+                }
+            if temp > CLIMATE_ADVISORY_HOT_THRESHOLD_C:
+                return {
+                    "mode": "climate_advisory",
+                    "content": f"It's warmer than usual indoors ({temp}°C)",
+                    "priority": 5.3,
+                    "data": {
+                        "temperature_c": temp,
+                        "because": [f"{temp}°C > {CLIMATE_ADVISORY_HOT_THRESHOLD_C}°C"],
+                    },
+                }
+
+        if climate["humidity_online"] and climate["humidity_pct"] is not None:
+            humidity = climate["humidity_pct"]
+            if humidity > CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT:
+                return {
+                    "mode": "climate_advisory",
+                    "content": f"Humidity is higher than usual indoors ({humidity}%)",
+                    "priority": 5.3,
+                    "data": {
+                        "humidity_pct": humidity,
+                        "because": [f"{humidity}% > {CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT}%"],
+                    },
+                }
+            if humidity < CLIMATE_ADVISORY_HUMIDITY_LOW_PCT:
+                return {
+                    "mode": "climate_advisory",
+                    "content": f"Humidity is lower than usual indoors ({humidity}%)",
+                    "priority": 5.3,
+                    "data": {
+                        "humidity_pct": humidity,
+                        "because": [f"{humidity}% < {CLIMATE_ADVISORY_HUMIDITY_LOW_PCT}%"],
+                    },
+                }
+
         return None
 
     def check_time(self, frame):

@@ -39,6 +39,7 @@ import logging
 import os
 from datetime import timedelta, timezone
 
+import orjson
 import pymysql
 
 logger = logging.getLogger("DaemonLog")
@@ -63,6 +64,7 @@ class ContextFrame:
         self.upcoming_events = None
         self.online_devices = None
         self.smarthome_online = None
+        self.esphome_climate = None
         self.environment = None
         self.playback = None
         self.persisted_now_playing = None
@@ -156,6 +158,51 @@ def fetch_smarthome_online():
         return sorted(name for (name,) in cursor.fetchall() if name)
     except pymysql.Error as e:
         logger.error(f"Context frame: smarthome_online fetch error: {e}")
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def fetch_esphome_climate_snapshot():
+    """Latest temperature/humidity reading from any accepted ESPHome sensor node (SA-9 Phase 1).
+
+    device_class isn't captured in last_state (esphome_utils._entity_last_state() only keeps
+    state/unit_of_measurement, see its own comment), and WiFi-signal sensors can also report a
+    '%' unit -- so entities are matched by name substring, not unit, to avoid mistaking a wifi
+    percentage for humidity. Only the single first match per kind is read; there's exactly one
+    ESPHome node today and no room column populated on smarthome_devices to disambiguate a
+    second one if it shows up later (see esphome_utils._upsert_node_entities -- room/capabilities
+    are never written). Returns a dict (fields None where that reading is missing/offline), or
+    None on a DB error.
+    """
+    db = None
+    try:
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT name, online, last_state FROM smarthome_devices "
+            "WHERE source = 'esphome' AND device_type = 'sensor' "
+            "AND (LOWER(name) LIKE '%%temperature%%' OR LOWER(name) LIKE '%%humidity%%')"
+        )
+        temperature_c, temperature_online = None, False
+        humidity_pct, humidity_online = None, False
+        for name, online, last_state_json in cursor.fetchall():
+            state = orjson.loads(last_state_json).get("state") if last_state_json else None
+            if "temperature" in name.lower() and temperature_c is None:
+                temperature_c, temperature_online = state, bool(online)
+            elif "humidity" in name.lower() and humidity_pct is None:
+                humidity_pct, humidity_online = state, bool(online)
+        if temperature_c is None and humidity_pct is None:
+            return None
+        return {
+            "temperature_c": temperature_c,
+            "temperature_online": temperature_online,
+            "humidity_pct": humidity_pct,
+            "humidity_online": humidity_online,
+        }
+    except pymysql.Error as e:
+        logger.error(f"Context frame: esphome_climate fetch error: {e}")
         return None
     finally:
         if db:

@@ -1146,6 +1146,11 @@ class TestDecideDisplays:
         "priority": 4.5,
     }
     WEATHER_CARD = {"mode": "weather", "content": "w", "priority": 5}
+    CLIMATE_ADVISORY_CARD = {
+        "mode": "climate_advisory",
+        "content": "ca",
+        "priority": 5.3,
+    }
     MOOD_CARD = {
         "mode": "mood",
         "content": "Tuesday evening — moderate energy",
@@ -1235,6 +1240,7 @@ class TestDecideDisplays:
         check_emails=None,
         check_weather_advisory=None,
         check_weather=None,
+        check_climate_advisory=None,
         check_mood=None,
         check_household_composition=None,
         check_rhythm_break_anomaly=None,
@@ -1259,6 +1265,7 @@ class TestDecideDisplays:
         daemon.check_emails = MagicMock(return_value=check_emails)
         daemon.check_weather_advisory = MagicMock(return_value=check_weather_advisory)
         daemon.check_weather = MagicMock(return_value=check_weather)
+        daemon.check_climate_advisory = MagicMock(return_value=check_climate_advisory)
         daemon.check_mood = MagicMock(return_value=check_mood)
         daemon.check_household_composition = MagicMock(return_value=check_household_composition)
         daemon.check_rhythm_break_anomaly = MagicMock(return_value=check_rhythm_break_anomaly)
@@ -1326,6 +1333,7 @@ class TestDecideDisplays:
             check_emails=self.EMAIL_CARD,
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
+            check_climate_advisory=self.CLIMATE_ADVISORY_CARD,
             check_mood=self.MOOD_CARD,
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
@@ -1343,6 +1351,7 @@ class TestDecideDisplays:
         assert len(result) == len(MyDaemon.DISPLAY_RULES)
         assert self.WEATHER_ADVISORY_CARD in result
         assert self.WEATHER_CARD in result
+        assert self.CLIMATE_ADVISORY_CARD in result
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
         assert self.NOW_PLAYING_CARD in result
@@ -1414,7 +1423,7 @@ class TestDecideDisplays:
         self,
     ):
         """End-to-end test of decide_displays() with the full, current category set
-        (all sixteen DISPLAY_RULES entries) firing at once.
+        (all DISPLAY_RULES entries) firing at once.
 
         This is the test to extend when a future PR registers another category:
         add its card to the `self._stub_daemon(...)` call below and to the
@@ -1430,6 +1439,7 @@ class TestDecideDisplays:
             check_emails=self.EMAIL_CARD,
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
+            check_climate_advisory=self.CLIMATE_ADVISORY_CARD,
             check_mood=self.MOOD_CARD,
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
@@ -1449,10 +1459,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all nineteen cards come back -- nothing dropped.
+        # rule fired exactly once, so all twenty cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 19 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 20 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -1474,6 +1484,7 @@ class TestDecideDisplays:
             "email",
             "weather_advisory",
             "weather",
+            "climate_advisory",
             "cross_surface_continuity",
             "wind_down_signal",
             "mood",
@@ -4289,6 +4300,137 @@ class TestCheckWeatherAdvisory:
         assert daemon.check_weather_advisory(_make_frame(environment=None)) is None
 
 
+class TestCheckClimateAdvisory:
+    """Tests for MyDaemon.check_climate_advisory() (SA-9 Phase 1)."""
+
+    def _climate(self, **overrides):
+        climate = {
+            "temperature_c": 22.0,
+            "temperature_online": True,
+            "humidity_pct": 45,
+            "humidity_online": True,
+        }
+        climate.update(overrides)
+        return climate
+
+    def test_returns_none_when_no_esphome_climate_on_frame(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        assert daemon.check_climate_advisory(_make_frame(esphome_climate=None)) is None
+
+    def test_returns_none_within_comfort_band(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(esphome_climate=self._climate())
+        assert daemon.check_climate_advisory(frame) is None
+
+    def test_fires_when_too_cold(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_COLD_THRESHOLD_C,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=CLIMATE_ADVISORY_COLD_THRESHOLD_C - 1)
+        )
+        card = daemon.check_climate_advisory(frame)
+
+        assert card["mode"] == "climate_advisory"
+        assert card["priority"] == 5.3
+        assert "cooler" in card["content"]
+        assert card["data"]["temperature_c"] == CLIMATE_ADVISORY_COLD_THRESHOLD_C - 1
+
+    def test_fires_when_too_hot(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_HOT_THRESHOLD_C,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=CLIMATE_ADVISORY_HOT_THRESHOLD_C + 1)
+        )
+        card = daemon.check_climate_advisory(frame)
+
+        assert card["mode"] == "climate_advisory"
+        assert "warmer" in card["content"]
+        assert card["data"]["temperature_c"] == CLIMATE_ADVISORY_HOT_THRESHOLD_C + 1
+
+    def test_fires_when_humidity_too_high(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(humidity_pct=CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT + 5)
+        )
+        card = daemon.check_climate_advisory(frame)
+
+        assert card["mode"] == "climate_advisory"
+        assert "higher" in card["content"]
+        assert card["data"]["humidity_pct"] == CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT + 5
+
+    def test_fires_when_humidity_too_low(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_HUMIDITY_LOW_PCT,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(humidity_pct=CLIMATE_ADVISORY_HUMIDITY_LOW_PCT - 5)
+        )
+        card = daemon.check_climate_advisory(frame)
+
+        assert card["mode"] == "climate_advisory"
+        assert "lower" in card["content"]
+        assert card["data"]["humidity_pct"] == CLIMATE_ADVISORY_HUMIDITY_LOW_PCT - 5
+
+    def test_temperature_breach_wins_over_simultaneous_humidity_breach(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_HOT_THRESHOLD_C,
+            CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(
+                temperature_c=CLIMATE_ADVISORY_HOT_THRESHOLD_C + 1,
+                humidity_pct=CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT + 5,
+            )
+        )
+        card = daemon.check_climate_advisory(frame)
+
+        assert "temperature_c" in card["data"]
+        assert "humidity_pct" not in card["data"]
+
+    def test_ignores_a_stale_offline_temperature_reading(self):
+        """A sensor's last known state must not fire an advisory once it's gone offline --
+        smarthome_devices has no updated_at column, so `online` is the only freshness signal
+        available this cycle."""
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_ADVISORY_COLD_THRESHOLD_C,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(
+                temperature_c=CLIMATE_ADVISORY_COLD_THRESHOLD_C - 1,
+                temperature_online=False,
+                humidity_pct=45,
+                humidity_online=False,
+            )
+        )
+        assert daemon.check_climate_advisory(frame) is None
+
+
 class TestCheckTime:
     """Tests for MyDaemon.check_time() -- previously exercised only indirectly
     via decide_displays() stubs, never as its own real (unmocked) call."""
@@ -4517,6 +4659,85 @@ class TestContextFrameFetchers:
         mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
 
         assert fetch_environment_snapshot("test_env") is None
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_snapshot_returns_a_dict(self, mock_connect):
+        import orjson
+
+        from services.service_daemon.utils.context_frame import fetch_esphome_climate_snapshot
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            (
+                "Temperature",
+                1,
+                orjson.dumps({"state": 24.9, "attributes": {"unit_of_measurement": "°C"}}),
+            ),
+            (
+                "Humidity",
+                1,
+                orjson.dumps({"state": 60.9, "attributes": {"unit_of_measurement": "%"}}),
+            ),
+        ]
+
+        result = fetch_esphome_climate_snapshot()
+
+        assert result == {
+            "temperature_c": 24.9,
+            "temperature_online": True,
+            "humidity_pct": 60.9,
+            "humidity_online": True,
+        }
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_snapshot_ignores_a_wifi_signal_percent_row(self, mock_connect):
+        """A WiFi-signal sensor can also report a '%' unit -- the fetcher matches by name
+        substring, not unit, so it must not mistake a wifi-signal-percent row for humidity."""
+        import orjson
+
+        from services.service_daemon.utils.context_frame import fetch_esphome_climate_snapshot
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            (
+                "WiFi Signal Percent",
+                1,
+                orjson.dumps({"state": 100, "attributes": {"unit_of_measurement": "%"}}),
+            ),
+            (
+                "Humidity",
+                1,
+                orjson.dumps({"state": 60.9, "attributes": {"unit_of_measurement": "%"}}),
+            ),
+        ]
+
+        result = fetch_esphome_climate_snapshot()
+
+        assert result["humidity_pct"] == 60.9
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_snapshot_returns_none_when_no_matching_rows(self, mock_connect):
+        from services.service_daemon.utils.context_frame import fetch_esphome_climate_snapshot
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = []
+
+        assert fetch_esphome_climate_snapshot() is None
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_snapshot_returns_none_on_db_error(self, mock_connect):
+        import pymysql
+
+        from services.service_daemon.utils.context_frame import fetch_esphome_climate_snapshot
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+
+        assert fetch_esphome_climate_snapshot() is None
 
 
 class TestRoutingUtils:
