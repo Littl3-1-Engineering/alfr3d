@@ -188,5 +188,25 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   to a public unauthenticated topic. Notion Timeline + `littl31.com`'s public timeline JSON both
   updated and rebuilt to reflect all of the above.
 
+- **2026-09-16 (interim SA-12 check, not the scheduled ~2026-09-28 re-check)**: queried
+  production `household_events` directly rather than trusting the 09-08 snapshot above. Real
+  progress on one candidate stream, not the others:
+  - `routine/executed`: **34 rows, steady ~4/day across all 9 days** from 2026-09-08 through
+    today, no gaps — this stream has crossed into genuinely mineable territory.
+  - `device/turned_on|off|set`: 13 rows total, but every one is a 2-minute burst at
+    03:02-03:04 AM today on just 2 device ids, fired seconds apart ("Command sent" ×13) — a
+    test/scripted burst, not organic household usage. Still effectively zero for mining.
+  - `user/left_area`/`entered_area`: 4 rows since the 09-11 geofence deploy — one real
+    round-trip (09-12, 21:24→21:58) plus 2 isolated arrivals on other days. One household
+    member, 5 days — too thin for a pattern yet.
+  - Side finding, unrelated to SA-12's candidate pairs: a new `sender`/`messaged`+`called`
+    structured stream exists (94+6 rows since 09-13, WhatsApp/Slack/Gmail contact
+    notifications, `routes/context.py`) — not in this doc's producer table since it isn't a
+    device/routine/presence transition, but worth knowing about if the candidate-pair
+    vocabulary ever gets extended.
+  - **Verdict unchanged**: not ready for Phase 1. `routine/executed` alone clearing the bar
+    doesn't substitute for `device`/`presence` pairs also having real distributed history —
+    the original **~2026-09-28** re-check date stands, not reopened early.
+
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
