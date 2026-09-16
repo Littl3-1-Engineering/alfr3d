@@ -10,8 +10,27 @@
 - **Feature:** Manual "add by IP" fallback for onboarding an ESPHome node when mDNS discovery
   can't reach it (Wi-Fi client isolation, a VLAN, an AP that blocks multicast) — connects directly
   by IP and feeds into the same accept pipeline discovery-based onboarding uses.
+- **Fix:** ESPHome sensor/binary_sensor readings were stored one shape level deeper than the
+  frontend expects, crashing `ControlBlade`'s sensor panel ("Objects are not valid as a React
+  child") the moment a real sensor was opened. Normalized to the same shape Home Assistant
+  entities already use.
+- **Fix:** A blank `"Failed to accept node: "` alert when ESPHome onboarding hit a bare
+  `asyncio.TimeoutError` (its string form is empty) — falls back to the exception's type name.
+- **Fix:** `service_speak`'s mute-check rename (`check_mute` → `get_mute_state`) left CI red on 6
+  stale test mocks; repaired.
+- **Fix:** Sunrise/Sunset/Bedtime routine quips were almost never spoken because the sleeping-hours
+  gate and the routine window shared the same boundary. Sleeping and empty-house are now
+  independent signals, and an empty (but not sleeping) house still emits the speak event for the
+  Deck app's phone-speech relay.
 - **Verified:** ESPHome's base integration (discovery, accept, poll sync) confirmed end-to-end
-  against real hardware for the first time since it shipped.
+  against real hardware (an Athom ESP32-C3 temp/humidity sensor) for the first time since it
+  shipped. Phase 5's persistent push connection remains unconfirmed against this device, traced to
+  its own poor Wi-Fi link (70%+ packet loss measured directly from the NUC), not a code issue.
+- **Security:** Resolved a batch of Aikido findings — CI credential persistence, Kubernetes
+  non-root/capability hardening, two static-scanner false positives, a certificate-validation
+  dependency floor.
+- **Chore:** Dependency updates across services (aioesphomeapi, alembic, pyjwt, starlette, docker,
+  uvicorn, vite, postcss, hls.js, lucide-react, @tanstack/react-query, anthropic).
 
 # Release v0.4.3
 
