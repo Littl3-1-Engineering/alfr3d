@@ -65,6 +65,7 @@ class ContextFrame:
         self.online_devices = None
         self.smarthome_online = None
         self.esphome_climate = None
+        self.esphome_climate_baselines = None
         self.environment = None
         self.playback = None
         self.persisted_now_playing = None
@@ -203,6 +204,58 @@ def fetch_esphome_climate_snapshot():
         }
     except pymysql.Error as e:
         logger.error(f"Context frame: esphome_climate fetch error: {e}")
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def fetch_esphome_climate_baselines(time_of_day_bucket):
+    """This time-of-day bucket's learned climate baseline (SA-9 Phase 2), for whichever
+    temperature/humidity entities fetch_esphome_climate_snapshot() also reads. Joins
+    entity_baselines rows written by compute_entity_baselines()'s room-baseline block
+    (entity_type='room', entity_id=smarthome_devices.id -- documented reuse, see migration 041's
+    own comment; there's no real per-room concept populated yet). Always returns a dict with
+    both keys present (value None where no baseline exists yet, e.g. not enough samples) so
+    callers can `.get()` safely -- None is reserved for an actual DB error.
+    """
+    db = None
+    try:
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT sd.name, eb.typical_median_value, eb.typical_daily_min, eb.typical_daily_max, "
+            "eb.sample_count, eb.min_sample_count "
+            "FROM smarthome_devices sd "
+            "JOIN entity_baselines eb ON eb.entity_type = 'room' AND eb.entity_id = sd.id "
+            "AND eb.day_bucket = 'all' AND eb.time_of_day_bucket = %s "
+            "WHERE sd.source = 'esphome' AND sd.device_type = 'sensor' "
+            "AND (LOWER(sd.name) LIKE '%%temperature%%' OR LOWER(sd.name) LIKE '%%humidity%%')",
+            (time_of_day_bucket,),
+        )
+        baselines = {"temperature": None, "humidity": None}
+        for (
+            name,
+            median_value,
+            daily_min,
+            daily_max,
+            sample_count,
+            min_sample_count,
+        ) in cursor.fetchall():
+            entry = {
+                "typical_median_value": median_value,
+                "typical_daily_min": daily_min,
+                "typical_daily_max": daily_max,
+                "sample_count": sample_count,
+                "min_sample_count": min_sample_count,
+            }
+            if "temperature" in name.lower() and baselines["temperature"] is None:
+                baselines["temperature"] = entry
+            elif "humidity" in name.lower() and baselines["humidity"] is None:
+                baselines["humidity"] = entry
+        return baselines
+    except pymysql.Error as e:
+        logger.error(f"Context frame: esphome_climate_baselines fetch error: {e}")
         return None
     finally:
         if db:

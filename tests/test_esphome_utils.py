@@ -12,7 +12,15 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aioesphomeapi import FanSpeed, LightInfo, LightState, SensorInfo, SensorState
+from aioesphomeapi import (
+    BinarySensorInfo,
+    BinarySensorState,
+    FanSpeed,
+    LightInfo,
+    LightState,
+    SensorInfo,
+    SensorState,
+)
 
 from common import esphome_utils
 
@@ -55,6 +63,58 @@ def test_entity_last_state_leaves_other_domains_as_raw_shape():
     result = esphome_utils._entity_last_state("light", entity, state)
 
     assert result == {"object_id": "light", "key": 2, "state": state.to_dict()}
+
+
+# --- Sensor history (SA-9 Phase 2) ---------------------------------------------------------
+
+
+def test_record_sensor_history_inserts_for_numeric_sensor_state():
+    cursor = MagicMock()
+    state = SensorState(key=1, state=24.9)
+
+    esphome_utils._record_sensor_history(cursor, 7, "sensor", state)
+
+    cursor.execute.assert_called_once()
+    sql, params = cursor.execute.call_args.args
+    assert "INSERT INTO smarthome_sensor_history" in sql
+    assert params[0] == 7
+    assert params[1] == 24.9
+
+
+def test_record_sensor_history_skips_binary_sensor():
+    cursor = MagicMock()
+    state = MagicMock(state=True)
+
+    esphome_utils._record_sensor_history(cursor, 7, "binary_sensor", state)
+
+    cursor.execute.assert_not_called()
+
+
+def test_record_sensor_history_skips_missing_state():
+    cursor = MagicMock()
+
+    esphome_utils._record_sensor_history(cursor, 7, "sensor", None)
+
+    cursor.execute.assert_not_called()
+
+
+def test_record_sensor_history_skips_non_numeric_state():
+    """e.g. a sensor that hasn't reported a real value yet -- state.state is None."""
+    cursor = MagicMock()
+    state = MagicMock(state=None)
+
+    esphome_utils._record_sensor_history(cursor, 7, "sensor", state)
+
+    cursor.execute.assert_not_called()
+
+
+def test_record_sensor_history_db_error_does_not_raise():
+    """A history-write failure must never break the caller's own state upsert."""
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("db down")
+    state = SensorState(key=1, state=24.9)
+
+    esphome_utils._record_sensor_history(cursor, 7, "sensor", state)  # must not raise
 
 
 # --- Config -------------------------------------------------------------------------------
@@ -275,6 +335,73 @@ def test_add_esphome_node_manual_async_derives_hostname_from_device_info_and_acc
     mock_db.commit.assert_called_once()
 
 
+# --- Sync (periodic) -- smarthome_sensor_history write path (SA-9 Phase 2) -----------------
+
+
+def test_upsert_node_entities_records_history_for_new_sensor_entity():
+    entity = SensorInfo(
+        object_id="temperature", key=1, name="Temperature", unit_of_measurement="°C"
+    )
+    state = SensorState(key=1, state=24.9)
+
+    mock_db = MagicMock()
+    mock_cursor = mock_db.cursor.return_value
+    # Call order: environment row, then per-entity "existing?" lookup (None -> INSERT path).
+    mock_cursor.fetchone.side_effect = [None, None]
+    mock_cursor.lastrowid = 42
+
+    with patch.object(esphome_utils, "get_connection", return_value=mock_db):
+        esphome_utils._upsert_node_entities("kitchen.local", None, [entity], {1: state})
+
+    history_calls = [
+        c for c in mock_cursor.execute.call_args_list if "smarthome_sensor_history" in c.args[0]
+    ]
+    assert len(history_calls) == 1
+    sql, params = history_calls[0].args
+    assert "INSERT INTO smarthome_sensor_history" in sql
+    assert params[0] == 42
+    assert params[1] == 24.9
+
+
+def test_upsert_node_entities_records_history_for_existing_sensor_entity():
+    entity = SensorInfo(
+        object_id="temperature", key=1, name="Temperature", unit_of_measurement="°C"
+    )
+    state = SensorState(key=1, state=25.4)
+
+    mock_db = MagicMock()
+    mock_cursor = mock_db.cursor.return_value
+    # Call order: environment row, then per-entity "existing?" lookup (row 99 -> UPDATE path).
+    mock_cursor.fetchone.side_effect = [None, (99,)]
+
+    with patch.object(esphome_utils, "get_connection", return_value=mock_db):
+        esphome_utils._upsert_node_entities("kitchen.local", None, [entity], {1: state})
+
+    history_calls = [
+        c for c in mock_cursor.execute.call_args_list if "smarthome_sensor_history" in c.args[0]
+    ]
+    assert len(history_calls) == 1
+    assert history_calls[0].args[1][0] == 99
+
+
+def test_upsert_node_entities_does_not_record_history_for_binary_sensor():
+    entity = BinarySensorInfo(object_id="motion", key=1, name="Motion")
+    state = BinarySensorState(key=1, state=True)
+
+    mock_db = MagicMock()
+    mock_cursor = mock_db.cursor.return_value
+    mock_cursor.fetchone.side_effect = [None, None]
+    mock_cursor.lastrowid = 42
+
+    with patch.object(esphome_utils, "get_connection", return_value=mock_db):
+        esphome_utils._upsert_node_entities("kitchen.local", None, [entity], {1: state})
+
+    history_calls = [
+        c for c in mock_cursor.execute.call_args_list if "smarthome_sensor_history" in c.args[0]
+    ]
+    assert history_calls == []
+
+
 # --- Push (persistent, Phase 5) --------------------------------------------------------------
 
 
@@ -292,7 +419,9 @@ def test_handle_state_push_updates_known_entity():
         esphome_utils._handle_state_push("kitchen.local", entity_map, mock_state)
 
     cursor = mock_db.cursor.return_value
-    cursor.execute.assert_called_once()
+    # SA-9 Phase 2: now also SELECTs the entity's smarthome_devices id (to key a possible
+    # sensor-history row) before the UPDATE -- two calls, not one.
+    assert cursor.execute.call_count == 2
     sql, params = cursor.execute.call_args.args
     assert "UPDATE smarthome_devices" in sql
     assert "online = TRUE" in sql

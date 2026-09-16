@@ -37,6 +37,7 @@ import os  # used to allow execution of system level commands
 import sys
 from random import randint  # used for random number generator
 import bisect
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 import orjson
@@ -254,6 +255,22 @@ ENTITY_BASELINE_LOOKBACK_DAYS = 30
 # below this, a "typical" pattern isn't meaningfully established yet, and
 # publishing one would produce noisy false-positive anomalies.
 ENTITY_BASELINE_MIN_SAMPLES = 5
+
+# SA-9 Phase 2: how far back compute_entity_baselines() looks in smarthome_sensor_history when
+# building each ESPHome sensor's per-time-of-day-bucket climate baseline.
+CLIMATE_BASELINE_LOOKBACK_DAYS = 30
+
+# Minimum readings in a given time-of-day bucket before check_climate_deviation() trusts that
+# bucket's baseline -- same "degrade to silence below a reliability floor" precedent as
+# ENTITY_BASELINE_MIN_SAMPLES.
+CLIMATE_BASELINE_MIN_SAMPLES = 10
+
+# check_climate_deviation() fires only when the current reading is this far outside the
+# baseline's observed [typical_daily_min, typical_daily_max] range for the current time-of-day
+# bucket -- a margin, not a hard edge, so a reading right at the historical boundary doesn't
+# flap in and out of firing.
+CLIMATE_DEVIATION_MARGIN_C = 2.0
+CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT = 10
 
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
 # storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
@@ -622,6 +639,10 @@ class MyDaemon:
         # device-sourced from a single intermittent ESPHome sensor -- lower confidence than the
         # forecast-backed weather cards, so it sits just below them rather than competing.
         ("climate_advisory", 5.3, "check_climate_advisory"),
+        # SA-9 Phase 2: baseline-learned deviation-from-typical sibling to climate_advisory
+        # (5.3) -- same tier, same "absolute readout vs. deviation alert" split as
+        # weather (5) / weather_advisory (4.5).
+        ("climate_deviation", 5.4, "check_climate_deviation"),
         # mood is lower-urgency ambient context, not an actionable alert —
         # slotted just below weather rather than competing with priorities 1-5.
         ("mood", 6, "check_mood"),
@@ -699,6 +720,15 @@ class MyDaemon:
             frame.esphome_climate = context_frame.fetch_esphome_climate_snapshot()
         except Exception as e:
             logger.error(f"Context frame: esphome_climate build failed: {e}")
+
+        try:
+            if frame.local_dt:
+                bucket = timeofday.coarse_bucket(frame.local_dt.hour)
+                frame.esphome_climate_baselines = context_frame.fetch_esphome_climate_baselines(
+                    bucket
+                )
+        except Exception as e:
+            logger.error(f"Context frame: esphome_climate_baselines build failed: {e}")
 
         try:
             frame.environment = context_frame.fetch_environment_snapshot(ENV_NAME)
@@ -2242,6 +2272,68 @@ class MyDaemon:
 
         return None
 
+    def check_climate_deviation(self, frame):
+        """Baseline-learned sibling to check_climate_advisory() (SA-9 Phase 2): fires when the
+        current reading is unusual for this time of day, not just absolutely uncomfortable.
+        Separate rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split
+        as weather/weather_advisory -- so dismissing one doesn't suppress the other, and nothing
+        about the already-shipped climate_advisory needed to change.
+        """
+        climate = frame.esphome_climate
+        baselines = frame.esphome_climate_baselines
+        if not climate or not baselines:
+            return None
+
+        temp_baseline = baselines.get("temperature")
+        if (
+            climate["temperature_online"]
+            and climate["temperature_c"] is not None
+            and temp_baseline
+            and temp_baseline["sample_count"] >= temp_baseline["min_sample_count"]
+        ):
+            temp = climate["temperature_c"]
+            floor = temp_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_C
+            ceiling = temp_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_C
+            if temp < floor or temp > ceiling:
+                direction = "Cooler" if temp < floor else "Warmer"
+                return {
+                    "mode": "climate_deviation",
+                    "content": f"{direction} than typical for this time of day ({temp}°C)",
+                    "priority": 5.4,
+                    "data": {
+                        "temperature_c": temp,
+                        "typical_median_value": temp_baseline["typical_median_value"],
+                        "because": [f"{temp}°C outside typical {floor}-{ceiling}°C for now"],
+                    },
+                }
+
+        humidity_baseline = baselines.get("humidity")
+        if (
+            climate["humidity_online"]
+            and climate["humidity_pct"] is not None
+            and humidity_baseline
+            and humidity_baseline["sample_count"] >= humidity_baseline["min_sample_count"]
+        ):
+            humidity = climate["humidity_pct"]
+            floor = humidity_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
+            ceiling = humidity_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
+            if humidity < floor or humidity > ceiling:
+                direction = "Lower" if humidity < floor else "Higher"
+                return {
+                    "mode": "climate_deviation",
+                    "content": (
+                        f"{direction} humidity than typical for this time of day ({humidity}%)"
+                    ),
+                    "priority": 5.4,
+                    "data": {
+                        "humidity_pct": humidity,
+                        "typical_median_value": humidity_baseline["typical_median_value"],
+                        "because": [f"{humidity}% outside typical {floor}-{ceiling}% for now"],
+                    },
+                }
+
+        return None
+
     def check_time(self, frame):
         """Get current time card.
 
@@ -2716,6 +2808,57 @@ def compute_entity_baselines():
             )
         sample_counts = {bucket: len(samples) for bucket, samples in household_buckets.items()}
         logger.info(f"Household baseline sample counts: {sample_counts}")
+
+        # SA-9 Phase 2: per-ESPHome-sensor-entity, per-time-of-day-bucket climate baselines,
+        # entity_type='room' (reserved since SA-10/migration 033 for exactly this -- see
+        # migration 041's own comment on why entity_id keys on the sensor's own
+        # smarthome_devices.id rather than an actual room, which isn't populated anywhere yet).
+        # Bucketed by time-of-day (common.timeofday.coarse_bucket()), not day_bucket
+        # (weekday/weekend) -- indoor temperature varies by hour far more than by day of week.
+        climate_lookback_start = datetime.now(timezone.utc) - timedelta(
+            days=CLIMATE_BASELINE_LOOKBACK_DAYS
+        )
+        cursor.execute(
+            "SELECT smarthome_device_id, value, recorded_at FROM smarthome_sensor_history "
+            "WHERE recorded_at >= %s",
+            (climate_lookback_start,),
+        )
+        climate_readings = defaultdict(list)
+        for device_id, value, recorded_at in cursor.fetchall():
+            local_hour = (recorded_at + tz_offset).hour
+            climate_readings[(device_id, timeofday.coarse_bucket(local_hour))].append(value)
+
+        for (device_id, bucket), values in climate_readings.items():
+            if len(values) < CLIMATE_BASELINE_MIN_SAMPLES:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO entity_baselines
+                    (entity_type, entity_id, day_bucket, time_of_day_bucket,
+                     typical_median_value, typical_daily_min, typical_daily_max,
+                     sample_count, min_sample_count, computed_at)
+                VALUES ('room', %s, 'all', %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    typical_median_value = VALUES(typical_median_value),
+                    typical_daily_min = VALUES(typical_daily_min),
+                    typical_daily_max = VALUES(typical_daily_max),
+                    sample_count = VALUES(sample_count),
+                    min_sample_count = VALUES(min_sample_count),
+                    computed_at = VALUES(computed_at)
+                """,
+                (
+                    device_id,
+                    bucket,
+                    statistics.median(values),
+                    min(values),
+                    max(values),
+                    len(values),
+                    CLIMATE_BASELINE_MIN_SAMPLES,
+                    datetime.now(timezone.utc),
+                ),
+            )
+        climate_sample_counts = {k: len(v) for k, v in climate_readings.items()}
+        logger.info(f"Climate baseline sample counts: {climate_sample_counts}")
 
         db.commit()
     except pymysql.Error as e:

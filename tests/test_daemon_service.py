@@ -1151,6 +1151,11 @@ class TestDecideDisplays:
         "content": "ca",
         "priority": 5.3,
     }
+    CLIMATE_DEVIATION_CARD = {
+        "mode": "climate_deviation",
+        "content": "cd",
+        "priority": 5.4,
+    }
     MOOD_CARD = {
         "mode": "mood",
         "content": "Tuesday evening — moderate energy",
@@ -1241,6 +1246,7 @@ class TestDecideDisplays:
         check_weather_advisory=None,
         check_weather=None,
         check_climate_advisory=None,
+        check_climate_deviation=None,
         check_mood=None,
         check_household_composition=None,
         check_rhythm_break_anomaly=None,
@@ -1266,6 +1272,7 @@ class TestDecideDisplays:
         daemon.check_weather_advisory = MagicMock(return_value=check_weather_advisory)
         daemon.check_weather = MagicMock(return_value=check_weather)
         daemon.check_climate_advisory = MagicMock(return_value=check_climate_advisory)
+        daemon.check_climate_deviation = MagicMock(return_value=check_climate_deviation)
         daemon.check_mood = MagicMock(return_value=check_mood)
         daemon.check_household_composition = MagicMock(return_value=check_household_composition)
         daemon.check_rhythm_break_anomaly = MagicMock(return_value=check_rhythm_break_anomaly)
@@ -1334,6 +1341,7 @@ class TestDecideDisplays:
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
             check_climate_advisory=self.CLIMATE_ADVISORY_CARD,
+            check_climate_deviation=self.CLIMATE_DEVIATION_CARD,
             check_mood=self.MOOD_CARD,
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
@@ -1352,6 +1360,7 @@ class TestDecideDisplays:
         assert self.WEATHER_ADVISORY_CARD in result
         assert self.WEATHER_CARD in result
         assert self.CLIMATE_ADVISORY_CARD in result
+        assert self.CLIMATE_DEVIATION_CARD in result
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
         assert self.NOW_PLAYING_CARD in result
@@ -1440,6 +1449,7 @@ class TestDecideDisplays:
             check_weather_advisory=self.WEATHER_ADVISORY_CARD,
             check_weather=self.WEATHER_CARD,
             check_climate_advisory=self.CLIMATE_ADVISORY_CARD,
+            check_climate_deviation=self.CLIMATE_DEVIATION_CARD,
             check_mood=self.MOOD_CARD,
             check_household_composition=self.HOUSEHOLD_COMPOSITION_CARD,
             check_rhythm_break_anomaly=self.RHYTHM_BREAK_ANOMALY_CARD,
@@ -1459,10 +1469,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all twenty cards come back -- nothing dropped.
+        # rule fired exactly once, so all twenty-one cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 20 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 21 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -1485,6 +1495,7 @@ class TestDecideDisplays:
             "weather_advisory",
             "weather",
             "climate_advisory",
+            "climate_deviation",
             "cross_surface_continuity",
             "wind_down_signal",
             "mood",
@@ -2540,9 +2551,10 @@ class TestComputeEntityBaselines:
             (online_hour + timedelta(days=4), "online"),
             (online_hour + timedelta(days=4, minutes=60), "offline"),
         ]
-        # 3rd/4th/5th fetchall(): SA-3's eligible-residents query (none eligible), then
-        # SA-10's household aggregate query (no rows).
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], []]
+        # 3rd/4th/5th/6th fetchall(): SA-3's eligible-residents query (none eligible), SA-10's
+        # household aggregate query (no rows), then SA-9 Phase 2's smarthome_sensor_history
+        # query (no rows).
+        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
 
         compute_entity_baselines()
 
@@ -2578,7 +2590,7 @@ class TestComputeEntityBaselines:
             (online_hour, "online"),
             (online_hour + timedelta(minutes=60), "offline"),
         ]
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], []]
+        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
 
         compute_entity_baselines()
 
@@ -2641,6 +2653,7 @@ class TestComputeUserDepartureBaselines:
             [(89,), (128,)],  # Munja's claimed device ids
             timestamp_rows,  # union device_history timestamps for those device ids
             [],  # SA-10 household aggregate query
+            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -2674,7 +2687,7 @@ class TestComputeUserDepartureBaselines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], []]
+        mock_cursor.fetchall.side_effect = [[], [], [], []]
 
         compute_entity_baselines()
 
@@ -2703,6 +2716,7 @@ class TestComputeUserDepartureBaselines:
             [(7, "Munja")],
             [],  # no claimed devices for this user
             [],  # SA-10 household aggregate query
+            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -2737,7 +2751,7 @@ class TestComputeHouseholdBaselines:
         household_rows = [(2, 7, 22, 5)] * 15 + [  # 15 Mondays: weekday bucket
             (1, 9, 23, 3)
         ] * 15  # 15 Sundays: weekend bucket
-        mock_cursor.fetchall.side_effect = [[], [], household_rows]
+        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
 
         compute_entity_baselines()
 
@@ -2774,7 +2788,7 @@ class TestComputeHouseholdBaselines:
         mock_tz.return_value = 0
 
         household_rows = [(2, 7, 22, 5)] * (HOUSEHOLD_BASELINE_MIN_SAMPLES - 1)
-        mock_cursor.fetchall.side_effect = [[], [], household_rows]
+        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
 
         compute_entity_baselines()
 
@@ -2801,7 +2815,7 @@ class TestComputeHouseholdBaselines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], [(2, 7, 22, 5)] * 20]
+        mock_cursor.fetchall.side_effect = [[], [], [(2, 7, 22, 5)] * 20, []]
 
         compute_entity_baselines()
 
@@ -2811,6 +2825,104 @@ class TestComputeHouseholdBaselines:
             if "GROUP BY local_date" in call.args[0]
         ]
         assert len(household_query_calls) == 1
+
+
+class TestComputeClimateBaselines:
+    """Tests for compute_entity_baselines()'s SA-9 Phase 2 addition: entity_type='room' rows
+    built from smarthome_sensor_history, bucketed by common.timeofday.coarse_bucket() rather
+    than day_bucket (weekday/weekend) -- see migration 041's own comment for why."""
+
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_upserts_a_climate_baseline_that_clears_the_floor(self, mock_connect, mock_tz):
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_tz.return_value = 0  # UTC, so local_hour == recorded_at.hour
+
+        # 10 readings at hour=14 ("day" bucket) for smarthome_device_id 5.
+        base_day = datetime(2026, 8, 1, 14, 0)
+        readings = [(5, float(20 + i), base_day + timedelta(days=i)) for i in range(10)]
+        mock_cursor.fetchall.side_effect = [[], [], [], readings]
+
+        compute_entity_baselines()
+
+        climate_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
+        ]
+        assert len(climate_calls) == 1
+        params = climate_calls[0].args[1]
+        assert params[0] == 5  # entity_id (smarthome_device_id)
+        assert params[1] == "day"  # time_of_day_bucket
+        assert params[2] == 24.5  # typical_median_value (median of 20..29)
+        assert params[3] == 20.0  # typical_daily_min
+        assert params[4] == 29.0  # typical_daily_max
+        assert params[5] == 10  # sample_count
+        mock_db.commit.assert_called_once()
+
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_skips_a_bucket_below_the_sample_floor(self, mock_connect, mock_tz):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_BASELINE_MIN_SAMPLES,
+            compute_entity_baselines,
+        )
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_tz.return_value = 0
+
+        base_day = datetime(2026, 8, 1, 14, 0)
+        readings = [
+            (5, 22.0, base_day + timedelta(days=i)) for i in range(CLIMATE_BASELINE_MIN_SAMPLES - 1)
+        ]
+        mock_cursor.fetchall.side_effect = [[], [], [], readings]
+
+        compute_entity_baselines()
+
+        climate_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
+        ]
+        assert len(climate_calls) == 0
+        mock_db.commit.assert_called_once()
+
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_buckets_readings_by_time_of_day_separately(self, mock_connect, mock_tz):
+        """Morning and evening readings for the same entity must produce two independent
+        baseline rows, not get averaged together into one."""
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_tz.return_value = 0
+
+        base_day = datetime(2026, 8, 1, 8, 0)  # hour=8 -> "morning"
+        morning_readings = [(5, 18.0, base_day + timedelta(days=i)) for i in range(10)]
+        evening_base = datetime(2026, 8, 1, 19, 0)  # hour=19 -> "evening"
+        evening_readings = [(5, 23.0, evening_base + timedelta(days=i)) for i in range(10)]
+        mock_cursor.fetchall.side_effect = [[], [], [], morning_readings + evening_readings]
+
+        compute_entity_baselines()
+
+        climate_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
+        ]
+        buckets = {call.args[1][1] for call in climate_calls}
+        assert buckets == {"morning", "evening"}
 
 
 class TestCheckDepartureAnomaly:
@@ -4431,6 +4543,174 @@ class TestCheckClimateAdvisory:
         assert daemon.check_climate_advisory(frame) is None
 
 
+class TestCheckClimateDeviation:
+    """Tests for MyDaemon.check_climate_deviation() (SA-9 Phase 2) -- the baseline-learned
+    sibling to check_climate_advisory(); separate rule_id/mode so dismissing one doesn't
+    suppress the other."""
+
+    def _climate(self, **overrides):
+        climate = {
+            "temperature_c": 22.0,
+            "temperature_online": True,
+            "humidity_pct": 45,
+            "humidity_online": True,
+        }
+        climate.update(overrides)
+        return climate
+
+    def _baselines(self, **overrides):
+        baselines = {
+            "temperature": {
+                "typical_median_value": 22.0,
+                "typical_daily_min": 20.0,
+                "typical_daily_max": 24.0,
+                "sample_count": 12,
+                "min_sample_count": 10,
+            },
+            "humidity": {
+                "typical_median_value": 45.0,
+                "typical_daily_min": 40.0,
+                "typical_daily_max": 50.0,
+                "sample_count": 12,
+                "min_sample_count": 10,
+            },
+        }
+        baselines.update(overrides)
+        return baselines
+
+    def test_returns_none_when_no_climate_on_frame(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(esphome_climate=None, esphome_climate_baselines=self._baselines())
+        assert daemon.check_climate_deviation(frame) is None
+
+    def test_returns_none_when_no_baselines_on_frame(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(esphome_climate=self._climate(), esphome_climate_baselines=None)
+        assert daemon.check_climate_deviation(frame) is None
+
+    def test_returns_none_within_baseline_range(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(),
+            esphome_climate_baselines=self._baselines(),
+        )
+        assert daemon.check_climate_deviation(frame) is None
+
+    def test_fires_when_cooler_than_baseline_range(self):
+        from services.service_daemon.alfr3ddaemon import CLIMATE_DEVIATION_MARGIN_C, MyDaemon
+
+        daemon = MyDaemon()
+        temp = 20.0 - CLIMATE_DEVIATION_MARGIN_C - 1
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=temp),
+            esphome_climate_baselines=self._baselines(),
+        )
+        card = daemon.check_climate_deviation(frame)
+
+        assert card["mode"] == "climate_deviation"
+        assert card["priority"] == 5.4
+        assert "Cooler" in card["content"]
+        assert card["data"]["temperature_c"] == temp
+
+    def test_fires_when_warmer_than_baseline_range(self):
+        from services.service_daemon.alfr3ddaemon import CLIMATE_DEVIATION_MARGIN_C, MyDaemon
+
+        daemon = MyDaemon()
+        temp = 24.0 + CLIMATE_DEVIATION_MARGIN_C + 1
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=temp),
+            esphome_climate_baselines=self._baselines(),
+        )
+        card = daemon.check_climate_deviation(frame)
+
+        assert "Warmer" in card["content"]
+        assert card["data"]["temperature_c"] == temp
+
+    def test_fires_when_humidity_lower_than_baseline_range(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        humidity = 40.0 - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT - 1
+        frame = _make_frame(
+            esphome_climate=self._climate(humidity_pct=humidity),
+            esphome_climate_baselines=self._baselines(),
+        )
+        card = daemon.check_climate_deviation(frame)
+
+        assert "Lower" in card["content"]
+        assert card["data"]["humidity_pct"] == humidity
+
+    def test_fires_when_humidity_higher_than_baseline_range(self):
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
+            MyDaemon,
+        )
+
+        daemon = MyDaemon()
+        humidity = 50.0 + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT + 1
+        frame = _make_frame(
+            esphome_climate=self._climate(humidity_pct=humidity),
+            esphome_climate_baselines=self._baselines(),
+        )
+        card = daemon.check_climate_deviation(frame)
+
+        assert "Higher" in card["content"]
+        assert card["data"]["humidity_pct"] == humidity
+
+    def test_returns_none_below_min_sample_count(self):
+        """A baseline that hasn't cleared its own reliability floor yet must not fire, even if
+        the current reading is numerically outside its (unreliable) observed range."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        baselines = self._baselines(
+            temperature={
+                "typical_median_value": 22.0,
+                "typical_daily_min": 20.0,
+                "typical_daily_max": 24.0,
+                "sample_count": 3,
+                "min_sample_count": 10,
+            }
+        )
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=10.0),
+            esphome_climate_baselines=baselines,
+        )
+        assert daemon.check_climate_deviation(frame) is None
+
+    def test_ignores_a_stale_offline_reading(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=1.0, temperature_online=False),
+            esphome_climate_baselines=self._baselines(),
+        )
+        assert daemon.check_climate_deviation(frame) is None
+
+    def test_temperature_deviation_wins_over_simultaneous_humidity_deviation(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        frame = _make_frame(
+            esphome_climate=self._climate(temperature_c=1.0, humidity_pct=99.0),
+            esphome_climate_baselines=self._baselines(),
+        )
+        card = daemon.check_climate_deviation(frame)
+
+        assert "temperature_c" in card["data"]
+        assert "humidity_pct" not in card["data"]
+
+
 class TestCheckTime:
     """Tests for MyDaemon.check_time() -- previously exercised only indirectly
     via decide_displays() stubs, never as its own real (unmocked) call."""
@@ -4738,6 +5018,68 @@ class TestContextFrameFetchers:
         mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
 
         assert fetch_esphome_climate_snapshot() is None
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_baselines_returns_a_dict(self, mock_connect):
+        from services.service_daemon.utils.context_frame import (
+            fetch_esphome_climate_baselines,
+        )
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            ("Temperature", 22.5, 20.0, 25.0, 12, 10),
+            ("Humidity", 45.0, 40.0, 50.0, 12, 10),
+        ]
+
+        result = fetch_esphome_climate_baselines("day")
+
+        assert result == {
+            "temperature": {
+                "typical_median_value": 22.5,
+                "typical_daily_min": 20.0,
+                "typical_daily_max": 25.0,
+                "sample_count": 12,
+                "min_sample_count": 10,
+            },
+            "humidity": {
+                "typical_median_value": 45.0,
+                "typical_daily_min": 40.0,
+                "typical_daily_max": 50.0,
+                "sample_count": 12,
+                "min_sample_count": 10,
+            },
+        }
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_baselines_returns_none_values_when_no_baseline_yet(
+        self, mock_connect
+    ):
+        from services.service_daemon.utils.context_frame import (
+            fetch_esphome_climate_baselines,
+        )
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = []
+
+        result = fetch_esphome_climate_baselines("night")
+
+        assert result == {"temperature": None, "humidity": None}
+
+    @patch("services.service_daemon.utils.context_frame.pymysql.connect")
+    def test_fetch_esphome_climate_baselines_returns_none_on_db_error(self, mock_connect):
+        import pymysql
+
+        from services.service_daemon.utils.context_frame import (
+            fetch_esphome_climate_baselines,
+        )
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+
+        assert fetch_esphome_climate_baselines("day") is None
 
 
 class TestRoutingUtils:
