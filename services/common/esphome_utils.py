@@ -404,6 +404,34 @@ async def control_esphome_device_async(hostname, key, domain, command, params=No
 # --- Sync (periodic, upserts into smarthome_devices) ----------------------------------------
 
 
+def _entity_last_state(domain, entity, state):
+    """Serializes one entity's state into the JSON stored in smarthome_devices.last_state.
+
+    sensor/binary_sensor are normalized into the same {"state": ..., "attributes": {...}} shape
+    ha_utils.py already produces for Home Assistant entities -- ControlBlade.jsx and
+    FavoriteDeviceTile.jsx read that shape directly (state.state, state.attributes.
+    unit_of_measurement) and would otherwise get ESPHome's raw nested
+    {"state": {"state": <value>, "key": ..., ...}} object handed straight into JSX, which
+    crashes React ("Objects are not valid as a React child") the moment a sensor's ControlBlade
+    is opened. Other domains keep the original raw shape for now -- ESPHome light/switch/climate
+    control already works off esp_entity_id's key, not this field, so a full HA-shape
+    normalization (brightness/position/etc. attributes) is out of scope here; only the domains
+    that get their raw value *displayed* needed fixing.
+    """
+    if domain in ("sensor", "binary_sensor"):
+        attributes = {}
+        unit = getattr(entity, "unit_of_measurement", "") or ""
+        if unit:
+            attributes["unit_of_measurement"] = unit
+        return {"state": state.state if state else None, "attributes": attributes}
+
+    return {
+        "object_id": entity.object_id,
+        "key": entity.key,
+        "state": state.to_dict() if state else None,
+    }
+
+
 def _upsert_node_entities(hostname, device_info, entities, states):
     """Shared by accept_esphome_node_async (initial sync of one node) and
     sync_esphome_devices_async (periodic sync of all accepted nodes). Mirrors
@@ -433,13 +461,7 @@ def _upsert_node_entities(hostname, device_info, entities, states):
         name = entity.name or entity.object_id or esp_entity_id
         state = states.get(entity.key)
         online = state is not None
-        last_state = orjson.dumps(
-            {
-                "object_id": entity.object_id,
-                "key": entity.key,
-                "state": state.to_dict() if state else None,
-            }
-        ).decode("utf-8")
+        last_state = orjson.dumps(_entity_last_state(domain, entity, state)).decode("utf-8")
 
         cursor.execute(
             "SELECT id FROM smarthome_devices WHERE source = 'esphome' AND esp_entity_id = %s",
@@ -539,13 +561,8 @@ def _handle_state_push(hostname, entity_map, state):
     if entity is None:
         return
     esp_entity_id = f"{hostname}:{state.key}"
-    last_state = orjson.dumps(
-        {
-            "object_id": entity.object_id,
-            "key": entity.key,
-            "state": state.to_dict(),
-        }
-    ).decode("utf-8")
+    domain = _ENTITY_DOMAIN_MAP.get(type(entity).__name__)
+    last_state = orjson.dumps(_entity_last_state(domain, entity, state)).decode("utf-8")
     db = get_connection()
     cursor = db.cursor()
     cursor.execute(

@@ -12,9 +12,49 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aioesphomeapi import FanSpeed
+from aioesphomeapi import FanSpeed, LightInfo, LightState, SensorInfo, SensorState
 
 from common import esphome_utils
+
+
+# --- last_state serialization (sensor/binary_sensor HA-shape normalization) ----------------
+# ControlBlade.jsx/FavoriteDeviceTile.jsx read last_state as HA's {"state": ..., "attributes":
+# {...}} shape directly -- ESPHome's raw per-entity dict nests the actual value one level
+# deeper, which used to get handed straight into JSX and crash React ("Objects are not valid as
+# a React child") the moment a sensor's ControlBlade was opened against real hardware.
+
+
+def test_entity_last_state_normalizes_sensor_to_ha_shape():
+    entity = SensorInfo(
+        object_id="temperature", key=1, name="Temperature", unit_of_measurement="°C"
+    )
+    state = SensorState(key=1, state=24.9)
+
+    result = esphome_utils._entity_last_state("sensor", entity, state)
+
+    assert result == {"state": 24.9, "attributes": {"unit_of_measurement": "°C"}}
+
+
+def test_entity_last_state_sensor_with_no_state_yet():
+    entity = SensorInfo(
+        object_id="temperature", key=1, name="Temperature", unit_of_measurement="°C"
+    )
+
+    result = esphome_utils._entity_last_state("sensor", entity, None)
+
+    assert result == {"state": None, "attributes": {"unit_of_measurement": "°C"}}
+
+
+def test_entity_last_state_leaves_other_domains_as_raw_shape():
+    """light/switch/climate/etc. keep the original nested shape -- this fix is scoped to the
+    domains that get their raw value rendered directly (sensor/binary_sensor), not a full
+    HA-shape normalization of every domain."""
+    entity = LightInfo(object_id="light", key=2, name="Light")
+    state = LightState(key=2, state=True)
+
+    result = esphome_utils._entity_last_state("light", entity, state)
+
+    assert result == {"object_id": "light", "key": 2, "state": state.to_dict()}
 
 
 # --- Config -------------------------------------------------------------------------------
