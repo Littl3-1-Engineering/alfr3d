@@ -1,6 +1,7 @@
 """Spotify / music routes."""
 
 import logging
+from datetime import datetime, timezone
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,7 +19,12 @@ def _current_situational_inputs():
     inputs `alfr3ddaemon.py`'s `check_gatherings()` computes for its
     gathering-triggered card, but on-demand and independent of "is a guest
     home", so `/music/recommend/playlist` can resolve a specific playlist at
-    any time, not only during a detected gathering."""
+    any time, not only during a detected gathering.
+
+    Also computes the same continuous-stay guest energy bonus check_gatherings() does (see
+    common.spotify_utils.aggregate_guest_energy()), so this on-demand endpoint never visibly
+    disagrees with the gathering-triggered card about a long-staying guest's effect on energy.
+    """
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -35,6 +41,29 @@ def _current_situational_inputs():
         row = cursor.fetchone()
         guest_count = row[0] if row and row[0] else 0
         total_count = row[1] if row and row[1] else 0
+
+        cursor.execute(
+            """
+            SELECT continuous_stay_since
+            FROM user u
+            JOIN states s ON u.state = s.id
+            JOIN user_types ut ON u.type = ut.id
+            WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
+            """
+        )
+        now = datetime.now(timezone.utc)
+        guest_stay_days = []
+        for (continuous_stay_since,) in cursor.fetchall():
+            if continuous_stay_since:
+                since = (
+                    continuous_stay_since.replace(tzinfo=timezone.utc)
+                    if continuous_stay_since.tzinfo is None
+                    else continuous_stay_since
+                )
+                guest_stay_days.append(max(0.0, (now - since).total_seconds() / 86400))
+            else:
+                guest_stay_days.append(0.0)
+        guest_energy_bonus = spotify_utils.aggregate_guest_energy(guest_stay_days)
 
         cursor.execute(
             "SELECT description, subjective_feel FROM environment WHERE name = %s",
@@ -58,6 +87,7 @@ def _current_situational_inputs():
         time_of_day,
         {"description": desc, "subjective_feel": subj},
         spotify_utils.is_party_night(local_dt),
+        guest_energy_bonus,
     )
 
 
@@ -372,7 +402,7 @@ async def recommend_playlist():
     nothing matched — callers should degrade gracefully, not treat it as an error.
     """
     try:
-        total_people, guest_count, time_of_day, weather, is_party_night = (
+        total_people, guest_count, time_of_day, weather, is_party_night, guest_energy_bonus = (
             _current_situational_inputs()
         )
         reco = spotify_utils.recommend(
@@ -381,6 +411,7 @@ async def recommend_playlist():
             time_of_day=time_of_day,
             weather=weather,
             is_party_night=is_party_night,
+            guest_energy_bonus=guest_energy_bonus,
         )
         hint = reco.get("playlist_hint") or reco.get("mood") or ""
         playlist, err = spotify_utils.find_playlist_for_hint(hint, reco.get("genre", ""))

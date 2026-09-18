@@ -23,6 +23,7 @@ CREATE TABLE `user` (
   `title` VARCHAR(64) NULL DEFAULT NULL, -- Free-text form of address the user prefers Alfred to use (e.g. "boss", "Dr. Athos", or a first name)
   `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
   `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
+  `continuous_stay_since` DATETIME NULL DEFAULT NULL, -- Start of this guest's current unbroken stay; NULL for non-guests or a guest not currently mid-stay
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Timestamp when user was created
   `environment_id` INTEGER NULL DEFAULT NULL, -- ID of the environment the user belongs to (foreign key to environment.id)
   `type` INTEGER NULL DEFAULT NULL, -- User type (references user_types table: 1=technoking, 2=resident, 3=guest)

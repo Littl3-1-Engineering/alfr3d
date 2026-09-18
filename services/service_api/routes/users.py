@@ -147,6 +147,12 @@ async def update_user(user_id: int, data: UserUpdate, user: CurrentUser = Depend
                 if type_id:
                     updates.append("type = %s")
                     params.append(type_id[0])
+                    if requested_type != "guest":
+                        # Continuous-stay guest decay: clear the stay-start when an admin
+                        # moves someone off the guest role (e.g. promoting them to resident,
+                        # the guest_overstay_advisory card's own suggested action), so a later
+                        # re-designation back to guest doesn't resurrect a stale stay.
+                        updates.append("continuous_stay_since = NULL")
             if updates:
                 params.append(user_id)
                 cursor.execute(f"UPDATE user SET {', '.join(updates)} WHERE id = %s", params)

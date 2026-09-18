@@ -9,6 +9,7 @@ spotify_client_secret, spotify_redirect_uri); OAuth tokens are persisted in
 
 import base64
 import logging
+import math
 import os
 from datetime import datetime, timedelta
 
@@ -645,8 +646,52 @@ def is_party_night(now=None):
 _PARTY_TIER_ENERGY = 0.8
 _WEEKNIGHT_ENERGY_CAP = 0.79
 
+# Continuous-stay guest decay: a guest's contribution to `energy` fades the longer they've been
+# continuously present (service_user.app.update_user_state() maintains user.continuous_stay_since),
+# eventually going negative rather than just neutral -- a guest who's overstayed can genuinely
+# drag the household energy down, not just stop lifting it.
+GUEST_STAY_ENERGY_PEAK = 0.08  # = today's flat bonus; day-0 arrival behavior is unchanged
+GUEST_STAY_ENERGY_FLOOR = -0.06  # smaller magnitude than PEAK: one overstaying guest can't drag
+# the score down as hard as a houseful of fresh guests lifts it
+GUEST_STAY_ENERGY_TAU_DAYS = 16.5  # solved so the curve's zero crossing lands at day 14:
+# FLOOR + (PEAK-FLOOR)*exp(-14/TAU) = 0  =>  TAU = -14 / ln(-FLOOR/(PEAK-FLOOR)) ~= 16.5
 
-def recommend(total_people, guest_count, time_of_day, weather=None, is_party_night=False):
+
+def guest_stay_energy_contribution(days_continuous):
+    """Bounded, signed, front-loaded-decay energy contribution for one guest.
+
+    GUEST_STAY_ENERGY_PEAK at day 0, decaying fastest early and tapering toward
+    GUEST_STAY_ENERGY_FLOOR as days grow, crossing zero around day 14.
+    """
+    days_continuous = max(0.0, days_continuous)
+    contribution = GUEST_STAY_ENERGY_FLOOR + (
+        GUEST_STAY_ENERGY_PEAK - GUEST_STAY_ENERGY_FLOOR
+    ) * math.exp(-days_continuous / GUEST_STAY_ENERGY_TAU_DAYS)
+    return max(GUEST_STAY_ENERGY_FLOOR, min(GUEST_STAY_ENERGY_PEAK, contribution))
+
+
+def aggregate_guest_energy(days_continuous_list):
+    """Mean guest_stay_energy_contribution() across every currently-online guest.
+
+    Mean, not sum, so N simultaneous guests can't push the total past
+    [GUEST_STAY_ENERGY_FLOOR, GUEST_STAY_ENERGY_PEAK]; a brand-new guest alongside a
+    long-term one still nets positive rather than being fully cancelled out.
+    """
+    if not days_continuous_list:
+        return 0.0
+    return sum(guest_stay_energy_contribution(d) for d in days_continuous_list) / len(
+        days_continuous_list
+    )
+
+
+def recommend(
+    total_people,
+    guest_count,
+    time_of_day,
+    weather=None,
+    is_party_night=False,
+    guest_energy_bonus=None,
+):
     """
     Deterministic mood/genre/energy recommendation from situational inputs.
     Lives in `common` (rather than only `service_daemon`) so both the daemon
@@ -671,6 +716,11 @@ def recommend(total_people, guest_count, time_of_day, weather=None, is_party_nig
                  energy is capped below the "dance / house / party hits"
                  tier -- a Tuesday gathering of 8 shouldn't sound like a
                  Saturday one just because the headcount matches.
+        guest_energy_bonus: precomputed aggregate_guest_energy() across the guests actually
+                 present (continuous-stay decay, can be negative for a long-overstaying
+                 guest). Replaces the flat +GUEST_STAY_ENERGY_PEAK bonus when provided; a
+                 caller that hasn't computed per-guest decay yet (leaves this None) gets that
+                 flat bonus as a conservative default, same posture as is_party_night.
 
     Returns:
         dict with keys: 'mood','genre','energy'(0-1),'tempo_hint','playlist_hint'
@@ -695,8 +745,10 @@ def recommend(total_people, guest_count, time_of_day, weather=None, is_party_nig
     else:
         energy = 0.9
 
-    if guest_count and guest_count > 0:
-        energy += 0.08
+    if guest_energy_bonus is not None:
+        energy += guest_energy_bonus
+    elif guest_count and guest_count > 0:
+        energy += GUEST_STAY_ENERGY_PEAK
 
     if time_of_day in ("evening", "night"):
         energy += 0.05

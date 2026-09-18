@@ -16,7 +16,15 @@ global Spotify search, gracefully returning None if Spotify isn't connected.
 import logging
 from typing import Dict, Any, Optional
 
-from common.spotify_utils import recommend, _normalize_time_of_day, is_party_night  # noqa: F401
+from common.spotify_utils import (  # noqa: F401
+    recommend,
+    _normalize_time_of_day,
+    is_party_night,
+    guest_stay_energy_contribution,
+    aggregate_guest_energy,
+    GUEST_STAY_ENERGY_PEAK,
+    GUEST_STAY_ENERGY_FLOOR,
+)
 
 logger = logging.getLogger("SpotifyUtils")
 

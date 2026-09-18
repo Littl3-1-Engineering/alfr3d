@@ -100,7 +100,9 @@ def is_docker_available() -> bool:
         logger.warning(f"Docker check failed: {str(e)}")
 
     if available != _docker_check_state["available"]:
-        logger.info("Docker CLI is available via socket" if available else "Docker CLI became unavailable")
+        logger.info(
+            "Docker CLI is available via socket" if available else "Docker CLI became unavailable"
+        )
     _docker_check_state["available"] = available
     _docker_check_state["checked_at"] = now
     return available
@@ -292,7 +294,7 @@ def _fetch_users():
         cursor.execute(
             """
             SELECT u.id, u.username, u.email, u.about_me, s.state, ut.type,
-                   u.last_online, u.created_at, u.title
+                   u.last_online, u.created_at, u.title, u.continuous_stay_since
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
@@ -312,6 +314,10 @@ def _fetch_users():
                 "last_online": row[6].isoformat() if row[6] else None,
                 "created_at": row[7].isoformat() if row[7] else None,
                 "title": row[8],
+                # Continuous-stay guest decay: when this guest's current unbroken stay began;
+                # NULL for non-guests or a guest not currently mid-stay. See
+                # service_user.app.update_user_state()/common.spotify_utils.aggregate_guest_energy().
+                "continuous_stay_since": row[9].isoformat() if row[9] else None,
             }
             for row in cursor.fetchall()
         ]

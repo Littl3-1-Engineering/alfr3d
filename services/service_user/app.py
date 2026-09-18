@@ -40,6 +40,14 @@ MYSQL_PSWD = os.environ["MYSQL_PSWD"]
 MYSQL_DB = os.environ["MYSQL_NAME"]
 ALFR3D_ENV_NAME = os.environ["ALFR3D_ENV_NAME"]
 
+# A guest offline for at least this long before coming back online is treated as starting a
+# fresh stay (continuous_stay_since resets) rather than continuing their current one -- reuses
+# speak_welcome()'s own existing "It's been a while" tier (time_away_hours >= 24) as the
+# same-stay/new-stay boundary, so a day trip doesn't reset the clock but an overnight-or-longer
+# absence does. See continuous-stay guest decay
+# (common.spotify_utils.guest_stay_energy_contribution).
+CONTINUOUS_STAY_RESET_GAP_HOURS = 24
+
 producer = None
 while producer is None:
     try:
@@ -367,6 +375,37 @@ def update_user_state(user, cursor, db, stat, producer, last_online):
             if not usr_type:
                 logger.error("User type not found")
                 return
+            if usr_type[1].lower() == "guest":
+                # Continuous-stay guest decay: figure out whether this is the same stay
+                # continuing (short gap, e.g. a day trip) or a fresh one starting (a real
+                # departure) using the same pre-update last_online (user[6]) speak_welcome()
+                # uses for its own "how long were they gone" tiering.
+                try:
+                    prior_last_online = user[6]
+                    if prior_last_online:
+                        tz = prior_last_online.tzinfo
+                        prior_last_online_aware = (
+                            prior_last_online.replace(tzinfo=timezone.utc)
+                            if tz is None
+                            else prior_last_online
+                        )
+                        hours_away = (time_now - prior_last_online_aware).total_seconds() / 3600
+                    else:
+                        hours_away = CONTINUOUS_STAY_RESET_GAP_HOURS
+                except Exception:
+                    hours_away = CONTINUOUS_STAY_RESET_GAP_HOURS
+
+                if hours_away >= CONTINUOUS_STAY_RESET_GAP_HOURS:
+                    cursor.execute(
+                        "UPDATE user SET continuous_stay_since = %s WHERE username = %s",
+                        (time_now, user[1]),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE user SET continuous_stay_since = "
+                        "COALESCE(continuous_stay_since, %s) WHERE username = %s",
+                        (time_now, user[1]),
+                    )
             if not is_alfr3d_self:
                 speak_welcome(producer, user[1], usr_type[1], user[6])
             event = {
