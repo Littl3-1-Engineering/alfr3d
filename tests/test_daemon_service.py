@@ -1137,6 +1137,11 @@ class TestDecideDisplays:
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
     NOW_PLAYING_CARD = {"mode": "music", "content": "np", "priority": 3.1}
+    GUEST_OVERSTAY_ADVISORY_CARD = {
+        "mode": "guest_overstay_advisory",
+        "content": "goa",
+        "priority": 3.15,
+    }
     PARTY_ADVISORY_CARD = {"mode": "party_advisory", "content": "pa", "priority": 3.2}
     FOCUS_CARD = {"mode": "focus_needed", "content": "f", "priority": 3.5}
     EMAIL_CARD = {"mode": "email", "content": "em", "priority": 4}
@@ -1240,6 +1245,7 @@ class TestDecideDisplays:
         check_travel=None,
         check_gatherings=None,
         check_now_playing=None,
+        check_guest_overstay_advisory=None,
         check_party_advisory=None,
         check_focus_needed=None,
         check_emails=None,
@@ -1266,6 +1272,7 @@ class TestDecideDisplays:
         daemon.check_travel = MagicMock(return_value=check_travel)
         daemon.check_gatherings = MagicMock(return_value=check_gatherings)
         daemon.check_now_playing = MagicMock(return_value=check_now_playing)
+        daemon.check_guest_overstay_advisory = MagicMock(return_value=check_guest_overstay_advisory)
         daemon.check_party_advisory = MagicMock(return_value=check_party_advisory)
         daemon.check_focus_needed = MagicMock(return_value=check_focus_needed)
         daemon.check_emails = MagicMock(return_value=check_emails)
@@ -1335,6 +1342,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_gatherings=self.MUSIC_CARD,
             check_now_playing=self.NOW_PLAYING_CARD,
+            check_guest_overstay_advisory=self.GUEST_OVERSTAY_ADVISORY_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
@@ -1364,6 +1372,7 @@ class TestDecideDisplays:
         assert self.MOOD_CARD in result
         assert self.FOCUS_CARD in result
         assert self.NOW_PLAYING_CARD in result
+        assert self.GUEST_OVERSTAY_ADVISORY_CARD in result
         assert self.PARTY_ADVISORY_CARD in result
         assert self.HOUSEHOLD_COMPOSITION_CARD in result
         assert self.RHYTHM_BREAK_ANOMALY_CARD in result
@@ -1443,6 +1452,7 @@ class TestDecideDisplays:
             check_events=self.EVENT_CARD,
             check_gatherings=self.MUSIC_CARD,
             check_now_playing=self.NOW_PLAYING_CARD,
+            check_guest_overstay_advisory=self.GUEST_OVERSTAY_ADVISORY_CARD,
             check_party_advisory=self.PARTY_ADVISORY_CARD,
             check_focus_needed=self.FOCUS_CARD,
             check_emails=self.EMAIL_CARD,
@@ -1469,10 +1479,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all twenty-one cards come back -- nothing dropped.
+        # rule fired exactly once, so all twenty-two cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 21 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 22 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -1488,6 +1498,7 @@ class TestDecideDisplays:
             "departure_anomaly",
             "music",
             "music",
+            "guest_overstay_advisory",
             "party_advisory",
             "focus_needed",
             "attention_focus",
