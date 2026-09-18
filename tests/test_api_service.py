@@ -69,8 +69,8 @@ def test_api_get_users(mock_db_connection, api_client):
     _mock_connection(
         mock_db_connection,
         [
-            (1, "user1", "email1", "about1", "online", "resident", None, None, "boss"),
-            (2, "user2", "email2", "about2", "offline", "guest", None, None, None),
+            (1, "user1", "email1", "about1", "online", "resident", None, None, "boss", None),
+            (2, "user2", "email2", "about2", "offline", "guest", None, None, None, None),
         ],
     )
 
@@ -82,6 +82,7 @@ def test_api_get_users(mock_db_connection, api_client):
     assert data[0]["name"] == "user1"
     assert data[0]["title"] == "boss"
     assert data[1]["title"] is None
+    assert data[1]["continuous_stay_since"] is None
 
 
 @patch("dependencies.db_connection")
