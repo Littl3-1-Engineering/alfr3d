@@ -221,6 +221,9 @@ CARD_SUBJECT_KEY_EXTRACTORS = {
     # SA-3: departure_anomaly is rhythm_break_anomaly's human analogue -- dismissing one
     # resident's "still home" card must not suppress a different resident's.
     "departure_anomaly": lambda card: card.get("entity_name") or "",
+    # Continuous-stay guest decay: dismissing one overstaying guest's advisory must not
+    # suppress a different guest's.
+    "guest_overstay_advisory": lambda card: card.get("entity_name") or "",
 }
 
 # Cards whose `urgent` field is true are never suppressed regardless of interaction history --
@@ -238,7 +241,11 @@ CARD_SUPPRESSION_HISTORY_LIMIT = 10
 # interaction data yet to tune it against (same caveat as every other threshold in this file).
 # Per-mode override via CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.
 CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES = 60
-CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {}
+CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
+    # Continuous-stay guest decay: the underlying signal (days-of-stay) only changes once a
+    # day, so re-showing this more than daily is pure noise on a signal that hasn't moved.
+    "guest_overstay_advisory": 1440,
+}
 
 # A card identity shown this many cycles in a row with no interaction at all (no dismiss, no
 # tap) gets suppressed until its underlying state changes (i.e. until something -- a different
@@ -318,6 +325,12 @@ DEPARTURE_BASELINE_MAX_SPREAD_HOURS = 4
 # card, mirroring RHYTHM_BREAK_GRACE_MINUTES's reasoning at the coarser (hour, not minute)
 # granularity appropriate for a once-a-day event.
 DEPARTURE_ANOMALY_GRACE_HOURS = 1.5
+
+# Continuous-stay guest decay: max how far check_gatherings() can nudge its own priority-3 slot
+# as its guests' decayed energy (spotify_utils.aggregate_guest_energy()) drops toward
+# spotify_utils.GUEST_STAY_ENERGY_FLOOR. 0.08 leaves a 0.02 cushion below now_playing's 3.1, so
+# a fully-decayed guest population never crosses into the next rule's priority band.
+GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 
 # check_travel() (SA-6): fires once the computed leave-by time is within this many minutes of
 # frame.now, in either direction -- gives advance notice before the leave-by moment rather than
@@ -620,6 +633,13 @@ class MyDaemon:
         # recommendation. Priority 3.2 keeps it right after the card it's
         # reacting to, ahead of focus_needed (3.5).
         ("party_advisory", 3.2, "check_party_advisory"),
+        # Continuous-stay guest decay: fires once a guest's decayed energy contribution has
+        # gone negative (day ~14+), suggesting the household resolve the situation -- promote
+        # to resident, or address the overstay -- before it drags energy down further. Priority
+        # 3.15 sits it between now_playing (3.1) and party_advisory (3.2): it reacts to the same
+        # guest-presence signal as music (3), but is a slower-moving, less time-sensitive
+        # observation than either neighbor.
+        ("guest_overstay_advisory", 3.15, "check_guest_overstay_advisory"),
         # A call starting soon is more actionable/time-boxed than the ambient
         # "should I play music" gathering check, but not as centrally
         # orchestrating as an event departure — priority 3.5 sits it directly
@@ -1043,6 +1063,37 @@ class MyDaemon:
             },
         }
 
+    def _online_guest_stay_days(self, cursor, now):
+        """Continuous-stay guest decay: days-of-continuous-stay for every currently-online
+        guest, shared by check_gatherings() (energy/priority) and
+        check_guest_overstay_advisory() (the resolve-this nudge) so both read the same
+        underlying signal. NULL continuous_stay_since (not yet backfilled, or a stay that
+        hasn't started per service_user.app.update_user_state()) is treated as a fresh
+        arrival (0 days) rather than fabricating an overstay from missing data.
+        """
+        cursor.execute(
+            """
+            SELECT username, continuous_stay_since
+            FROM user u
+            JOIN states s ON u.state = s.id
+            JOIN user_types ut ON u.type = ut.id
+            WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
+            """
+        )
+        results = []
+        for username, continuous_stay_since in cursor.fetchall():
+            if continuous_stay_since:
+                since = (
+                    continuous_stay_since.replace(tzinfo=timezone.utc)
+                    if continuous_stay_since.tzinfo is None
+                    else continuous_stay_since
+                )
+                days = max(0.0, (now - since).total_seconds() / 86400)
+            else:
+                days = 0.0
+            results.append((username, days))
+        return results
+
     def check_gatherings(self, frame):
         """Check for gatherings (>3 guests/residents online).
 
@@ -1094,12 +1145,20 @@ class MyDaemon:
                     "subjective_feel": environment.get("subjective_feel"),
                 }
 
+                guest_stays = self._online_guest_stay_days(
+                    cursor, frame.now or datetime.now(timezone.utc)
+                )
+                guest_energy_bonus = spotify_utils.aggregate_guest_energy(
+                    [days for _, days in guest_stays]
+                )
+
                 reco = spotify_utils.recommend(
                     total_people=total_count,
                     guest_count=guest_count,
                     time_of_day=time_of_day,
                     weather=weather_info,
                     is_party_night=spotify_utils.is_party_night(local_dt),
+                    guest_energy_bonus=guest_energy_bonus,
                 )
                 logger.info(f"Recommendation: {reco}")
 
@@ -1126,10 +1185,27 @@ class MyDaemon:
 
                 display_name = playlist.get("name") if playlist else hint
                 content = f"Play {display_name} ({reco['genre']}, energy={reco['energy']})"
+
+                # Continuous-stay guest decay: demote this card's own priority as its guests'
+                # decayed energy drops toward the floor -- a houseful of long-staying guests
+                # shouldn't keep surfacing as prominently as a fresh gathering does.
+                span = spotify_utils.GUEST_STAY_ENERGY_PEAK - spotify_utils.GUEST_STAY_ENERGY_FLOOR
+                penalty = (
+                    GUEST_CARD_PRIORITY_MAX_DEMOTION
+                    * (spotify_utils.GUEST_STAY_ENERGY_PEAK - guest_energy_bonus)
+                    / span
+                )
+                because = [f"{guest_count} guest(s) online", f"{time_of_day} time of day"]
+                because.extend(
+                    f"{username}: {days:.0f}d continuous, contribution "
+                    f"{spotify_utils.guest_stay_energy_contribution(days):+.2f}"
+                    for username, days in guest_stays
+                )
+
                 card = {
                     "mode": "music",
                     "content": content,
-                    "priority": 3,
+                    "priority": round(3.0 + penalty, 3),
                     "data": {
                         "mood": reco.get("mood"),
                         "genre": reco.get("genre"),
@@ -1138,10 +1214,8 @@ class MyDaemon:
                         "guest_count": guest_count,
                         "total_count": total_count,
                         "time_of_day": time_of_day,
-                        "because": [
-                            f"{guest_count} guest(s) online",
-                            f"{time_of_day} time of day",
-                        ],
+                        "guest_energy_contribution": round(guest_energy_bonus, 3),
+                        "because": because,
                     },
                 }
                 if playlist:
@@ -1159,6 +1233,64 @@ class MyDaemon:
             return None
         except pymysql.Error as e:
             logger.error("Gathering check error: " + str(e))
+            if db:
+                db.rollback()
+            return None
+        finally:
+            if db:
+                db.close()
+
+    def check_guest_overstay_advisory(self, frame):
+        """Continuous-stay guest decay: once a guest's decayed energy contribution
+        (spotify_utils.guest_stay_energy_contribution(), see check_gatherings()/
+        _online_guest_stay_days()) has gone negative -- day ~14+ of an unbroken stay -- nudge
+        the household to actually resolve the situation before their continued presence drags
+        the household energy down further: promote them to resident, or address the overstay.
+
+        Only one card per cycle, same "single most-overdue" precedent as
+        check_departure_anomaly()/check_rhythm_break_anomaly() -- picks the guest whose
+        contribution has decayed furthest negative. CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE
+        keeps this from re-firing more than once a day, since the underlying signal (days of
+        stay) only moves that slowly.
+        """
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            guest_stays = self._online_guest_stay_days(
+                cursor, frame.now or datetime.now(timezone.utc)
+            )
+            overstaying = [
+                (spotify_utils.guest_stay_energy_contribution(days), username, days)
+                for username, days in guest_stays
+            ]
+            overstaying = [row for row in overstaying if row[0] < 0]
+            if not overstaying:
+                return None
+
+            overstaying.sort()
+            contribution, username, days = overstaying[0]
+            return {
+                "mode": "guest_overstay_advisory",
+                "content": (
+                    f"{username} has been staying continuously for {int(days)} day(s) — "
+                    "consider promoting them to resident, or addressing the overstay"
+                ),
+                "priority": 3.15,
+                "entity_name": username,
+                "data": {
+                    "days_continuous": round(days, 1),
+                    "energy_contribution": round(contribution, 3),
+                    "because": [
+                        f"{int(days)} days of continuous stay",
+                        f"energy contribution {contribution:+.2f} (negative past day 14)",
+                    ],
+                },
+            }
+        except pymysql.Error as e:
+            logger.error("Guest overstay advisory check error: " + str(e))
             if db:
                 db.rollback()
             return None
