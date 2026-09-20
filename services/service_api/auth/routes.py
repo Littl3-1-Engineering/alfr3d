@@ -108,6 +108,12 @@ async def login(data: LoginRequest, request: Request):
 
 @router.post("/refresh")
 async def refresh(data: RefreshRequest):
+    # Grace-window replay: a duplicate redemption of a token this same process already rotated
+    # (see auth/tokens.py's module docstring) gets the prior result instead of 401ing.
+    cached = tokens.get_cached_rotation_result(data.refresh_token)
+    if cached is not None:
+        return cached
+
     user_id = tokens.redeem_refresh_token(data.refresh_token)
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
@@ -123,7 +129,9 @@ async def refresh(data: RefreshRequest):
         raise HTTPException(status_code=401, detail="User no longer exists")
 
     tokens.revoke_refresh_token(data.refresh_token)
-    return _issue_tokens(user_id, row[0])
+    result = _issue_tokens(user_id, row[0])
+    tokens.cache_rotation_result(data.refresh_token, result)
+    return result
 
 
 @router.post("/logout")

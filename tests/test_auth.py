@@ -553,26 +553,59 @@ def test_logout_revokes_the_given_refresh_token():
 
 
 def test_refresh_rejects_invalid_token():
-    with patch.object(routes.tokens, "redeem_refresh_token", return_value=None):
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(routes.refresh(RefreshRequest(refresh_token="bad-token")))
+    with patch.object(routes.tokens, "get_cached_rotation_result", return_value=None):
+        with patch.object(routes.tokens, "redeem_refresh_token", return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(routes.refresh(RefreshRequest(refresh_token="bad-token")))
     assert exc_info.value.status_code == 401
 
 
 def test_refresh_rotates_token_and_issues_new_access_token():
     mock_db = MagicMock()
     mock_db.cursor.return_value.fetchone.return_value = ("resident",)
-    with patch.object(routes.tokens, "redeem_refresh_token", return_value=9):
-        with patch.object(routes.tokens, "revoke_refresh_token") as mock_revoke:
-            with patch.object(routes.tokens, "issue_refresh_token", return_value="new-refresh"):
-                with patch.object(routes, "db_connection") as mock_conn:
-                    mock_conn.return_value.__enter__.return_value = mock_db
-                    result = asyncio.run(routes.refresh(RefreshRequest(refresh_token="old-token")))
+    with patch.object(routes.tokens, "get_cached_rotation_result", return_value=None):
+        with patch.object(routes.tokens, "cache_rotation_result") as mock_cache:
+            with patch.object(routes.tokens, "redeem_refresh_token", return_value=9):
+                with patch.object(routes.tokens, "revoke_refresh_token") as mock_revoke:
+                    with patch.object(
+                        routes.tokens, "issue_refresh_token", return_value="new-refresh"
+                    ):
+                        with patch.object(routes, "db_connection") as mock_conn:
+                            mock_conn.return_value.__enter__.return_value = mock_db
+                            result = asyncio.run(
+                                routes.refresh(RefreshRequest(refresh_token="old-token"))
+                            )
     mock_revoke.assert_called_once_with("old-token")
     assert result["refresh_token"] == "new-refresh"
     payload = jwt_utils.decode_access_token(result["access_token"])
     assert payload["sub"] == "9"
     assert payload["type"] == "resident"
+    mock_cache.assert_called_once_with("old-token", result)
+
+
+def test_refresh_replays_cached_result_for_duplicate_redemption():
+    """The concurrent-refresh race (two Deck pollers refreshing off the same stored token within
+    milliseconds of each other, observed live 2026-09-20): the loser must get the winner's
+    already-rotated pair back, not a 401 that permanently kills the session."""
+    cached_result = {
+        "access_token": "cached-access",
+        "refresh_token": "cached-refresh",
+        "token_type": "bearer",
+    }
+    with patch.object(routes.tokens, "get_cached_rotation_result", return_value=cached_result):
+        with patch.object(routes.tokens, "redeem_refresh_token") as mock_redeem:
+            result = asyncio.run(routes.refresh(RefreshRequest(refresh_token="old-token")))
+    mock_redeem.assert_not_called()
+    assert result == cached_result
+
+
+def test_cache_rotation_result_and_get_cached_rotation_result_round_trip():
+    store = {}
+    with patch.object(tokens, "redis_set", side_effect=lambda k, v, ttl: store.__setitem__(k, v)):
+        tokens.cache_rotation_result("old-token", {"access_token": "a"})
+    with patch.object(tokens, "redis_get", side_effect=lambda k: store.get(k)):
+        assert tokens.get_cached_rotation_result("old-token") == {"access_token": "a"}
+        assert tokens.get_cached_rotation_result("some-other-token") is None
 
 
 # --- rate_limit --------------------------------------------------------------------------------
