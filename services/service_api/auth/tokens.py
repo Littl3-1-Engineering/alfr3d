@@ -3,15 +3,25 @@
 Only a SHA-256 hash of the token is ever stored -- the raw value is returned to the caller once
 (at issue time) and never persisted, so a DB read alone can't be replayed. Uses the same raw
 pymysql + `with db_connection() as db:` pattern as every other module in this codebase (no ORM).
+
+Rotation grace window: refresh tokens are one-time-use (redeemed -> immediately revoked), so two
+callers racing to refresh off the same stored token -- e.g. two of the Deck app's background
+pollers noticing the same expired access token within milliseconds of each other -- always leave
+a loser trying to redeem an already-revoked token. Observed live 2026-09-20: the loser's 401
+permanently killed the Deck app's session (no further refresh attempts for hours) rather than
+just failing that one poll. `cache_rotation_result`/`get_cached_rotation_result` give the loser
+the same rotated pair the winner already got instead of a 401 -- same fail-soft Redis pattern as
+`auth/rate_limit.py`.
 """
 
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from common import db_connection
+from common import db_connection, redis_get, redis_set
 
 REFRESH_TOKEN_TTL_DAYS = 30
+REFRESH_GRACE_SECONDS = 10
 
 
 def _hash(raw_token):
@@ -30,6 +40,21 @@ def issue_refresh_token(user_id):
         )
         db.commit()
     return raw_token
+
+
+def _grace_cache_key(raw_token):
+    return f"refresh_grace:{_hash(raw_token)}"
+
+
+def cache_rotation_result(raw_token, result):
+    """Caches the token pair issued for redeeming raw_token, keyed by that (now-revoked) token's
+    hash, so a duplicate redemption within REFRESH_GRACE_SECONDS replays the same result instead
+    of 401ing."""
+    redis_set(_grace_cache_key(raw_token), result, ttl=REFRESH_GRACE_SECONDS)
+
+
+def get_cached_rotation_result(raw_token):
+    return redis_get(_grace_cache_key(raw_token))
 
 
 def redeem_refresh_token(raw_token):
