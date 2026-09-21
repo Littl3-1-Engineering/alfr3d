@@ -1,11 +1,13 @@
 // src/components/Core.jsx
 
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Moon, Sun } from 'lucide-react';
 import { Lottie, LottieSubscription } from 'lottie-react';
 import PropTypes from 'prop-types';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { API_BASE_URL } from '../config';
+import HudRing from './HudRing';
+import { useSettleOnChange } from '../hooks/useSettleOnChange';
 import { getSunAngle, getMoonAngle, getSunAltitude, getMoonAltitude } from '../utils/timeUtils';
 import { useTheme } from '../utils/useTheme';
 import socket from '../utils/socket';
@@ -318,7 +320,13 @@ SVGReticle.propTypes = {
   variant: PropTypes.oneOf(['crosshair', 'radar', 'crosshair1', 'crosshair2', 'crosshair3', 'grid']),
 };
 
-const Core = ({ initialContainers = null, initialDevices = null, initialUsers = null, onClick = null }) => {
+const Core = ({
+  initialContainers = null,
+  initialDevices = null,
+  initialUsers = null,
+  onClick = null,
+  launchers = [],
+}) => {
   const DEFAULT_LOCATION = { latitude: 44.7866, longitude: 20.4489 };
 
   const [animationData, setAnimationData] = useState(null);
@@ -338,6 +346,19 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
   const [reticle2Animate, setReticle2Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
   const [reticle3Animate, setReticle3Animate] = useState({ rotate: 0, transition: { duration: 4, ease: "easeInOut" } });
   const { themeColors } = useTheme();
+  const prefersReducedMotion = useReducedMotion();
+
+  // One signature per launcher. A panel opening or closing is a state change like any
+  // other, so this hook gives the launcher its settle -- the bounce lands while the panel
+  // is sliding in.
+  const launcherSignatures = useMemo(() => {
+    const signatures = {};
+    launchers.forEach((launcher) => { signatures[`launcher-${launcher.id}`] = launcher.isOpen ? 'open' : 'closed'; });
+    return signatures;
+  }, [launchers]);
+
+  const settling = useSettleOnChange(launcherSignatures);
+  const [hoveredLauncher, setHoveredLauncher] = useState(null);
 
   useEffect(() => {
     fetch('/assets/lottie/logo.json')
@@ -601,7 +622,7 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       {/* Orbit calculations: Tactical stuttering rotation over 30 seconds */}
       <motion.div
         className="absolute top-0 left-0 w-full h-full"
-        animate={{
+        animate={prefersReducedMotion ? { rotate: 0 } : {
           rotate: 360,
           transition: {
             duration: 30,
@@ -627,7 +648,7 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       {/* Orbit calculations: Tactical scanning rotation with stuttering */}
       <motion.div
         className="absolute top-0 left-0 w-full h-full"
-        animate={{
+        animate={prefersReducedMotion ? { rotate: 0 } : {
           rotate: -360,
           transition: {
             duration: 60,
@@ -656,7 +677,7 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
       {/* Orbit calculations: Tactical counter-clockwise rotation with scanning patterns */}
       <motion.div
         className="absolute top-0 left-0 w-full h-full"
-        animate={{
+        animate={prefersReducedMotion ? { rotate: 0 } : {
           rotate: 360,
           transition: {
             duration: 60,
@@ -694,6 +715,64 @@ const Core = ({ initialContainers = null, initialDevices = null, initialUsers = 
         })}
       </motion.div>
 
+      {/* Launcher ring - the only orbit that does NOT turn.
+          These are controls, not readouts: a target that drifts is a target you have to
+          chase, and an open panel's node doubles as the "what is open" indicator, which
+          only works if it stays where you left it. */}
+      <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 20 }}>
+        {launchers.map((launcher, index) => {
+          const key = `launcher-${launcher.id}`;
+          const isSettling = settling.has(key);
+          const hovered = hoveredLauncher === launcher.id;
+          // Opening flares magenta through the bounce so the colour lands before the
+          // corner brackets snap on, rather than the two arriving at once.
+          const state = isSettling
+            ? 'resolve'
+            : launcher.isOpen
+              ? 'active'
+              : hovered
+                ? 'working'
+                : 'idle';
+          const tone = isSettling && launcher.isOpen ? 'magenta' : null;
+          return (
+            <Satellite
+              key={key}
+              radius={200}
+              angle={(index / launchers.length) * 2 * Math.PI - Math.PI / 2}
+              size={30}
+              color="transparent"
+              glowColor="transparent"
+            >
+              <span
+                className="block"
+                onMouseEnter={() => setHoveredLauncher(launcher.id)}
+                onMouseLeave={() => setHoveredLauncher(null)}
+                onFocus={() => setHoveredLauncher(launcher.id)}
+                onBlur={() => setHoveredLauncher(null)}
+              >
+                <HudRing
+                  shape={launcher.shape}
+                  state={state}
+                  tone={tone}
+                  size={30}
+                  // The whole Core box is itself a "tap for Quick Controls" button (see
+                  // `onClick` on the wrapper below), and these launcher buttons live inside
+                  // it. Without stopping propagation, every launcher click bubbled up and
+                  // fired that handler too, so opening Weather (or any other panel) also
+                  // opened Quick Controls behind it.
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    launcher.onToggle();
+                  }}
+                  pressed={!!launcher.isOpen}
+                  label={`${launcher.isOpen ? 'Close' : 'Open'} ${launcher.label}`}
+                />
+              </span>
+            </Satellite>
+          );
+        })}
+      </div>
+
       {/* Sun Orbit - Positioned by solar ephemeris (lat/lon + time), dimmed below horizon */}
       <div className="absolute top-0 left-0 w-full h-full" style={{ zIndex: 10 }}>
         <Satellite
@@ -730,6 +809,13 @@ Core.propTypes = {
   initialDevices: PropTypes.array,
   initialUsers: PropTypes.array,
   onClick: PropTypes.func,
+  launchers: PropTypes.arrayOf(PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+    shape: PropTypes.string.isRequired,
+    isOpen: PropTypes.bool,
+    onToggle: PropTypes.func.isRequired,
+  })),
 };
 
 export default Core;

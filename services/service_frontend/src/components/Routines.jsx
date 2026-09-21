@@ -6,6 +6,8 @@ import {
   UserX, Home, DoorClosed, Thermometer, Gauge, Lock, Unlock, Blinds, DoorOpen, Wind, Filter,
   Music4, Volume2, Pause, SkipForward, SkipBack, Cast,
 } from 'lucide-react';
+import HudLoading from './HudLoading';
+import HudRing from './HudRing';
 import { useTheme } from '../utils/useTheme';
 import { useAuth } from '../utils/useAuth';
 import { apiFetch } from '../utils/apiClient';
@@ -64,6 +66,8 @@ const triggerMeta = (type) => TRIGGER_TYPES.find((t) => t.value === type);
 const conditionMeta = (type) => CONDITION_TYPES.find((t) => t.value === type);
 const actionMeta = (type) => ACTION_TYPES.find((t) => t.value === type);
 
+const RUN_FEEDBACK_MS = 1600;
+
 const emptyForm = () => ({
   name: '',
   time: '08:00',
@@ -78,6 +82,7 @@ const Routines = () => {
   useTheme();
   const { isAuthenticated } = useAuth();
   const { data: routines = [], isLoading, error } = useRoutines();
+  const [runState, setRunState] = useState({});
   const createRoutine = useCreateRoutine();
   const updateRoutine = useUpdateRoutine();
   const deleteRoutine = useDeleteRoutine();
@@ -114,12 +119,29 @@ const Routines = () => {
     }
   };
 
+  // Firing a routine used to be completely silent — the POST's result, success or failure,
+  // never reached the screen. The ring is the feedback: it turns while the request is in
+  // flight, bounce-settles when the routine actually fires, and stalls amber if it did not.
   const handleRun = async (id) => {
+    setRunState((current) => ({ ...current, [id]: 'working' }));
     try {
-      await apiFetch(`${API_BASE_URL}/api/routines/${id}/run`, { method: 'POST' });
+      // apiFetch resolves for any status — it only throws on a network failure — so a 500
+      // from the server used to sail straight through this try block as a success and the
+      // user was told nothing at all. Check the status explicitly.
+      const response = await apiFetch(`${API_BASE_URL}/api/routines/${id}/run`, { method: 'POST' });
+      if (!response.ok) throw new Error(`Run failed with status ${response.status}`);
+      setRunState((current) => ({ ...current, [id]: 'resolve' }));
     } catch (error) {
       console.error('Failed to run routine:', error);
+      setRunState((current) => ({ ...current, [id]: 'fault' }));
     }
+    setTimeout(() => {
+      setRunState((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    }, RUN_FEEDBACK_MS);
   };
 
   const resetForm = () => {
@@ -234,7 +256,7 @@ const Routines = () => {
         {/* Routine List */}
         <div className="w-72 space-y-3">
           {isLoading ? (
-            <div className="text-text-tertiary">Loading...</div>
+            <HudLoading label="Loading routines" className="!justify-start py-2" />
           ) : error ? (
             <div className="text-error">Failed to load routines</div>
           ) : routines.length === 0 ? (
@@ -274,9 +296,15 @@ const Routines = () => {
                       <button
                         onClick={(e) => { e.stopPropagation(); handleRun(routine.id); }}
                         disabled={!isAuthenticated}
+                        aria-label={`Run ${routine.name}`}
                         className="p-1.5 rounded hover:bg-success/20 text-success disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <Play className="w-4 h-4" />
+                        {/* The Play triangle stays the affordance; the ring only appears
+                            once there is something to report, so the button never stops
+                            looking like a run button. */}
+                        {runState[routine.id]
+                          ? <HudRing shape="compass" state={runState[routine.id]} size={16} />
+                          : <Play className="w-4 h-4" />}
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDelete(routine.id); }}

@@ -4,6 +4,7 @@ import { User, Save } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
+import HudLoading from '../components/HudLoading';
 
 const Profile = () => {
   const { user } = useAuth();
@@ -89,7 +90,7 @@ const Profile = () => {
           </div>
 
           {loading ? (
-            <p className="text-sm text-text-secondary">Loading...</p>
+            <HudLoading label="Loading profile" className="!justify-start py-2" />
           ) : (
             <form onSubmit={handleSave} className="space-y-4">
               <div>

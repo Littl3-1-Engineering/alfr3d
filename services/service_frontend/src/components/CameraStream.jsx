@@ -3,6 +3,7 @@ import { Camera, RefreshCw, AlertTriangle, Image } from 'lucide-react';
 import Hls from 'hls.js';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
+import HudLoading from './HudLoading';
 
 const STREAM_BASE = `${API_BASE_URL}/api/stream`;
 const hlsBase = (id) => `${STREAM_BASE}/hls/${id}`;
@@ -262,10 +263,7 @@ const CameraStream = () => {
             />
             {status === 'loading' && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                <div className="flex flex-col items-center gap-2">
-                  <RefreshCw size={20} className="text-fui-accent animate-spin" />
-                  <span className="font-mono text-[10px] text-fui-text/60 uppercase">C0NN3CT1NG T0 C4M3R4...</span>
-                </div>
+                <HudLoading label="C0NN3CT1NG T0 C4M3R4..." size={20} />
               </div>
             )}
           </div>

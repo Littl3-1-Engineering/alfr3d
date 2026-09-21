@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import socket from '../utils/socket';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
+import HudLoading from './HudLoading';
 
 const CalendarPanel = ({ initialTimezone = null }) => {
   const [events, setEvents] = useState([]);
@@ -92,7 +93,7 @@ const CalendarPanel = ({ initialTimezone = null }) => {
         <div>
           <h5 className="text-xs font-mono text-fui-text/60 uppercase mb-2">TODAY&apos;S EVENTS</h5>
           {isLoading ? (
-            <p className="text-fui-accent font-mono uppercase text-xs">LOADING...</p>
+            <HudLoading label="Loading events" size={18} className="!justify-start py-1" />
           ) : error ? (
             <p className="text-red-400 font-mono uppercase text-xs">ERROR LOADING EVENTS</p>
           ) : events.length === 0 ? (

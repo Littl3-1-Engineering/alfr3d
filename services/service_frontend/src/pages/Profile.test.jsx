@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Profile from './Profile'
+import { ThemeProvider } from '../utils/ThemeContext'
 import { AuthProvider } from '../utils/AuthContext'
 import * as authStore from '../utils/authStore'
 
@@ -43,9 +44,11 @@ describe('Profile', () => {
     })
 
     render(
-      <AuthProvider>
-        <Profile />
-      </AuthProvider>,
+      <ThemeProvider>
+        <AuthProvider>
+          <Profile />
+        </AuthProvider>
+      </ThemeProvider>,
     )
 
     await waitFor(() => expect(screen.getByDisplayValue('Alice')).toBeInTheDocument())
@@ -63,9 +66,11 @@ describe('Profile', () => {
     })
 
     render(
-      <AuthProvider>
-        <Profile />
-      </AuthProvider>,
+      <ThemeProvider>
+        <AuthProvider>
+          <Profile />
+        </AuthProvider>
+      </ThemeProvider>,
     )
 
     await waitFor(() => expect(screen.getByDisplayValue('Alice')).toBeInTheDocument())

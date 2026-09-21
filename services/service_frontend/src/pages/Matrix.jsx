@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState, lazy, Suspense } from 'react';
-import { Loader2 } from 'lucide-react';
+import HudLoading from '../components/HudLoading';
+import HudRing from '../components/HudRing';
 import TacticalPanel from '../components/TacticalPanel';
 import TacticalPanelVariant1 from '../components/TacticalPanelVariant1';
 import TacticalPanelVariant2 from '../components/TacticalPanelVariant2';
@@ -18,11 +19,29 @@ const Integrations = lazy(() => import('../components/Integrations'));
 const System = lazy(() => import('../components/System'));
 const Music = lazy(() => import('../components/Music'));
 
+// The three primaries carry a system meaning; the rest tell one choice apart from another.
+// Kept in sync with the table in todo/todo_cyber_hud_buttons_frontend.md.
+const RING_VOCABULARY = [
+  { shape: 'compass', name: 'Compass', role: 'Acquire / lock', use: 'Presence found, a state changed' },
+  { shape: 'splitArc', name: 'Split-Arc', role: 'Handshake / sync', use: 'A request in flight, reachability' },
+  { shape: 'gear', name: 'Gear Dial', role: 'Process / compute', use: 'Background work, container health' },
+  { shape: 'scanner', name: 'Scanner Arc', role: 'Identity', use: 'Weather, warning events' },
+  { shape: 'sensor', name: 'Sensor Ring', role: 'Identity', use: 'Time & date, climate, readouts' },
+  { shape: 'node', name: 'Node Ring', role: 'Identity', use: 'Project tree, music' },
+  { shape: 'reticle', name: 'Quad Reticle', role: 'Identity', use: 'Calendar, switches' },
+  { shape: 'iris', name: 'Iris Ring', role: 'Identity', use: 'Camera, covers' },
+];
+
+const RING_STATES = [
+  { state: 'idle', caption: 'At rest. Nothing spins.' },
+  { state: 'working', caption: 'Indeterminate, seamless loop.' },
+  { state: 'resolve', caption: 'The bounce: a thing landing.' },
+  { state: 'active', caption: 'Selected, brackets held.' },
+  { state: 'fault', caption: 'Stalled mid-travel.' },
+];
+
 const LoadingFallback = () => (
-  <div className="flex items-center justify-center h-64">
-    <Loader2 className="w-8 h-8 text-fui-accent animate-spin" />
-    <span className="ml-3 text-text-tertiary">Loading...</span>
-  </div>
+  <HudLoading label="Loading" size={32} className="h-64" />
 );
 
 const Matrix = () => {
@@ -171,6 +190,50 @@ const Matrix = () => {
                             </div>
                           </TacticalPanel>
                         </div>
+                      </div>
+                      <div>
+                        <h3 className="font-tech font-bold text-lg uppercase tracking-widest text-fui-accent mb-2">
+                          HUD Rings
+                        </h3>
+                        <p className="text-fui-text text-sm mb-4 max-w-3xl">
+                          One ring vocabulary used as loader, status indicator and button. The shape
+                          carries the meaning and the bounce marks a thing landing, not a click.
+                          Nothing spins at rest, and reduced motion stops every ring outright while
+                          colour and the bracket frame still carry state.
+                        </p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                          {RING_VOCABULARY.map(({ shape, name, role, use }) => (
+                            <div
+                              key={shape}
+                              className="border border-fui-border bg-fui-panel/40 p-4 flex flex-col items-center gap-2 text-center"
+                            >
+                              <HudRing shape={shape} state="working" size={48} />
+                              <div className="font-mono text-[11px] uppercase tracking-widest text-fui-text">{name}</div>
+                              <div className="font-mono text-[10px] uppercase tracking-widest text-fui-accent">{role}</div>
+                              <div className="font-mono text-[10px] text-fui-text/60">{use}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <h4 className="font-tech font-bold text-sm uppercase tracking-widest text-fui-accent mb-3">
+                          States
+                        </h4>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                          {RING_STATES.map(({ state, caption }) => (
+                            <div
+                              key={state}
+                              className="border border-fui-border bg-fui-panel/40 p-4 flex flex-col items-center gap-2 text-center"
+                            >
+                              <HudRing shape="splitArc" state={state} size={44} />
+                              <div className="font-mono text-[11px] uppercase tracking-widest text-fui-text">{state}</div>
+                              <div className="font-mono text-[10px] text-fui-text/60">{caption}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="font-mono text-[10px] text-fui-text/50">
+                          Design source: &ldquo;cyber btns&rdquo; by Goran Spasojevic (@gorango) —
+                          codepen.io/gorango/pen/vNXejK. Recreated for ALFR3D in React and Framer
+                          Motion, not ported.
+                        </p>
                       </div>
                     </div>
                   ) : ActiveComponent && <ActiveComponent />}
