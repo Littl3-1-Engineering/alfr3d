@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import socket from '../utils/socket';
 import { boot } from '../utils/themes';
+import HudLoading from './HudLoading';
 
 const MAX_VISIBLE_NODES = 200;
 const TICK_THROTTLE_MS = 33;
@@ -424,8 +425,8 @@ const ProjectTreeViz = () => {
       <svg ref={svgRef} className="w-full h-full bg-boot-bg" />
 
       {expanding && (
-        <div className="absolute top-2 left-2 px-2 py-1 text-[9px] text-primary bg-black/80 rounded border border-primary/30 font-mono">
-          Loading...
+        <div className="absolute top-2 left-2 px-2 py-1 bg-black/80 rounded border border-primary/30">
+          <HudLoading label="Expanding" mode="compute" size={12} className="!gap-2" />
         </div>
       )}
 

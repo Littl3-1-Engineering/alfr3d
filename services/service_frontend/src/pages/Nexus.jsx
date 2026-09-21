@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Lottie } from 'lottie-react';
 import { API_BASE_URL } from '../config';
@@ -23,21 +23,28 @@ import ProjectTreeViz from '../components/ProjectTreeViz';
 import ErrorBoundary from '../components/ErrorBoundary';
 import CameraStream from '../components/CameraStream';
 import NowPlayingCard from '../components/NowPlayingCard';
+import HudRing from '../components/HudRing';
 import { useTheme } from '../utils/useTheme';
 
+// `shape` turns the boot log into a HUD checklist instead of scrolling text: each line's
+// ring spins while that line is the current step and bounce-settles as it completes. The
+// shape says what kind of work the step is (see the vocabulary in
+// todo/todo_cyber_hud_buttons_frontend.md) — gear for local work, splitArc for anything
+// talking to something else, compass for a reading that got acquired, sensor for a plain
+// readout, scanner for the line that wants attention.
 const BOOT_MESSAGES = [
-  { msg: '[ OK ] Loading kernel modules...', delay: 200 },
-  { msg: '[ OK ] Initializing network stack...', delay: 400 },
-  { msg: '[WARN] ALFR3D firewall rules: 3 active, 2 legacy', delay: 600 },
-  { msg: '[ OK ] Mounting filesystems...', delay: 900 },
-  { msg: '[INFO] Scan root: /project (max depth: 3)', delay: 1100 },
-  { msg: '[ OK ] Starting container orchestration...', delay: 1400 },
-  { msg: '[ OK ] Establishing websocket gateway...', delay: 1700 },
-  { msg: '[INFO] Device registry: 12 registered, 8 online', delay: 2000 },
-  { msg: '[ OK ] Initializing sensor fusion pipeline...', delay: 2300 },
-  { msg: '[INFO] Core temperature: nominal', delay: 2600 },
-  { msg: '[ OK ] Nexus subsystems: all green', delay: 2900 },
-  { msg: '[ OK ] ALFR3D Nexus ready.', delay: 3200 },
+  { msg: '[ OK ] Loading kernel modules...', delay: 200, shape: 'gear' },
+  { msg: '[ OK ] Initializing network stack...', delay: 400, shape: 'splitArc' },
+  { msg: '[WARN] ALFR3D firewall rules: 3 active, 2 legacy', delay: 600, shape: 'scanner' },
+  { msg: '[ OK ] Mounting filesystems...', delay: 900, shape: 'gear' },
+  { msg: '[INFO] Scan root: /project (max depth: 3)', delay: 1100, shape: 'sensor' },
+  { msg: '[ OK ] Starting container orchestration...', delay: 1400, shape: 'gear' },
+  { msg: '[ OK ] Establishing websocket gateway...', delay: 1700, shape: 'splitArc' },
+  { msg: '[INFO] Device registry: 12 registered, 8 online', delay: 2000, shape: 'compass' },
+  { msg: '[ OK ] Initializing sensor fusion pipeline...', delay: 2300, shape: 'gear' },
+  { msg: '[INFO] Core temperature: nominal', delay: 2600, shape: 'sensor' },
+  { msg: '[ OK ] Nexus subsystems: all green', delay: 2900, shape: 'compass' },
+  { msg: '[ OK ] ALFR3D Nexus ready.', delay: 3200, shape: 'compass' },
 ];
 
 const NexusLoader = () => {
@@ -98,22 +105,24 @@ const NexusLoader = () => {
                   : isInfo
                     ? themeColors.textSecondary
                     : themeColors.textPrimary;
-              const promptColor = isWarn
-                ? themeColors.warning
-                : isInfo
-                  ? themeColors.textSecondary
-                  : themeColors.primary;
+              // Exactly one ring is ever in motion: the step being worked on. Everything
+              // above it has already bounce-settled, and the warning line sits frozen.
+              const ringState = isWarn
+                ? 'fault'
+                : i < logIndex
+                  ? 'resolve'
+                  : 'working';
               return (
                 <p
                   key={i}
-                  className="boot-log-line whitespace-nowrap"
+                  className="boot-log-line whitespace-nowrap flex items-center gap-2"
                   style={{
                     color: lineColor,
                     animationDelay: '0s',
                   }}
                 >
-                  <span style={{ color: promptColor }}>{'>'}</span>{' '}
-                  {m.msg}
+                  <HudRing shape={m.shape} state={ringState} size={14} />
+                  <span>{m.msg}</span>
                 </p>
               );
             })}
@@ -143,6 +152,25 @@ const Nexus = () => {
     projectTree: false,
     camera: false
   });
+
+  const togglePanel = useCallback((id) => {
+    setOpenPanels(prev => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  // The ring of launchers around the Core. Every panel reachable from Nexus is here, and
+  // each gets its own shape so the ring is learnable by silhouette rather than by reading
+  // labels. Where a shape can mean something it does: Container Health takes the Gear Dial
+  // that its own container satellites wear, Quick Controls takes the Split-Arc because it
+  // reaches out to devices, Camera takes the Iris. The Compass stays reserved for presence.
+  const launchers = useMemo(() => [
+    { id: 'favorites', label: 'Quick Controls', shape: 'splitArc', isOpen: favoritesOpen, onToggle: () => setFavoritesOpen(v => !v) },
+    { id: 'timeDate', label: 'Time & Date', shape: 'sensor', isOpen: openPanels.timeDate, onToggle: () => togglePanel('timeDate') },
+    { id: 'weather', label: 'Weather', shape: 'scanner', isOpen: openPanels.weather, onToggle: () => togglePanel('weather') },
+    { id: 'calendar', label: 'Calendar', shape: 'reticle', isOpen: openPanels.calendar, onToggle: () => togglePanel('calendar') },
+    { id: 'containerHealth', label: 'Container Health', shape: 'gear', isOpen: openPanels.containerHealth, onToggle: () => togglePanel('containerHealth') },
+    { id: 'projectTree', label: 'Project Tree', shape: 'node', isOpen: openPanels.projectTree, onToggle: () => togglePanel('projectTree') },
+    { id: 'camera', label: 'Camera', shape: 'iris', isOpen: openPanels.camera, onToggle: () => togglePanel('camera') },
+  ], [favoritesOpen, openPanels, togglePanel]);
 
   const fetchJson = (url) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
 
@@ -235,7 +263,14 @@ const Nexus = () => {
                 transition={{ delay: 0.6, duration: 0.8 }}
                 className="flex flex-col gap-8 px-6 items-center order-1 md:order-none min-w-0"
               >
-              <Core health={systemHealth} initialContainers={containers} initialDevices={devices} initialUsers={onlineUsers} onClick={() => setFavoritesOpen(v => !v)} />
+              <Core
+                health={systemHealth}
+                initialContainers={containers}
+                initialDevices={devices}
+                initialUsers={onlineUsers}
+                onClick={() => setFavoritesOpen(v => !v)}
+                launchers={launchers}
+              />
 <TacticalPanelVariant1 title="Situat1onal Awar3ness" className="w-full">
                   <SituationalAwareness timezone={location?.timezone} />
                 </TacticalPanelVariant1>
@@ -269,9 +304,8 @@ const Nexus = () => {
             position="left"
             title="TIME & DAT3"
             isOpen={openPanels.timeDate}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, timeDate: !prev.timeDate }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
-            tabIndex={0}
+            slot={0}
           >
 <TacticalPanelVariant1 title="TIME & DATE">
               <TimeDatePanel timezone={location?.timezone} />
@@ -282,9 +316,8 @@ const Nexus = () => {
             position="left"
             title="W3ATH3R"
             isOpen={openPanels.weather}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, weather: !prev.weather }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
-            tabIndex={1}
+            slot={1}
           >
 <TacticalPanelVariant2 title="WEATHER">
               <WeatherPanel initialWeather={weather} />
@@ -295,9 +328,8 @@ const Nexus = () => {
             position="left"
             title="C4L3ND4R"
             isOpen={openPanels.calendar}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, calendar: !prev.calendar }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
-            tabIndex={2}
+            slot={2}
           >
 <TacticalPanelVariant3 title="C4lendar">
               <CalendarPanel />
@@ -308,9 +340,8 @@ const Nexus = () => {
             position="right"
             title="C0NT41N3R H3ALTH"
             isOpen={openPanels.containerHealth}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, containerHealth: !prev.containerHealth }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
-            tabIndex={0}
+            slot={0}
           >
             <TacticalPanelVariant2 title="Container Health">
               <ContainerHealth initialContainers={containers} />
@@ -321,9 +352,8 @@ const Nexus = () => {
             position="right"
             title="PR0J3CT TR33"
             isOpen={openPanels.projectTree}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, projectTree: !prev.projectTree }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, projectTree: false }))}
-            tabIndex={1}
+            slot={1}
           >
             <TacticalPanelVariant1 title="Pr0j3ct Tr33">
               <ErrorBoundary>
@@ -336,9 +366,8 @@ const Nexus = () => {
             position="right"
             title="C4M3R4"
             isOpen={openPanels.camera}
-            onToggle={() => setOpenPanels(prev => ({ ...prev, camera: !prev.camera }))}
             onClose={() => setOpenPanels(prev => ({ ...prev, camera: false }))}
-            tabIndex={2}
+            slot={2}
           >
             <TacticalPanelVariant2 title="Cam3ra Str3am">
               <CameraStream />

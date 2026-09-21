@@ -328,14 +328,14 @@ credentials directly.
 The ALFR3D dashboard provides real-time monitoring and control across three pages:
 
 #### Nexus (Dashboard)
-- **Boot Sequence**: Animated Lottie logo with boot-log and glitch effects
+- **Boot Sequence**: Animated Lottie logo with a boot-log HUD checklist — each line carries a cyber-HUD ring that spins while that step runs and bounce-settles as it completes — plus glitch effects
 - **Core Clock**: 24h clock ring with solar/lunar ephemeris satellites; uptime/version tooltip
 - **Quick Controls**: Clicking the Core opens a top-center panel with up to 10 favorited IoT devices as compact toggle/dial tiles (per-user, edit mode to star/unstar, same control endpoint as ControlBlade)
 - **Real-Time Metrics**: Live CPU/memory, service health bars, user/device/IoT metrics via WebSocket
 - **WeatherPanel**: Animated weather icon, large current temp, wind + pressure trend
 - **ResidentsSummary**: Residents vs. guests online
 - **Situational Awareness**: Live, priority-ordered cards from a registry-based engine (`DISPLAY_RULES`, 19 rules) — time, upcoming events, gathering-triggered music, "call starting soon" focus alerts, unread email, forward-looking rain advisories (from the persisted `forecast_rain_probability` snapshot), current weather, ambient day-mood, learned-baseline rhythm-break/departure/household-unusual-day anomalies, an empty-house-still-on check, and self-hosted leave-by travel guidance; music cards link to the resolved Spotify playlist
-- **Calendar & Event Stream**: Upcoming events and event feed
+- **Calendar & Event Stream**: Upcoming events and event feed; each entry's ring glyph encodes the event kind, and the newest arrival bounce-settles as it lands
 - **Camera Stream**: Live RTSP camera panel
 - **Project Tree**: Interactive force-directed visualization of the project structure
 - **Health Indicators**: Visual status (🟢 Healthy, 🟡 Warning, 🔴 Unhealthy)
@@ -362,6 +362,22 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Responsive Layout**: Works on desktop and mobile devices
 - **Interactive Elements**: Hover effects and smooth animations
 - **Navigation**: Unified nav bar across all pages
+- **Cyber HUD rings** (`HudRing` / `HudLoading`): one animated ring vocabulary used as loader,
+  status indicator and button. The shape carries the meaning — Compass = acquire/lock,
+  Split-Arc = handshake/sync, Gear Dial = process/compute — and the bounce-settle marks a thing
+  landing, not a click. A ring is never still: idle and active loop the same motion as a busy
+  ring, just much slower, and only a fault freezes it — so a resting HUD still reads as alive.
+  `prefers-reduced-motion` stops every ring outright while colour and the corner-bracket frame
+  still carry state.
+
+##### Design credit
+
+The ring designs are recreations of **Goran Spasojevic**'s ([@gorango](https://codepen.io/gorango))
+"cyber btns" pen — <https://codepen.io/gorango/pen/vNXejK> — rebuilt from scratch in React and
+Framer Motion for ALFR3D rather than ported from his Snap.svg source. His
+[Cyber Dial](https://codepen.io/gorango/pen/bVBWmr) and
+[SVG Glitch](https://codepen.io/gorango/pen/GpYBqY) pens were explored alongside it as design
+references for the tactical HUD look.
 
 ## Build & Run
 

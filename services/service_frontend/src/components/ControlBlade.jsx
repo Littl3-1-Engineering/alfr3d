@@ -1,11 +1,13 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Settings, RefreshCw, Thermometer, Lock, Unlock, Fan, Blinds, Play, Pause, Volume2 } from 'lucide-react';
+import { X, Settings, Thermometer, Lock, Unlock, Fan, Blinds, Play, Pause, Volume2 } from 'lucide-react';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
 import TacticalPanelVariant5 from './TacticalPanelVariant5';
+import HudRing from './HudRing';
+import { ringShapeForDevice } from '../utils/deviceRings';
 
 const ControlBlade = ({ device, onClose, anchor }) => {
   const { isAuthenticated } = useAuth();
@@ -184,7 +186,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <span className="text-text-secondary">Power</span>
-          {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
         </div>
         <motion.button
           whileTap={{ scale: 0.95 }}
@@ -227,7 +229,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         <div className="flex items-center space-x-2">
           <Thermometer className="w-5 h-5 text-primary" />
           <span className="text-text-secondary">Climate</span>
-          {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
         </div>
         <span className="text-primary font-mono">
           {device?.last_state?.attributes?.current_temperature || '--'}°
@@ -270,7 +272,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         <span className="text-text-secondary">
           {lockState === 'locked' ? 'Locked' : 'Unlocked'}
         </span>
-        {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+        {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
       </div>
       <motion.button
         whileTap={{ scale: 0.95 }}
@@ -293,7 +295,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         <div className="flex items-center space-x-2">
           <Fan className={`w-5 h-5 ${power ? 'text-primary animate-spin' : 'text-text-secondary'}`} />
           <span className="text-text-secondary">Fan</span>
-          {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
         </div>
         <motion.button
           whileTap={{ scale: 0.95 }}
@@ -341,7 +343,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         <div className="flex items-center space-x-2">
           <Blinds className="w-5 h-5 text-primary" />
           <span className="text-text-secondary">Blinds</span>
-          {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
         </div>
         <span className="text-primary font-mono">{coverPosition}%</span>
       </div>
@@ -439,7 +441,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         return (
           <div className="flex items-center justify-between">
             <span className="text-text-secondary">Power</span>
-            {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+            {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handlePowerToggle}
@@ -487,7 +489,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         return (
           <div className="flex items-center justify-between">
             <span className="text-text-secondary">Power</span>
-            {loading && <RefreshCw className="w-4 h-4 text-primary animate-spin" />}
+            {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={handlePowerToggle}

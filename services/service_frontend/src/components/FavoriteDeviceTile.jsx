@@ -1,9 +1,11 @@
 import { motion } from 'framer-motion';
-import { Lightbulb, Power, Thermometer, Fan, Blinds, Lock, Unlock, Play, Pause, X, RefreshCw } from 'lucide-react';
+import { Lightbulb, Power, Thermometer, Fan, Blinds, Lock, Unlock, Play, Pause, X } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
+import HudRing from './HudRing';
+import { ringShapeForDevice } from '../utils/deviceRings';
 
 const TYPE_ICONS = {
   light: Lightbulb,
@@ -17,6 +19,8 @@ const TYPE_ICONS = {
 };
 
 const FAN_SPEEDS = ['off', 'low', 'medium', 'high'];
+
+
 
 // Compact single-tile counterpart to ControlBlade.jsx: one toggle + one contextual dial per
 // device, sized to fit up to 10 favorites in a grid rather than one full anchored popover per
@@ -243,6 +247,21 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     }
   };
 
+  const ringState = !device.online
+    ? 'fault'
+    : loading
+      ? 'working'
+      : power || lockState === 'locked'
+        ? 'active'
+        : 'idle';
+  const ringLabel = !device.online
+    ? 'offline'
+    : loading
+      ? 'sending'
+      : power || lockState === 'locked'
+        ? 'active'
+        : 'idle';
+
   const handleTileClick = (e) => {
     if (editMode || !onSelect) return;
     onSelect(device, { x: e.clientX, y: e.clientY });
@@ -270,7 +289,16 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
         <span className="text-fui-text font-mono text-[11px] truncate flex-1" title={device.name}>
           {device.name}
         </span>
-        {loading && <RefreshCw className="w-3 h-3 text-fui-accent animate-spin flex-shrink-0" />}
+        {/* Replaces a spinning RefreshCw that only ever showed one of these four states.
+            Offline reads as stalled, a command in flight spins, and an active device
+            holds its selected frame. */}
+        <HudRing
+          shape={ringShapeForDevice(deviceType)}
+          state={ringState}
+          size={18}
+          className="flex-shrink-0"
+          label={`${device.name}: ${ringLabel}`}
+        />
       </div>
       <div onClick={(e) => e.stopPropagation()}>
         {renderControl()}

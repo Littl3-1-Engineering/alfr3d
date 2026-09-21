@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Pencil, Star, Check } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
+import HudLoading from './HudLoading';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
@@ -121,7 +122,7 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
             )}
 
             {isAuthenticated && loading && (
-              <p className="text-fui-accent text-center py-6 uppercase tracking-widest">Loading...</p>
+              <HudLoading label="Loading favorites" className="py-6" />
             )}
 
             {isAuthenticated && error && (

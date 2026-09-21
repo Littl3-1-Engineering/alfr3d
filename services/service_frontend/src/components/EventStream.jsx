@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import { formatLocalTime } from '../utils/timeUtils';
 import socket from '../utils/socket';
+import HudRing from './HudRing';
 
 const EventStream = () => {
   const [displayedEvents, setDisplayedEvents] = useState([]);
@@ -33,14 +34,20 @@ const EventStream = () => {
     };
   }, []);
 
-  const getIcon = (type) => {
-    switch (type) {
-      case 'warning': return <div className="w-3 h-3 border-2 border-warning" />;
-      case 'success': return <div className="w-3 h-3 border-2 border-fui-accent bg-fui-accent" />;
-      case 'audio': return <div className="w-3 h-3 border-2 border-blue-500 bg-blue-500" />;
-      default: return <div className="w-3 h-3 border-2 border-fui-text" />;
-    }
+  // Shape tells the event kinds apart; colour is left to carry severity alone. These are
+  // deliberately the identity shapes (see todo/todo_cyber_hud_buttons_frontend.md) —
+  // compass/splitArc/gear are reserved for acquire/sync/compute and would misread here,
+  // since every line in a log is something that already happened.
+  //
+  // The real event types come from the services: success, info, warning and audio
+  // (service_device/app.py, service_user/app.py, service_daemon/utils/now_playing_monitor.py).
+  const RING = {
+    success: { shape: 'reticle', tone: 'cyan' },
+    warning: { shape: 'scanner', tone: 'amber' },
+    audio: { shape: 'node', tone: 'cyan' },
+    info: { shape: 'sensor', tone: 'cyan' },
   };
+  const ringFor = (type) => RING[type] || { shape: 'iris', tone: 'cyan' };
 
   return (
     <motion.div
@@ -62,7 +69,16 @@ const EventStream = () => {
             transition={{ duration: 0.3 }}
             className="flex items-start space-x-3 p-3 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
           >
-            {getIcon(event.type)}
+            {/* Only the newest event bounces. Older rows are keyed by event.id and simply
+                re-render as idle when something newer arrives, so the settle happens once,
+                on arrival, and never replays. */}
+            <HudRing
+              shape={ringFor(event.type).shape}
+              tone={ringFor(event.type).tone}
+              state={index === 0 ? 'resolve' : 'idle'}
+              size={16}
+              className="mt-0.5 shrink-0"
+            />
             <div className="flex-1">
               <p className="text-sm text-fui-text font-mono">{event.message}</p>
                <p className="text-xs text-fui-text/60 mt-1 font-mono">[{formatLocalTime(event.time)}]</p>

@@ -248,21 +248,15 @@ body {
   animation: count-up 0.6s ease-out;
 }
 
+/* Used by Core.jsx's counterSpin(): each orbiting HudRing spins against its own orbit at
+   the orbit's rate, so the glyph stays upright instead of tumbling. The .ring-1/.ring-2/
+   .ring-3 helper classes that used to sit here were removed on 2026-09-20 — nothing had
+   ever referenced them, and leaving a second ring-rotation system in the stylesheet
+   invites the two to drift apart. Callers set their own duration and direction inline,
+   because those have to match the orbit they are cancelling. */
 @keyframes rotate-slow {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-.ring-1 {
-  animation: rotate-slow 60s linear infinite;
-}
-
-.ring-2 {
-  animation: rotate-slow 70s linear infinite reverse;
-}
-
-.ring-3 {
-  animation: rotate-slow 80s linear infinite;
 }
 
 /* Grid background with + signs */
