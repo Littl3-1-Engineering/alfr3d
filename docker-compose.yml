@@ -9,6 +9,16 @@ services:
       ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
     ports:
       - "${ZOOKEEPER_CLIENT_PORT}:${ZOOKEEPER_CLIENT_PORT}"
+    # `srvr` over the 4-letter-word port, not the more obvious `ruok`: this image ships with
+    # only `srvr` allowlisted, and widening 4lw.commands.whitelist would mean recreating the
+    # broker's own dependency for a cosmetically nicer probe. Grepping for "Mode" confirms ZK
+    # is actually serving (standalone/leader/follower), not merely accepting a connection.
+    healthcheck:
+      test: [ "CMD-SHELL", "echo srvr | nc -w 2 localhost ${ZOOKEEPER_CLIENT_PORT} | grep -q Mode" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
@@ -98,6 +108,15 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
       - LOG_LEVEL=${LOG_LEVEL}
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH in service_user/app.py - the consumer touches the file on every
+      # connect attempt and poll cycle, so a stale file means it's wedged (e.g. blocked in a
+      # Kafka connect at boot) even though the process is still running.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/user_heartbeat", "90" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   service-api:
     build:
@@ -125,6 +144,14 @@ services:
       - "5001"
     ports:
       - "5001:5001"
+    healthcheck:
+      # This image has no curl/wget, so probe with the interpreter that's already here.
+      # /api/health is unauthenticated by design and reports the API's own liveness.
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/api/health', timeout=5).status == 200 else 1)" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   service-device:
     build:
@@ -140,6 +167,15 @@ services:
       - MYSQL_DATABASE=localhost
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_2}
       - LOG_LEVEL=${LOG_LEVEL}
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH in service_device/app.py. A file probe rather than a port probe
+      # matters here: this service runs with network_mode: host, so there's no container-local
+      # port that would distinguish it from anything else on the host.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/device_heartbeat", "90" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   service-environment:
     build:
@@ -156,6 +192,13 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
       - LOG_LEVEL=${LOG_LEVEL}
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH in service_environment/environment.py.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/environment_heartbeat", "90" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   service-speak:
     build:
@@ -201,6 +244,15 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - secrets_data:/secrets
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH/HEARTBEAT_STALE_SECONDS in service_daemon/alfr3ddaemon.py. The
+      # window is 300s, not 90s, because one MyDaemon.run() cycle is a 60s sleep plus the
+      # routine and situational-awareness work - 90s would flap on an ordinary slow pass.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/daemon_heartbeat", "300" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   # SA-6: self-hosted routing (check_travel()). Opt-in via the "routing" profile -- not started
   # by default, since it needs real regional OSRM data (see setup/build_routing_extract.sh) that
@@ -217,9 +269,16 @@ services:
       - "5005:5000"
     volumes:
       - ./routing_data:/data
-    # No healthcheck: nothing else in this file depends_on `routing` being healthy (it's
-    # opt-in and standalone), and the osrm-backend image's minimal Ubuntu base isn't confirmed
-    # to carry curl/wget to probe with -- not worth guessing at rather than verifying.
+    # The image really does lack curl/wget/nc (verified 2026-09-22, superseding an earlier
+    # note that only suspected it), but it does ship bash, so /dev/tcp gives a real HTTP
+    # round trip rather than a bare port check: a listening-but-wedged osrm-routed still
+    # fails to return a status line.
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /nearest/v1/driving/0,0 HTTP/1.0\r\n\r\n' >&3 && head -1 <&3 | grep -q HTTP" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   service-frontend:
     build:
@@ -233,6 +292,12 @@ services:
       - "8000"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   nginx:
     image: nginx:alpine

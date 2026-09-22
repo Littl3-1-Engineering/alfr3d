@@ -20,9 +20,16 @@ from kafka import KafkaConsumer  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer, get_kafka_url, ha_utils, st_utils, esphome_utils  # noqa: E402
+from common import heartbeat  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
+
+# Heartbeat file the Kafka consumer touches on every connect attempt and poll cycle.
+# A stale heartbeat means the consumer is wedged (typically blocked in a connect at
+# boot, racing the broker) even though the process itself is still alive -- the
+# container HEALTHCHECK keys off this file. See common/heartbeat.py.
+HEARTBEAT_PATH = "/tmp/device_heartbeat"
 
 # set up logging
 logger = logging.getLogger("DevicesLog")
@@ -475,6 +482,7 @@ if __name__ == "__main__":
     consumer = None
     retry_count = 0
     while consumer is None and not shutdown_event.is_set():
+        heartbeat.touch(HEARTBEAT_PATH)
         try:
             consumer = KafkaConsumer("device", bootstrap_servers=get_kafka_url())
             logger.info("Connected to Kafka device topic")
@@ -493,6 +501,7 @@ if __name__ == "__main__":
     esphome_utils.start_push_state_thread(shutdown_event)
 
     while not shutdown_event.is_set():
+        heartbeat.touch(HEARTBEAT_PATH)
         messages = consumer.poll(timeout_ms=1000)
         for topic_partition, msgs in messages.items():
             for message in msgs:
