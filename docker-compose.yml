@@ -9,6 +9,13 @@ services:
       ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
     ports:
       - "${ZOOKEEPER_CLIENT_PORT}:${ZOOKEEPER_CLIENT_PORT}"
+    # Named, not the image's own anonymous VOLUMEs. Kafka's topic metadata, consumer group
+    # registry and broker registration all live in ZK's data dir, so an anonymous volume put
+    # the whole event bus one `down -v` (or `up -V`) away from silently starting empty.
+    # Migrated 2026-09-22; /etc/zookeeper/secrets stays anonymous, it is an empty cert mount.
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
     # `srvr` over the 4-letter-word port, not the more obvious `ruok`: this image ships with
     # only `srvr` allowlisted, and widening 4lw.commands.whitelist would mean recreating the
     # broker's own dependency for a cosmetically nicer probe. Grepping for "Mode" confirms ZK
@@ -37,6 +44,10 @@ services:
       - KAFKA_CREATE_TOPICS=speak:1:1,environment:1:1,device:1:1,user:1:1,google:1:1,event-stream:1:1,situational-awareness:1:1,integrations:1:1,personality:1:1
     ports:
       - "9092:9092"
+    # Same reasoning as zookeeper above: this holds every topic's log segments and the
+    # __consumer_offsets partitions, and was on an anonymous volume until 2026-09-22.
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     # Healthcheck ensures Kafka is ready to accept connections
     healthcheck:
       test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list" ]
@@ -340,3 +351,6 @@ volumes:
   audio_data:
   redis_data:
   secrets_data:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
