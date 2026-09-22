@@ -581,6 +581,7 @@ def refresh_all():
 if __name__ == "__main__":
     # get all instructions from Kafka
     logger.info("Starting Alfr3d's user service")
+    heartbeat.start_watchdog(HEARTBEAT_PATH, log=logger)
     if not db_utils.wait_for_db():
         logger.error("Exiting: could not connect to MySQL")
         sys.exit(1)

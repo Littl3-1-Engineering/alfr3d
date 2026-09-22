@@ -7,6 +7,7 @@ stopped making progress.
 """
 
 import os
+import threading
 import time
 
 from services.common import heartbeat
@@ -73,3 +74,67 @@ def test_cli_defaults_to_the_module_window(tmp_path):
     old = time.time() - (heartbeat.DEFAULT_STALE_SECONDS + 10)
     os.utime(p, (old, old))
     assert heartbeat.main([p]) == 1
+
+
+def test_watchdog_exits_the_process_when_the_heartbeat_goes_stale(tmp_path, monkeypatch):
+    """The whole point: a wedged loop must take the process down so the container restarts."""
+    p = str(tmp_path / "hb")
+    exits = []
+    monkeypatch.setattr(heartbeat.os, "_exit", lambda code: exits.append(code))
+    stop = threading.Event()
+
+    try:
+        heartbeat.start_watchdog(p, stale_seconds=0.05, check_interval=0.01, stop_event=stop)
+        # start_watchdog touches up front, so it is fresh; let it go stale on its own.
+        deadline = time.time() + 3
+        while not exits and time.time() < deadline:
+            time.sleep(0.02)
+    finally:
+        stop.set()
+
+    assert exits == [1], "watchdog should have exited with status 1"
+
+
+def test_watchdog_stays_quiet_while_the_loop_keeps_beating(tmp_path, monkeypatch):
+    p = str(tmp_path / "hb")
+    exits = []
+    monkeypatch.setattr(heartbeat.os, "_exit", lambda code: exits.append(code))
+    stop = threading.Event()
+
+    try:
+        heartbeat.start_watchdog(p, stale_seconds=1.0, check_interval=0.01, stop_event=stop)
+        # A loop making progress keeps touching; the watchdog must not fire.
+        for _ in range(30):
+            heartbeat.touch(p)
+            time.sleep(0.02)
+    finally:
+        stop.set()
+
+    assert exits == [], "watchdog fired despite a live heartbeat"
+
+
+def test_watchdog_touches_up_front_so_a_slow_start_does_not_trip_it(tmp_path):
+    p = str(tmp_path / "hb")
+    stop = threading.Event()
+    try:
+        assert heartbeat.is_fresh(p) is False
+        heartbeat.start_watchdog(p, stale_seconds=60, check_interval=60, stop_event=stop)
+        assert heartbeat.is_fresh(p) is True
+    finally:
+        stop.set()
+
+
+def test_watchdog_can_be_retired_so_it_cannot_outlive_its_owner(tmp_path, monkeypatch):
+    """A leaked watchdog would os._exit whatever process is still running. Guards the guard."""
+    p = str(tmp_path / "hb")
+    exits = []
+    monkeypatch.setattr(heartbeat.os, "_exit", lambda code: exits.append(code))
+    stop = threading.Event()
+
+    thread = heartbeat.start_watchdog(p, stale_seconds=0.05, check_interval=0.01, stop_event=stop)
+    stop.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive(), "watchdog thread should retire once stopped"
+    time.sleep(0.2)  # well past the stale window it would otherwise have fired on
+    assert exits == [], "a stopped watchdog must never fire"
