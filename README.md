@@ -869,7 +869,11 @@ Run these scripts as needed for database maintenance, backups, and integration c
   - `GET /api/calendar/events`: Retrieve calendar events
   - `GET /api/situational-awareness`: Retrieve situational awareness data
   - `GET /api/audio/<filename>`: Serve generated audio files
-  - `GET /api/containers`: Container health metrics
+  - `GET /api/containers`: Per-container CPU/memory utilization plus Docker's own
+    lifecycle state, healthcheck verdict and restart count
+    (`{name, cpu, mem, state, health, restarts}`). Health is Docker's verdict, not a
+    function of resource usage — a busy container is working, not failing. `cpu` is
+    normalized by host core count, so it stays within 0-100.
   - `GET /api/health`: Overall health, uptimes, and version
   - `GET /api/project-tree`: Retrieve project directory tree structure for visualization
   - `GET /api/integrations/status`: Check integration sync status

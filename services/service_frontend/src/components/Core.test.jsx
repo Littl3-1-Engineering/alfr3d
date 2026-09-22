@@ -16,9 +16,9 @@ const DEVICES = [
   { id: 2, name: 'garage-pi', type: 'sensor', user: 'alfr3d', state: 'offline' },
 ]
 const CONTAINERS = [
-  { name: 'service_api', errors: 0 },
-  { name: 'service_daemon', errors: 1 },
-  { name: 'service_device', errors: 4 },
+  { name: 'service_api', state: 'running', health: 'healthy', restarts: 0 },
+  { name: 'service_daemon', state: 'running', health: 'starting', restarts: 0 },
+  { name: 'service_device', state: 'exited', health: 'none', restarts: 4 },
 ]
 
 const LAUNCHERS = [

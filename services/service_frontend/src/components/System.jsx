@@ -6,6 +6,7 @@ import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
 import socket from '../utils/socket';
+import { containerStatus } from '../utils/containerStatus';
 
 const Section = ({ icon: Icon, title, children, defaultOpen = false }) => {
   const [open, setOpen] = useState(defaultOpen);
@@ -168,8 +169,7 @@ const System = () => {
           const containers = await containersRes.value.json();
           initial.push(addLog('INIT', `${containers.length} containers detected`));
           containers.forEach(c => {
-            const status = c.errors > 0 ? 'ERR' : 'OK';
-            initial.push(addLog('SCAN', `${c.name}: CPU ${c.cpu}% MEM ${c.mem}% DSK ${c.disk}% [${status}]`));
+            initial.push(addLog('SCAN', `${c.name}: CPU ${c.cpu}% MEM ${c.mem}% [${containerStatus(c)}]`));
           });
         } else {
           initial.push(addLog('ERR', 'Failed to fetch container data'));
@@ -217,8 +217,7 @@ const System = () => {
     const handleContainers = (containers) => {
       setLogs(prev => {
         const newLogs = containers.map(c => {
-          const status = c.errors > 0 ? 'ERR' : 'OK';
-          return addLog('UPD', `${c.name}: CPU ${c.cpu}% MEM ${c.mem}% DSK ${c.disk}% [${status}]`);
+          return addLog('UPD', `${c.name}: CPU ${c.cpu}% MEM ${c.mem}% [${containerStatus(c)}]`);
         });
         return [...prev, ...newLogs];
       });
