@@ -19,6 +19,55 @@
 - **Unchanged:** the ring shape vocabulary, the state machine, and the three discipline rules
   from v0.4.6. The ring is still what ALFR3D leads with.
 
+# Release v0.4.6
+
+## Release Name: Heads Up
+
+### Notes:
+- **Feature:** Animated cyber HUD rings — a new `HudRing`/`HudLoading` component family
+  replaces every generic spinner, "Loading..." string, and plain circular border across the
+  dashboard with a shared shape+state vocabulary. Compass Ring, Split-Arc Ring, and Gear Dial
+  carry real system meaning (acquire/lock, handshake/sync, process/compute); five identity
+  shapes distinguish launchers and menu items; idle/working/resolve/active/fault states, with
+  every ring always in motion except `fault`.
+- **Feature:** Boot sequence becomes a HUD checklist — each `NexusLoader` line carries a ring
+  that spins while the step runs and bounce-settles as it completes.
+- **Feature:** Event stream glyphs, Core's launcher ring, Quick Controls tiles, and the
+  per-routine run button in Routines all adopt the same ring vocabulary. A real bug surfaced
+  along the way: Routines' `handleRun` was silently treating any non-2xx response as success.
+- **Accessibility:** `prefers-reduced-motion` hard-stops all rotation; colour and the
+  corner-bracket "selection" frame still carry state.
+- **Design credit:** Goran Spasojevic (@gorango) — "cyber btns" CodePen, recreated from scratch
+  in React/Framer Motion, not ported.
+
+Full detail and on-device/browser verification log in
+`todo/todo_cyber_hud_buttons_frontend.md`.
+
+# Release v0.4.5
+
+## Release Name: Diminishing Returns
+
+### Notes:
+- **Feature:** Continuous-stay guest decay — a guest who's actually moved in for a while (weeks,
+  not hours) no longer reads as a fresh drop-in. Tracks each guest's current unbroken stay
+  (`user.continuous_stay_since`, reset on a real 24h+ departure gap) and decays their contribution
+  to both the household "energy" score and their SA cards' priority the longer they stay —
+  front-loaded, crossing zero around day 14, and allowed to go negative (bounded) past that. Once
+  negative, a new `guest_overstay_advisory` card nudges promoting them to resident or addressing
+  the stay. RBAC/permissions are untouched — `guest` stays strictly read-only.
+- **Feature:** SA-9 Phase 1 — `climate_advisory`, a fixed-threshold indoor comfort advisory read
+  from the household's first accepted ESPHome temperature/humidity sensor.
+- **Feature:** SA-9 Phase 2 — `climate_deviation`, a baseline-learned sibling to `climate_advisory`
+  that fires on genuine deviation from what's typical for the current time of day, backed by a new
+  `smarthome_sensor_history` table (730d retention) and a `time_of_day_bucket` dimension on
+  `entity_baselines`.
+- **Security:** Removed the dead ntfy.sh event relay from `service_api` — a legacy Tasker
+  integration path that was posting household SA event data to a public, unauthenticated ntfy.sh
+  topic.
+- **Docs:** Restored the SA-8 BLE presence sensing todo doc (wrongly deleted by a prior cleanup)
+  and re-verified it's still dead — MAC randomization defeats it structurally, confirmed again
+  against the real NUC.
+
 # Release v0.4.4
 
 ## Release Name: First Light
