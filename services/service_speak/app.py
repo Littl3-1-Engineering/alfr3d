@@ -24,6 +24,7 @@ from gtts import gTTS
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer as _get_producer, get_kafka_url, get_connection  # noqa: E402
 from common import db_utils  # noqa: E402
+from common import heartbeat  # noqa: E402
 
 # Local imports
 from personality import (  # noqa: E402
@@ -356,11 +357,7 @@ def process_speak_message(message):
 
 def touch_heartbeat():
     """Record that the consumer is making progress (connecting or actively polling)."""
-    try:
-        with open(HEARTBEAT_PATH, "w") as f:
-            f.write(str(time.time()))
-    except OSError as e:
-        logger.warning(f"Failed to write heartbeat: {e}")
+    heartbeat.touch(HEARTBEAT_PATH)
 
 
 def consume_speak():

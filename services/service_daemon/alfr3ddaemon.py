@@ -65,9 +65,17 @@ from common import get_producer  # noqa: E402
 from common import db_utils  # noqa: E402
 from common import day_context  # noqa: E402
 from common import timeofday  # noqa: E402
+from common import heartbeat  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
+
+# Heartbeat file MyDaemon.run() touches at the top of every cycle. The window is wider
+# than the consumer services' 90s because one cycle is a 60s sleep plus however long the
+# routine/SA work takes -- 300s catches a genuinely wedged daemon without flapping on an
+# ordinary slow pass. See common/heartbeat.py.
+HEARTBEAT_PATH = "/tmp/daemon_heartbeat"
+HEARTBEAT_STALE_SECONDS = 300
 
 
 # set up daemon things
@@ -436,6 +444,7 @@ class MyDaemon:
     def run(self):
         last_reset_date = None
         while True:
+            heartbeat.touch(HEARTBEAT_PATH)
             schedule.run_pending()  # Execute any pending scheduled tasks
             local_today = db_utils.get_env_local_time(ENV_NAME).date()
             if last_reset_date is not None and local_today != last_reset_date:
