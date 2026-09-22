@@ -3,13 +3,16 @@ import { render, screen } from '@testing-library/react'
 import App from './App'
 import { ThemeProvider } from './utils/ThemeContext'
 import { AuthProvider } from './utils/AuthContext'
+import { UiPrefsProvider } from './utils/UiPrefsContext'
 
 const renderApp = () =>
   render(
     <ThemeProvider>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <UiPrefsProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </UiPrefsProvider>
     </ThemeProvider>
   )
 

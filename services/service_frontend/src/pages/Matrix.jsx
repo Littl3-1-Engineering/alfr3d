@@ -10,6 +10,7 @@ import TacticalPanelVariant4 from '../components/TacticalPanelVariant4';
 import TacticalPanelVariant5 from '../components/TacticalPanelVariant5';
 import TacticalPanelVariant6 from '../components/TacticalPanelVariant6';
 import TacticalPanelVariant7 from '../components/TacticalPanelVariant7';
+import NexusNavCustomization from '../components/NexusNavCustomization';
 import ThemeCustomization from '../components/ThemeCustomization';
 import { useTheme } from '../utils/useTheme';
 
@@ -119,6 +120,9 @@ const Matrix = () => {
                     <div className="grid grid-cols-1 gap-8">
                       <div>
                         <ThemeCustomization />
+                      </div>
+                      <div>
+                        <NexusNavCustomization />
                       </div>
                       <div>
                         <h3 className="font-tech font-bold text-lg uppercase tracking-widest text-fui-accent mb-4">

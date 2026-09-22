@@ -25,6 +25,7 @@ import CameraStream from '../components/CameraStream';
 import NowPlayingCard from '../components/NowPlayingCard';
 import HudRing from '../components/HudRing';
 import { useTheme } from '../utils/useTheme';
+import { useUiPrefs } from '../utils/useUiPrefs';
 
 // `shape` turns the boot log into a HUD checklist instead of scrolling text: each line's
 // ring spins while that line is the current step and bounce-settles as it completes. The
@@ -141,6 +142,8 @@ const NexusLoader = () => {
 };
 
 const Nexus = () => {
+  const { nexusNav } = useUiPrefs();
+  const tabsMode = nexusNav === 'tabs';
   const [systemHealth] = useState('cyan');
   const [locationTitle, setLocationTitle] = useState('');
   const [favoritesOpen, setFavoritesOpen] = useState(false);
@@ -159,10 +162,13 @@ const Nexus = () => {
 
   // The ring of launchers around the Core. Every panel reachable from Nexus is here, and
   // each gets its own shape so the ring is learnable by silhouette rather than by reading
-  // labels. Where a shape can mean something it does: Container Health takes the Gear Dial
-  // that its own container satellites wear, Quick Controls takes the Split-Arc because it
-  // reaches out to devices, Camera takes the Iris. The Compass stays reserved for presence.
-  const launchers = useMemo(() => [
+  // labels. Empty in tabs mode: the edge tabs are then the only control, and an empty ring
+  // is what hides it -- Core renders exactly what it is handed.
+  //
+  // Where a shape can mean something it does: Container Health takes the Gear Dial that its
+  // own container satellites wear, Quick Controls takes the Split-Arc because it reaches out
+  // to devices, Camera takes the Iris. The Compass stays reserved for presence.
+  const launchers = useMemo(() => tabsMode ? [] : [
     { id: 'favorites', label: 'Quick Controls', shape: 'splitArc', isOpen: favoritesOpen, onToggle: () => setFavoritesOpen(v => !v) },
     { id: 'timeDate', label: 'Time & Date', shape: 'sensor', isOpen: openPanels.timeDate, onToggle: () => togglePanel('timeDate') },
     { id: 'weather', label: 'Weather', shape: 'scanner', isOpen: openPanels.weather, onToggle: () => togglePanel('weather') },
@@ -170,7 +176,13 @@ const Nexus = () => {
     { id: 'containerHealth', label: 'Container Health', shape: 'gear', isOpen: openPanels.containerHealth, onToggle: () => togglePanel('containerHealth') },
     { id: 'projectTree', label: 'Project Tree', shape: 'node', isOpen: openPanels.projectTree, onToggle: () => togglePanel('projectTree') },
     { id: 'camera', label: 'Camera', shape: 'iris', isOpen: openPanels.camera, onToggle: () => togglePanel('camera') },
-  ], [favoritesOpen, openPanels, togglePanel]);
+  ], [tabsMode, favoritesOpen, openPanels, togglePanel]);
+
+  // In tabs mode the edge tab is the control, so it owns the toggle; in ring mode the
+  // panels are opened from the Core and only ever close themselves.
+  const tabProps = useCallback((id) => (
+    tabsMode ? { showTab: true, onToggle: () => togglePanel(id) } : {}
+  ), [tabsMode, togglePanel]);
 
   const fetchJson = (url) => fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
 
@@ -305,6 +317,7 @@ const Nexus = () => {
             title="TIME & DAT3"
             isOpen={openPanels.timeDate}
             onClose={() => setOpenPanels(prev => ({ ...prev, timeDate: false }))}
+            {...tabProps('timeDate')}
             slot={0}
           >
 <TacticalPanelVariant1 title="TIME & DATE">
@@ -317,6 +330,7 @@ const Nexus = () => {
             title="W3ATH3R"
             isOpen={openPanels.weather}
             onClose={() => setOpenPanels(prev => ({ ...prev, weather: false }))}
+            {...tabProps('weather')}
             slot={1}
           >
 <TacticalPanelVariant2 title="WEATHER">
@@ -329,6 +343,7 @@ const Nexus = () => {
             title="C4L3ND4R"
             isOpen={openPanels.calendar}
             onClose={() => setOpenPanels(prev => ({ ...prev, calendar: false }))}
+            {...tabProps('calendar')}
             slot={2}
           >
 <TacticalPanelVariant3 title="C4lendar">
@@ -341,6 +356,7 @@ const Nexus = () => {
             title="C0NT41N3R H3ALTH"
             isOpen={openPanels.containerHealth}
             onClose={() => setOpenPanels(prev => ({ ...prev, containerHealth: false }))}
+            {...tabProps('containerHealth')}
             slot={0}
           >
             <TacticalPanelVariant2 title="Container Health">
@@ -353,6 +369,7 @@ const Nexus = () => {
             title="PR0J3CT TR33"
             isOpen={openPanels.projectTree}
             onClose={() => setOpenPanels(prev => ({ ...prev, projectTree: false }))}
+            {...tabProps('projectTree')}
             slot={1}
           >
             <TacticalPanelVariant1 title="Pr0j3ct Tr33">
@@ -367,6 +384,7 @@ const Nexus = () => {
             title="C4M3R4"
             isOpen={openPanels.camera}
             onClose={() => setOpenPanels(prev => ({ ...prev, camera: false }))}
+            {...tabProps('camera')}
             slot={2}
           >
             <TacticalPanelVariant2 title="Cam3ra Str3am">

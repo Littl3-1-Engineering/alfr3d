@@ -2,13 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Matrix from './Matrix'
 import { ThemeProvider } from '../utils/ThemeContext'
+import { UiPrefsProvider } from '../utils/UiPrefsContext'
 
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
 const openCustomizations = async () => {
   globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
-  const utils = render(<ThemeProvider><Matrix /></ThemeProvider>)
+  const utils = render(<ThemeProvider><UiPrefsProvider><Matrix /></UiPrefsProvider></ThemeProvider>)
   fireEvent.click(screen.getByRole('button', { name: /customizations/i }))
   await waitFor(() => expect(screen.getByText('HUD Rings')).toBeInTheDocument())
   return utils
