@@ -3,18 +3,7 @@ import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import socket from '../utils/socket';
-
-const healthColor = (health) => {
-  if (health >= 80) return 'var(--theme-success)';
-  if (health >= 50) return 'var(--theme-warning)';
-  return 'var(--theme-error)';
-};
-
-const healthLabel = (health) => {
-  if (health >= 80) return 'NOMINAL';
-  if (health >= 50) return 'DEGRADED';
-  return 'CRITICAL';
-};
+import { containerStatus, statusColor, utilization } from '../utils/containerStatus';
 
 const ContainerHealth = ({ initialContainers = null }) => {
   const [selectedContainer, setSelectedContainer] = useState(null);
@@ -61,11 +50,11 @@ const ContainerHealth = ({ initialContainers = null }) => {
   }, []);
 
   const renderBar = (container, index) => {
-    const health = container.errors > 0
-      ? 0
-      : Math.max(0, 100 - Math.max(container.cpu, container.mem, container.disk));
-    const color = healthColor(health);
-    const status = container.errors > 0 ? 'DOWN' : healthLabel(health);
+    // The bar shows how hard the container is working; its colour shows whether Docker
+    // considers it well. A container can legitimately be busy and green at the same time.
+    const util = utilization(container);
+    const color = statusColor(container);
+    const status = containerStatus(container);
 
     return (
       <motion.div
@@ -83,17 +72,17 @@ const ContainerHealth = ({ initialContainers = null }) => {
             <span className="text-[9px] font-mono tracking-widest" style={{ color }}>
               {status}
             </span>
-            <span className="text-xs font-mono text-fui-text">{Math.round(health)}%</span>
+            <span className="text-xs font-mono text-fui-text">{Math.round(util)}%</span>
           </span>
         </div>
 
-        {/* Full-width health bar */}
+        {/* Full-width utilization bar */}
         <div className="w-full h-2 bg-fui-border/20 relative overflow-hidden">
           <motion.div
             className="h-full"
             style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}
             initial={{ width: 0 }}
-            animate={{ width: `${health}%` }}
+            animate={{ width: `${util}%` }}
             transition={{ delay: 0.3 + index * 0.08, duration: 0.9, ease: 'easeOut' }}
           />
         </div>
@@ -102,11 +91,12 @@ const ContainerHealth = ({ initialContainers = null }) => {
         <div className="absolute right-0 top-full mt-1 z-20 hidden group-hover:block bg-fui-panel border border-fui-border p-2 shadow-xl whitespace-nowrap">
           <p className="font-mono text-[10px] text-fui-text">
             <span className="text-fui-text/60">CPU:</span> <span style={{ color: 'var(--theme-primary)' }}>{container.cpu}%</span>{' '}
-            <span className="ml-2 text-fui-text/60">MEM:</span> <span style={{ color: 'var(--theme-primary)' }}>{container.mem}%</span>{' '}
-            <span className="ml-2 text-fui-text/60">DSK:</span> <span style={{ color: 'var(--theme-warning)' }}>{container.disk}%</span>
+            <span className="ml-2 text-fui-text/60">MEM:</span> <span style={{ color: 'var(--theme-primary)' }}>{container.mem}%</span>
           </p>
           <p className="font-mono text-[10px] text-fui-text mt-1">
-            <span className="text-fui-text/60">STATUS:</span> <span style={{ color }}>{container.errors > 0 ? 'UNHEALTHY' : 'UP'}</span>
+            <span className="text-fui-text/60">STATE:</span> <span style={{ color }}>{container.state}</span>{' '}
+            <span className="ml-2 text-fui-text/60">HEALTH:</span>{' '}
+            <span style={{ color }}>{container.health === 'none' ? 'no healthcheck' : container.health}</span>
           </p>
         </div>
       </motion.div>
@@ -161,7 +151,6 @@ const ContainerHealth = ({ initialContainers = null }) => {
                   {[
                     ['CPU', selectedContainer.cpu, 'var(--theme-primary)'],
                     ['MEM', selectedContainer.mem, 'var(--theme-primary)'],
-                    ['DSK', selectedContainer.disk, 'var(--theme-warning)'],
                   ].map(([label, value, color]) => (
                     <div key={label} className="flex items-center gap-2">
                       <span className="font-mono text-[10px] text-fui-text/60 w-8">{label}</span>
@@ -178,7 +167,11 @@ const ContainerHealth = ({ initialContainers = null }) => {
                     </div>
                   ))}
                 </div>
-                <p className="text-xs text-fui-text font-mono mt-2">ERRORS: {selectedContainer.errors}</p>
+                <p className="text-xs text-fui-text font-mono mt-2">
+                  STATE: {selectedContainer.state} &middot; HEALTH:{' '}
+                  {selectedContainer.health === 'none' ? 'no healthcheck defined' : selectedContainer.health}
+                  {selectedContainer.restarts > 0 && ` \u00b7 RESTARTS: ${selectedContainer.restarts}`}
+                </p>
               </motion.div>
             )}
           </div>

@@ -11,6 +11,7 @@ import { useSettleOnChange } from '../hooks/useSettleOnChange';
 import { getSunAngle, getMoonAngle, getSunAltitude, getMoonAltitude } from '../utils/timeUtils';
 import { useTheme } from '../utils/useTheme';
 import socket from '../utils/socket';
+import { statusTier } from '../utils/containerStatus';
 
 // --- A simplified Satellite component ---
 const Satellite = ({ radius, angle, size, color, glowColor, opacity = 1, children }) => {
@@ -387,11 +388,11 @@ const Core = ({
         setContainers(data);
       } else {
         console.error('Error fetching containers:', response.status);
-        setContainers([{ name: 'test-container', errors: 0 }]);
+        setContainers([{ name: 'test-container', state: 'running', health: 'none', restarts: 0 }]);
       }
     } catch (error) {
       console.error('Error fetching containers:', error);
-      setContainers([{ name: 'test-container', errors: 0 }]);
+      setContainers([{ name: 'test-container', state: 'running', health: 'none', restarts: 0 }]);
     }
   };
 
@@ -688,17 +689,20 @@ const Core = ({
         style={{ zIndex: 10 }}
       >
         {containers.map((container, index) => {
+          // Severity comes from Docker's own state/healthcheck verdict, not from how
+          // much CPU the container happens to be using at this instant.
           let color, glowColor, size;
-          if (container.errors === 0) {
+          const tier = statusTier(container);
+          if (tier === 'ok') {
             color = themeColors.success; // Green for healthy
             glowColor = themeColors.success;
             size = 8;
-          } else if (container.errors === 1) {
-            color = themeColors.warning; // Yellow for unhealthy
+          } else if (tier === 'warn') {
+            color = themeColors.warning; // Yellow for starting/degraded
             glowColor = themeColors.warning;
             size = 10;
           } else {
-            color = themeColors.error; // Red for critical
+            color = themeColors.error; // Red for unhealthy/down
             glowColor = themeColors.error;
             size = 12;
           }
