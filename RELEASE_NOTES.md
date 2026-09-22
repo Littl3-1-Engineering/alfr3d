@@ -1,3 +1,60 @@
+# Release v0.4.8
+
+## Release Name: Vital Signs
+
+### Notes:
+- **Fix:** The Nexus container-health panel reported a perfectly healthy Kafka as **0% /
+  CRITICAL**, roughly one poll in seven. `docker stats` reports `{{.CPUPerc}}` summed across
+  cores, so on the 4-core NUC it ranges 0-400%; the API passed that straight through and the
+  frontend's `100 - max(cpu, mem, disk)` went negative and clamped to zero. Kafka tripped it
+  because its own healthcheck spawns a full JVM every 10s. CPU is now normalized by the host's
+  core count (`docker info --format {{.NCPU}}`, cached), so the figure stays inside 0-100.
+- **Fix:** Container health is no longer derived from resource usage at all. The old formula
+  encoded "busy = dying", which is backwards for a broker — normalizing CPU alone would have
+  stopped the 0% while still calling a genuinely busy container DEGRADED. `/api/containers` now
+  reports Docker's own verdict (`state`, `health`, `restarts`) alongside `cpu`/`mem`, and the
+  panel shows a *utilization* bar coloured by *status*. A container can be busy and green.
+- **Fix:** `mysql`, `redis` and `zookeeper` were missing from the panel entirely — 10 containers
+  shown instead of 13. They carried hash-prefixed names and the API filtered on
+  `name.startswith("alfr3d")`. The filter is now a substring match, which is also the more
+  robust choice given the naming trap below.
+- **Fix:** The `disk` metric is gone. It read a hardcoded `15.0` for 9 of 10 containers (kB/B
+  writable-layer sizes matched neither the `MB` nor `GB` branch), its `GB * 100` branch pinned
+  anything over 1GB to 100% — a second silent route to 0% health — and nothing else consumed it.
+  Per-container writable bytes are a housekeeping stat, not a health signal.
+- **Feature:** Healthchecks for the eight containers that had none — `service-api`,
+  `service-frontend`, `service-user`, `service-device`, `service-environment`, `service-daemon`,
+  `routing` and `zookeeper`. **All 13 containers now report a real health verdict**, where
+  before only 5 did and the rest could only say "the process has not exited."
+- **Feature:** `common/heartbeat.py`, a shared liveness file for services whose main loop has no
+  HTTP surface. A wedged Kafka consumer keeps its process alive, so PID liveness says nothing;
+  each consumer touches a file as it makes progress and the HEALTHCHECK fails on staleness.
+  `service_speak`'s hand-rolled version now delegates here. The daemon gets a 300s window rather
+  than 90s, because one `MyDaemon.run()` cycle is a 60s sleep plus the routine and SA work.
+- **Fix:** `service-api` has no curl or wget, so its healthcheck probes `/api/health` with the
+  interpreter that is already in the image. `routing`'s previous "no healthcheck" note *guessed*
+  the OSRM image lacked probe tools; measured this time — true for curl/wget/nc, but it ships
+  `bash`, so `/dev/tcp` gives a real HTTP round trip. `zookeeper` uses `srvr` rather than the
+  more obvious `ruok`, which this image does not allowlist.
+- **Ops:** `mysql`, `redis` and `zookeeper` had been **un-recreatable by compose since
+  2026-09-12** and nothing surfaced it for ten days. Compose recreates by renaming the old
+  container to `<id-prefix>_<name>` as a backup; that sequence was interrupted (the
+  docker-compose v1/v2 incident), so the name stuck and every later recreate tried to rename a
+  container to its own current name and died on the conflict. Fixed with `docker rename` —
+  metadata-only, no restart — and confirmed with a `--dry-run --force-recreate`. Full writeup
+  and the remaining zookeeper anonymous-volume risk in
+  `todo/todo_compose_container_name_collision.md`.
+- **Docs:** New `todo/todo_redis_decimal_serialization.md` — `redis_set()` calls
+  `orjson.dumps()` with no `default=`, so any payload carrying a `decimal.Decimal` (the
+  `environment` table's `latitude`/`longitude`) fails to cache and the failure is swallowed at
+  WARNING. Degraded rather than broken, because `TTLCache` also keeps an in-memory copy. Found
+  here, deliberately not fixed here.
+- **Verified:** Deployed to the production NUC and checked live — 13/13 containers healthy, 25
+  consecutive Kafka samples with a maximum CPU of 33.1% and none over 100% (against 15-16% of
+  samples over 100% before), all 9 Kafka topics and the ZK node count intact across the
+  zookeeper recreate. Batching the collector's docker calls from `1 + 2N` down to 3 also cut
+  `/api/containers` from ~20s to ~2.1s and the WebSocket broadcast interval from ~30s to ~12.7s.
+
 # Release v0.4.7
 
 ## Release Name: Second Opinion
