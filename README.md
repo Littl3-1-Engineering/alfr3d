@@ -179,6 +179,20 @@ All configured conditions must evaluate true:
 - **Live Picker**: Matrix → Customizations lets you switch themes instantly; changes persist across sessions
 - Components use only theme tokens — no hardcoded colors
 
+### Nexus Navigation
+
+Matrix → Customizations also picks how the Nexus side panels are opened. Both modes drive the
+same panels and the same open/close state; only the control changes, and the choice persists
+across sessions.
+
+- **Orbit Rings** (default) — animated cyber-HUD rings orbit the Core, one per panel, each with
+  its own shape so the ring is learnable by silhouette; an open panel keeps its node lit, so the
+  ring doubles as the "what is open" indicator
+- **Edge Tabs** — vertical-text tabs pinned to the left and right screen edges, labelled in full
+
+Either way, an open panel closes from its corner control or with `Escape`, and clicking the Core
+still opens Quick Controls.
+
 ### System Management
 
 - **Health**: `GET /api/health` returns service uptime, container status, and the version from `services/service_api/VERSION`
@@ -330,6 +344,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 #### Nexus (Dashboard)
 - **Boot Sequence**: Animated Lottie logo with a boot-log HUD checklist — each line carries a cyber-HUD ring that spins while that step runs and bounce-settles as it completes — plus glitch effects
 - **Core Clock**: 24h clock ring with solar/lunar ephemeris satellites; uptime/version tooltip
+- **Panel Navigation**: The side panels open from a ring of cyber-HUD launchers around the Core, or from vertical-text edge tabs — pick either in Matrix → Customizations (see [Nexus Navigation](#nexus-navigation))
 - **Quick Controls**: Clicking the Core opens a top-center panel with up to 10 favorited IoT devices as compact toggle/dial tiles (per-user, edit mode to star/unstar, same control endpoint as ControlBlade)
 - **Real-Time Metrics**: Live CPU/memory, service health bars, user/device/IoT metrics via WebSocket
 - **WeatherPanel**: Animated weather icon, large current temp, wind + pressure trend

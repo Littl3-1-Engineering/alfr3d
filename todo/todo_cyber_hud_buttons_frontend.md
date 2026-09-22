@@ -2,10 +2,20 @@
 
 ## Status: §1-§6 shipped (2026-09-20) — rings, the house loader, the boot checklist, the
 event-stream glyphs, the launcher ring, the quick-control state rings, routine-run feedback and
-the Matrix gallery are all in, and the vertical-text edge tabs are gone. §6 cleanup is done too.
+the Matrix gallery are all in. §6 cleanup is done too.
+
 **§3's Core-orbit piece (users/devices/containers) was reverted the same day — see the note
 under §3 below — so it is no longer part of what shipped;** every other planned section stands.
 §7 stays out of scope.
+
+**Amended 2026-09-22:** the vertical-text edge tabs are no longer *gone*, they are no longer the
+default. "Nobody wants tabs" turned out to be an assumption, so the removal became a preference:
+Matrix → Customizations → **Nexus Navigation** picks Orbit Rings (default, unchanged) or Edge
+Tabs, stored under `alfr3d-nexus-nav` by `utils/UiPrefsContext.jsx`. In tabs mode `Nexus.jsx`
+hands `Core` an empty `launchers` array and each `CollapsibleSidePanel` a `showTab`/`onToggle`
+pair; the corner close control and Escape that §6 added stay on in both modes. Nothing about the
+ring vocabulary, the state machine or the discipline rules changes — the ring is still the
+design ALFR3D leads with.
 
 **§7.5 shipped (2026-09-20), same day, as a correction:** `idle` and `active` had been wired
 as still frames — correctly per rule 1 as written, but rule 1 was wrong. Both states are on
