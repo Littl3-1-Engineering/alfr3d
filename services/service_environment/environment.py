@@ -384,6 +384,7 @@ def check_forecast():
 # Main
 if __name__ == "__main__":
     logger.info("Starting Alfr3d's environment service")
+    heartbeat.start_watchdog(HEARTBEAT_PATH, log=logger)
     if not db_utils.wait_for_db():
         logger.error("Exiting: could not connect to MySQL")
         sys.exit(1)

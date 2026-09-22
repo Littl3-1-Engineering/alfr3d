@@ -3118,6 +3118,7 @@ if __name__ == "__main__":
         if "start" == sys.argv[1]:
             logger.info("Alfr3d Daemon initializing")
             init_daemon()
+            heartbeat.start_watchdog(HEARTBEAT_PATH, HEARTBEAT_STALE_SECONDS, log=logger)
             threading.Thread(target=consume_integrations, daemon=True).start()
             now_playing_monitor.start_now_playing_monitor()
             logger.info("Alfr3d Daemon starting...")

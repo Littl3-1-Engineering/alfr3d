@@ -479,6 +479,7 @@ def check_lan():
 
 if __name__ == "__main__":
     logger.info("Starting Alfr3d's device service")
+    heartbeat.start_watchdog(HEARTBEAT_PATH, log=logger)
     consumer = None
     retry_count = 0
     while consumer is None and not shutdown_event.is_set():

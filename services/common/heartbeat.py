@@ -17,6 +17,7 @@ consumer service reports liveness the same way.
 import logging
 import os
 import sys
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,63 @@ def is_fresh(path: str, stale_seconds: float = DEFAULT_STALE_SECONDS) -> bool:
     except OSError:
         # Missing file: the service has not reached its loop yet, or never will.
         return False
+
+
+# How often the watchdog re-checks. Small next to any sane stale window, so the delay between
+# a loop wedging and the process exiting is dominated by `stale_seconds`, not by this.
+WATCHDOG_CHECK_INTERVAL_SECONDS = 10
+
+
+def start_watchdog(
+    path: str,
+    stale_seconds: float = DEFAULT_STALE_SECONDS,
+    log: logging.Logger = logger,
+    check_interval: float = WATCHDOG_CHECK_INTERVAL_SECONDS,
+    stop_event: threading.Event = None,
+) -> threading.Thread:
+    """Exit the process once `path` goes stale, so the container's restart policy revives it.
+
+    A Docker HEALTHCHECK on the same file makes a wedged loop *visible*; this makes it
+    *recover*. Docker does not restart a container merely for being unhealthy, so without
+    this a stuck consumer sits red until a human notices.
+
+    The callers that need this touch their heartbeat from inside the very loop that can
+    wedge, so nothing in-process would otherwise be running to notice. Hence a separate
+    daemon thread, and `os._exit` rather than `sys.exit`: raising SystemExit here would
+    only unwind this watchdog thread, which is the one thread still working.
+
+    Touches `path` once up front so a slow start can't trip the watchdog before the loop
+    has written its first beat; a loop that never starts still goes stale on schedule.
+
+    Setting `stop_event` retires the thread. Services never need it -- the watchdog should
+    outlive everything else in the process -- but anything that starts a watchdog it does
+    not intend to keep, tests above all, must be able to stop it: a leaked watchdog will
+    happily call os._exit on whatever process is still running when its file goes stale.
+    """
+    touch(path)
+
+    stop = stop_event if stop_event is not None else threading.Event()
+
+    def _watch() -> None:
+        # wait() doubles as the sleep and the stop check, so a retired watchdog goes away
+        # within one interval instead of lingering for a full stale window.
+        while not stop.wait(check_interval):
+            if is_fresh(path, stale_seconds):
+                continue
+            try:
+                age = time.time() - os.path.getmtime(path)
+                age_text = f"{age:.0f}s"
+            except OSError:
+                age_text = "missing"
+            log.critical(
+                f"Heartbeat {path} stale ({age_text} > {stale_seconds:.0f}s); "
+                "the main loop is wedged -- exiting for container restart"
+            )
+            os._exit(1)
+
+    thread = threading.Thread(target=_watch, name="heartbeat-watchdog", daemon=True)
+    thread.start()
+    return thread
 
 
 def main(argv) -> int:
