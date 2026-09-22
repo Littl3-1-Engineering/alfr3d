@@ -1,3 +1,24 @@
+# Release v0.4.7
+
+## Release Name: Second Opinion
+
+### Notes:
+- **Feature:** Nexus panel navigation is now a preference. v0.4.6 replaced the six vertical-text
+  edge tabs with the HUD launcher ring around the Core outright; "nobody wants the tabs" was an
+  assumption rather than a finding, so the removal becomes a choice instead — Matrix >
+  Customizations > **Nexus Navigation** picks **Orbit Rings** (the default, unchanged) or
+  **Edge Tabs**. Both modes drive the same panels and the same open/close state; only the
+  control changes, and the choice persists per browser.
+- **Feature:** A `UiPrefs` provider beside the existing theme provider, for UI preferences that
+  aren't colours (`alfr3d-nexus-nav` in `localStorage`). Unrecognised or unreadable values fall
+  back to the default, so a blocked store degrades to the standard look rather than to nothing.
+- **Accessibility:** The restored edge tab is labelled with the bare panel title plus
+  `aria-expanded`, not "Close <title>" — that name belongs to the panel's own corner close
+  control, and two buttons answering to it would have been ambiguous. The corner close control
+  and `Escape`, both added when the tabs were removed, stay live in **both** modes.
+- **Unchanged:** the ring shape vocabulary, the state machine, and the three discipline rules
+  from v0.4.6. The ring is still what ALFR3D leads with.
+
 # Release v0.4.4
 
 ## Release Name: First Light
