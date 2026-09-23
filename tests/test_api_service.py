@@ -1,8 +1,10 @@
 """Tests for the ALFR3D API service."""
 
+import decimal
 import os
 import sys
 from unittest.mock import patch, MagicMock
+import orjson
 import pytest
 from fastapi.testclient import TestClient
 
@@ -129,6 +131,74 @@ def test_api_get_devices(mock_db_connection, api_client):
     assert data[0]["has_stream"] is False
     assert data[1]["has_stream"] is True
     assert "stream_url" not in data[1]
+
+
+def _environment_row(latitude, longitude):
+    """One `environment` row in `_fetch_environment`'s exact SELECT order."""
+    return (
+        1,
+        "test",
+        latitude,
+        longitude,
+        "Toronto",
+        "ON",
+        "CA",
+        "10.0.0.1",
+        3,
+        11,
+        7,
+        "clear sky",
+        None,
+        None,
+        1013,
+        "steady",
+        62,
+        0,
+        0,
+        None,
+        "America/Toronto",
+    )
+
+
+@patch("dependencies.db_connection")
+def test_fetch_environment_returns_floats_for_coordinates(mock_db_connection):
+    """`environment.latitude/longitude` are decimal(20,10), so MySQL returns decimal.Decimal --
+    which orjson cannot serialize, silently killing the `api:environment` Redis write. The cast
+    happens here rather than only in `redis_set`'s encoder so a cache hit and a cache miss agree
+    on the type; the wire format is unchanged either way."""
+    import dependencies as deps
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = _environment_row(
+        decimal.Decimal("43.6439720000"), decimal.Decimal("-79.5889170000")
+    )
+
+    env = deps._fetch_environment()
+    assert env["latitude"] == 43.643972
+    assert env["longitude"] == -79.588917
+    assert isinstance(env["latitude"], float)
+    assert isinstance(env["longitude"], float)
+    orjson.dumps(env)  # the whole payload is now cacheable
+
+
+@patch("dependencies.db_connection")
+def test_fetch_environment_keeps_null_coordinates_as_none(mock_db_connection):
+    """Both columns are nullable, and `fetch_home_coordinates()` relies on None to mean
+    "no coordinates set" -- a bare float() would raise here instead."""
+    import dependencies as deps
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = _environment_row(None, None)
+
+    env = deps._fetch_environment()
+    assert env["latitude"] is None
+    assert env["longitude"] is None
 
 
 @patch("routes.devices.db_connection")
