@@ -1,6 +1,7 @@
 # Next session: where the SA roadmap stands
 
-## Status: reference doc, not a task — updated 2026-08-30 after the full deployment pass
+## Status: reference doc, not a task — last refreshed **2026-09-23** (full review pass over all
+56 todo docs across the three repos; see the final entry under "Since this was written")
 
 Everything in this doc is a pointer, not new information — each item links to its own
 `todo/todo_*.md` for the real detail. Purpose: let a future session (or a human) pick up without
@@ -207,6 +208,65 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   - **Verdict unchanged**: not ready for Phase 1. `routine/executed` alone clearing the bar
     doesn't substitute for `device`/`presence` pairs also having real distributed history —
     the original **~2026-09-28** re-check date stands, not reopened early.
+
+- **2026-09-18**: continuous-stay guest decay for SA energy and card priority (`bd04a429`,
+  tests `929efcf5`), released as **v0.4.5** after a version slip (`7b7e5b62` bumped to 0.5.0 by
+  mistake, corrected by `94d5a12f`). Deck released v0.2.7 with the same slip/correction shape
+  (`2c83d37` → `6ea7d89`). Not an SA-roadmap item.
+
+- **2026-09-20**: the **animated cyber HUD rings** landed on both surfaces the same day —
+  `alfr3d` **v0.4.6** (`954a7699`) for the web frontend and `alfr3d_deck` **v0.2.8**
+  (`2698445`) for the Compose port. §1-§6 of `todo_cyber_hud_buttons_frontend.md` and the whole
+  of `alfr3d_deck/todo/todo_cyber_hud_widgets.md` are complete; §7 stays out of scope. Two
+  corrections shipped alongside: §7.5 (every ring now always turns at one of three tempos — the
+  original "motion means something is happening" rule made the HUD read as static icons), and
+  §3's Core-orbit piece was reverted the same day. Also `76a8c518`, a grace window on
+  refresh-token rotation.
+
+- **2026-09-22**: a **container-health day**, plus two findings filed rather than fixed.
+  - `851b9fd6` — `/api/containers` was deriving health from CPU load, so a wedged Kafka
+    reported healthy at 0%. Now read from Docker. `169de1bd` added healthchecks to the eight
+    containers that had none; `b31e466b` made a wedged consumer restart itself instead of just
+    going red. Released as **v0.4.8 — Vital Signs** (`7f3b3fc2`), with v0.4.5/v0.4.6 release
+    notes backfilled (`5b5f6427`).
+  - `77656792` — **zookeeper *and* kafka moved onto named volumes.** Both had been on the
+    images' own anonymous `VOLUME`s, i.e. one `docker compose down -v` away from silently
+    starting empty; kafka turned out to have the same gap zookeeper was filed for. Migrated on
+    the NUC first, every copy verified byte-identical. See
+    `todo_compose_container_name_collision.md`.
+  - `cf7e9a52`/`0c78a4c4` — **v0.4.7**, Nexus panel navigation is now a preference (Orbit
+    Rings default, Edge Tabs opt-in). "Nobody wants tabs" turned out to be an assumption, so the
+    §6 removal became a choice instead.
+  - `300b5678` filed two findings found in passing: the Redis `Decimal` bug and the compose
+    name-collision post-mortem.
+
+- **2026-09-23 (this doc's own refresh)**: a full review pass over all 56 `todo/` docs across
+  the three repos. Outcomes:
+  - **Fixed** `todo_redis_decimal_serialization.md` — all three design items shipped with 7
+    tests (full suite 625 passing, flake8/black clean). Still needs its live check on the NUC;
+    it is not deployed.
+  - **Corrected four stale docs** where the work was already done but the doc still said
+    otherwise: this one, `todo_compose_container_name_collision.md` (follow-up 1 was fixed by
+    `77656792` hours after it was filed — only the stranded-container detection check is still
+    open), `littl31/todo/todo_site_dial_in.md` (A3 was **shipped 2026-09-10**, not "blocked on
+    Athos" — `check_travel()` fired, the clip is live on the home page, only the Play Store /
+    waitlist reuse remains), and `todo_leave_by_demo.md`'s "pending commit/push" thread
+    (committed as `littl31` `1408b2e`). Deck's `todo_app_long_press_menu.md` and
+    `todo_onboarding_first_launch.md` had 20 unticked Scope boxes between them despite both
+    being shipped and on-device verified two weeks ago — re-confirmed against the code, then
+    ticked.
+  - **Still genuinely open and buildable**, in rough priority order: CEP Phases 3-5
+    (`todo_context_exchange_protocol.md`, designed not built), the Deck side of
+    `todo_card_feedback_loop.md` (backend + web have been live since 08-29; the launcher never
+    got `cardKey` reporting), `todo_multiuser_integrations.md` (its stated blocker — auth/RBAC
+    — shipped 2026-08-23, so it is unblocked and nobody noticed), and the Deck's
+    spoken-notifications end-to-end speak check, which also has temporary 2026-09-13
+    instrumentation logging waiting to be deleted.
+  - **The SA-12 re-check date (~2026-09-28) is five days out** as of this entry.
+  - One thing this pass did *not* do: the mockup canvas's `credit-note` still wrongly claims the
+    Compose port shipped a generative version first. As of 09-20 the Compose port has genuinely
+    shipped, so that note now needs rewriting rather than deleting — see
+    `todo_cyber_hud_buttons_frontend.md`'s correction block.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
