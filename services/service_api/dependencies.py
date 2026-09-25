@@ -368,8 +368,12 @@ def _fetch_environment():
             return {
                 "id": row[0],
                 "name": row[1],
-                "latitude": row[2],
-                "longitude": row[3],
+                # MySQL hands DECIMAL back as decimal.Decimal, which orjson can't serialize --
+                # leaving it raw silently killed the Redis write for this whole payload. The
+                # wire format doesn't change: FastAPI's jsonable_encoder already rendered these
+                # as JSON numbers.
+                "latitude": float(row[2]) if row[2] is not None else None,
+                "longitude": float(row[3]) if row[3] is not None else None,
                 "city": row[4],
                 "state": row[5],
                 "country": row[6],

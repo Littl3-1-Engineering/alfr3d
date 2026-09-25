@@ -1,14 +1,40 @@
 # Redis cache: `decimal.Decimal` breaks JSON serialization
 
-## Status: 🔲 Not started — found 2026-09-22
+## Status: 🟡 Built 2026-09-23 — all three design items shipped with tests; not yet deployed
+to the NUC, so the live check below is still owed
 
 Found incidentally while fixing the Kafka container-health misreport (`/api/containers`
 reporting a healthy Kafka at 0%, 2026-09-22); unrelated to that work and deliberately left
 unfixed there to keep that change focused.
 
+**What shipped 2026-09-23:**
+
+- **§1** — `_fetch_environment()` (`services/service_api/dependencies.py:356`) casts `latitude` /
+  `longitude` with `float(row[n]) if row[n] is not None else None`. The None guard matters: both
+  columns are nullable and `fetch_home_coordinates()` relies on None meaning "no coordinates
+  set", so a bare `float()` would have turned a missing-coordinates household into a crash.
+- **§2** — `redis_set()` passes a new `_json_default` handler (`redis_client.py:69`) that
+  converts `Decimal` → `float` and re-raises `TypeError` for anything else, so the net stays a
+  net rather than becoming a blanket `str()` fallback.
+- **§3** — a serialization failure now logs at **ERROR** (`Redis SET serialization error for
+  …`) while a connection failure stays at WARNING. `orjson.JSONEncodeError` subclasses
+  `TypeError` — verified in this environment rather than assumed — so `except TypeError` catches
+  the encode path cleanly ahead of the general handler.
+- **Tests** — new `tests/test_redis_client.py` (5: Decimal round-trip, non-Decimal still refused,
+  ERROR vs WARNING levels, `_json_default` directly) plus 2 in `tests/test_api_service.py`
+  covering `_fetch_environment`'s float cast and its None passthrough. Full suite 625 passed;
+  flake8 + black clean on all four touched files.
+
+**Still owed:** the live check under Testing below — deploy, hit `/api/environment`, confirm an
+`api:environment` key appears in `redis-cli --scan`, and confirm no `Redis SET error` warning is
+logged.
+
 ## Overview
 
-`redis_set()` (`services/common/redis_client.py:74`) serializes with a bare
+_Describes the bug as found on 2026-09-22 — present tense throughout this section and the
+Design section below refers to the pre-fix code. See the status block above for what changed._
+
+`redis_set()` (`services/common/redis_client.py:82`) serializes with a bare
 `orjson.dumps(value)`. orjson has no native encoder for `decimal.Decimal` and no `default=`
 handler is passed, so it raises `TypeError` for any payload containing one. The exception is
 caught and logged at WARNING, and the function returns `False` — **the caller never finds out**:

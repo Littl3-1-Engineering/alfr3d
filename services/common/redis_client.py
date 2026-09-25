@@ -1,5 +1,6 @@
 """Redis client wrapper for ALFR3D caching."""
 
+import decimal
 import os
 import logging
 import orjson
@@ -65,14 +66,33 @@ def redis_get(key: str) -> Optional[Any]:
         return None
 
 
+def _json_default(obj: Any) -> Any:
+    """Last-resort encoder for types orjson has no native handler for.
+
+    `decimal.Decimal` is the one that actually bites: MySQL returns every DECIMAL column as one,
+    so any cached payload built straight off such a row used to raise and kill the write. Callers
+    should still normalize at the source (see `_fetch_environment`) -- otherwise a cache *hit*
+    returns float while a *miss* returns Decimal, which is a worse bug than the one this fixes.
+    """
+    if isinstance(obj, decimal.Decimal):
+        return float(obj)
+    raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
+
+
 def redis_set(key: str, value: Any, ttl: int = 300) -> bool:
     """Set a value in Redis with TTL, serializing to JSON."""
     r = get_redis()
     if r is None:
         return False
     try:
-        r.setex(key, ttl, orjson.dumps(value))
+        r.setex(key, ttl, orjson.dumps(value, default=_json_default))
         return True
+    except TypeError as e:
+        # A payload this function cannot encode is a code defect, not an operational blip -- it
+        # will fail identically on every retry until someone changes the payload. Logged louder
+        # than a connection error for that reason: the Decimal case sat unnoticed at WARNING.
+        logger.error(f"Redis SET serialization error for {key}: {e}")
+        return False
     except Exception as e:
         logger.warning(f"Redis SET error for {key}: {e}")
         return False
