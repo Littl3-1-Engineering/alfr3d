@@ -39,6 +39,13 @@ ENV_NAME = os.environ.get("ALFR3D_ENV_NAME")
 CLIENT_ID = os.environ.get("CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 
+# get_upcoming_events()'s own lookahead -- was a 2h window, too narrow for check_travel() (SA-6)
+# to ever see a location-bearing event more than 2h out, which capped how much advance notice a
+# leave-by card could give no matter how generous its own lead-time logic was. 18h matches the
+# device-calendar lookahead alfr3d_deck's own CalendarContextProvider already uses, so a next
+# event is visible here for as long as the deck itself would call it "upcoming."
+UPCOMING_EVENTS_LOOKAHEAD_HOURS = 18
+
 
 def get_credentials():
     """Get valid credentials for Calendar API."""
@@ -149,7 +156,7 @@ def get_upcoming_events():
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
         now = datetime.now()
-        future = now + timedelta(hours=2)
+        future = now + timedelta(hours=UPCOMING_EVENTS_LOOKAHEAD_HOURS)
         cursor.execute(
             "SELECT title, start_time, address, notes, conference_uri, conference_solution "
             "FROM calendar_events WHERE start_time BETWEEN %s AND %s "
