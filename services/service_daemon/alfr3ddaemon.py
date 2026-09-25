@@ -419,29 +419,43 @@ def get_random_quip(quip_type: str) -> str:
 
 
 def consume_integrations() -> None:
-    """Consume integration messages from Kafka integrations topic."""
-    try:
-        logger.info(f"Integration consumer bootstrap servers: {KAFKA_URL}")
-        consumer = KafkaConsumer(
-            "integrations", bootstrap_servers=KAFKA_URL, auto_offset_reset="latest"
-        )
-        logger.info("Connected to Kafka integrations topic")
-        while True:
-            msg = consumer.poll(timeout_ms=1000)
-            if msg:
-                for tp, messages in msg.items():
-                    for message in messages:
-                        logger.info("Polling for integration message")
-                        try:
-                            data = orjson.loads(message.value)
-                            if data.get("type") == "calendar" and data.get("action") == "sync":
-                                calendar_utils.sync_calendar()
-                            elif data.get("type") == "gmail" and data.get("action") == "sync":
-                                gmail_utils.sync_gmail()
-                        except orjson.JSONDecodeError as e:
-                            logger.error(f"Error processing integration message: {str(e)}")
-    except KafkaError as e:
-        logger.error(f"Error connecting to Kafka for integrations: {str(e)}")
+    """Consume integration messages from Kafka integrations topic.
+
+    Retries with backoff on any Kafka error instead of exiting. Previously a single
+    failed connection (e.g. the broker still recovering from an unclean shutdown)
+    killed this thread permanently, silently stopping calendar/gmail sync until
+    someone noticed and restarted the daemon by hand (confirmed 2026-09-25).
+    """
+    retry_count = 0
+    while True:
+        try:
+            logger.info(f"Integration consumer bootstrap servers: {KAFKA_URL}")
+            consumer = KafkaConsumer(
+                "integrations", bootstrap_servers=KAFKA_URL, auto_offset_reset="latest"
+            )
+            logger.info("Connected to Kafka integrations topic")
+            retry_count = 0
+            while True:
+                msg = consumer.poll(timeout_ms=1000)
+                if msg:
+                    for tp, messages in msg.items():
+                        for message in messages:
+                            logger.info("Polling for integration message")
+                            try:
+                                data = orjson.loads(message.value)
+                                if data.get("type") == "calendar" and data.get("action") == "sync":
+                                    calendar_utils.sync_calendar()
+                                elif data.get("type") == "gmail" and data.get("action") == "sync":
+                                    gmail_utils.sync_gmail()
+                            except orjson.JSONDecodeError as e:
+                                logger.error(f"Error processing integration message: {str(e)}")
+        except KafkaError as e:
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(
+                f"Error connecting to Kafka for integrations: {str(e)}, retrying in {wait_time}s"
+            )
+            time.sleep(wait_time)
 
 
 class MyDaemon:

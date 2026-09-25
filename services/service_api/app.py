@@ -148,26 +148,40 @@ async def _persist_household_events(events: list) -> None:
 
 
 def _kafka_pump(topic: str, out_q: "queue.Queue", stop_event: threading.Event) -> None:
-    """Run a blocking Kafka consumer on a dedicated thread, pushing messages to a queue."""
-    logger.info(f"Kafka pump started for {topic}: {KAFKA_URL}")
-    try:
-        consumer = KafkaConsumer(
-            topic,
-            bootstrap_servers=KAFKA_URL,
-            auto_offset_reset="latest",
-            consumer_timeout_ms=1000,
-        )
-        logger.info(f"Connected to Kafka topic {topic}")
-        while not stop_event.is_set():
-            for message in consumer:
-                if stop_event.is_set():
-                    break
-                try:
-                    out_q.put_nowait(message.value)
-                except queue.Full:
-                    logger.warning(f"Kafka queue full for {topic}, dropping message")
-    except KafkaError as e:
-        logger.error(f"Error connecting to Kafka for {topic}: {str(e)}")
+    """Run a blocking Kafka consumer on a dedicated thread, pushing messages to a queue.
+
+    Retries with backoff on any Kafka error instead of exiting. Previously a single
+    failed connection (e.g. the broker still recovering from an unclean shutdown)
+    killed this thread permanently, leaving the events/SA feed empty until someone
+    noticed and restarted this service by hand (confirmed 2026-09-25).
+    """
+    retry_count = 0
+    while not stop_event.is_set():
+        try:
+            logger.info(f"Kafka pump started for {topic}: {KAFKA_URL}")
+            consumer = KafkaConsumer(
+                topic,
+                bootstrap_servers=KAFKA_URL,
+                auto_offset_reset="latest",
+                consumer_timeout_ms=1000,
+            )
+            logger.info(f"Connected to Kafka topic {topic}")
+            retry_count = 0
+            while not stop_event.is_set():
+                for message in consumer:
+                    if stop_event.is_set():
+                        break
+                    try:
+                        out_q.put_nowait(message.value)
+                    except queue.Full:
+                        logger.warning(f"Kafka queue full for {topic}, dropping message")
+        except KafkaError as e:
+            retry_count += 1
+            wait_time = min(5 * (2 ** (retry_count - 1)), 60)
+            logger.error(
+                f"Error connecting to Kafka for {topic}: {str(e)}, retrying in {wait_time}s"
+            )
+            stop_event.wait(wait_time)
 
 
 async def consume_events():
