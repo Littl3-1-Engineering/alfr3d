@@ -340,11 +340,15 @@ DEPARTURE_ANOMALY_GRACE_HOURS = 1.5
 # a fully-decayed guest population never crosses into the next rule's priority band.
 GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 
-# check_travel() (SA-6): fires once the computed leave-by time is within this many minutes of
-# frame.now, in either direction -- gives advance notice before the leave-by moment rather than
-# only announcing it right as it arrives, but still stops mentioning it once it's meaningfully
-# passed (a stale leave-by time is worse than no card).
-TRAVEL_LEAD_MINUTES = 30
+# check_travel() (SA-6): once the computed leave-by time is more than this many minutes in the
+# past, stop publishing the card -- a stale leave-by time is worse than no card. Deliberately
+# one-sided: this used to also cap how far *ahead* of leave-by the card could appear (a symmetric
+# +/- window), which meant a distant event's leave-by simply didn't exist on the wire yet no
+# matter how much advance notice a consumer wanted. self-hosted OSRM has no live-traffic layer
+# (see check_travel()'s own doc comment), so the drive-time estimate doesn't get more accurate by
+# waiting -- there's no reason to withhold it. How far in advance to actually *show* the card is
+# alfr3d_deck's call (EventLeaveByLifecycle.LEAD_TIME_MINUTES), not this service's.
+TRAVEL_STALE_AFTER_MINUTES = 30
 
 # SA-10: household-level baselines (entity_type='household'). Household is a singleton -- there's
 # only one row per day_bucket regardless of household size -- so entity_id is a fixed sentinel,
@@ -947,10 +951,12 @@ class MyDaemon:
         for routing (measured live against real production hardware) plus the public Nominatim
         API for the much rarer geocoding need, over any paid/hosted alternative.
 
-        Fires only when the next calendar event has a resolvable physical destination -- a
-        non-empty `address` and no `conference_uri` (a video call has nowhere to drive to; that
-        case is check_focus_needed()'s job, not this one's) -- and the computed leave-by time
-        falls within TRAVEL_LEAD_MINUTES of frame.now, in either direction.
+        Fires for any upcoming event (see UPCOMING_EVENTS_LOOKAHEAD_HOURS) that has a resolvable
+        physical destination -- a non-empty `address` and no `conference_uri` (a video call has
+        nowhere to drive to; that case is check_focus_needed()'s job, not this one's) -- as long
+        as its computed leave-by time hasn't meaningfully passed yet (TRAVEL_STALE_AFTER_MINUTES).
+        No upper bound on how far in advance: how soon to actually surface this to the household
+        is a display decision, made downstream (see TRAVEL_STALE_AFTER_MINUTES's own doc comment).
 
         Fails closed and silent at every step: an ungeocodable address, a household location
         that hasn't been geocoded yet, or an unreachable routing container all mean no card,
@@ -982,7 +988,7 @@ class MyDaemon:
 
         leave_by = start_time - timedelta(minutes=route["duration_minutes"])
         minutes_until_leave = (leave_by - frame.now).total_seconds() / 60
-        if abs(minutes_until_leave) > TRAVEL_LEAD_MINUTES:
+        if minutes_until_leave < -TRAVEL_STALE_AFTER_MINUTES:
             return None
 
         title = event["title"]

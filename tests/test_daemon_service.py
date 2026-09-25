@@ -4220,9 +4220,7 @@ class TestCheckTravel:
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.get_route")
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.fetch_home_coordinates")
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.geocode_address")
-    def test_fires_when_leave_by_is_within_the_lead_window(
-        self, mock_geocode, mock_home, mock_route
-    ):
+    def test_fires_when_leave_by_is_not_yet_stale(self, mock_geocode, mock_home, mock_route):
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
         now = datetime.now(timezone.utc)
@@ -4230,7 +4228,7 @@ class TestCheckTravel:
         mock_home.return_value = (43.62, -79.55)
         mock_route.return_value = {"duration_minutes": 20, "distance_km": 12.3}
 
-        # Event in 45 min, 20 min drive -> leave in 25 min, within the 30 min lead window.
+        # Event in 45 min, 20 min drive -> leave in 25 min, well before leave-by even arrives.
         frame = self._frame_with_event(now, minutes_to_start=45)
         daemon = MyDaemon()
         card = daemon.check_travel(frame)
@@ -4340,9 +4338,14 @@ class TestCheckTravel:
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.get_route")
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.fetch_home_coordinates")
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.geocode_address")
-    def test_returns_none_when_leave_by_is_too_far_in_the_future(
+    def test_fires_even_when_leave_by_is_far_in_the_future(
         self, mock_geocode, mock_home, mock_route
     ):
+        """No upper bound on advance notice: self-hosted OSRM's estimate doesn't get more
+        accurate closer to leave-by, so there's no reason to withhold a distant event's leave-by
+        once it's computable -- when to actually surface it is alfr3d_deck's call
+        (EventLeaveByLifecycle.LEAD_TIME_MINUTES), not this service's. See
+        TRAVEL_STALE_AFTER_MINUTES's own doc comment for what changed and why."""
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
         now = datetime.now(timezone.utc)
@@ -4350,10 +4353,14 @@ class TestCheckTravel:
         mock_home.return_value = (43.62, -79.55)
         mock_route.return_value = {"duration_minutes": 5, "distance_km": 2.0}
 
-        # Event in 3 hours, 5 min drive -> leave in ~175 min, way outside the 30 min lead window.
+        # Event in 3 hours, 5 min drive -> leave in ~175 min, well before leave-by even arrives.
         frame = self._frame_with_event(now, minutes_to_start=180)
         daemon = MyDaemon()
-        assert daemon.check_travel(frame) is None
+        card = daemon.check_travel(frame)
+
+        assert card is not None
+        assert card["mode"] == "travel"
+        assert card["data"]["leave_by"]
 
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.get_route")
     @patch("services.service_daemon.alfr3ddaemon.routing_utils.fetch_home_coordinates")
@@ -4361,7 +4368,11 @@ class TestCheckTravel:
     def test_returns_none_once_leave_by_has_meaningfully_passed(
         self, mock_geocode, mock_home, mock_route
     ):
-        """A stale leave-by time is worse than no card -- once the window's passed, stop."""
+        """A stale leave-by time is worse than no card -- once it's TRAVEL_STALE_AFTER_MINUTES in
+        the past, stop. (In real production traffic this can't actually happen --
+        get_upcoming_events()'s own query only ever returns events starting at or after `now` --
+        but check_travel() still guards it defensively rather than trusting that upstream
+        invariant blindly.)"""
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
         now = datetime.now(timezone.utc)
@@ -4369,8 +4380,8 @@ class TestCheckTravel:
         mock_home.return_value = (43.62, -79.55)
         mock_route.return_value = {"duration_minutes": 5, "distance_km": 2.0}
 
-        # Event started 10 min ago, 5 min drive -> should have left 15 min ago, within the
-        # (symmetric) 30 min window still -- use a longer overshoot to confirm it clears.
+        # Event started 70 min ago, 5 min drive -> should have left 75 min ago, well past
+        # TRAVEL_STALE_AFTER_MINUTES (30).
         frame = self._frame_with_event(now, minutes_to_start=-70)
         daemon = MyDaemon()
         assert daemon.check_travel(frame) is None
