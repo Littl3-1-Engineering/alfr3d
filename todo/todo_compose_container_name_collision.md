@@ -1,6 +1,7 @@
 # Compose recreate trap: containers stuck under their own backup name
 
-## Status: 🟢 Fixed on the production NUC 2026-09-22; prevention + the zookeeper volume follow-up still open
+## Status: 🟢 Fixed on the production NUC 2026-09-22; the zookeeper volume follow-up landed
+the same day (commit `77656792`) -- only the detection check (follow-up 2) is still open
 
 Found while adding container healthchecks (`docker compose up -d --no-deps zookeeper` failed
 outright). Not caused by that work — the containers had been in this state since 2026-09-12.
@@ -67,7 +68,21 @@ data volume reattached, all 9 Kafka topics intact, ZK node count unchanged at 17
 
 ## Open follow-ups
 
-### 1. Zookeeper's data is on an anonymous volume — the real remaining risk
+### 1. Zookeeper's data is on an anonymous volume — ✅ fixed 2026-09-22 (`77656792`)
+
+**Done, later the same day this was filed.** Both `zookeeper` *and* `kafka` moved onto named
+volumes (`zookeeper_data`, `zookeeper_log`, `kafka_data`) — kafka turned out to have the same
+gap, holding every topic's log segments plus the `__consumer_offsets` partitions on an anonymous
+volume of its own. Migrated on the NUC *before* the compose change landed, since editing the file
+alone would have created empty named volumes and started both services fresh: stop kafka then
+zookeeper, `docker volume create`, copy the anonymous contents in, recreate against the named
+volumes. Every copy was verified byte-identical (md5 per file, source vs destination).
+`/etc/zookeeper/secrets` stays anonymous on purpose — it is an empty cert mount.
+
+The original finding is kept below for its reasoning; the migration was done exactly as it
+describes, with kafka added.
+
+---
 
 `mysql` and `redis` use named volumes (`alfr3d_mysql_data`, `alfr3d_redis_data`). Zookeeper
 does not: `/var/lib/zookeeper/data` and `/var/lib/zookeeper/log` are **anonymous** volumes

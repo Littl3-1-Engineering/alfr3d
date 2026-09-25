@@ -21,9 +21,13 @@ hero clip wired into `littl31`.
   `littl31/src/assets/data/timeline.json` mirrored (`leave-by-card-live` entry,
   `self-hosted-routing` → Shipped).
 
-Only open thread: the `littl31` changes are staged in the working tree pending an
-explicit commit/push (per `AGENTS.md`). Same clip still needs dropping into the Play
-Store listing video + waitlist replies (Dial-In Plan A3).
+The `littl31` changes were committed as `1408b2e` ("Leave-by demo clip live in the
+`#anticipation` slot; un-hedge the SA-6 copy") — that repo's tree is clean, so the
+"staged pending commit/push" note this doc originally carried is resolved.
+
+Only open thread: the same clip still needs dropping into the Play Store listing video
++ waitlist replies (Dial-In Plan A3 step 6), which is gated on
+`alfr3d_deck/todo/todo_play_store_launch_polish.md` §5's manual Play Console setup.
 
 ---
 
