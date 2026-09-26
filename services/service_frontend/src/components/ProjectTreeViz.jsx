@@ -426,7 +426,7 @@ const ProjectTreeViz = () => {
 
       {expanding && (
         <div className="absolute top-2 left-2 px-2 py-1 bg-black/80 rounded border border-primary/30">
-          <HudLoading label="Expanding" mode="compute" size={12} className="!gap-2" />
+          <HudLoading label="Expanding" size={12} className="!gap-2" />
         </div>
       )}
 

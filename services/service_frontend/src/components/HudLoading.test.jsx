@@ -18,15 +18,11 @@ describe('HudLoading', () => {
     expect(status).toHaveTextContent('Loading routines')
   })
 
-  it('uses the handshake ring for a fetch and the process ring for local work', () => {
-    // The distinction is the whole point of the vocabulary: waiting on the other end
-    // looks different from waiting on ourselves.
-    const { container: fetching } = renderLoading({ mode: 'fetch' })
-    const { container: computing } = renderLoading({ mode: 'compute' })
-
-    // Split-Arc is arc rings only; Gear Dial adds a filled centre dot.
-    expect(fetching.querySelectorAll('circle[fill="currentColor"]')).toHaveLength(0)
-    expect(computing.querySelectorAll('circle[fill="currentColor"]').length).toBeGreaterThan(0)
+  it('always renders the Gear Dial ring, regardless of caller', () => {
+    // The generic loader is one shape now — Gear Dial adds a filled centre dot that
+    // Split-Arc (arc rings only) never does.
+    const { container } = renderLoading({ label: 'Loading anything' })
+    expect(container.querySelectorAll('circle[fill="currentColor"]').length).toBeGreaterThan(0)
   })
 
   it('keeps the ring out of the accessibility tree so the label is read once', () => {
