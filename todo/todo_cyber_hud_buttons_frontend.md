@@ -8,6 +8,17 @@ the Matrix gallery are all in. §6 cleanup is done too.
 under §3 below — so it is no longer part of what shipped;** every other planned section stands.
 §7 stays out of scope.
 
+**Amended 2026-09-25:** `HudLoading`'s `fetch`/`compute` mode is gone — the generic house
+loader always renders Gear Dial now, and the `mode` prop was removed as dead weight. The
+distinction never carried information at any of its call sites (`CalendarPanel`, `CameraStream`,
+`Profile`, `Routines`, `FavoritesPanel`, `Matrix`'s `LoadingFallback`, `ProjectTreeViz`) — every
+one of them just meant "something is happening." **Split-Arc keeps its handshake/reachability
+meaning everywhere else it's used** — device-online rings (`Core.jsx`, `deviceRings.js`), the
+Nexus boot log's network lines, the Quick Controls launcher (`Nexus.jsx`), `EventStream`, and the
+Matrix gallery's own vocabulary table — none of that changed. This narrows the shape vocabulary
+table below to describe identity/state usage only; it no longer describes what the house loader
+picks, because the house loader no longer picks.
+
 **Amended 2026-09-22:** the vertical-text edge tabs are no longer *gone*, they are no longer the
 default. "Nobody wants tabs" turned out to be an assumption, so the removal became a preference:
 Matrix → Customizations → **Nexus Navigation** picks Orbit Rings (default, unchanged) or Edge
@@ -254,8 +265,10 @@ whether or not reduced motion is honoured.
       as it completes, `fault` amber for `[WARN]` lines. The fake boot log becomes a HUD
       checklist — the single most visually impressive change on the page.
 - [x] **Replace every generic spinner**: `Matrix.jsx:21-26`'s `LoadingFallback`, and the plain
-      `"Loading..."` strings listed in the survey above. Split-Arc for anything waiting on a
-      fetch, Gear Dial for anything computing. One house loader, everywhere.
+      `"Loading..."` strings listed in the survey above. ~~Split-Arc for anything waiting on a
+      fetch, Gear Dial for anything computing.~~ **Superseded 2026-09-25 — see the amendment at
+      the top of this doc: the fetch/compute split was retired, the house loader is Gear Dial
+      only now.** One house loader, everywhere.
 - [x] **Event stream glyphs.** Swap `EventStream.jsx:36-42`'s 3×3 `div` squares for 16px
       `HudRing`s, shape by event type. **Only the newest arrival plays `resolve`** — the stream
       is socket-driven (`socket.on('events')`), so this is live and restrained.
