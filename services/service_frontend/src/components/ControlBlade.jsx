@@ -20,6 +20,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   const [fanSpeed, setFanSpeed] = useState('off');
   const [coverPosition, setCoverPosition] = useState(0);
   const [volume, setVolume] = useState(50);
+  const [tvPower, setTvPower] = useState(false);
   const [sensorValue, setSensorValue] = useState(null);
   const [sensorUnit, setSensorUnit] = useState('');
   const [loading, setLoading] = useState(false);
@@ -73,6 +74,9 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     } else if (device.device_type === 'media_player') {
       setPower(state.state === 'playing');
       setVolume(attrs.volume_level * 100 || 50);
+      // media_player reports 'off' when the TV itself is powered down, distinct from the
+      // play/pause state above which only applies while the TV is already on.
+      setTvPower(!['off', 'unavailable', 'unknown'].includes(state.state));
     } else if (device.device_type === 'sensor' || device.device_type === 'binary_sensor') {
       const unit = attrs.unit_of_measurement || '';
       setSensorUnit(unit);
@@ -165,6 +169,13 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     const success = await sendCommand(newState ? 'media_play' : 'media_pause');
     if (!success) setPower(!newState);
   }, [power, sendCommand]);
+
+  const handleTvPowerToggle = useCallback(async () => {
+    const newState = !tvPower;
+    setTvPower(newState);
+    const success = await sendCommand(newState ? 'turn_on' : 'turn_off');
+    if (!success) setTvPower(!newState);
+  }, [tvPower, sendCommand]);
 
   const handleVolumeChange = useCallback(async (value) => {
     const newVolume = parseInt(value, 10);
@@ -386,14 +397,32 @@ const ControlBlade = ({ device, onClose, anchor }) => {
 
   const renderMediaControls = () => (
     <>
+      <div className="flex items-center justify-between">
+        <span className="text-text-secondary">Power</span>
+        {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
+        <motion.button
+          whileTap={{ scale: 0.95 }}
+          onClick={handleTvPowerToggle}
+          disabled={loading || !canControl}
+          className={`w-12 h-6 rounded-full p-1 transition-colors ${
+            tvPower ? 'bg-primary' : 'bg-border-secondary'
+          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          <motion.div
+            animate={{ x: tvPower ? 18 : 0 }}
+            className="w-4 h-4 bg-text-inverse rounded-full"
+          />
+        </motion.button>
+      </div>
+
       <div className="flex items-center justify-center py-4">
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handleMediaToggle}
-          disabled={loading || !canControl}
+          disabled={loading || !canControl || !tvPower}
           className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors ${
             power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
+          } ${(!canControl || !tvPower) ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           {power ? (
             <Pause className="w-8 h-8 text-white" />
