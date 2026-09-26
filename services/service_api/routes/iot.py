@@ -596,14 +596,8 @@ async def control_iot_device(
         if source == "homeassistant" and ha_entity_id:
             from common import ha_utils
 
-            domain = ha_entity_id.split(".")[0] if "." in ha_entity_id else "switch"
-
             if command == "turn_on":
-                service = (
-                    "turn_on"
-                    if domain in ["light", "switch", "fan"]
-                    else domain.split(".")[0] if "." in ha_entity_id else domain
-                )
+                service = "turn_on"
             elif command == "turn_off":
                 service = "turn_off"
             elif command == "toggle":
