@@ -1,9 +1,9 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟢 Phase 2's `climate_deviation` bug and `climate_advisory`'s threshold miscalibration
-(both found 2026-09-26) fixed and deployed the same day; `ambient_occupancy` still blocked on
-hardware; the physical sensor itself is currently offline (unrelated hardware/network issue, see
-below)
+## Status: 🟡 Phase 2's `climate_deviation` bug and `climate_advisory`'s threshold miscalibration
+(both found 2026-09-26) fixed and deployed the same day; sensor power-cycled back online same
+day but resurfaced under new `smarthome_devices` ids, orphaning its 11-day baseline (mitigated,
+root cause open -- see below); `ambient_occupancy` still blocked on hardware
 
 **Update 2026-09-26 (climate_advisory recalibrated)**: `climate_advisory`'s fixed thresholds were
 never wrong in code, but the original placeholder *values* were -- checked directly against the
@@ -33,6 +33,30 @@ already-documented "single intermittent sensor" behavior from Phase 1, not a reg
 nothing to fix in code; it self-heals once the physical device reconnects. Neither
 `climate_advisory` nor `climate_deviation` can produce a card while it's down, which is correct
 (no data, no card), not a bug in either rule.
+
+**Update 2026-09-26 (later, sensor power-cycled -- new finding, not fixed)**: Athos power-cycled
+the physical sensor; it came back online (`smarthome_devices.online=1`, fresh readings flowing).
+But it came back under **brand-new `smarthome_devices` ids** (37890-37897) instead of reusing
+the old ones (37885-37889) -- confirmed the old ids no longer exist at all (not just offline),
+even though the entity keys are byte-identical (`athom-tem-hum-sensor-4a4734.local:899752953`
+for Temperature, unchanged). Three previously-unseen entities also appeared (Status, Power
+Button, Light), suggesting this was a full re-discovery rather than a plain reconnect. Traced
+`_upsert_node_entities()`'s match-by-`esp_entity_id` SELECT -- looks correct in isolation and
+should have reused the old row -- and ruled out every DELETE path in the codebase that touches
+`smarthome_devices` (the only one, `remove_esphome_node()`, is only reachable via an explicit
+API call that nothing called here). Root cause not found: the relevant logs from the actual
+reconnect window had already rotated out under a flood of arp-scan "packets received" noise by
+the time this was checked, a few minutes later. Notably, three *earlier* automatic drops this
+same week (09-22, 09-23 x2) did **not** churn the id -- `smarthome_sensor_history` shows
+continuous device_id=37885/37889 rows across all of them -- so whatever causes this seems
+specific to a real power-cycle/full reboot, not an ordinary network drop. Mitigated (not fixed)
+by manually re-running `compute_entity_baselines()` so `climate_deviation` has *a* baseline
+against the new ids rather than none -- but it's necessarily thin (97 night-bucket samples vs.
+the 44,000+ the old id had) and only covers whatever bucket has accumulated data since the
+reboot. The old ids' 11-day baselines are still sitting in `entity_baselines`, now orphaned and
+harmless clutter. **Open**: if this recurs, catch it live (watch `docker compose logs -f
+service-device` through a deliberate power-cycle) to get the log evidence that rotated away this
+time.
 
 **Update 2026-09-26 (fix deployed)**: fixed the gap below -- `compute_entity_baselines()` now
 computes `typical_daily_min`/`typical_daily_max` for climate baselines as
