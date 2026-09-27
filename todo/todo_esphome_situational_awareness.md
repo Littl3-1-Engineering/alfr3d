@@ -1,10 +1,29 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟡 Phase 2 shipped 2026-09-16, but `climate_deviation` has never fired and structurally
-can't as designed (found 2026-09-26 — see below); `climate_advisory` live and working;
-`ambient_occupancy` still blocked on hardware
+## Status: 🟢 Phase 2's `climate_deviation` bug (found 2026-09-26) fixed and deployed the same
+day; `climate_advisory` live and working; `ambient_occupancy` still blocked on hardware
 
-**Update 2026-09-26**: with 10 days of real `smarthome_sensor_history` accumulated (314k+ rows,
+**Update 2026-09-26 (fix deployed)**: fixed the gap below -- `compute_entity_baselines()` now
+computes `typical_daily_min`/`typical_daily_max` for climate baselines as
+`median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER` (2.0) standard deviations instead of raw
+min/max, and `CLIMATE_DEVIATION_MARGIN_C`/`_HUMIDITY_PCT` shrunk from 2.0/10 to 0.5/3 to match
+(the margin only needs hysteresis now, not to compensate for an overly wide band). Commit
+`4f024d90`, 2 tests updated/added, full daemon suite green (290 passed; the 2
+`TestSyncCalendarRoutine` failures are pre-existing/unrelated). Built and pushed, then rebuilt
++ redeployed `service-daemon` on the real NUC the same session, and manually re-ran
+`compute_entity_baselines()` against real production data to verify immediately rather than
+waiting for the 6-hourly schedule. Real before/after for smarthome_device_id 37885
+(temperature): night bucket went from a 21.37-29.75°C band (effectively ~19-32°C once margined
+-- wider than the sensor's entire recorded range) to 21.64-30.91°C median +/- 2sd (effectively
+~21.1-31.4°C margined). Confirmed the fix actually does something, not just in theory: the
+household's real recorded 19.27°C morning low and 63.57% humidity peak both now fall *outside*
+their bucket's learned band, so a repeat of either would fire `climate_deviation`; the current
+live reading at deploy time (23.78°C / 49.65% humidity, both unremarkable) correctly falls
+*inside* its band and does not fire. Not yet observed firing live on a genuine future deviation
+-- same "built and verified, waiting on a real occurrence" category as SA-3 before its
+2026-09-12 firing was found.
+
+**Update 2026-09-26 (bug found)**: with 10 days of real `smarthome_sensor_history` accumulated (314k+ rows,
 well past `CLIMATE_BASELINE_MIN_SAMPLES`), checked whether Phase 2's `climate_deviation` had
 started firing. It hasn't — zero rows in `card_interactions` for that `rule_id`, ever. Root
 cause is a design gap, not a data-volume one: `compute_entity_baselines()` sets
@@ -16,10 +35,8 @@ never firing rather than converging toward a tight, meaningful "typical" range. 
 against real numbers: the night-bucket temperature baseline is already 21.37-29.75°C (close to
 the sensor's entire 10-day observed range of 19.27-29.94°C), so with the margin the effective
 trigger band is roughly 19-32°C — wider than anything the sensor has ever recorded. Same
-mechanism likely applies to the humidity leg (baseline min/max ± 10 pts) though the humidity
-range hasn't been checked as closely. Not yet fixed this pass — needs a tighter statistic
-(a percentile band, or median ± N standard deviations) instead of raw min/max before
-`climate_deviation` can ever do what it was built to do. `climate_advisory` (Phase 1, fixed
+mechanism applied to the humidity leg (baseline min/max ± 10 pts) -- fixed in the same pass, see
+the "fix deployed" entry above. `climate_advisory` (Phase 1, fixed
 thresholds) is unaffected and has been firing correctly on its own absolute thresholds
 (120 rows 09-16→09-17, then correctly silent since as real indoor temp dropped below 27°C from
 09-20 on — not a bug).

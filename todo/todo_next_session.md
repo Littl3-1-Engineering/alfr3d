@@ -280,13 +280,21 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     doc's and `todo_departure_anomaly.md`'s "never fired" claims were both stale; both corrected
     (see that doc's "Live firing confirmed" section). Open follow-up: it hasn't recurred on
     either Saturday since — not yet root-caused.
-  - **SA-9 `climate_deviation` (not yet fixed, filed here)**: has never fired and structurally
-    can't under the current design — its "typical" band is raw min/max of the same rolling
-    window it's compared against, so real data already shows the night-bucket band at
-    21.4-29.8°C; with the ±2°C margin that's a ~19-32°C effective trigger range, wider than the
-    sensor's entire 10-day observed range. Needs a percentile- or stddev-based band instead of
-    min/max to ever be able to fire. Separately, `climate_advisory`'s 9-day silence since 09-17
-    is *not* a bug — indoor temp genuinely dropped below its 27°C threshold from 09-20 on.
+  - **SA-9 `climate_deviation`**: had never fired and structurally couldn't under the original
+    design — its "typical" band was raw min/max of the same rolling window it's compared
+    against. Separately, `climate_advisory`'s 9-day silence since 09-17 is *not* a bug — indoor
+    temp genuinely dropped below its 27°C threshold from 09-20 on.
+
+- **2026-09-26 (later, same day)**: fixed the `climate_deviation` gap above. Baseline now uses
+  `median +/- 2 stdev` instead of raw min/max (commit `4f024d90`); margin constants shrunk to
+  match. Built, tested (290 passed, 2 pre-existing unrelated failures), pushed, and deployed to
+  the production NUC same session — rebuilt+recreated `service-daemon`, then manually re-ran
+  `compute_entity_baselines()` against real data rather than waiting for the 6-hourly schedule.
+  Verified with real numbers: the household's actual recorded 19.27°C morning low and 63.57%
+  humidity peak now fall outside their bucket's learned band (would fire if repeated), while the
+  reading at deploy time (23.78°C/49.65%, unremarkable) correctly stays inside it. See
+  `todo_esphome_situational_awareness.md`'s own "fix deployed" entry for the full before/after.
+  Not yet observed firing live on a genuine future deviation.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
