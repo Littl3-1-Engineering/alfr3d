@@ -2846,7 +2846,12 @@ class TestComputeClimateBaselines:
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
     def test_upserts_a_climate_baseline_that_clears_the_floor(self, mock_connect, mock_tz):
-        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+        import statistics
+
+        from services.service_daemon.alfr3ddaemon import (
+            CLIMATE_BASELINE_STDEV_MULTIPLIER,
+            compute_entity_baselines,
+        )
 
         mock_cursor = MagicMock()
         mock_db = MagicMock()
@@ -2856,7 +2861,8 @@ class TestComputeClimateBaselines:
 
         # 10 readings at hour=14 ("day" bucket) for smarthome_device_id 5.
         base_day = datetime(2026, 8, 1, 14, 0)
-        readings = [(5, float(20 + i), base_day + timedelta(days=i)) for i in range(10)]
+        values = [float(20 + i) for i in range(10)]
+        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
         mock_cursor.fetchall.side_effect = [[], [], [], readings]
 
         compute_entity_baselines()
@@ -2868,13 +2874,53 @@ class TestComputeClimateBaselines:
         ]
         assert len(climate_calls) == 1
         params = climate_calls[0].args[1]
+        median = statistics.median(values)
+        stdev = statistics.stdev(values)
         assert params[0] == 5  # entity_id (smarthome_device_id)
         assert params[1] == "day"  # time_of_day_bucket
-        assert params[2] == 24.5  # typical_median_value (median of 20..29)
-        assert params[3] == 20.0  # typical_daily_min
-        assert params[4] == 29.0  # typical_daily_max
+        assert params[2] == median  # typical_median_value (median of 20..29)
+        # 2026-09-26 fix: typical_daily_min/max are a median +/- N-stdev band now, not the raw
+        # observed min/max (20.0/29.0) -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment.
+        assert params[3] == pytest.approx(median - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
+        assert params[4] == pytest.approx(median + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
         assert params[5] == 10  # sample_count
         mock_db.commit.assert_called_once()
+
+    @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
+    @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
+    def test_climate_band_is_tighter_than_the_raw_range_not_self_widening(
+        self, mock_connect, mock_tz
+    ):
+        """The 2026-09-26 fix itself: a couple of outlier readings must not drag
+        typical_daily_min/max out to the raw min/max, or the band is back to self-widening to
+        cover everything and check_climate_deviation() can never fire again."""
+        from services.service_daemon.alfr3ddaemon import compute_entity_baselines
+
+        mock_cursor = MagicMock()
+        mock_db = MagicMock()
+        mock_connect.return_value = mock_db
+        mock_db.cursor.return_value = mock_cursor
+        mock_tz.return_value = 0
+
+        base_day = datetime(2026, 8, 1, 14, 0)
+        # Tightly clustered around 25.0, plus two extreme outliers (15.0, 35.0).
+        values = [25.0] * 18 + [15.0, 35.0]
+        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
+        mock_cursor.fetchall.side_effect = [[], [], [], readings]
+
+        compute_entity_baselines()
+
+        climate_calls = [
+            call
+            for call in mock_cursor.execute.call_args_list
+            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
+        ]
+        params = climate_calls[0].args[1]
+        typical_min, typical_max = params[3], params[4]
+        # The old (raw min/max) behavior would have set these to 15.0/35.0 -- exactly the
+        # outliers, guaranteeing the band always contains any future reading in that range.
+        assert typical_min > 15.0
+        assert typical_max < 35.0
 
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
