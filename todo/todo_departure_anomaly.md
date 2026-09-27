@@ -1,7 +1,8 @@
 # SA-3: Presence-transition spike & departure anomaly
 
-## Status: 🟢 Built and live-verified 2026-08-29 (no live *firing* observed yet -- see below);
-deployed to production 2026-08-30
+## Status: 🟢 Built and live-verified 2026-08-29; deployed to production 2026-08-30; **a real
+live firing found in production history 2026-09-26** (occurred 2026-09-12, undetected until this
+review -- see "Live firing confirmed" below)
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
 `mysqldump` backup was taken first; migrations applied cleanly through 0035; `service-daemon`
@@ -172,15 +173,31 @@ the new call sequence and the 17th registered rule. Full suite: **424 passed, 9 
   "resident currently home" gate correctly withheld the card -- a real, live confirmation that
   this gate prevents a false positive, not just a unit-test fabrication.
 
+## Live firing confirmed (found 2026-09-26, occurred 2026-09-12)
+
+Queried production `card_interactions` directly rather than trusting this doc's stale "never
+fired" claim (the same review pass also caught `todo_next_session.md` repeating it). Found 68
+`departure_anomaly`/`shown` rows for `athos`, all on **2026-09-12, a Saturday** -- the only day
+its baseline (`athos`/weekend, spread 0) is trusted -- running continuously from **20:44:47 to
+22:01:16** at the normal ~64-90s `decide_displays()` cadence (not a scripted burst: compare the
+same day's `iot` test burst elsewhere, which fires multiple events per *second*, not per minute).
+Two pieces of corroborating evidence this was a genuine live condition, not test data:
+- The window brackets a real `user`/`left_area` → `entered_area` geofence round-trip logged the
+  same evening (21:24:55 → 21:58:xx, see `todo_device_location_reporting.md`) -- consistent with
+  athos leaving and returning while a different claimed device stayed on the home network the
+  whole time, which is exactly the per-*user*-aggregation behavior Phase 0 designed for.
+  `check_departure_anomaly()`'s "past typical hour + a claimed device online" gate doesn't care
+  which device, so the card correctly kept firing through the round-trip.
+- Zero `dismissed` actions on any of the 68 rows -- unsurprising (this is an ambient card, not an
+  alert), and consistent with nobody having manually triggered/tested it that evening.
+
+Not yet re-examined: whether this has recurred on either Saturday since (09-19, 09-26) -- it
+hasn't shown up again in `card_interactions`, which is itself worth a look next time this doc is
+picked up (device offline all evening those days vs. a calendar event covering the hours vs. a
+baseline recompute changing the trusted bucket -- open question, not yet root-caused).
+
 ## Not yet done
 
-- **A live firing has not been observed.** The one baseline that clears both gates today
-  (`athos`/weekend) needs athos to actually be home, past 05:30 local, on a Saturday or Sunday,
-  with no covering calendar event, to produce a real card -- that combination hasn't occurred
-  during this verification window. Same category of gap as SA-4's `empty_house_still_on` (also
-  never observed firing live) and SA-7's conferencing metadata (never observed against a real
-  conferencing event) -- the rule's logic is covered by 8 direct unit tests plus the live
-  computation above; a genuine end-to-end firing is still open.
 - **`Vanja` and most weekday baselines remain unreliable** at the current lookback/anchor/spread
   settings -- this is accepted as correct, conservative behavior per the task doc's own accepted
   "ship with the card off by default rather than something that cries wolf" outcome, not a bug to

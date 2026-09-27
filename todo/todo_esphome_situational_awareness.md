@@ -1,6 +1,28 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟢 Phase 2 shipped 2026-09-16 — baseline-learned `climate_deviation` rule added; `ambient_occupancy` still blocked on hardware
+## Status: 🟡 Phase 2 shipped 2026-09-16, but `climate_deviation` has never fired and structurally
+can't as designed (found 2026-09-26 — see below); `climate_advisory` live and working;
+`ambient_occupancy` still blocked on hardware
+
+**Update 2026-09-26**: with 10 days of real `smarthome_sensor_history` accumulated (314k+ rows,
+well past `CLIMATE_BASELINE_MIN_SAMPLES`), checked whether Phase 2's `climate_deviation` had
+started firing. It hasn't — zero rows in `card_interactions` for that `rule_id`, ever. Root
+cause is a design gap, not a data-volume one: `compute_entity_baselines()` sets
+`typical_daily_min`/`typical_daily_max` to the raw observed min/max of the lookback window, and
+`check_climate_deviation()` compares the live reading against that range ± a fixed margin
+(`CLIMATE_DEVIATION_MARGIN_C = 2.0`). A min/max-based "typical" band self-widens to cover
+whatever noise already happened to occur in the window, so it structurally converges toward
+never firing rather than converging toward a tight, meaningful "typical" range. Confirmed
+against real numbers: the night-bucket temperature baseline is already 21.37-29.75°C (close to
+the sensor's entire 10-day observed range of 19.27-29.94°C), so with the margin the effective
+trigger band is roughly 19-32°C — wider than anything the sensor has ever recorded. Same
+mechanism likely applies to the humidity leg (baseline min/max ± 10 pts) though the humidity
+range hasn't been checked as closely. Not yet fixed this pass — needs a tighter statistic
+(a percentile band, or median ± N standard deviations) instead of raw min/max before
+`climate_deviation` can ever do what it was built to do. `climate_advisory` (Phase 1, fixed
+thresholds) is unaffected and has been firing correctly on its own absolute thresholds
+(120 rows 09-16→09-17, then correctly silent since as real indoor temp dropped below 27°C from
+09-20 on — not a bug).
 
 **Update 2026-09-16 (Phase 2, same day as Phase 1)**: `climate_advisory` (Phase 1) fired on fixed
 absolute thresholds because there was no history to learn "typical" from. This phase builds that:

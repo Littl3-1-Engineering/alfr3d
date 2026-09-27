@@ -19,10 +19,9 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
 ## Open items, grouped by what they need
 
 **Waiting on a real-world event — nothing to build, just time:**
-- **SA-3** (`todo_departure_anomaly.md`): `check_departure_anomaly()` has never fired live. Needs
-  a resident whose baseline clears both reliability gates (currently only `athos`/weekend) to
-  actually be away past their typical hour with no calendar event covering it. Now running
-  against real production history, not the local dev stack's mirrored copy — check back.
+- **SA-3** (`todo_departure_anomaly.md`): fired live once, 2026-09-12 (found 2026-09-26 —
+  this bullet's "has never fired live" was stale). Hasn't recurred on either Saturday since;
+  see the doc's own "Live firing confirmed" section for the open follow-up.
 - **SA-10** (`todo_generalize_entity_baselines.md`): `expected_absent` and
   `household_unusual_day` have never fired live either, same reasoning — needs a genuine
   deviation day to occur.
@@ -267,6 +266,27 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     Compose port shipped a generative version first. As of 09-20 the Compose port has genuinely
     shipped, so that note now needs rewriting rather than deleting — see
     `todo_cyber_hud_buttons_frontend.md`'s correction block.
+
+- **2026-09-26**: a full SA data-inventory pass against live production tables (not this doc),
+  ahead of the ~2026-09-28 SA-12 re-check. Volumes: `household_events` 40,685 rows/28 days,
+  `smarthome_sensor_history` 314k+ rows/11 days (dense, ~1 reading/6s on temp+humidity),
+  `card_interactions` 10,904 rows across 16 rule types, `attention_telemetry_history` 978 rows.
+  `routine/executed` has now held a steady ~4/day for 19 straight days (genuinely mineable);
+  `iot`/presence streams are still thin (only 3 of the last 10 days have any `iot` event, on one
+  device) — SA-12 verdict unchanged, still waiting on the 09-28 date. Two real findings, one
+  fixed here:
+  - **SA-3 correction (this entry)**: `check_departure_anomaly()` *has* fired live —
+    2026-09-12, 68 rows, correlated with a real geofence round-trip the same evening. This
+    doc's and `todo_departure_anomaly.md`'s "never fired" claims were both stale; both corrected
+    (see that doc's "Live firing confirmed" section). Open follow-up: it hasn't recurred on
+    either Saturday since — not yet root-caused.
+  - **SA-9 `climate_deviation` (not yet fixed, filed here)**: has never fired and structurally
+    can't under the current design — its "typical" band is raw min/max of the same rolling
+    window it's compared against, so real data already shows the night-bucket band at
+    21.4-29.8°C; with the ±2°C margin that's a ~19-32°C effective trigger range, wider than the
+    sensor's entire 10-day observed range. Needs a percentile- or stddev-based band instead of
+    min/max to ever be able to fire. Separately, `climate_advisory`'s 9-day silence since 09-17
+    is *not* a bug — indoor temp genuinely dropped below its 27°C threshold from 09-20 on.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
