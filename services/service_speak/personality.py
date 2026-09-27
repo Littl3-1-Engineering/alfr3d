@@ -593,14 +593,20 @@ meeting? Shocking."), as long as they don't require a response
 {forbidden_instruction}
 
 Instructions:
-- Respond to the user's request as a statement, not a request for more information
+- Rephrase the announcement below in your own voice as a statement, not a request for more \
+information
 - Keep it under 20 words for TTS efficiency
 - Stay in character based on the personality traits above
 {formality_instruction}
 {warmth_instruction}
 {sarcasm_instruction}
 
-User request: """
+The text below is YOUR OWN outbound announcement, written in the third person about someone \
+else (e.g. a household member arriving home). Any name in it belongs to that other person, \
+never to you -- it is not someone addressing you or mistaking you for them, so never "correct" \
+it or claim a case of mistaken identity.
+
+Announcement to rephrase: """
 
 
 def select_quip_by_traits(quips, traits):
