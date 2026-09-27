@@ -98,11 +98,20 @@ RAIN_ADVISORY_THRESHOLD = 30
 # How far ahead the forecast checked by check_weather_advisory() looks.
 FORECAST_HOURS_AHEAD = 6
 
-# Indoor comfort band for check_climate_advisory() (SA-9 Phase 1) -- placeholder defaults, not a
-# considered-final household calibration.
+# Indoor comfort band for check_climate_advisory() (SA-9 Phase 1). The hot/humidity-high sides
+# were recalibrated 2026-09-26 against the real household's first ~11 days of
+# smarthome_sensor_history (144k+ readings): the original 27.0C placeholder sat only ~0.5
+# stdev above the real median (26.0C, stdev ~1.8-2.3C across buckets), so it fired on ordinary
+# afternoon warmth (120 cards in its first 2 days) rather than genuine discomfort; the original
+# 65% humidity placeholder sat *above* the real 11-day max (63.57%), so it had structurally
+# never fired. New values sit just past each metric's real p97 (28.86C / 56.04%) and below its
+# real max (29.94C / 63.57%) -- reachable by genuinely hot/humid moments, not by every warm
+# afternoon. Cold/humidity-low are left at their original generic-comfort defaults: the real
+# data has never come close to either (min 19.27C, min humidity 33.92%), so there's no household
+# evidence yet to calibrate them against -- revisit once a real cold/dry spell happens.
 CLIMATE_ADVISORY_COLD_THRESHOLD_C = 18.0
-CLIMATE_ADVISORY_HOT_THRESHOLD_C = 27.0
-CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT = 65
+CLIMATE_ADVISORY_HOT_THRESHOLD_C = 29.0
+CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT = 58
 CLIMATE_ADVISORY_HUMIDITY_LOW_PCT = 30
 
 # Spotify's own 0.0-1.0 "energy" audio feature above which check_party_advisory()
@@ -2389,11 +2398,15 @@ class MyDaemon:
 
     def check_climate_advisory(self, frame):
         """Fixed-threshold indoor comfort advisory from the household's one accepted ESPHome
-        temp/humidity sensor (SA-9 Phase 1). Not baseline-learned -- no entity_baselines support
-        exists yet for smarthome/ESPHome entities (see compute_entity_baselines()'s own
-        docstring). Single intermittent sensor, no room scoping (smarthome_devices.room is never
-        populated for ESPHome entities) -- content stays generic ("indoors") rather than naming
-        a room.
+        temp/humidity sensor (SA-9 Phase 1). Deliberately still fixed thresholds, not
+        baseline-learned, even though entity_baselines gained smarthome/ESPHome support in
+        Phase 2 (climate_deviation) -- this rule and that one answer different questions on
+        purpose ("is it uncomfortable, period" vs. "is it unusual for this house right now") and
+        collapsing them into one baseline-driven check would lose the absolute-comfort signal
+        entirely. The threshold *values* themselves were recalibrated against real household data
+        2026-09-26 -- see CLIMATE_ADVISORY_HOT_THRESHOLD_C's own comment. Single intermittent
+        sensor, no room scoping (smarthome_devices.room is never populated for ESPHome entities)
+        -- content stays generic ("indoors") rather than naming a room.
         """
         climate = frame.esphome_climate
         if not climate:
