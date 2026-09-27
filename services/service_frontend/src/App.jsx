@@ -7,6 +7,7 @@ import AudioPlayer from './components/AudioPlayer';
 import LoginModal from './components/LoginModal';
 import OnboardingModal from './components/OnboardingModal';
 import SignInRequired from './components/SignInRequired';
+import UpdateBanner from './components/UpdateBanner';
 import socket from './utils/socket';
 import { getSetupStatus } from './utils/authStore';
 import { useAuth } from './utils/useAuth';
@@ -32,6 +33,7 @@ function AppContent() {
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [onboardingModalOpen, setOnboardingModalOpen] = useState(false);
   const [setupStatus, setSetupStatus] = useState(null);
+  const [updateBannerVisible, setUpdateBannerVisible] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,45 +75,48 @@ function AppContent() {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <nav className="fixed top-0 left-0 right-0 z-20 bg-card/80 backdrop-blur-sm border-b border-primary/20">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex space-x-6">
-            <Link to="/" className="text-primary hover:text-primary-hover transition-colors">Nexus</Link>
-            {isAuthenticated && (
-              <>
-                <Link to="/domain" className="text-primary hover:text-primary-hover transition-colors">Domain</Link>
-                <Link to="/matrix" className="text-primary hover:text-primary-hover transition-colors">Matrix</Link>
-              </>
+      <div className="fixed top-0 left-0 right-0 z-20">
+        <nav className="bg-card/80 backdrop-blur-sm border-b border-primary/20">
+          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex space-x-6">
+              <Link to="/" className="text-primary hover:text-primary-hover transition-colors">Nexus</Link>
+              {isAuthenticated && (
+                <>
+                  <Link to="/domain" className="text-primary hover:text-primary-hover transition-colors">Domain</Link>
+                  <Link to="/matrix" className="text-primary hover:text-primary-hover transition-colors">Matrix</Link>
+                </>
+              )}
+            </div>
+            {isAuthenticated ? (
+              <div className="flex items-center space-x-3">
+                <Link
+                  to="/profile"
+                  className="text-sm text-text-secondary hover:text-primary transition-colors"
+                >
+                  {user.id} <span className="text-primary uppercase">{user.role}</span>
+                </Link>
+                <button
+                  onClick={logout}
+                  className="flex items-center space-x-1 text-sm text-text-secondary hover:text-primary transition-colors"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={openSignIn}
+                className="flex items-center space-x-1 text-sm text-primary hover:text-primary-hover transition-colors"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Sign In</span>
+              </button>
             )}
           </div>
-          {isAuthenticated ? (
-            <div className="flex items-center space-x-3">
-              <Link
-                to="/profile"
-                className="text-sm text-text-secondary hover:text-primary transition-colors"
-              >
-                {user.id} <span className="text-primary uppercase">{user.role}</span>
-              </Link>
-              <button
-                onClick={logout}
-                className="flex items-center space-x-1 text-sm text-text-secondary hover:text-primary transition-colors"
-                title="Sign Out"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={openSignIn}
-              className="flex items-center space-x-1 text-sm text-primary hover:text-primary-hover transition-colors"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Sign In</span>
-            </button>
-          )}
-        </div>
-      </nav>
+        </nav>
+        <UpdateBanner onVisibilityChange={setUpdateBannerVisible} />
+      </div>
       <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
       <OnboardingModal
         isOpen={onboardingModalOpen}
@@ -123,7 +128,7 @@ function AppContent() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 1 }}
-        className="relative z-10 pt-16"
+        className={`relative z-10 ${updateBannerVisible ? 'pt-28' : 'pt-16'}`}
       >
         {getComponent()}
       </motion.div>

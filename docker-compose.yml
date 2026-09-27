@@ -110,6 +110,19 @@ services:
       - MYSQL_PSWD=${MYSQL_PSWD}
       - MYSQL_NAME=${MYSQL_NAME}
 
+  # Self-service update (todo/todo_selfservice_release_update.md). Built, never started by
+  # `up -d` -- service-api spawns a one-shot `docker run -d --rm` instance of this image via its
+  # existing docker.sock when an update is triggered. profiles: ["tools"] keeps it out of a bare
+  # `docker compose build`/`config --services` too, same as `migrate` above; run_update.sh's own
+  # build step must name both profiles explicitly or this image (and migrate's) goes stale.
+  service-updater:
+    profiles: ["tools"]
+    build:
+      context: ./services/service_updater
+    volumes:
+      - update_status_data:/status
+      - db_backups:/backups:ro
+
   service-user:
     build:
       context: ./services
@@ -152,6 +165,8 @@ services:
       - audio_data:/tmp/audio
       - secrets_data:/secrets
       - .:/project:ro
+      - db_backups:/backups
+      - update_status_data:/status:ro
     privileged: true
     env_file: .env
     environment:
@@ -360,3 +375,5 @@ volumes:
   zookeeper_data:
   zookeeper_log:
   kafka_data:
+  db_backups:
+  update_status_data:

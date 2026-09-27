@@ -5,6 +5,7 @@ import { Terminal, ChevronRight, Network, Database, FileCode2, RefreshCw, Downlo
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
+import { useUpdateCheck } from '../utils/useUpdateCheck';
 import socket from '../utils/socket';
 import { containerStatus } from '../utils/containerStatus';
 
@@ -36,6 +37,7 @@ Section.propTypes = {
 
 const System = () => {
   const { isAuthenticated } = useAuth();
+  const updateInfo = useUpdateCheck();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -293,6 +295,28 @@ const System = () => {
               <InfoRow label="IP Address" value={network.ip} />
               <InfoRow label="DNS" value={network.dns} />
               <InfoRow label="Gateway" value={network.gateway} />
+              <InfoRow
+                label="Version"
+                value={
+                  updateInfo
+                    ? updateInfo.update_available
+                      ? `${updateInfo.current_version} → ${updateInfo.latest_tag} available`
+                      : `${updateInfo.current_version} — up to date`
+                    : null
+                }
+              />
+              {updateInfo?.update_available && updateInfo.release_notes_url && (
+                <div className="flex justify-end pt-1">
+                  <a
+                    href={updateInfo.release_notes_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-[10px] text-primary hover:text-primary-hover transition-colors underline"
+                  >
+                    Release notes
+                  </a>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-fui-text/60 font-mono text-xs">LOADING NETWORK INFO...</p>

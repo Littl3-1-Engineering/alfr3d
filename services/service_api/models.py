@@ -214,3 +214,8 @@ class ChangePasswordRequest(BaseModel):
 class AdminResetPasswordRequest(BaseModel):
     user_id: int
     new_password: str
+
+
+class UpdateStartRequest(BaseModel):
+    target_tag: str
+    current_password: str

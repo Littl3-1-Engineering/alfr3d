@@ -41,7 +41,10 @@ from routes.personality import router as personality_router  # noqa: E402
 from routes.iot import router as iot_router, broadcast_iot_devices  # noqa: E402
 from routes.stream import router as stream_router  # noqa: E402
 from routes.health import router as health_router  # noqa: E402
-from routes.system import router as system_router  # noqa: E402
+from routes.system import (  # noqa: E402
+    router as system_router,
+    broadcast_update_status,
+)
 from routes.music import router as music_router  # noqa: E402
 from routes.context import router as context_router  # noqa: E402
 from auth.routes import router as auth_router  # noqa: E402
@@ -276,6 +279,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(broadcast_devices())
     asyncio.create_task(broadcast_iot_devices())
     asyncio.create_task(broadcast_calendar_events())
+    asyncio.create_task(broadcast_update_status())
     asyncio.create_task(start_file_watcher_task())
     yield
 

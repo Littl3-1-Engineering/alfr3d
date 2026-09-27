@@ -20,6 +20,8 @@ os.environ.setdefault(
     "ALFR3D_SECRETS_KEY",
     "8pS1sOe6r8kM2v3z1Q5X0jz3n5aQ6l1V9j0k3m0zQeM=",  # pragma: allowlist secret
 )  # fixed test-only Fernet key, not a real credential
+os.environ.setdefault("HOST_REPO_PATH", "/tmp/alfr3d-test-repo")
+os.environ.setdefault("COMPOSE_PROJECT_NAME", "alfr3d")
 
 
 @pytest.fixture(scope="session")
@@ -1523,3 +1525,254 @@ def test_notification_event_500s_when_kafka_unavailable(mock_get_producer, api_c
         headers=_bearer(2, "resident"),
     )
     assert response.status_code == 500
+
+
+@patch("routes.system.requests.get")
+def test_update_check_reports_available_when_tags_differ(mock_get, api_client):
+    mock_get.return_value.raise_for_status = MagicMock()
+    mock_get.return_value.json.return_value = {
+        "tag_name": "v99.0.0",
+        "name": "v99.0.0: Test Release",
+        "html_url": "https://github.com/Littl3-1-Engineering/alfr3d/releases/tag/v99.0.0",
+        "body": "Release notes here",
+        "published_at": "2026-09-27T00:00:00Z",
+    }
+
+    response = api_client.get("/api/system/update-check")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["update_available"] is True
+    assert data["latest_tag"] == "v99.0.0"
+    assert data["current_version"] != "v99.0.0"
+    assert mock_get.call_args.kwargs["headers"]["User-Agent"]
+
+
+@patch("routes.system.requests.get")
+def test_update_check_reports_up_to_date_when_tags_match(mock_get, api_client):
+    import dependencies as deps
+
+    current = deps.read_version()
+    mock_get.return_value.raise_for_status = MagicMock()
+    mock_get.return_value.json.return_value = {
+        "tag_name": f"v{current}",
+        "name": f"v{current}",
+        "html_url": "https://github.com/Littl3-1-Engineering/alfr3d/releases/tag/v" + current,
+        "body": "",
+        "published_at": "2026-09-27T00:00:00Z",
+    }
+
+    response = api_client.get("/api/system/update-check")
+
+    assert response.status_code == 200
+    assert response.json()["update_available"] is False
+
+
+@patch("routes.system.requests.get")
+def test_update_check_fails_open_when_github_is_unreachable(mock_get, api_client):
+    mock_get.side_effect = Exception("network unreachable")
+
+    response = api_client.get("/api/system/update-check")
+
+    assert response.status_code == 200
+    assert response.json()["update_available"] is False
+
+
+@patch("routes.system.requests.get")
+def test_update_check_uses_the_cache_on_a_second_call(mock_get, api_client):
+    mock_get.return_value.raise_for_status = MagicMock()
+    mock_get.return_value.json.return_value = {
+        "tag_name": "v99.0.0",
+        "name": "v99.0.0",
+        "html_url": "https://github.com/Littl3-1-Engineering/alfr3d/releases/tag/v99.0.0",
+        "body": "",
+        "published_at": "2026-09-27T00:00:00Z",
+    }
+
+    api_client.get("/api/system/update-check")
+    api_client.get("/api/system/update-check")
+
+    assert mock_get.call_count == 1
+
+
+# --- POST /api/system/update/start + GET /api/system/update/status (Phase 2 execution) ---
+
+
+def _mock_password_row(mock_db_connection, password_hash="hashed"):  # pragma: allowlist secret
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (password_hash,)
+    return mock_db
+
+
+def test_update_start_rejects_unauthenticated_request(api_client):
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+    )
+    assert response.status_code == 401
+
+
+def test_update_start_rejects_resident_token(api_client):
+    """system scope is technoking/owner-only -- a resident token must 403."""
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+        headers=_bearer(2, "resident"),
+    )
+    assert response.status_code == 403
+
+
+@patch("routes.system.subprocess.run")
+@patch("routes.system._perform_database_backup")
+@patch("routes.system.password_utils.verify_password")
+@patch("routes.system.db_connection")
+def test_update_start_rejects_wrong_password(
+    mock_db_connection, mock_verify, mock_backup, mock_docker_run, api_client
+):
+    _mock_password_row(mock_db_connection)
+    mock_verify.return_value = False
+
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "wrong"},  # pragma: allowlist secret
+        headers=_bearer(1, "technoking"),
+    )
+
+    assert response.status_code == 401
+    mock_backup.assert_not_called()
+    mock_docker_run.assert_not_called()
+
+
+@patch("routes.system.subprocess.run")
+@patch("routes.system._perform_database_backup")
+@patch("routes.system.password_utils.verify_password")
+@patch("routes.system.db_connection")
+@patch("routes.system._read_update_status")
+def test_update_start_rejects_when_already_running(
+    mock_read_status, mock_db_connection, mock_verify, mock_backup, mock_docker_run, api_client
+):
+    mock_read_status.return_value = {"state": "running", "phase": "build"}
+    _mock_password_row(mock_db_connection)
+    mock_verify.return_value = True
+
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+        headers=_bearer(1, "technoking"),
+    )
+
+    assert response.status_code == 409
+    mock_backup.assert_not_called()
+    mock_docker_run.assert_not_called()
+
+
+@patch("routes.system.subprocess.run")
+@patch("routes.system._perform_database_backup")
+@patch("routes.system.password_utils.verify_password")
+@patch("routes.system.db_connection")
+@patch("routes.system._read_update_status")
+def test_update_start_500s_when_backup_fails(
+    mock_read_status, mock_db_connection, mock_verify, mock_backup, mock_docker_run, api_client
+):
+    from fastapi import HTTPException
+
+    mock_read_status.return_value = None
+    _mock_password_row(mock_db_connection)
+    mock_verify.return_value = True
+    mock_backup.side_effect = HTTPException(status_code=500, detail="mysqldump failed")
+
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+        headers=_bearer(1, "technoking"),
+    )
+
+    assert response.status_code == 500
+    mock_docker_run.assert_not_called()
+
+
+@patch("routes.system.subprocess.run")
+@patch("routes.system._perform_database_backup")
+@patch("routes.system.password_utils.verify_password")
+@patch("routes.system.db_connection")
+@patch("routes.system._read_update_status")
+def test_update_start_happy_path_launches_the_updater_container(
+    mock_read_status, mock_db_connection, mock_verify, mock_backup, mock_docker_run, api_client
+):
+    mock_read_status.return_value = None
+    _mock_password_row(mock_db_connection)
+    mock_verify.return_value = True
+    mock_backup.return_value = {
+        "databases": ["alfr3d_db"],
+        "timestamp": "20260927T120000Z",
+        "files": ["/backups/alfr3d_db_20260927T120000Z.sql"],
+    }
+    mock_docker_run.return_value = MagicMock(returncode=0, stdout="containerid\n", stderr="")
+
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+        headers=_bearer(1, "technoking"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Update started", "target_tag": "v0.4.9"}
+    docker_cmd = mock_docker_run.call_args.args[0]
+    assert docker_cmd[:3] == ["docker", "run", "-d"]
+    assert "TARGET_TAG=v0.4.9" in docker_cmd
+    assert "BACKUP_TIMESTAMP=20260927T120000Z" in docker_cmd
+    assert "alfr3d-service-updater:latest" in docker_cmd
+
+
+@patch("routes.system.subprocess.run")
+@patch("routes.system._perform_database_backup")
+@patch("routes.system.password_utils.verify_password")
+@patch("routes.system.db_connection")
+@patch("routes.system._read_update_status")
+def test_update_start_500s_when_launching_the_updater_fails(
+    mock_read_status, mock_db_connection, mock_verify, mock_backup, mock_docker_run, api_client
+):
+    mock_read_status.return_value = None
+    _mock_password_row(mock_db_connection)
+    mock_verify.return_value = True
+    mock_backup.return_value = {
+        "databases": ["alfr3d_db"],
+        "timestamp": "20260927T120000Z",
+        "files": [],
+    }
+    mock_docker_run.return_value = MagicMock(returncode=1, stdout="", stderr="no such image")
+
+    response = api_client.post(
+        "/api/system/update/start",
+        json={"target_tag": "v0.4.9", "current_password": "hunter2"},  # pragma: allowlist secret
+        headers=_bearer(1, "technoking"),
+    )
+
+    assert response.status_code == 500
+
+
+def test_update_status_is_idle_when_no_update_has_ever_run(api_client):
+    """No status file exists on a plain test host -- real code path, no mocking needed."""
+    response = api_client.get("/api/system/update/status")
+    assert response.status_code == 200
+    assert response.json() == {"state": "idle"}
+
+
+@patch("routes.system._read_update_status")
+def test_update_status_returns_the_status_file_contents(mock_read_status, api_client):
+    mock_read_status.return_value = {
+        "state": "running",
+        "phase": "build",
+        "target_tag": "v0.4.9",
+        "message": "Building images for v0.4.9",
+        "backup_file": "",
+        "updated_at": "2026-09-27T12:00:00Z",
+    }
+
+    response = api_client.get("/api/system/update/status")
+
+    assert response.status_code == 200
+    assert response.json()["phase"] == "build"
