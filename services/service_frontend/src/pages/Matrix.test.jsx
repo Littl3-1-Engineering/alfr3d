@@ -18,8 +18,10 @@ const openCustomizations = async () => {
 describe('Matrix ring gallery', () => {
   it('documents the whole vocabulary, so the shapes are discoverable', async () => {
     await openCustomizations()
+    // getAllByText, not getByText: the live CyberHudButtons gallery below this one reuses the
+    // same shape names as its own button labels (see CyberHudButtons.test.jsx).
     const names = ['Compass', 'Split-Arc', 'Gear Dial', 'Scanner Arc', 'Sensor Ring', 'Node Ring', 'Quad Reticle', 'Iris Ring']
-    names.forEach((name) => expect(screen.getByText(name)).toBeInTheDocument())
+    names.forEach((name) => expect(screen.getAllByText(name).length).toBeGreaterThan(0))
   })
 
   it('spells out which shapes carry a meaning and which only tell choices apart', async () => {

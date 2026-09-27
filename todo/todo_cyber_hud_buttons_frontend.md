@@ -643,6 +643,24 @@ in its `onComplete`.
       covers this ground more simply, and there is no `<filter>` element anywhere in `src/`
       today. Revisit only if a concrete need for the literal channel-split look comes up.
 
+### 8. Clickable Component boards added to the Customizations gallery (2026-09-27)
+
+`Matrix.jsx`'s Customizations tab gained `src/components/CyberHudButtons.jsx`: a live,
+clickable recreation of the canvas's two component boards — "Component · 3 Recreations &
+Bounce" (Compass, Split-Arc, Gear Dial) and "Component · 5 New Recreations" (Scanner, Sensor,
+Node, Reticle, Iris) — sitting right after the existing read-only "HUD Rings" vocabulary
+gallery. Built entirely on the existing `HudRing` shapes; no new geometry. Each ring is a real
+toggle button with local demo state only (click → bounce-settle → active/idle).
+
+- [ ] **TODO: wire these to real IoT device toggles.** Right now `CyberHudButtons` only flips
+      local component state — it is not connected to any device. When a surface needs a literal
+      on/off cyber button (as opposed to the role-based status rings `FavoriteDeviceTile`/
+      `ControlBlade` already wear), replace the local `on`/`setOn` state in
+      `src/components/CyberHudButtons.jsx` with the real device on/off state and call, the way
+      `ControlBlade.jsx`'s command spinners already do for their own actions. Decide then which
+      shape maps to which device kind, or whether it reuses `utils/deviceRings.js`'s
+      `ringShapeForDevice()` mapping.
+
 ---
 
 ## Agent prompt

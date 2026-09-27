@@ -12,6 +12,7 @@ import TacticalPanelVariant6 from '../components/TacticalPanelVariant6';
 import TacticalPanelVariant7 from '../components/TacticalPanelVariant7';
 import NexusNavCustomization from '../components/NexusNavCustomization';
 import ThemeCustomization from '../components/ThemeCustomization';
+import CyberHudButtons from '../components/CyberHudButtons';
 import { useTheme } from '../utils/useTheme';
 
 const Routines = lazy(() => import('../components/Routines'));
@@ -238,6 +239,9 @@ const Matrix = () => {
                           codepen.io/gorango/pen/vNXejK. Recreated for ALFR3D in React and Framer
                           Motion, not ported.
                         </p>
+                      </div>
+                      <div>
+                        <CyberHudButtons />
                       </div>
                     </div>
                   ) : ActiveComponent && <ActiveComponent />}
