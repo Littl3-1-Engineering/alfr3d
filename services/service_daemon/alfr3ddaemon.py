@@ -280,12 +280,26 @@ CLIMATE_BASELINE_LOOKBACK_DAYS = 30
 # ENTITY_BASELINE_MIN_SAMPLES.
 CLIMATE_BASELINE_MIN_SAMPLES = 10
 
+# 2026-09-26 fix: typical_daily_min/typical_daily_max for a 'room' (climate) baseline used to be
+# the *raw* min/max of the lookback window -- checked against real production data and found to
+# be self-defeating: a "typical" band built from the full observed range already covers ~all
+# future readings, so check_climate_deviation() could never fire (confirmed: zero firings in 10
+# days against 314k+ real readings). Now typical_daily_min/max are computed as
+# median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER standard deviations -- a band that reflects
+# genuinely "typical" values instead of self-widening to the noise floor. Verified against the
+# real household's actual sensor history before picking 2.0 (see todo_esphome_situational_
+# awareness.md's 2026-09-26 entry): tight enough that real recorded extremes fall outside it,
+# loose enough not to flap on ordinary variation.
+CLIMATE_BASELINE_STDEV_MULTIPLIER = 2.0
+
 # check_climate_deviation() fires only when the current reading is this far outside the
-# baseline's observed [typical_daily_min, typical_daily_max] range for the current time-of-day
-# bucket -- a margin, not a hard edge, so a reading right at the historical boundary doesn't
-# flap in and out of firing.
-CLIMATE_DEVIATION_MARGIN_C = 2.0
-CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT = 10
+# baseline's [typical_daily_min, typical_daily_max] band (now a median +/- stdev band, not a raw
+# min/max range -- see CLIMATE_BASELINE_STDEV_MULTIPLIER) for the current time-of-day bucket --
+# a margin, not a hard edge, so a reading right at the historical boundary doesn't flap in and
+# out of firing. Sized much smaller than before the 2026-09-26 fix: the band itself is now tight,
+# so the margin only needs to add hysteresis, not compensate for an overly wide band.
+CLIMATE_DEVIATION_MARGIN_C = 0.5
+CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT = 3
 
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
 # storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
@@ -2439,6 +2453,11 @@ class MyDaemon:
         Separate rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split
         as weather/weather_advisory -- so dismissing one doesn't suppress the other, and nothing
         about the already-shipped climate_advisory needed to change.
+
+        The [typical_daily_min, typical_daily_max] band compared against here is a
+        median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER-stdev band, not the raw observed range
+        (2026-09-26 fix -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment for why a literal
+        min/max band made this rule structurally unable to ever fire).
         """
         climate = frame.esphome_climate
         baselines = frame.esphome_climate_baselines
@@ -2992,6 +3011,16 @@ def compute_entity_baselines():
         for (device_id, bucket), values in climate_readings.items():
             if len(values) < CLIMATE_BASELINE_MIN_SAMPLES:
                 continue
+            # 2026-09-26 fix: typical_daily_min/max used to be raw min(values)/max(values) --
+            # a "typical" band built from the literal observed range self-widens to cover
+            # nearly every future reading too, so check_climate_deviation() could never fire
+            # (confirmed against real production data: zero firings in 10 days). A
+            # median +/- N-stdev band reflects what's actually typical instead.
+            median_value = statistics.median(values)
+            # len(values) >= CLIMATE_BASELINE_MIN_SAMPLES (10) >= 2, so stdev() is always safe.
+            stdev_value = statistics.stdev(values)
+            typical_min = median_value - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
+            typical_max = median_value + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
             cursor.execute(
                 """
                 INSERT INTO entity_baselines
@@ -3010,9 +3039,9 @@ def compute_entity_baselines():
                 (
                     device_id,
                     bucket,
-                    statistics.median(values),
-                    min(values),
-                    max(values),
+                    median_value,
+                    typical_min,
+                    typical_max,
                     len(values),
                     CLIMATE_BASELINE_MIN_SAMPLES,
                     datetime.now(timezone.utc),
