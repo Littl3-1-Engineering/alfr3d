@@ -1,3 +1,80 @@
+# Release v0.4.9
+
+## Release Name: Room Service
+
+### Notes:
+- **Feature:** Self-service updates, phase 1 of 3 — detection and display. `GET
+  /api/system/update-check` polls the GitHub releases API (cached 6h via the existing Redis-backed
+  `_get_cached_or_fetch`, never blocking a page load if GitHub is unreachable — fails open to
+  `update_available: false`) and compares against `services/VERSION`. A dismissible top-of-app
+  banner and a version row in the System panel surface it to `owner`/`technoking` accounts;
+  dismissal is keyed to the release tag in `sessionStorage` so a newer release isn't silently
+  suppressed by an old dismiss.
+- **Feature:** Self-service updates, phase 2 — execution. `POST /api/system/update/start` (same
+  `owner`/`technoking`-only tier as `restart_service`/`database/backup`, plus re-entering the
+  caller's own password — reusing `/api/auth/change-password`'s existing verification, not new
+  infrastructure) takes a database backup, then spawns a one-shot, never-`up -d`'d
+  `service-updater` container (`docker run -d --rm` via `service-api`'s existing docker.sock) that
+  does the actual `git fetch`/checkout, `docker compose build`, `alembic` migration, and
+  `docker compose up -d`, polling every container's health for up to 360s (derived from the
+  slowest real healthcheck's worst-case-to-unhealthy timing, `service-daemon` at 300s, plus margin
+  for all 13 containers restarting at once). A build or migration failure reverts the git checkout
+  and leaves the running containers untouched — proven safe by construction, not just by
+  intention. If containers come up unhealthy after a successful migration, the images are
+  automatically re-tagged back to the previous version and redeployed once; the database is
+  deliberately *never* auto-restored in that case, since the schema may already be ahead of the
+  code being rolled back to — that decision is surfaced to a human instead of guessed at.
+- **Feature:** Self-service updates, phase 3 — the actual button. An **Update Now** confirm modal
+  shows the release notes body and requires the password re-entry above before submitting; a live
+  progress banner subscribes to a new `"update_status"` WebSocket channel (service-api
+  re-broadcasting the updater container's status file, since the ephemeral container has no
+  FastAPI app of its own to broadcast from directly), falling back to polling
+  `GET /api/system/update/status` if the socket drops.
+- **Fix:** `backup_database()`'s output filename was a fixed `{db_name}.sql` — a routine manual
+  backup could silently clobber the safety backup an in-progress update had just taken, since both
+  wrote to the same path. Now timestamped (`{db_name}_{timestamp}.sql`); nothing reads the old
+  fixed name.
+- **Fix:** `/backups` was never a persistent Docker volume — just `service-api`'s own writable
+  container layer, which the self-service-update flow itself deletes every time it recreates
+  `service-api`. New `db_backups` named volume closes the gap.
+- **Fix (found via a real dry run, not a hypothetical):** the ephemeral updater container's git
+  operations failed with "dubious ownership" (the bind-mounted repo is owned by the host user, not
+  the container's own UID) — fixed with `git config --global --add safe.directory '*'`.
+- **Fix (found via the same dry run):** a second, worse instance of the docker-from-docker path
+  problem `HOST_REPO_PATH` already existed to solve — `docker compose`, run from inside the
+  ephemeral container but talking to the *host's* daemon, resolves docker-compose.yml's own
+  relative bind mounts (`./nginx.conf`, `./certs`) against its own cwd and hands that resolved
+  path straight to the host daemon. A cwd of `/repo` caused Docker to silently create an empty
+  directory at `/repo` on the **real host filesystem** and then fail trying to bind-mount it over
+  the file nginx expected. Fixed by mounting the repo at the same absolute path inside the
+  container as on the host, everywhere, instead of a translated one.
+- **Ops:** Verified via an isolated scratch dry run — a second local clone, a second Compose
+  project (`alfr3dtest`), no shared ports or network with the real stack (`service-daemon` and
+  `service-device`'s `network_mode: host` had to be reworked for the scratch copy specifically, or
+  they'd have reached the *real* production Kafka/MySQL on `localhost`). Confirmed: a broken build
+  reverts git and never touches running containers; a broken migration does the same and leaves
+  `alembic_version` untouched; the container-rollback path re-tags images back to the *exact* prior
+  image ID (confirmed by direct ID comparison, not just log text) and the stack always eventually
+  settles back to fully healthy. The specific "does this settle within 360s" timing could not be
+  cleanly confirmed in that environment — running two full 12-container stacks on one 15GB host
+  produced genuine, measurable resource contention (free memory into the low hundreds of MB, swap
+  usage climbing past 5GB, an unrelated container restarting on its own) that slowed real container
+  boot sequencing regardless of this feature's own correctness. Worth a real check under normal
+  single-stack load; the 360s figure itself is independently justified from real
+  `docker-compose.yml` healthcheck timings, not just this test run.
+- **Docs:** Found, documented, and deliberately *not* fixed here: `setup/createTables.sql`'s
+  `DELIMITER` handling around the two `CREATE EVENT` statements is ordered wrong (the delimiter
+  change meant to protect a statement's internal semicolon comes after that statement instead of
+  before), which only surfaces when running the file from scratch against a truly empty database —
+  this system's own schema predates the bug. Full writeup and the fix (verified working) in the
+  scratch clone used for the dry run above; out of scope for this release.
+- **Non-goals, both deliberate:** automatic database restore on rollback (a human decision, always
+  — see the Feature note above) and Android (`alfr3d_deck`) self-update, which already goes
+  through the Play Store.
+
+Full design writeup, including the two architecture options not chosen and why, in
+`todo/todo_selfservice_release_update.md`.
+
 # Release v0.4.8
 
 ## Release Name: Vital Signs
