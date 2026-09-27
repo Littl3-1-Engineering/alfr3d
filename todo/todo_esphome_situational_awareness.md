@@ -1,7 +1,38 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
-## Status: 🟢 Phase 2's `climate_deviation` bug (found 2026-09-26) fixed and deployed the same
-day; `climate_advisory` live and working; `ambient_occupancy` still blocked on hardware
+## Status: 🟢 Phase 2's `climate_deviation` bug and `climate_advisory`'s threshold miscalibration
+(both found 2026-09-26) fixed and deployed the same day; `ambient_occupancy` still blocked on
+hardware; the physical sensor itself is currently offline (unrelated hardware/network issue, see
+below)
+
+**Update 2026-09-26 (climate_advisory recalibrated)**: `climate_advisory`'s fixed thresholds were
+never wrong in code, but the original placeholder *values* were -- checked directly against the
+real household's first ~11 days of `smarthome_sensor_history` (144k+ readings) rather than left
+as guesses. `CLIMATE_ADVISORY_HOT_THRESHOLD_C` (27.0) sat only ~0.5 stdev above the real median
+(26.0°C), so it fired on ordinary afternoon warmth (120 cards in its first 2 days, then silence
+once outdoor temps cooled -- see the entry below on why that silence itself wasn't a bug).
+`CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT` (65%) sat *above* the real 11-day max (63.57%) -- the
+opposite problem, structurally unable to ever fire. Recalibrated to 29.0°C / 58%, both now
+sitting just past each metric's real p97 and below its real max -- reachable by genuine outliers,
+not routine readings. Cold/humidity-low thresholds (18.0°C / 30%) are untouched: real data has
+never come close to either, so there's no household evidence yet to calibrate them against.
+Deliberately kept these as fixed absolute thresholds rather than folding them into
+`climate_deviation`'s baseline-learned approach -- the two rules intentionally answer different
+questions ("is it uncomfortable, period" vs. "is it unusual for this house right now"). Commit
+`48512737`; tests unaffected (all reference the constants symbolically); full suite still 290
+passed, 2 pre-existing unrelated failures; flake8/black clean on the changed lines. Built, pushed,
+and deployed to the production NUC the same session (rebuilt + recreated `service-daemon`,
+healthy, clean cycle).
+
+**Side finding, same investigation**: at deploy time the physical ESPHome sensor
+(`athom-tem-hum-sensor-4a4734` @ 192.168.2.251) was actually offline -- confirmed via
+`service-device` logs: `[Errno 113] Connect call failed (No route to host)`, with
+aioesphomeapi's `ReconnectLogic` correctly retrying every ~30s but unable to reach it. This
+intermittent-connectivity pattern goes back to at least 2026-09-22 in the logs -- it's the
+already-documented "single intermittent sensor" behavior from Phase 1, not a regression, and
+nothing to fix in code; it self-heals once the physical device reconnects. Neither
+`climate_advisory` nor `climate_deviation` can produce a card while it's down, which is correct
+(no data, no card), not a bug in either rule.
 
 **Update 2026-09-26 (fix deployed)**: fixed the gap below -- `compute_entity_baselines()` now
 computes `typical_daily_min`/`typical_daily_max` for climate baselines as
