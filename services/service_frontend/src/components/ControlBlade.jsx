@@ -1,13 +1,16 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Settings, Thermometer, Lock, Unlock, Fan, Blinds, Play, Pause, Volume2 } from 'lucide-react';
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { X, Settings, Thermometer, Lock, Unlock, Fan, Blinds, Volume2 } from 'lucide-react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import { useAuth } from '../utils/useAuth';
 import TacticalPanelVariant5 from './TacticalPanelVariant5';
 import HudRing from './HudRing';
+import DeviceToggleButton from './DeviceToggleButton';
 import { ringShapeForDevice } from '../utils/deviceRings';
+import { useSettleOnChange } from '../hooks/useSettleOnChange';
 
 const ControlBlade = ({ device, onClose, anchor }) => {
   const { isAuthenticated } = useAuth();
@@ -24,6 +27,22 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   const [sensorValue, setSensorValue] = useState(null);
   const [sensorUnit, setSensorUnit] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Bumped only once a command is confirmed (sendCommand resolved true), never on the click
+  // itself — see DeviceToggleButton.jsx. `toggleGen` covers whichever single toggle this
+  // device has (light/switch/climate/fan power, lock, TV power); `secondaryGen` is only
+  // ever used by media_player's Play/Pause, alongside `toggleGen` for its own Power button.
+  const [toggleGen, setToggleGen] = useState(0);
+  const [secondaryGen, setSecondaryGen] = useState(0);
+  // Memoized: useSettleOnChange keys its effect on this object's identity, and an
+  // unmemoized `{ toggle, secondary }` literal is a new reference every render — any
+  // unrelated re-render inside the 1.6s resolve window would cancel the pending cleanup
+  // timeout without rescheduling it, leaving the ring stuck on `resolve` forever.
+  const toggleSignatures = useMemo(
+    () => ({ toggle: toggleGen, secondary: secondaryGen }),
+    [toggleGen, secondaryGen],
+  );
+  const settling = useSettleOnChange(toggleSignatures);
 
   // Position as a viewport-fixed float anchored near the click point (map pin or list item),
   // clamped so it always lands fully on-screen regardless of page scroll or where on the
@@ -129,6 +148,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     setPower(newState);
     const success = await sendCommand(newState ? 'turn_on' : 'turn_off');
     if (!success) setPower(!newState);
+    else setToggleGen((g) => g + 1);
   }, [power, sendCommand]);
 
   const handleBrightnessChange = useCallback(async (value) => {
@@ -149,6 +169,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     setLockState(newState);
     const success = await sendCommand(newState === 'locked' ? 'lock' : 'unlock');
     if (!success) setLockState(lockState);
+    else setToggleGen((g) => g + 1);
   }, [lockState, sendCommand]);
 
   const handleFanSpeedChange = useCallback(async (speed) => {
@@ -168,6 +189,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     setPower(newState);
     const success = await sendCommand(newState ? 'media_play' : 'media_pause');
     if (!success) setPower(!newState);
+    else setSecondaryGen((g) => g + 1);
   }, [power, sendCommand]);
 
   const handleTvPowerToggle = useCallback(async () => {
@@ -175,6 +197,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
     setTvPower(newState);
     const success = await sendCommand(newState ? 'turn_on' : 'turn_off');
     if (!success) setTvPower(!newState);
+    else setToggleGen((g) => g + 1);
   }, [tvPower, sendCommand]);
 
   const handleVolumeChange = useCallback(async (value) => {
@@ -194,24 +217,18 @@ const ControlBlade = ({ device, onClose, anchor }) => {
 
   const renderLightControls = () => (
     <>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <span className="text-text-secondary">Power</span>
-          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-        </div>
-        <motion.button
-          whileTap={{ scale: 0.95 }}
+      <div className="flex flex-col items-center gap-1">
+        <DeviceToggleButton
+          shape={ringShapeForDevice(deviceType)}
+          active={power}
+          loading={loading}
+          disabled={!canControl}
+          resolving={settling.has('toggle')}
           onClick={handlePowerToggle}
-          disabled={loading || !canControl}
-          className={`w-12 h-6 rounded-full p-1 transition-colors ${
-            power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <motion.div
-            animate={{ x: power ? 18 : 0 }}
-            className="w-4 h-4 bg-text-inverse rounded-full"
-          />
-        </motion.button>
+          label={`${power ? 'Turn off' : 'Turn on'} ${device?.name}`}
+          size={56}
+        />
+        <span className="text-text-secondary text-sm">{power ? 'On' : 'Off'}</span>
       </div>
 
       <div>
@@ -236,11 +253,24 @@ const ControlBlade = ({ device, onClose, anchor }) => {
 
   const renderClimateControls = () => (
     <>
+      <div className="flex flex-col items-center gap-1">
+        <DeviceToggleButton
+          shape={ringShapeForDevice(deviceType)}
+          active={power}
+          loading={loading}
+          disabled={!canControl}
+          resolving={settling.has('toggle')}
+          onClick={handlePowerToggle}
+          label={`${power ? 'Turn off' : 'Turn on'} ${device?.name}`}
+          size={56}
+        />
+        <span className="text-text-secondary text-sm">{power ? 'On' : 'Off'}</span>
+      </div>
+
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <Thermometer className="w-5 h-5 text-primary" />
           <span className="text-text-secondary">Climate</span>
-          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
         </div>
         <span className="text-primary font-mono">
           {device?.last_state?.attributes?.current_temperature || '--'}°
@@ -273,54 +303,45 @@ const ControlBlade = ({ device, onClose, anchor }) => {
   );
 
   const renderLockControls = () => (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center space-x-2">
-        {lockState === 'locked' ? (
-          <Lock className="w-5 h-5 text-primary" />
-        ) : (
-          <Unlock className="w-5 h-5 text-text-secondary" />
-        )}
-        <span className="text-text-secondary">
-          {lockState === 'locked' ? 'Locked' : 'Unlocked'}
-        </span>
-        {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-      </div>
-      <motion.button
-        whileTap={{ scale: 0.95 }}
+    <div className="flex flex-col items-center gap-1">
+      <DeviceToggleButton
+        shape={ringShapeForDevice(deviceType)}
+        active={lockState === 'locked'}
+        loading={loading}
+        disabled={!canControl}
+        resolving={settling.has('toggle')}
         onClick={handleLockToggle}
-        disabled={loading || !canControl}
-        className={`px-4 py-2 rounded-lg transition-colors ${
-          lockState === 'locked'
-            ? 'bg-red-600 text-white'
-            : 'bg-green-600 text-white'
-        } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        {lockState === 'locked' ? 'Unlock' : 'Lock'}
-      </motion.button>
+        label={`${lockState === 'locked' ? 'Unlock' : 'Lock'} ${device?.name}`}
+        size={56}
+      />
+      <span className="flex items-center gap-1 text-text-secondary text-sm">
+        {lockState === 'locked' ? (
+          <Lock className="w-4 h-4 text-primary" />
+        ) : (
+          <Unlock className="w-4 h-4 text-text-secondary" />
+        )}
+        {lockState === 'locked' ? 'Locked' : 'Unlocked'}
+      </span>
     </div>
   );
 
   const renderFanControls = () => (
     <>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Fan className={`w-5 h-5 ${power ? 'text-primary animate-spin' : 'text-text-secondary'}`} />
-          <span className="text-text-secondary">Fan</span>
-          {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-        </div>
-        <motion.button
-          whileTap={{ scale: 0.95 }}
+      <div className="flex flex-col items-center gap-1">
+        <DeviceToggleButton
+          shape={ringShapeForDevice(deviceType)}
+          active={power}
+          loading={loading}
+          disabled={!canControl}
+          resolving={settling.has('toggle')}
           onClick={handlePowerToggle}
-          disabled={loading || !canControl}
-          className={`w-12 h-6 rounded-full p-1 transition-colors ${
-            power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <motion.div
-            animate={{ x: power ? 18 : 0 }}
-            className="w-4 h-4 bg-text-inverse rounded-full"
-          />
-        </motion.button>
+          label={`${power ? 'Turn off' : 'Turn on'} ${device?.name}`}
+          size={56}
+        />
+        <span className="flex items-center gap-1 text-text-secondary text-sm">
+          <Fan className={`w-4 h-4 ${power ? 'text-primary animate-spin' : 'text-text-secondary'}`} />
+          {power ? 'On' : 'Off'}
+        </span>
       </div>
 
       <div>
@@ -397,39 +418,33 @@ const ControlBlade = ({ device, onClose, anchor }) => {
 
   const renderMediaControls = () => (
     <>
-      <div className="flex items-center justify-between">
-        <span className="text-text-secondary">Power</span>
-        {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-        <motion.button
-          whileTap={{ scale: 0.95 }}
-          onClick={handleTvPowerToggle}
-          disabled={loading || !canControl}
-          className={`w-12 h-6 rounded-full p-1 transition-colors ${
-            tvPower ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <motion.div
-            animate={{ x: tvPower ? 18 : 0 }}
-            className="w-4 h-4 bg-text-inverse rounded-full"
+      <div className="flex items-center justify-center gap-6 py-2">
+        <div className="flex flex-col items-center gap-1">
+          <DeviceToggleButton
+            shape={ringShapeForDevice(deviceType)}
+            active={tvPower}
+            loading={loading}
+            disabled={!canControl}
+            resolving={settling.has('toggle')}
+            onClick={handleTvPowerToggle}
+            label={`${tvPower ? 'Turn off' : 'Turn on'} ${device?.name}`}
+            size={56}
           />
-        </motion.button>
-      </div>
-
-      <div className="flex items-center justify-center py-4">
-        <motion.button
-          whileTap={{ scale: 0.95 }}
-          onClick={handleMediaToggle}
-          disabled={loading || !canControl || !tvPower}
-          className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors ${
-            power ? 'bg-primary' : 'bg-border-secondary'
-          } ${(!canControl || !tvPower) ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          {power ? (
-            <Pause className="w-8 h-8 text-white" />
-          ) : (
-            <Play className="w-8 h-8 text-white ml-1" />
-          )}
-        </motion.button>
+          <span className="text-text-secondary text-sm">{tvPower ? 'On' : 'Off'}</span>
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <DeviceToggleButton
+            shape="compass"
+            active={power}
+            loading={loading}
+            disabled={!canControl || !tvPower}
+            resolving={settling.has('secondary')}
+            onClick={handleMediaToggle}
+            label={`${power ? 'Pause' : 'Play'} ${device?.name}`}
+            size={56}
+          />
+          <span className="text-text-secondary text-sm">{power ? 'Playing' : 'Paused'}</span>
+        </div>
       </div>
 
       <div>
@@ -468,22 +483,18 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         return renderLightControls();
       case 'switch':
         return (
-          <div className="flex items-center justify-between">
-            <span className="text-text-secondary">Power</span>
-            {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-            <motion.button
-              whileTap={{ scale: 0.95 }}
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
               onClick={handlePowerToggle}
-              disabled={loading || !canControl}
-              className={`w-12 h-6 rounded-full p-1 transition-colors ${
-                power ? 'bg-primary' : 'bg-border-secondary'
-              } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <motion.div
-                animate={{ x: power ? 18 : 0 }}
-                className="w-4 h-4 bg-text-inverse rounded-full"
-              />
-            </motion.button>
+              label={`${power ? 'Turn off' : 'Turn on'} ${device?.name}`}
+              size={56}
+            />
+            <span className="text-text-secondary text-sm">{power ? 'On' : 'Off'}</span>
           </div>
         );
       case 'climate':
@@ -516,28 +527,31 @@ const ControlBlade = ({ device, onClose, anchor }) => {
         );
       default:
         return (
-          <div className="flex items-center justify-between">
-            <span className="text-text-secondary">Power</span>
-            {loading && <HudRing shape={ringShapeForDevice(deviceType)} state="working" size={16} label="Sending command" />}
-            <motion.button
-              whileTap={{ scale: 0.95 }}
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
               onClick={handlePowerToggle}
-              disabled={loading || !canControl}
-              className={`w-12 h-6 rounded-full p-1 transition-colors ${
-                power ? 'bg-primary' : 'bg-border-secondary'
-              } ${(!canControl) ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <motion.div
-                animate={{ x: power ? 18 : 0 }}
-                className="w-4 h-4 bg-text-inverse rounded-full"
-              />
-            </motion.button>
+              label={`${power ? 'Turn off' : 'Turn on'} ${device?.name}`}
+              size={56}
+            />
+            <span className="text-text-secondary text-sm">{power ? 'On' : 'Off'}</span>
           </div>
         );
     }
   };
 
-  return (
+  // Portaled to document.body: `position: fixed` is relative to the nearest ancestor with a
+  // transform/translate, not necessarily the real viewport (CSS spec, not a Framer Motion
+  // quirk), and callers like FavoritesPanel wrap this in a `translate-x-1/2`-centered panel of
+  // their own. Without the portal, the on-screen clamping math below (based on the real
+  // `window.innerWidth`/`innerHeight`) is correct but gets applied inside that narrower,
+  // off-center container instead of the window, so the blade renders off-screen for any device
+  // whose tile isn't near that container's own top-left corner.
+  return createPortal(
     <AnimatePresence>
       {device && (
         <motion.div
@@ -578,7 +592,8 @@ const ControlBlade = ({ device, onClose, anchor }) => {
           </TacticalPanelVariant5>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 };
 
