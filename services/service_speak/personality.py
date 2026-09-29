@@ -606,7 +606,35 @@ else (e.g. a household member arriving home). Any name in it belongs to that oth
 never to you -- it is not someone addressing you or mistaking you for them, so never "correct" \
 it or claim a case of mistaken identity.
 
-Announcement to rephrase: """
+The announcement to rephrase is the user's message. Output ONLY the rephrased line -- never \
+comment on the input, never say it is missing, a test, or unclear; if it is short or odd, just \
+rephrase it as-is."""
+
+
+def frame_announcement(text):
+    return f"Announcement to rephrase: {text}"
+
+
+_LLM_META_MARKERS = (
+    "announcement",
+    "i appreciate the test",
+    "i'm not seeing",
+    "i am not seeing",
+    "nothing to rephrase",
+)
+LLM_MAX_WORDS = 40
+
+
+def llm_reply_is_usable(original, reply):
+    """Reject replies where the model talked about the task instead of doing it."""
+    if not reply:
+        return False
+    lowered = reply.lower()
+    if any(m in lowered for m in _LLM_META_MARKERS) and not any(
+        m in original.lower() for m in _LLM_META_MARKERS
+    ):
+        return False
+    return len(reply.split()) <= LLM_MAX_WORDS
 
 
 def select_quip_by_traits(quips, traits):
