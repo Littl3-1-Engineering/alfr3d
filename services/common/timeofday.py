@@ -33,7 +33,7 @@ def coarse_bucket(hour):
 # boundaries worth tuning per household, the middle of the day is not.
 PARTS = ("night", "dawn", "morning", "midday", "afternoon", "evening", "wind_down")
 
-MIDDAY_START_HOUR = 11
+MIDDAY_START_HOUR = 12
 AFTERNOON_START_HOUR = 14
 EVENING_FALLBACK_HOUR = 17  # only used when sunset is unavailable
 
