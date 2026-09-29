@@ -652,14 +652,41 @@ Node, Reticle, Iris) — sitting right after the existing read-only "HUD Rings" 
 gallery. Built entirely on the existing `HudRing` shapes; no new geometry. Each ring is a real
 toggle button with local demo state only (click → bounce-settle → active/idle).
 
-- [ ] **TODO: wire these to real IoT device toggles.** Right now `CyberHudButtons` only flips
-      local component state — it is not connected to any device. When a surface needs a literal
-      on/off cyber button (as opposed to the role-based status rings `FavoriteDeviceTile`/
-      `ControlBlade` already wear), replace the local `on`/`setOn` state in
-      `src/components/CyberHudButtons.jsx` with the real device on/off state and call, the way
-      `ControlBlade.jsx`'s command spinners already do for their own actions. Decide then which
-      shape maps to which device kind, or whether it reuses `utils/deviceRings.js`'s
-      `ringShapeForDevice()` mapping.
+- [x] **Wire these to real IoT device toggles.**
+
+**Done 2026-09-29.** `CyberHudButtons.jsx` itself is untouched and stays demo-only — the
+Customizations gallery's job is to show the vocabulary, not run real devices from it. Instead,
+**`src/components/DeviceToggleButton.jsx`** is a new small wrapper around `HudRing` that both
+real control surfaces (`FavoriteDeviceTile.jsx`, `ControlBlade.jsx`) now use for every literal
+on/off action: light/switch/fan/climate power, lock/unlock, and (new) a TV's Power button,
+replacing every pill-style toggle switch and the lock/media text buttons those two files used to
+render by hand.
+
+- **Shape choice reuses `ringShapeForDevice()`**, per the TODO's own suggestion: a device's
+  primary toggle wears the same shape as its own status ring (light → Compass, switch →
+  Reticle, climate/fan → Sensor/Scanner, lock → Gear, TV Power → Node). TV is the one device
+  with two toggles on the same card (Power, Play/Pause) — Play/Pause borrows **Compass**, since
+  reusing Node for both would put two different choices side by side wearing the same
+  silhouette, which rule 3 forbids.
+- **The bounce fires off a confirmed command, not the click.** Each handler (`handlePowerToggle`,
+  `handleLockToggle`, `handleMediaToggle`, `handleTvPowerToggle`) now bumps a `toggleGen`/
+  `secondaryGen` counter only once `sendCommand` resolves `true`; `useSettleOnChange` (the same
+  hook `Core.jsx`'s orbit rings use) turns that into a one-shot `resolve` state. A failed command
+  reverts the optimistic on/off state exactly as before and never bounces.
+- **`FavoriteDeviceTile.jsx` gained TV parity with `ControlBlade.jsx`**: a separate Power toggle
+  (`tvPower`, distinct from Play/Pause) and a Volume slider, both already present in the blade
+  but missing from the compact tile.
+- **`cover`'s Close/Open buttons and `climate`'s temperature +/- steppers were left alone** —
+  they're positional/multi-value, not binary toggles, so a ring button doesn't fit them.
+- **Verified**: `npm test` 184/184 (unchanged pass count — `FavoriteDeviceTile.test.jsx` only
+  asserts the passive status ring, which wasn't touched), `npm run build` clean. Lint could not
+  run (`eslint-plugin-react-hooks`'s flat config is broken under ESLint 9 — pre-existing, see
+  the alfr3d Dependabot posture notes, unrelated to this change). Verified live in Chrome against
+  a throwaway harness route (same pattern as this doc's own `/hudring` harness, since reverted)
+  rendering `FavoriteDeviceTile` directly with mock light/lock/media_player/switch/fan/offline
+  devices: every shape rendered distinct and at the right state (idle/active/fault), and
+  clicking the TV's Power toggle flipped it, disabled the now out-of-reach Play/Pause button,
+  and correctly reverted both on the command failing (no session in the harness).
 
 ---
 

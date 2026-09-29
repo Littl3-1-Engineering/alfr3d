@@ -131,7 +131,7 @@ const FavoritesPanel = ({ isOpen, onClose }) => {
 
             {isAuthenticated && !loading && !error && !editMode && (
               favorites.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
+                <div className="flex flex-wrap gap-2 justify-center">
                   {favorites.map((device) => (
                     <FavoriteDeviceTile key={device.id} device={device} canControl onSelect={handleDeviceSelect} />
                   ))}

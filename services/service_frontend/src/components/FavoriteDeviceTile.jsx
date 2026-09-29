@@ -1,11 +1,13 @@
 import { motion } from 'framer-motion';
-import { Lightbulb, Power, Thermometer, Fan, Blinds, Lock, Unlock, Play, Pause, X } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { Lightbulb, Power, Thermometer, Fan, Blinds, Lock, Unlock, Play, Volume2, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
 import { apiFetch } from '../utils/apiClient';
 import HudRing from './HudRing';
+import DeviceToggleButton from './DeviceToggleButton';
 import { ringShapeForDevice } from '../utils/deviceRings';
+import { useSettleOnChange } from '../hooks/useSettleOnChange';
 
 const TYPE_ICONS = {
   light: Lightbulb,
@@ -37,7 +39,25 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
   const [lockState, setLockState] = useState('unlocked');
   const [fanSpeed, setFanSpeed] = useState('off');
   const [coverPosition, setCoverPosition] = useState(0);
+  const [volume, setVolume] = useState(50);
+  const [tvPower, setTvPower] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Bumped only once a command is confirmed (sendCommand resolved true), never on the click
+  // itself, so the ring's bounce-settle fires on real data — `toggleGen` covers whichever
+  // single toggle a tile has (light/switch/climate/fan power, lock), `secondaryGen` is only
+  // ever used by media_player's Play/Pause, alongside `toggleGen` for its own Power button.
+  const [toggleGen, setToggleGen] = useState(0);
+  const [secondaryGen, setSecondaryGen] = useState(0);
+  // Memoized: useSettleOnChange keys its effect on this object's identity, and an
+  // unmemoized `{ toggle, secondary }` literal is a new reference every render — any
+  // unrelated re-render inside the 1.6s resolve window would cancel the pending cleanup
+  // timeout without rescheduling it, leaving the ring stuck on `resolve` forever.
+  const toggleSignatures = useMemo(
+    () => ({ toggle: toggleGen, secondary: secondaryGen }),
+    [toggleGen, secondaryGen],
+  );
+  const settling = useSettleOnChange(toggleSignatures);
 
   useEffect(() => {
     if (deviceType === 'light') {
@@ -58,8 +78,12 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
       setCoverPosition(attrs.current_position || 0);
     } else if (deviceType === 'media_player') {
       setPower(state.state === 'playing');
+      setVolume(attrs.volume_level * 100 || 50);
+      // media_player reports 'off' when the TV itself is powered down, distinct from the
+      // play/pause state above which only applies while the TV is already on.
+      setTvPower(!['off', 'unavailable', 'unknown'].includes(state.state));
     }
-  }, [state.state, attrs.brightness, attrs.temperature, attrs.percentage, attrs.current_position, deviceType]);
+  }, [state.state, attrs.brightness, attrs.temperature, attrs.percentage, attrs.current_position, attrs.volume_level, deviceType]);
 
   const sendCommand = useCallback(async (command, params = {}) => {
     setLoading(true);
@@ -83,6 +107,7 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     setPower(next);
     const success = await sendCommand(next ? 'turn_on' : 'turn_off');
     if (!success) setPower(!next);
+    else setToggleGen((g) => g + 1);
   }, [power, sendCommand]);
 
   const handleBrightnessChange = useCallback(async (value) => {
@@ -103,6 +128,7 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     setLockState(next);
     const success = await sendCommand(next === 'locked' ? 'lock' : 'unlock');
     if (!success) setLockState(lockState);
+    else setToggleGen((g) => g + 1);
   }, [lockState, sendCommand]);
 
   const handleFanSpeedCycle = useCallback(async () => {
@@ -124,7 +150,23 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     setPower(next);
     const success = await sendCommand(next ? 'media_play' : 'media_pause');
     if (!success) setPower(!next);
+    else setSecondaryGen((g) => g + 1);
   }, [power, sendCommand]);
+
+  const handleTvPowerToggle = useCallback(async () => {
+    const next = !tvPower;
+    setTvPower(next);
+    const success = await sendCommand(next ? 'turn_on' : 'turn_off');
+    if (!success) setTvPower(!next);
+    else setToggleGen((g) => g + 1);
+  }, [tvPower, sendCommand]);
+
+  const handleVolumeChange = useCallback(async (value) => {
+    const next = parseInt(value, 10);
+    setVolume(next);
+    const success = await sendCommand('volume_set', { params: { volume: next } });
+    if (!success) setVolume(50);
+  }, [sendCommand]);
 
   const disabled = !canControl || loading;
 
@@ -139,8 +181,19 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     switch (deviceType) {
       case 'light':
         return (
-          <div className="flex items-center gap-2">
-            <ToggleSwitch on={power} onToggle={handlePowerToggle} disabled={disabled} />
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
+              onClick={handlePowerToggle}
+              label={`${power ? 'Turn off' : 'Turn on'} ${device.name}`}
+            />
+            <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+              {power ? 'On' : 'Off'}
+            </span>
             <input
               type="range"
               min="0"
@@ -148,15 +201,26 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
               value={brightness}
               onChange={(e) => handleBrightnessChange(e.target.value)}
               disabled={disabled || !power}
-              className="flex-1 accent-fui-accent h-1 disabled:opacity-40"
+              className="w-full accent-fui-accent h-1 disabled:opacity-40"
             />
           </div>
         );
       case 'climate':
       case 'thermostat':
         return (
-          <div className="flex items-center justify-between gap-1">
-            <ToggleSwitch on={power} onToggle={handlePowerToggle} disabled={disabled} />
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
+              onClick={handlePowerToggle}
+              label={`${power ? 'Turn off' : 'Turn on'} ${device.name}`}
+            />
+            <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+              {power ? 'On' : 'Off'}
+            </span>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => handleTemperatureChange(Math.max(50, targetTemp - 1))}
@@ -178,12 +242,23 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
         );
       case 'fan':
         return (
-          <div className="flex items-center justify-between gap-2">
-            <ToggleSwitch on={power} onToggle={handlePowerToggle} disabled={disabled} />
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
+              onClick={handlePowerToggle}
+              label={`${power ? 'Turn off' : 'Turn on'} ${device.name}`}
+            />
+            <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+              {power ? 'On' : 'Off'}
+            </span>
             <button
               onClick={handleFanSpeedCycle}
               disabled={disabled || !power}
-              className="flex-1 py-1 border border-fui-border text-fui-text uppercase text-[10px] tracking-widest hover:border-fui-accent disabled:opacity-40"
+              className="w-full py-1 border border-fui-border text-fui-text uppercase text-[10px] tracking-widest hover:border-fui-accent disabled:opacity-40"
             >
               {fanSpeed}
             </button>
@@ -211,29 +286,71 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
         );
       case 'lock':
         return (
-          <button
-            onClick={handleLockToggle}
-            disabled={disabled}
-            className={`w-full py-1 flex items-center justify-center gap-1 uppercase text-[10px] tracking-widest border disabled:opacity-40 ${
-              lockState === 'locked'
-                ? 'border-error text-error'
-                : 'border-success text-success'
-            }`}
-          >
-            {lockState === 'locked' ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-            {lockState === 'locked' ? 'Locked' : 'Unlocked'}
-          </button>
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={lockState === 'locked'}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
+              onClick={handleLockToggle}
+              label={`${lockState === 'locked' ? 'Unlock' : 'Lock'} ${device.name}`}
+            />
+            <span className={`flex items-center gap-1 uppercase text-[10px] tracking-widest ${
+              lockState === 'locked' ? 'text-error' : 'text-success'
+            }`}>
+              {lockState === 'locked' ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+              {lockState === 'locked' ? 'Locked' : 'Unlocked'}
+            </span>
+          </div>
         );
       case 'media_player':
         return (
-          <button
-            onClick={handleMediaToggle}
-            disabled={disabled}
-            className="w-full py-1 flex items-center justify-center gap-1 border border-fui-border text-fui-accent hover:border-fui-accent disabled:opacity-40"
-          >
-            {power ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-            {power ? 'Playing' : 'Paused'}
-          </button>
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center justify-center gap-4">
+              <div className="flex flex-col items-center gap-1">
+                <DeviceToggleButton
+                  shape={ringShapeForDevice(deviceType)}
+                  active={tvPower}
+                  loading={loading}
+                  disabled={!canControl}
+                  resolving={settling.has('toggle')}
+                  onClick={handleTvPowerToggle}
+                  label={`${tvPower ? 'Turn off' : 'Turn on'} ${device.name}`}
+                />
+                <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+                  {tvPower ? 'On' : 'Off'}
+                </span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <DeviceToggleButton
+                  shape="compass"
+                  active={power}
+                  loading={loading}
+                  disabled={!canControl || !tvPower}
+                  resolving={settling.has('secondary')}
+                  onClick={handleMediaToggle}
+                  label={`${power ? 'Pause' : 'Play'} ${device.name}`}
+                />
+                <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+                  {power ? 'Playing' : 'Paused'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full">
+              <Volume2 className="w-3 h-3 text-fui-text/70 flex-shrink-0" />
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={volume}
+                onChange={(e) => handleVolumeChange(e.target.value)}
+                disabled={disabled || !tvPower}
+                className="flex-1 accent-fui-accent h-1 disabled:opacity-40"
+              />
+              <span className="text-fui-accent font-mono text-[10px] w-8 text-right">{volume}%</span>
+            </div>
+          </div>
         );
       case 'sensor':
       case 'binary_sensor':
@@ -243,7 +360,22 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
           </div>
         );
       default:
-        return <ToggleSwitch on={power} onToggle={handlePowerToggle} disabled={disabled} />;
+        return (
+          <div className="flex flex-col items-center gap-1">
+            <DeviceToggleButton
+              shape={ringShapeForDevice(deviceType)}
+              active={power}
+              loading={loading}
+              disabled={!canControl}
+              resolving={settling.has('toggle')}
+              onClick={handlePowerToggle}
+              label={`${power ? 'Turn off' : 'Turn on'} ${device.name}`}
+            />
+            <span className="text-fui-text/70 uppercase text-[10px] tracking-widest">
+              {power ? 'On' : 'Off'}
+            </span>
+          </div>
+        );
     }
   };
 
@@ -271,7 +403,7 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
     <motion.div
       whileHover={{ scale: 1.02 }}
       onClick={handleTileClick}
-      className={`relative border border-fui-border bg-fui-panel/60 p-2 flex flex-col gap-2 min-w-0 ${
+      className={`relative border border-fui-border bg-fui-panel/60 p-2 flex flex-col gap-2 w-fit min-w-[112px] max-w-[180px] ${
         !editMode && onSelect ? 'cursor-pointer' : ''
       }`}
     >
@@ -305,25 +437,6 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
       </div>
     </motion.div>
   );
-};
-
-const ToggleSwitch = ({ on, onToggle, disabled }) => (
-  <motion.button
-    whileTap={{ scale: 0.95 }}
-    onClick={onToggle}
-    disabled={disabled}
-    className={`w-8 h-4 rounded-full p-0.5 transition-colors flex-shrink-0 ${
-      on ? 'bg-fui-accent' : 'bg-fui-border'
-    } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-  >
-    <motion.div animate={{ x: on ? 16 : 0 }} className="w-3 h-3 rounded-full bg-black" />
-  </motion.button>
-);
-
-ToggleSwitch.propTypes = {
-  on: PropTypes.bool.isRequired,
-  onToggle: PropTypes.func.isRequired,
-  disabled: PropTypes.bool,
 };
 
 FavoriteDeviceTile.propTypes = {
