@@ -530,7 +530,10 @@ class MyDaemon:
 
             p = get_producer()
             if p and quip:
-                p.send("speak", quip.encode("utf-8"))
+                # Quips are already written in character; running them through the
+                # "rephrase this announcement" LLM prompt made it complain about a
+                # missing announcement, so speak them verbatim.
+                p.send("speak", orjson.dumps({"text": quip, "skip_personality": True}))
 
             QUIP_START_TIME = time.time()
             QUIP_WAIT_TIME = randint(10, 50)

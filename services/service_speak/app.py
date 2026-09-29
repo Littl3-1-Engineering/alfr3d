@@ -30,6 +30,8 @@ from common import heartbeat  # noqa: E402
 from personality import (  # noqa: E402
     get_blended_personality,
     build_llm_system_prompt,
+    frame_announcement,
+    llm_reply_is_usable,
     get_quips_for_environment,
     select_quip_by_traits,
     track_speak_text,
@@ -320,7 +322,11 @@ def process_speak_message(message):
                     )
 
                     system_prompt = build_llm_system_prompt(personality)
-                    llm_text = call_claude_haiku(system_prompt, text, config)
+                    llm_text = call_claude_haiku(system_prompt, frame_announcement(text), config)
+
+                    if llm_text and not llm_reply_is_usable(text, llm_text):
+                        logger.warning(f"Discarding off-task LLM reply: {llm_text[:80]!r}")
+                        llm_text = None
 
                     if llm_text:
                         text = llm_text
