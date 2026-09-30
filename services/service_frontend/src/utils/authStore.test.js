@@ -25,6 +25,7 @@ describe('authStore', () => {
 
   beforeEach(async () => {
     sessionStorage.clear()
+    localStorage.clear()
     vi.resetModules()
     authStore = await import('./authStore')
   })
@@ -39,14 +40,14 @@ describe('authStore', () => {
     expect(authStore.getRefreshToken()).toBeNull()
   })
 
-  it('login stores both tokens and persists the refresh token to sessionStorage', async () => {
+  it('login stores both tokens and persists the refresh token to localStorage', async () => {
     mockFetch({ json: { access_token: 'access-1', refresh_token: 'refresh-1', token_type: 'bearer' } })
 
     await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
 
     expect(authStore.getAccessToken()).toBe('access-1')
     expect(authStore.getRefreshToken()).toBe('refresh-1')
-    expect(sessionStorage.getItem('alfr3d-refresh-token')).toBe('refresh-1')
+    expect(localStorage.getItem('alfr3d-refresh-token')).toBe('refresh-1')
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/auth/login'),
       expect.objectContaining({
@@ -77,7 +78,7 @@ describe('authStore', () => {
     expect(authStore.getRefreshToken()).toBe('refresh-2')
   })
 
-  it('refresh clears stored tokens and returns null on failure', async () => {
+  it('refresh clears stored tokens and returns null when the server rejects the token', async () => {
     mockFetch({ json: { access_token: 'access-1', refresh_token: 'refresh-1', token_type: 'bearer' } })
     await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
 
@@ -87,7 +88,47 @@ describe('authStore', () => {
     expect(result).toBeNull()
     expect(authStore.getAccessToken()).toBeNull()
     expect(authStore.getRefreshToken()).toBeNull()
+    expect(localStorage.getItem('alfr3d-refresh-token')).toBeNull()
+  })
+
+  it('refresh keeps tokens on a network error or 5xx so a blip does not log you out', async () => {
+    mockFetch({ json: { access_token: 'access-1', refresh_token: 'refresh-1', token_type: 'bearer' } })
+    await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
+
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    expect(await authStore.refresh()).toBeNull()
+    expect(authStore.getRefreshToken()).toBe('refresh-1')
+    expect(localStorage.getItem('alfr3d-refresh-token')).toBe('refresh-1')
+
+    mockFetch({ ok: false, status: 503, json: {} })
+    expect(await authStore.refresh()).toBeNull()
+    expect(authStore.getRefreshToken()).toBe('refresh-1')
+  })
+
+  it('migrates a legacy sessionStorage refresh token to localStorage', async () => {
+    sessionStorage.setItem('alfr3d-refresh-token', 'legacy-1')
+    vi.resetModules()
+    authStore = await import('./authStore')
+    expect(authStore.getRefreshToken()).toBe('legacy-1')
+    expect(localStorage.getItem('alfr3d-refresh-token')).toBe('legacy-1')
     expect(sessionStorage.getItem('alfr3d-refresh-token')).toBeNull()
+  })
+
+  it('proactively refreshes shortly before the access token expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const exp = Math.floor(Date.now() / 1000) + 15 * 60
+      mockFetch({ json: { access_token: fakeJwt({ sub: '1', type: 'owner', exp }), refresh_token: 'refresh-1' } })
+      await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
+
+      const fetchMock = mockFetch({ json: { access_token: 'access-2', refresh_token: 'refresh-2' } })
+      await vi.advanceTimersByTimeAsync(14 * 60 * 1000 + 1000)
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(authStore.getAccessToken()).toBe('access-2')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('refresh is a no-op when there is no refresh token', async () => {

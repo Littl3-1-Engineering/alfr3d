@@ -8,6 +8,7 @@ describe('apiClient', () => {
 
   beforeEach(async () => {
     sessionStorage.clear()
+    localStorage.clear()
     vi.resetModules()
     authStore = await import('./authStore')
     ;({ apiFetch } = await import('./apiClient'))
@@ -83,7 +84,7 @@ describe('apiClient', () => {
     globalThis.fetch = loginFetch
     await authStore.login({ username: 'alice', password: 'hunter2' }) // pragma: allowlist secret
 
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401 })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) })
     globalThis.fetch = fetchMock
 
     const response = await apiFetch('http://api.test/api/devices/1', { method: 'PUT' })
