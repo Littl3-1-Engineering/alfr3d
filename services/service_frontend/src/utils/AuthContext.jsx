@@ -18,7 +18,7 @@ export const AuthProvider = ({ children }) => {
     const unsubscribe = authStore.subscribe(syncFromStore);
 
     // On mount, an access token never survives a reload (in-memory only) but the refresh
-    // token does (sessionStorage) -- attempt a silent resume so a reload doesn't force a
+    // token does (localStorage) -- attempt a silent resume so a reload doesn't force a
     // fresh login mid-session.
     if (!authStore.getAccessToken() && authStore.getRefreshToken()) {
       authStore.refresh();

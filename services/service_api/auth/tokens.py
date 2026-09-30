@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from common import db_connection, redis_get, redis_set
 
 REFRESH_TOKEN_TTL_DAYS = 30
-REFRESH_GRACE_SECONDS = 10
+REFRESH_GRACE_SECONDS = 60
 
 
 def _hash(raw_token):

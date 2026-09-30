@@ -9,6 +9,7 @@ describe('LoginModal', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
     sessionStorage.clear()
+    localStorage.clear()
     vi.restoreAllMocks()
   })
 
