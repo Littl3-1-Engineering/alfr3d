@@ -996,6 +996,7 @@ def test_card_interaction_inserts_for_permitted_resident_token(mock_db_connectio
             "rule_id": "rhythm_break_anomaly",
             "subject_key": "Living Room Lamp",
             "action": "dismissed",
+            "user_id": 999,  # spoofed body value must be ignored in favor of the token's user
         },
         headers=_bearer(2, "resident"),
     )
@@ -1011,6 +1012,7 @@ def test_card_interaction_inserts_for_permitted_resident_token(mock_db_connectio
     assert params[0] == "rhythm_break_anomaly"
     assert params[1] == "Living Room Lamp"
     assert params[2] == "dismissed"
+    assert params[3] == 2
     mock_db.commit.assert_called_once()
 
 

@@ -139,6 +139,24 @@ QUIP_WAIT_TIME = randint(5, 10)
 # undefined "last time".
 PARTY_ADVISORY_LAST_NUDGE_TIME = 0.0
 
+# check_system_health(): how often an integration (Home Assistant / SmartThings) is probed, and
+# how many probes in a row must fail before the card fires. A probe is a network call with a
+# 10s timeout, so it must not run every ~60s cycle; two consecutive failures (~10 min) keeps a
+# single blip or an HA restart from raising an urgent card.
+SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS = 300
+SYSTEM_HEALTH_FAILURES_BEFORE_ALERT = 2
+
+# (key, display name, common module, is-configured fn, probe fn) -- an unconfigured integration
+# is never probed or alerted on.
+SYSTEM_HEALTH_INTEGRATIONS = (
+    ("home_assistant", "Home Assistant", "ha_utils", "is_ha_configured", "test_ha_connection"),
+    ("smartthings", "SmartThings", "st_utils", "is_st_configured", "test_st_connection"),
+)
+
+# Per-integration probe state: {key: {"failures": int, "last_probe": float}}. In-memory only --
+# a restart just re-probes, and the alert needs fresh consecutive failures anyway.
+SYSTEM_HEALTH_STATE = {}
+
 # `config` table key check_now_playing() persists the last-seen track under,
 # so the value survives daemon restarts and is queryable by other services.
 NOW_PLAYING_CONFIG_KEY = "music_now_playing"
@@ -653,6 +671,7 @@ class MyDaemon:
     #   weather_advisory:      forecast_rain_probability, hours_ahead, because
     #   mood:                   day_of_week, time_of_day, energy, energy_label
     #   household_composition: known_names
+    #   system_health:         unreachable (integration keys), because
     #   rhythm_break_anomaly:  varies by deviation_type -- still_on_past_typical:
     #                           over_by_minutes/typical_daily_max_minutes; unusual_hour:
     #                           current_hour/typical_active_hour; expected_absent:
@@ -723,6 +742,11 @@ class MyDaemon:
         # ambient (6.2, next to mood) when every online device is claimed, elevated (2.3,
         # next to event/gathering) when an unclaimed/unknown device is on the network.
         ("household_composition", 6.2, "check_household_composition"),
+        # Urgent (never suppressible, no dismiss button): a configured integration that has been
+        # unreachable for several probes means every device it syncs reads offline. Priority 2.2
+        # sits just above household_composition's elevated variant (2.3) -- the system itself
+        # being blind outranks any single card it would have produced.
+        ("system_health", 2.2, "check_system_health"),
         # Actionable, near event/gathering: a genuine deviation from a device's
         # established on/off rhythm is worth surfacing promptly.
         ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),
@@ -940,6 +964,60 @@ class MyDaemon:
         finally:
             if db:
                 db.close()
+
+    def check_system_health(self, frame=None):
+        """Urgent card when a configured integration (Home Assistant, SmartThings) has failed
+        SYSTEM_HEALTH_FAILURES_BEFORE_ALERT consecutive probes. SA had no way to say "I'm blind"
+        -- an HA outage just made every synced device read offline with nothing on the dashboard
+        explaining why.
+
+        Probes are rate-limited to SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS per integration (each is
+        a network call with a 10s timeout); between probes the last result stands. An
+        unconfigured integration is skipped entirely, never alerted on. Sets `urgent`, so
+        decide_displays() never suppresses it. Not a frame field (SA-4) -- it probes external
+        services rather than reading shared state.
+        """
+        from common import ha_utils, st_utils
+
+        modules = {"ha_utils": ha_utils, "st_utils": st_utils}
+        now = time.time()
+        down = []
+        for key, name, module_name, configured_fn, probe_fn in SYSTEM_HEALTH_INTEGRATIONS:
+            state = SYSTEM_HEALTH_STATE.setdefault(key, {"failures": 0, "last_probe": 0.0})
+            try:
+                if now - state["last_probe"] >= SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS:
+                    state["last_probe"] = now
+                    module = modules[module_name]
+                    if not getattr(module, configured_fn)():
+                        state["failures"] = 0
+                    elif getattr(module, probe_fn)()[0]:
+                        state["failures"] = 0
+                    else:
+                        state["failures"] += 1
+            except Exception as e:
+                # A broken probe must not take the whole SA cycle down, and must not count as
+                # the integration being down either -- that would be a false urgent alert.
+                logger.error(f"System health probe for {key} failed: {e}")
+            if state["failures"] >= SYSTEM_HEALTH_FAILURES_BEFORE_ALERT:
+                down.append((key, name, state["failures"]))
+
+        if not down:
+            return None
+        names = ", ".join(name for _key, name, _n in down)
+        minutes = SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS // 60
+        return {
+            "mode": "system_health",
+            "content": f"{names} unreachable — synced devices will read offline",
+            "priority": 2.2,
+            "urgent": True,
+            "data": {
+                "unreachable": [key for key, _name, _n in down],
+                "because": [
+                    f"{name}: {n} consecutive failed checks (every {minutes} min)"
+                    for _key, name, n in down
+                ],
+            },
+        }
 
     def check_emails(self, frame=None):
         """Check for unread emails using Gmail utils. Not a frame field (SA-4) -- not

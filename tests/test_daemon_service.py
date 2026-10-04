@@ -1133,6 +1133,12 @@ class TestDecideDisplays:
             mock_cursor.fetchall.return_value = []
             yield
 
+    SYSTEM_HEALTH_CARD = {
+        "mode": "system_health",
+        "content": "sh",
+        "priority": 2.2,
+        "urgent": True,
+    }
     TIME_CARD = {"mode": "time", "content": "t", "priority": 1}
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
@@ -1262,6 +1268,7 @@ class TestDecideDisplays:
         check_empty_house_still_on=None,
         check_departure_anomaly=None,
         check_household_unusual_day=None,
+        check_system_health=None,
     ):
         """Build a MyDaemon with each check_* replaced by a stub returning the given card."""
         from services.service_daemon.alfr3ddaemon import MyDaemon
@@ -1291,6 +1298,7 @@ class TestDecideDisplays:
         daemon.check_empty_house_still_on = MagicMock(return_value=check_empty_house_still_on)
         daemon.check_departure_anomaly = MagicMock(return_value=check_departure_anomaly)
         daemon.check_household_unusual_day = MagicMock(return_value=check_household_unusual_day)
+        daemon.check_system_health = MagicMock(return_value=check_system_health)
         return daemon
 
     def test_all_ten_checks_produce_cards_in_priority_order(self):
@@ -1360,6 +1368,7 @@ class TestDecideDisplays:
             check_departure_anomaly=self.DEPARTURE_ANOMALY_CARD,
             check_travel=self.TRAVEL_CARD,
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
+            check_system_health=self.SYSTEM_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -1470,6 +1479,7 @@ class TestDecideDisplays:
             check_departure_anomaly=self.DEPARTURE_ANOMALY_CARD,
             check_travel=self.TRAVEL_CARD,
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
+            check_system_health=self.SYSTEM_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -1479,10 +1489,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all twenty-two cards come back -- nothing dropped.
+        # rule fired exactly once, so all twenty-three cards come back -- nothing dropped.
         from services.service_daemon.alfr3ddaemon import MyDaemon
 
-        assert len(result) == 22 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
+        assert len(result) == 23 == MyDaemon.MAX_DISPLAYS == len(MyDaemon.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -1492,6 +1502,7 @@ class TestDecideDisplays:
         assert [card["mode"] for card in result] == [
             "time",
             "event",
+            "system_health",
             "empty_house_still_on",
             "travel",
             "rhythm_break_anomaly",
@@ -5587,3 +5598,75 @@ class TestFocusNeededDndCorrelation:
         card = self._card({})
         assert "Find a quiet spot." in card["content"]
         assert card["dnd_active"] is None
+
+
+class TestSystemHealth:
+    """check_system_health(): debounced, rate-limited probe of configured integrations."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_state(self):
+        from services.service_daemon import alfr3ddaemon
+
+        alfr3ddaemon.SYSTEM_HEALTH_STATE.clear()
+        yield
+        alfr3ddaemon.SYSTEM_HEALTH_STATE.clear()
+
+    @staticmethod
+    def _run(ha=(True, False), st=(False, False), now=1000.0, daemon=None):
+        """Run one check. ha/st = (configured, connected); st defaults to unconfigured."""
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = daemon or MyDaemon()
+        with patch("common.ha_utils.is_ha_configured", return_value=ha[0]), patch(
+            "common.ha_utils.test_ha_connection", return_value=(ha[1], "m")
+        ), patch("common.st_utils.is_st_configured", return_value=st[0]), patch(
+            "common.st_utils.test_st_connection", return_value=(st[1], "m")
+        ), patch(
+            "services.service_daemon.alfr3ddaemon.time.time", return_value=now
+        ):
+            return daemon.check_system_health(None)
+
+    def test_single_failed_probe_does_not_alert(self):
+        assert self._run(now=1000.0) is None
+
+    def test_second_consecutive_failure_fires_urgent_card(self):
+        self._run(now=1000.0)
+        card = self._run(now=1000.0 + 301)
+        assert card["mode"] == "system_health"
+        assert card["urgent"] is True
+        assert card["data"]["unreachable"] == ["home_assistant"]
+        assert "Home Assistant" in card["content"]
+
+    def test_probes_are_rate_limited_between_cycles(self):
+        self._run(now=1000.0)
+        # Next 60s cycle: inside the probe interval, so no second failure is counted.
+        assert self._run(now=1060.0) is None
+
+    def test_recovery_clears_the_alert(self):
+        self._run(now=1000.0)
+        assert self._run(now=1301.0) is not None
+        assert self._run(ha=(True, True), now=1602.0) is None
+
+    def test_unconfigured_integration_never_alerts(self):
+        for i in range(4):
+            assert self._run(ha=(False, False), now=1000.0 + 301 * i) is None
+
+    def test_probe_exception_is_not_counted_as_down(self):
+        from services.service_daemon.alfr3ddaemon import MyDaemon
+
+        daemon = MyDaemon()
+        with patch("common.ha_utils.is_ha_configured", side_effect=RuntimeError("db down")), patch(
+            "common.st_utils.is_st_configured", return_value=False
+        ):
+            for i in range(4):
+                with patch(
+                    "services.service_daemon.alfr3ddaemon.time.time",
+                    return_value=1000.0 + 301 * i,
+                ):
+                    assert daemon.check_system_health(None) is None
+
+    def test_urgent_card_survives_a_recent_dismissal(self):
+        """The card's `urgent` flag must route it past decide_displays()'s suppression pass."""
+        from services.service_daemon.alfr3ddaemon import CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD
+
+        assert CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD == "urgent"

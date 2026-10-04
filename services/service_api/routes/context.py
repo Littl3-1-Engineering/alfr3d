@@ -393,7 +393,7 @@ _CARD_INTERACTION_ACTIONS = {"shown", "tapped", "dismissed", "expired"}
 
 @router.post("/context/card-interaction")
 async def report_card_interaction(
-    data: dict = None, _perm=Depends(require_permission("context", "card_interaction"))
+    data: dict = None, user=Depends(require_permission("context", "card_interaction"))
 ):
     """Record a `card_interactions` row for one situational-awareness card
     (SA-1). Card identity is `(rule_id, subject_key)` -- see
@@ -408,6 +408,10 @@ async def report_card_interaction(
     the card (i.e. after any client-side truncation like
     `MAX_DISPLAY_CARDS`) -- never assumed by the daemon, which has no way to
     know what a truncated-away card's fate was.
+
+    `user_id` always comes from the authenticated token, never the request body --
+    the body field used to be trusted, but no client ever sent it, so every row landed
+    with `user_id = NULL`.
     """
     try:
         data = data or {}
@@ -419,7 +423,7 @@ async def report_card_interaction(
                 detail=f"rule_id and one of {sorted(_CARD_INTERACTION_ACTIONS)} are required",
             )
         subject_key = data.get("subject_key") or ""
-        user_id = data.get("user_id")
+        user_id = user.id
         with db_connection() as db:
             cursor = db.cursor()
             cursor.execute(
