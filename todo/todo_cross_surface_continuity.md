@@ -87,6 +87,21 @@ external data source — cross-referencing state ALFR3D already holds, plus one 
   "Resume" action wired back into `WindowManager.openWindow`/`focus` based on
   `resume_type`/`resume_target` — no new window-opening mechanism needed, reuses what's there.
 
+## Bug fix 2026-10-05: system writes looked like user edits
+
+The "routine edited recently -- reopen it?" card fired for no reason a user would call an edit.
+Cause: `routines.updated_at` is bumped by MySQL on *any* UPDATE, and the "zero application-code
+changes" design above meant every system write counted: the daemon firing a routine
+(`triggered = 1, last_run = NOW()`), re-arming it at midnight (`triggered = 0`), the
+sunrise/sunset time sync (`weather_util.py`), and run-now (`routes/routines.py`). Production
+confirmed it: Morning's `updated_at` was identical to its `last_run`.
+
+Fixed in `a9e1c44b`: those four statements pin `updated_at = updated_at`, so only the PATCH
+route's user edits bump it. `tests/test_routines_updated_at_guard.py` fails if a new static
+`UPDATE routines SET` statement forgets the pin. Deployed to the NUC the same day (backup first).
+**Not yet observed live**: confirm the card stays away after the next real Sunrise/Sunset/Morning
+run. Anything added later that writes `routines` from the system side needs the same pin.
+
 ## Open questions
 
 - Whether "last-edited routine" should exclude routines edited by the request that's asking for
