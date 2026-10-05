@@ -18,4 +18,4 @@ SQLAlchemy>=2.0.54
 aioesphomeapi==46.4.1
 zeroconf==0.151.3
 werkzeug==3.1.8
-PyJWT==2.14.0
+PyJWT==2.15.0
