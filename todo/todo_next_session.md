@@ -315,7 +315,7 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     `routines.updated_at` (`a9e1c44b`, deployed) -- see `todo_cross_surface_continuity.md`. Still
     to observe: the card staying away after the next real routine run.
   - **2026-10-05 (later): item (2) CEP Phase 3 built, committed, backend deployed to the NUC, verified on-device (Deck commit unpushed).** See
-    `todo_context_exchange_protocol.md`. Next: Phase 4 (reconciliation layer).
+    `todo_context_exchange_protocol.md`. Phase 4 Deck-side slice shipped (`a3c2b65`) and Phase 5 connected path verified on-device the same day; offline/version-skew skipped by decision. CEP is done unless a consumer turns up for the unbuilt Phase 4 pieces.
   - Update this entry and the owning `todo_*.md` as each item is started and finished.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
