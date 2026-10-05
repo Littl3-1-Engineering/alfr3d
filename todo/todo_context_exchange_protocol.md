@@ -310,9 +310,27 @@ Worth stating, because the value isn't only "stop contradicting each other":
   `GET /api/context/snapshot` 200s from the phone and **no** `day-context` fallback call after
   them, window renders its cards normally. Wind-down authoritative branch still unobserved (needs
   a 21:15-22:00 weeknight). The JSON mapping has no unit test (org.json unavailable to JVM tests).
-- **Phase 4 — reconciliation layer.** The single merge step on each side; retire the hand-mirrored
-  tables in `MusicEnergy.localEnergyFor()` and the duplicated mood logic; split the contested
-  weekend facet per the ruling above.
+- **Phase 4 — reconciliation layer. 🟡 Deck-side slice built 2026-10-05 (uncommitted, not on-device verified).**
+  Scoped to what the ownership map actually calls for, not the full original wording:
+  - `ContextSnapshotProvider.resolveDayMood()` — same precedence ladder as `resolveDayContext()`
+    (fresh + understood schema, else `ResolvedDayMood.Unknown`), yielding backend-owned
+    `baseEnergy`/`isWeekend` and a `householdNow` (server wall clock advanced by the answer's age).
+    `ContextSnapshot.moodFacet` carries it; `dayMood` (the Deck-owned presentation enum) is now
+    computed from `householdNow` so day-of-week/hour follow the house, not a skewed device clock.
+  - **The weekend split from the ruling**: `moodFacet.isWeekend` is the backend-owned calendar fact;
+    `DayMood` stays the Deck-owned presentation choice built on top. Nothing reads `isWeekend`
+    yet — no current rule needed a calendar guard the way `evening_winddown` did, and adding one
+    speculatively is the opposite of "subscribe, don't re-derive".
+  - `MusicEnergy.localEnergyFor()` starts from the backend's `base_energy` when fresh; its
+    hand-mirrored hourly table is offline-fallback only. Deck presentation rules (weekend-night
+    floor, Sunday cap, guest/rain/away adjustments) still apply on top. The old "kept in sync by a
+    code comment" coupling is gone for the connected case.
+  - 7 new unit tests (`DayMoodResolutionTest`); ktlint/detekt/unit tests/`assembleDebug` pass.
+  **Deliberately not done:** (a) the merged "is the user home" rule — its confident-geofence half
+  lives backend-side (`_geofence_state()`), and Deck's `PeopleContext` needs per-resident detail
+  (guest stay times) the `presence` facet doesn't carry, so swapping it would lose data; (b)
+  the backend-side `frame.launcher_context` roll-up beyond Phase 2's DND reduce; (c) retiring
+  `DEDICATED_SITUATIONAL_MODES`' card-layer dedup. Each needs a real consumer first.
 - **Phase 5 — verify.** On-device against the real household, both reachable and with Wi-Fi off,
   plus a deliberate backend-version-skew check. Same "verify against real production data before
   calling it done" discipline as `todo_device_location_reporting.md`.
