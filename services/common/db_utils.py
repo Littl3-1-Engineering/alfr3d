@@ -1,7 +1,8 @@
+import json
 import logging
 import time
 import pymysql
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .db_pool import get_connection
 
@@ -162,13 +163,68 @@ def get_mute_state(env_name) -> tuple[bool, bool]:
         return is_sleeping, False
 
 
+# Mirrors alfr3ddaemon.DEVICE_CONTEXT_CONFIG_KEY / DEVICE_CONTEXT_STALENESS_MINUTES and
+# routes/context.py's key -- kept in sync manually, same as those two already are.
+_DEVICE_CONTEXT_CONFIG_KEY = "launcher_device_context"
+_DEVICE_CONTEXT_STALENESS_MINUTES = 15
+
+
+def deck_relay_available() -> bool:
+    """True when at least one Deck has *recently* reported (fresh snapshot, so it can
+    reach the backend now) that its PHONE SPEECH relay is on, i.e. a device exists
+    that will actually speak what the backend emits. Both halves matter: the toggle
+    is the user's opt-in/out, the fresh snapshot proves the Deck is reachable.
+    Nothing reported, relay off/unreported (tri-state: omitted is "not known", never
+    "on"), stale reports, or a read error all mean False.
+    """
+    try:
+        db = get_db_connection()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT value FROM config WHERE name = %s", (_DEVICE_CONTEXT_CONFIG_KEY,)
+            )
+            row = cursor.fetchone()
+        finally:
+            db.close()
+        if not row or not row[0]:
+            return False
+        devices = json.loads(row[0]).get("devices")
+        if not isinstance(devices, dict):
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=_DEVICE_CONTEXT_STALENESS_MINUTES)
+        for entry in devices.values():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                observed = datetime.fromisoformat(entry.get("observed_at") or "")
+            except ValueError:
+                continue
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=timezone.utc)
+            if observed < cutoff:
+                continue
+            speech = (entry.get("facets") or {}).get("speech") or {}
+            if speech.get("relay_enabled") is True:
+                return True
+    except Exception as e:
+        logger.error(f"deck_relay_available read failed: {e}")
+    return False
+
+
 def check_mute_optimized(env_name) -> bool:
     """Return True when Alfr3d should stay quiet: outside the household's waking
-    hours or with no owner/technoking/resident currently online to hear it.
-    See get_mute_state() for the two signals broken out separately.
+    hours, or with no owner/technoking/resident online to hear it -- unless a Deck
+    with its PHONE SPEECH relay on is reporting in, in which case an empty house is
+    not muted (the line still reaches service_speak, which emits the `audio` event
+    the Deck relay speaks; the relay itself stays silent while the owner is home).
+    Quiet hours stay authoritative regardless. See get_mute_state() for the two
+    signals broken out separately.
     """
     is_sleeping, is_empty_house = get_mute_state(env_name)
-    return is_sleeping or is_empty_house
+    if is_sleeping:
+        return True
+    return is_empty_house and not deck_relay_available()
 
 
 def get_lookup_ids(cursor, state_name=None, user_type_name=None, env_name=None):

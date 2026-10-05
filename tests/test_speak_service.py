@@ -135,6 +135,37 @@ class TestSpeakService:
 
         return _patched()
 
+    def test_empty_house_without_deck_relay_generates_nothing(self):
+        """Scenario 1: nobody home and no Deck relay available -> no audio at all."""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event") as mock_send:
+                with patch(
+                    "services.service_speak.app.db_utils.deck_relay_available", return_value=False
+                ):
+                    with self._patch_pipeline(get_mute_state=lambda: (False, True)):
+                        message = MagicMock()
+                        message.value = "Test message"
+                        process_speak_message(message)
+
+                mock_generate.assert_not_called()
+                mock_send.assert_not_called()
+
+    def test_empty_house_with_deck_relay_still_emits(self):
+        """Scenario 2: nobody home but a Deck relay is on -> audio event is emitted."""
+        with patch("services.service_speak.app.generate_tts") as mock_generate:
+            with patch("services.service_speak.app.send_event") as mock_send:
+                mock_generate.return_value = "test.mp3"
+                with patch(
+                    "services.service_speak.app.db_utils.deck_relay_available", return_value=True
+                ):
+                    with self._patch_pipeline(get_mute_state=lambda: (False, True)):
+                        message = MagicMock()
+                        message.value = "Test message"
+                        process_speak_message(message)
+
+                mock_generate.assert_called_once()
+                mock_send.assert_called_once()
+
     def test_process_speak_message_string(self):
         """Test processing string message"""
         with patch("services.service_speak.app.generate_tts") as mock_generate:

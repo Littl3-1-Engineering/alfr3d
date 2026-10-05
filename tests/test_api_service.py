@@ -1451,6 +1451,21 @@ def test_device_snapshot_stores_facets_keyed_by_device(mock_db_connection, api_c
 
 
 @patch("routes.context.db_connection")
+def test_device_snapshot_keeps_speech_relay_facet(mock_db_connection, api_client):
+    cursor = _snapshot_cursor(mock_db_connection)
+
+    response = api_client.post(
+        "/api/context/device-snapshot",
+        json={"device_id": _DEV_A, "facets": {"speech": {"relay_enabled": True, "junk": 1}}},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    facets = _stored_blob(cursor)["devices"][_DEV_A]["facets"]
+    assert facets["speech"] == {"relay_enabled": True}
+
+
+@patch("routes.context.db_connection")
 def test_device_snapshot_preserves_other_devices(mock_db_connection, api_client):
     """Two Decks must not overwrite each other -- the disagreement between them is exactly
     what the household roll-up needs to see."""

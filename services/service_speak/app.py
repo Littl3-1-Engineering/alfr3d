@@ -299,11 +299,13 @@ def process_speak_message(message):
             logger.info("Alfr3d is in quiet hours, discarding speak request")
             return
         if is_empty_house:
-            # Don't discard: still generate + emit the event so the Deck app's
-            # phone-speech relay (Alfr3dTtsRelay, off by default, opt-in per
-            # device) can speak it to whichever away resident has it enabled --
-            # it already self-suppresses when its owner is confirmed home, so
-            # this is the one case it actually needs the event for.
+            if not db_utils.deck_relay_available():
+                # Nobody home and no Deck with PHONE SPEECH on to carry it: generate nothing.
+                logger.info("No one home and no Deck relay available, discarding speak request")
+                return
+            # Still generate + emit the event so the Deck's phone-speech relay
+            # (Alfr3dTtsRelay) speaks it to the away resident who has it enabled; it
+            # self-suppresses when its owner is confirmed home.
             logger.info("No one home to hear this locally, still emitting for the Deck relay")
 
         track_speak_text(text)
