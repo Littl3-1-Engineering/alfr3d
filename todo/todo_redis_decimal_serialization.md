@@ -1,7 +1,7 @@
 # Redis cache: `decimal.Decimal` breaks JSON serialization
 
-## Status: 🟡 Built 2026-09-23 — all three design items shipped with tests; not yet deployed
-to the NUC, so the live check below is still owed
+## Status: ✅ Done 2026-10-04 — built 2026-09-23 (PR #235), deployed, and live-verified on the
+prod NUC
 
 Found incidentally while fixing the Kafka container-health misreport (`/api/containers`
 reporting a healthy Kafka at 0%, 2026-09-22); unrelated to that work and deliberately left
@@ -25,9 +25,10 @@ unfixed there to keep that change focused.
   covering `_fetch_environment`'s float cast and its None passthrough. Full suite 625 passed;
   flake8 + black clean on all four touched files.
 
-**Still owed:** the live check under Testing below — deploy, hit `/api/environment`, confirm an
-`api:environment` key appears in `redis-cli --scan`, and confirm no `Redis SET error` warning is
-logged.
+**Live check, 2026-10-04 (prod NUC at `82a70b67`, containers up ~2h):** `_json_default` present
+in the running `service-api` container; before the request `redis-cli --scan` showed no
+`api:environment`; after `GET /api/environment` (200, lat/long as floats) the key appeared with
+TTL 300 and the cached JSON matched the response; zero `Redis SET` warnings/errors in the API log.
 
 ## Overview
 
