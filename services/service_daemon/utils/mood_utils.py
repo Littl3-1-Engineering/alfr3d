@@ -1,88 +1,17 @@
 #!/usr/bin/python
 
-"""
-Shared "day mood" primitive for Alfr3d Daemon.
-
-Pure, dependency-free (stdlib `datetime` only) time-of-day and baseline-energy
-bucketing, factored out of what used to be inline hour math in
-`alfr3ddaemon.check_gatherings()`. `check_gatherings()` and the new
-`check_mood()` situational-awareness card both call `get_day_mood()` so the
-"what part of the day/week is it" logic lives in exactly one place.
-
-The time-of-day boundaries live in `common.timeofday.coarse_bucket()` (6-12
-morning, 12-18 day, 18-22 evening, else night) -- one definition, shared with
-`common.spotify_utils` and the daemon's scheduled music. `common.timeofday` is
-stdlib-only (no DB/Kafka), so importing it here keeps this module effectively
-dependency-free.
-"""
+"""Re-export of `common.day_mood` -- the implementation moved there so service_api can serve the
+same day-mood facet (todo/todo_context_exchange_protocol.md Phase 3). Kept so existing daemon
+imports (`mood_utils.get_day_mood`) don't change."""
 
 import sys
 import os
-from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
-from common import timeofday  # noqa: E402
-
-_WEEKEND_DAYS = ("Saturday", "Sunday")
-
-# Baseline energy (0.0-1.0) before any situational adjustment (people count,
-# weather, etc. — those stay in common.spotify_utils.recommend()).
-_BASE_ENERGY_BY_TIME_OF_DAY = {
-    "morning": 0.35,
-    "day": 0.50,
-    "evening": 0.55,
-    "night": 0.30,
-}
-
-# Simple, explainable weekend rule: Friday evening/night through all of
-# Saturday/Sunday get a flat bump to the evening/night baseline, standing in
-# for "people are more likely to be relaxed/social heading into a weekend."
-# A Tuesday evening stays at the plain evening baseline; a Friday or Saturday
-# evening/night does not.
-_WEEKEND_ENERGY_BONUS = 0.15
-
-
-def _bucket_time_of_day(hour):
-    """Bucket an hour (0-23) into 'morning'/'day'/'evening'/'night'.
-
-    Thin wrapper kept for this module's existing call sites; the definition is
-    common.timeofday.coarse_bucket().
-    """
-    return timeofday.coarse_bucket(hour)
-
-
-def get_day_mood(now=None):
-    """Compute a simple, explainable day-mood snapshot.
-
-    Args:
-        now: optional `datetime` to evaluate; defaults to `datetime.now()`
-             when omitted so callers can pass a fixed time in tests. Callers
-             that care about the household's local time (e.g. the daemon)
-             should pass `db_utils.get_env_local_time(ENV_NAME)` explicitly.
-
-    Returns:
-        dict with keys:
-            time_of_day: 'morning' | 'day' | 'evening' | 'night'
-            day_of_week: full weekday name, e.g. 'Tuesday'
-            is_weekend: True for Saturday/Sunday
-            base_energy: float 0.0-1.0, same scale as
-                common.spotify_utils.recommend()'s 'energy' output
-    """
-    if now is None:
-        now = datetime.now()
-
-    time_of_day = _bucket_time_of_day(now.hour)
-    day_of_week = now.strftime("%A")
-    is_weekend = day_of_week in _WEEKEND_DAYS
-    is_friday_wind_up = day_of_week == "Friday" and time_of_day in ("evening", "night")
-
-    base_energy = _BASE_ENERGY_BY_TIME_OF_DAY[time_of_day]
-    if (is_weekend or is_friday_wind_up) and time_of_day in ("evening", "night"):
-        base_energy = min(1.0, base_energy + _WEEKEND_ENERGY_BONUS)
-
-    return {
-        "time_of_day": time_of_day,
-        "day_of_week": day_of_week,
-        "is_weekend": is_weekend,
-        "base_energy": round(base_energy, 2),
-    }
+from common.day_mood import (  # noqa: E402,F401
+    _BASE_ENERGY_BY_TIME_OF_DAY,
+    _WEEKEND_DAYS,
+    _WEEKEND_ENERGY_BONUS,
+    _bucket_time_of_day,
+    get_day_mood,
+)

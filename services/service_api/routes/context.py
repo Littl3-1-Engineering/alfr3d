@@ -28,6 +28,7 @@ import orjson
 from fastapi import APIRouter, Depends, HTTPException
 
 from common import db_connection, get_day_context
+from common.day_mood import get_day_mood
 from auth.dependencies import require_permission
 from dependencies import ALFR3D_ENV_NAME, get_producer
 
@@ -450,6 +451,21 @@ async def report_card_interaction(
 DAY_CONTEXT_SCHEMA_VERSION = 1
 
 
+def _day_context_value(ctx):
+    """The facet payload shared by GET /context/day-context and GET /context/snapshot, so the
+    two can never drift apart."""
+    return {
+        "part_of_day": ctx.part_of_day,
+        "greeting": ctx.greeting,
+        "is_waking_hours": ctx.is_waking_hours,
+        "is_daylight": ctx.is_daylight,
+        "in_wind_down": ctx.in_wind_down,
+        "minutes_to_bedtime": ctx.minutes_to_bedtime,
+        "wake_time": ctx.wake_time.strftime("%H:%M"),
+        "bed_time": ctx.bed_time.strftime("%H:%M"),
+    }
+
+
 @router.get("/context/day-context")
 async def get_day_context_route():
     """This household's current day context -- the backend-owned answer to "what part of the day
@@ -470,14 +486,7 @@ async def get_day_context_route():
         ctx = get_day_context(ALFR3D_ENV_NAME)
         return {
             "schema_version": DAY_CONTEXT_SCHEMA_VERSION,
-            "part_of_day": ctx.part_of_day,
-            "greeting": ctx.greeting,
-            "is_waking_hours": ctx.is_waking_hours,
-            "is_daylight": ctx.is_daylight,
-            "in_wind_down": ctx.in_wind_down,
-            "minutes_to_bedtime": ctx.minutes_to_bedtime,
-            "wake_time": ctx.wake_time.strftime("%H:%M"),
-            "bed_time": ctx.bed_time.strftime("%H:%M"),
+            **_day_context_value(ctx),
             "server_now_local": ctx.now.isoformat(),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -487,6 +496,105 @@ async def get_day_context_route():
         # any non-200 exactly like a stale payload and uses its own local estimate.
         logger.error(f"Error building day context: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- GET /api/context/snapshot (todo_context_exchange_protocol.md Phase 3) ---
+#
+# The full downlink document: every facet the backend owns, in one envelope, each stamped with
+# provenance + freshness and independently omittable. Additive to the granular endpoints
+# (/weather, /routines, /music/now-playing, ...) which stay; this is the *derived-context*
+# document they can't express. `day_context` is also still served by its own Phase 1 route.
+CONTEXT_SNAPSHOT_SCHEMA_VERSION = 1
+_NOW_PLAYING_CONFIG_KEY = "music_now_playing"
+
+
+def _presence_value():
+    """Who is on the network right now -- the same query the daemon's fetch_online_devices()
+    runs, so the Deck reads the backend's presence answer instead of re-reasoning over a
+    `getResidents` summary. Names only; device names/MACs are not exposed."""
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            SELECT u.username
+            FROM device d
+            JOIN states s ON d.state = s.id
+            LEFT JOIN user u ON d.user_id = u.id
+                AND u.username NOT IN ('unknown', 'alfr3d')
+            WHERE s.state = 'online'
+            """
+        )
+        rows = cursor.fetchall()
+    known = sorted({row[0] for row in rows if row[0]})
+    return {
+        "known_names": known,
+        "known_count": len(known),
+        "unknown_count": sum(1 for row in rows if not row[0]),
+    }
+
+
+def _smarthome_online_value():
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute("SELECT name FROM smarthome_devices WHERE online = TRUE")
+        names = sorted(name for (name,) in cursor.fetchall() if name)
+    return {"names": names, "count": len(names)}
+
+
+def _playback_value():
+    """Last track the daemon persisted (no live Spotify call). A facet only when something has
+    actually been observed -- absent otherwise, which the client reads as "no signal"."""
+    with db_connection() as db:
+        cursor = db.cursor()
+        cursor.execute("SELECT value FROM config WHERE name = %s", (_NOW_PLAYING_CONFIG_KEY,))
+        row = cursor.fetchone()
+    if not row or not row[0]:
+        return None
+    return orjson.loads(row[0])
+
+
+@router.get("/context/snapshot")
+async def get_context_snapshot():
+    """The backend's authoritative view of every facet it owns. Ungated, like the other read
+    routes (see get_day_context_route).
+
+    Every facet is built independently and omitted on failure or when there is nothing to say
+    -- a facet that can't be built this cycle must never take the others (or the endpoint) down,
+    because the Deck reads absence as "fall back to my local estimate." `source` is always
+    `backend` here: a Deck must never re-report a backend-sourced facet upward (echo hazard).
+    """
+    now_utc = datetime.now(timezone.utc).isoformat()
+    facets = {}
+
+    def add(name, builder):
+        try:
+            value = builder()
+        except Exception as e:
+            logger.error(f"Context snapshot: {name} facet failed: {e}")
+            return
+        if value is not None:
+            facets[name] = {"value": value, "source": "backend", "observed_at": now_utc}
+
+    ctx = None
+    try:
+        ctx = get_day_context(ALFR3D_ENV_NAME)
+    except Exception as e:
+        logger.error(f"Context snapshot: day_context facet failed: {e}")
+    if ctx is not None:
+        add("day_context", lambda: _day_context_value(ctx))
+        add("day_mood", lambda: get_day_mood(ctx.now))
+    add("presence", _presence_value)
+    add("smarthome_online", _smarthome_online_value)
+    add("playback", _playback_value)
+
+    return {
+        "schema_version": CONTEXT_SNAPSHOT_SCHEMA_VERSION,
+        "generated_at": now_utc,
+        # Household wall clock, for clients with a skewed device clock. None only if the day
+        # context itself couldn't be built.
+        "server_now_local": ctx.now.isoformat() if ctx is not None else None,
+        "facets": facets,
+    }
 
 
 # --- POST /api/context/device-snapshot (todo_context_exchange_protocol.md Phase 2) ---

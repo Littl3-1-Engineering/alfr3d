@@ -1,6 +1,6 @@
 # Backend↔Deck Context Exchange Protocol
 
-## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phases 3-5 designed
+## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built 2026-10-05 (uncommitted, not deployed, not on-device verified); Phases 4-5 designed
 
 Prompted by a real bug (Deck showed a "Wind down" card on a Saturday at 18:18) that turned out to
 be one symptom of a structural gap: **both sides run a situational-awareness engine, and neither
@@ -287,8 +287,26 @@ Worth stating, because the value isn't only "stop contradicting each other":
   instead. It still **fires** — the useful part is "your call starts in N minutes," and
   suppressing that because the phone is silenced would throw away the alert to preserve the
   footnote. 7 route tests + 11 daemon tests.
-- **Phase 3 — full downlink document.** `GET /api/context/snapshot` with the facet envelope;
-  migrate `day_context` (Phase 1) into it; add `day_mood`, presence, playback, `smarthome_online`.
+- **Phase 3 — full downlink document. ✅ Built 2026-10-05 (uncommitted; not deployed).**
+  `GET /api/context/snapshot` returns the `{schema_version, generated_at, server_now_local,
+  facets}` envelope; each facet is `{value, source: "backend", observed_at}` and is built
+  independently — one that raises or has nothing to say is simply omitted (never a 500). Facets:
+  `day_context` (same payload as Phase 1's route, via a shared `_day_context_value()` so they
+  can't drift), `day_mood`, `presence`, `smarthome_online`, `playback`. `get_day_mood()` moved to
+  `common/day_mood.py` (daemon's `mood_utils` re-exports it) so the API serves the *same* answer
+  instead of a second implementation; it's evaluated at the household-local `ctx.now`.
+  `atmosphere` is deliberately **not** in the envelope: the granular `/api/weather` +
+  `/api/environment` already carry it and Deck already consumes them — duplicating adds drift,
+  not information. Phase 1's route stays (old Decks).
+  Deck: `Alfr3dClient.getContextSnapshot()` (+ `ContextSnapshotParsing.kt`),
+  `Alfr3dSnapshot.dayMood`; `alfr3dSnapshot()` takes `dayContext` from the envelope and falls
+  back to `getDayContext()` only when the snapshot fails (a pre-Phase-3 backend 404s), then to
+  the resolver's local estimate. `resolveDayContext()` is untouched. `dayMood`/presence/etc. are
+  parsed but **no rule reads them yet** — Phase 4 is their consumer.
+  Verified: 7 new route tests (envelope/provenance, parity with Phase 1, household-local
+  day_mood, per-facet degrade, failed day_context); full backend suite 656 passed; black/flake8
+  clean. Deck: ktlint/detekt/unit tests/`assembleDebug` pass. **Not** verified: live against the
+  NUC, or on-device (the JSON mapping has no unit test — org.json isn't available to JVM tests).
 - **Phase 4 — reconciliation layer.** The single merge step on each side; retire the hand-mirrored
   tables in `MusicEnergy.localEnergyFor()` and the duplicated mood logic; split the contested
   weekend facet per the ruling above.
