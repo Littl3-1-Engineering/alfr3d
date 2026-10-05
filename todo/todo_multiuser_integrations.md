@@ -1,6 +1,6 @@
 # Plan: Multi-user calendar/email integrations
 
-## Status: 🔲 TODO (not started — open design question)
+## Status: 💤 BACKBURNER (parked by Athos 2026-10-05; RBAC prerequisite is shipped, open design questions below still need an answer)
 
 ## The question
 If multiple household members each connect their own calendar and/or email, how does ALFR3D know whose event/email it's looking at — e.g. so a notification can correctly say "another email arrived for Sarah" instead of just "you have new mail"? Today it can't, because integrations aren't attributed to a user at all (see Current state).

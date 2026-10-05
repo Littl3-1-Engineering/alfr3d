@@ -326,6 +326,12 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     show events in the phone's local timezone (`EventTimeFormat`, deck `2c298a1`/`eb867e0`); backend
     producers stopped emitting `+00:00Z` / naive-local+`Z`, web `formatLocalTime` tolerates legacy shapes
     (`7f7326ce`, deployed to the NUC). See `alfr3d_deck/todo/todo_ambient_log_local_timezone.md`.
+  - **2026-10-05 (end of day): priority list cleared.** Items (1)-(3) are closed (see their entries
+    above). Item (4) `todo_multiuser_integrations.md` is **deliberately moved to the backburner** by
+    Athos; it stays parked until the two design questions in that doc are answered. Notion timeline row
+    + public `timeline.json` entry refreshed (description no longer says "blocked on RBAC", which
+    shipped 2026-08-23). Nothing is queued as "next" now; the remaining open work is all
+    waiting-on-real-world-event (SA-3/SA-7/SA-10, `climate_deviation`, SA-12 re-check ~2026-11-01).
   - Update this entry and the owning `todo_*.md` as each item is started and finished.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
