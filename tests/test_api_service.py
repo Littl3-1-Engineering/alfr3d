@@ -1255,6 +1255,102 @@ def test_day_context_route_500s_on_unexpected_failure(api_client):
     assert response.status_code == 500
 
 
+# --- GET /api/context/snapshot (todo_context_exchange_protocol.md Phase 3) --
+
+
+def _snapshot(api_client, ctx=None, **builders):
+    """Hit the route with every DB-backed facet builder stubbed (defaults: empty/None)."""
+    defaults = {
+        "_presence_value": {"known_names": ["athos"], "known_count": 1, "unknown_count": 2},
+        "_smarthome_online_value": {"names": ["Lamp"], "count": 1},
+        "_playback_value": None,
+    }
+    defaults.update(builders)
+    ctx = ctx or _day_context_at(18, 18)
+    patches = [patch("routes.context.get_day_context", return_value=ctx)]
+    for name, value in defaults.items():
+        if isinstance(value, Exception):
+            patches.append(patch(f"routes.context.{name}", side_effect=value))
+        else:
+            patches.append(patch(f"routes.context.{name}", return_value=value))
+    for p_ in patches:
+        p_.start()
+    try:
+        return api_client.get("/api/context/snapshot")
+    finally:
+        for p_ in patches:
+            p_.stop()
+
+
+def test_snapshot_route_is_readable_without_auth(api_client):
+    assert _snapshot(api_client).status_code == 200
+
+
+def test_snapshot_envelope_stamps_provenance_on_every_facet(api_client):
+    body = _snapshot(api_client, _playback_value={"title": "X", "is_playing": True}).json()
+
+    assert body["schema_version"] == 1
+    assert body["server_now_local"].startswith("2026-09-12T18:18")
+    assert set(body["facets"]) == {
+        "day_context",
+        "day_mood",
+        "presence",
+        "smarthome_online",
+        "playback",
+    }
+    for facet in body["facets"].values():
+        assert facet["source"] == "backend"
+        assert facet["observed_at"].endswith("+00:00")
+
+
+def test_snapshot_day_context_facet_matches_the_phase1_route(api_client):
+    ctx = _day_context_at(18, 18)
+    facet = _snapshot(api_client, ctx=ctx).json()["facets"]["day_context"]["value"]
+    with patch("routes.context.get_day_context", return_value=ctx):
+        legacy = api_client.get("/api/context/day-context").json()
+
+    for key, value in facet.items():
+        assert legacy[key] == value
+
+
+def test_snapshot_day_mood_uses_household_local_time(api_client):
+    """Saturday 18:18 household-local -> weekend + evening bucket, regardless of server tz."""
+    mood = _snapshot(api_client).json()["facets"]["day_mood"]["value"]
+
+    assert mood["day_of_week"] == "Saturday"
+    assert mood["is_weekend"] is True
+    assert mood["time_of_day"] == "evening"
+    assert mood["base_energy"] == 0.7  # 0.55 evening + 0.15 weekend bonus
+
+
+def test_snapshot_omits_a_facet_that_raises_but_keeps_the_rest(api_client):
+    """The degrade-never-block rule: one failed facet is absence, not a 500."""
+    response = _snapshot(api_client, _presence_value=RuntimeError("db down"))
+
+    assert response.status_code == 200
+    facets = response.json()["facets"]
+    assert "presence" not in facets
+    assert {"day_context", "day_mood", "smarthome_online"} <= set(facets)
+
+
+def test_snapshot_omits_playback_when_nothing_was_observed(api_client):
+    assert "playback" not in _snapshot(api_client).json()["facets"]
+
+
+def test_snapshot_survives_a_failed_day_context(api_client):
+    with patch("routes.context.get_day_context", side_effect=RuntimeError("boom")), patch(
+        "routes.context._presence_value", return_value={"known_names": []}
+    ), patch("routes.context._smarthome_online_value", return_value=None), patch(
+        "routes.context._playback_value", return_value=None
+    ):
+        response = api_client.get("/api/context/snapshot")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["server_now_local"] is None
+    assert set(body["facets"]) == {"presence"}
+
+
 # --- POST /api/context/device-snapshot (todo_context_exchange_protocol.md Phase 2) --
 
 _DEV_A = "11111111-1111-4111-8111-111111111111"
