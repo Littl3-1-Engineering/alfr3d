@@ -113,15 +113,22 @@
  // Clock ring: hour angle (radians) clockwise from 00:00 at the top.
  export const getClockAngle = (timeRatio) => timeRatio * 2 * Math.PI;
 
-   export const formatLocalTime = (isoString) => {
-     try {
-       const date = new Date(isoString);
-       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-     } catch {
-       // Fallback if not ISO
-       return isoString;
-     }
-   };
+// Event-stream producers have historically emitted "<isoformat-with-offset>Z" (offset and "Z"
+// both present, which `new Date()` rejects) and naive isoformat strings (which `new Date()`
+// would read as browser-local). Normalise both: drop the stray "Z", and treat a naive value as UTC.
+export const parseEventTime = (isoString) => {
+  if (!isoString) return null;
+  let s = String(isoString).trim().replace(/([+-]\d{2}:?\d{2})Z$/i, '$1').replace(' ', 'T');
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(s)) s += 'Z';
+  const date = new Date(s);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const formatLocalTime = (isoString) => {
+  const date = parseEventTime(isoString);
+  if (!date) return isoString;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+};
 
 export const formatCreatedDate = (dateString) => {
      if (!dateString) return 'UNKNOWN';

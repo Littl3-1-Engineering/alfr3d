@@ -73,7 +73,7 @@ def send_event(event_type, message):
             "id": f"environment_{event_type}_{datetime.datetime.now(timezone.utc).isoformat()}",
             "type": event_type,
             "message": message,
-            "time": datetime.datetime.now(timezone.utc).isoformat() + "Z",
+            "time": datetime.datetime.now(timezone.utc).isoformat(),
         }
         try:
             p.send("event-stream", orjson.dumps(event))

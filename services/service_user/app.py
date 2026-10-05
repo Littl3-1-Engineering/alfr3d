@@ -85,7 +85,7 @@ def send_event(event_type, message):
             "id": f"user_{event_type}_{datetime.now(timezone.utc).isoformat()}",
             "type": event_type,
             "message": message,
-            "time": datetime.now(timezone.utc).isoformat() + "Z",
+            "time": datetime.now(timezone.utc).isoformat(),
         }
         try:
             producer.send("event-stream", orjson.dumps(event))

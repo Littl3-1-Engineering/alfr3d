@@ -10,7 +10,7 @@ import pymysql  # Changed from MySQLdb
 import sys
 from kafka.errors import KafkaError
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.request import urlopen  # used to make calls to www
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from random import randint
@@ -67,7 +67,7 @@ def send_event(event_type, message, subject_type=None, subject_id=None, verb=Non
             "id": f"weather_{event_type}_{datetime.now().isoformat()}",
             "type": event_type,
             "message": message,
-            "time": datetime.now().isoformat() + "Z",
+            "time": datetime.now(timezone.utc).isoformat(),
         }
         if subject_type:
             event["subject_type"] = subject_type
