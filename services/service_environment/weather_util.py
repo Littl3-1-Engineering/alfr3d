@@ -332,7 +332,8 @@ def update_routines(db, cursor, weatherData):
         # routines are only re-armed once per day by the daemon at local midnight,
         # otherwise every weather refresh would re-fire them.
         cursor.execute(
-            "UPDATE routines SET time = CASE name WHEN 'Sunrise' THEN %s "
+            "UPDATE routines SET updated_at = updated_at, "
+            "time = CASE name WHEN 'Sunrise' THEN %s "
             "WHEN 'Sunset' THEN %s END WHERE name IN ('Sunrise', 'Sunset') "
             "AND environment_id = %s",
             (
