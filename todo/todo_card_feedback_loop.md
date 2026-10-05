@@ -1,6 +1,6 @@
 # SA-1: Card feedback loop & suppression
 
-## Status: 🟢 Backend + React dashboard built and live-verified 2026-08-29; Android launcher reporting not started; deployed to production 2026-08-30
+## Status: 🟢 Backend + React dashboard built and live-verified 2026-08-29; Android launcher reporting built 2026-10-04 (uncommitted, not yet verified on-device); deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
 `mysqldump` backup was taken first; migrations applied cleanly through 0035; affected services
@@ -122,9 +122,40 @@ reports, urgent card has no dismiss button) — 15/15 passing, ESLint clean.
   (report timing, card identity, dismiss-hides-immediately, urgent-exemption) is what this
   session verified, not a specific authenticated user's write ever landing from that browser.
 
+## Android launcher reporting (built 2026-10-04, `alfr3d_deck`, uncommitted)
+
+The Deck never renders raw backend cards: `ContextRules.kt` maps them into `ContextRecommendation`s
+alongside locally derived ones. So identity is carried *through* that mapping rather than
+reported from a card list:
+- `SituationalAwarenessCard`/`SituationalSignal` parse `rule_id`/`subject_key`/`urgent`;
+  `CardIdentity(ruleId, subjectKey, urgent).key` matches the web's `cardKey()`.
+- `ContextRecommendation.card` is stamped by the rules that consume a backend card:
+  `rhythm_break_anomaly`, `attention_focus`, `household_composition`, `weather_advisory`,
+  `cross_surface_continuity`, `wind_down_signal`, `alfr3d_music_recommendation`, and the two
+  generic `alfr3d_insight_*` rules. Locally derived recommendations have `card = null` and report
+  nothing.
+- `Alfr3dClient.reportCardInteraction()` -> `POST /api/context/card-interaction`.
+- `ContextAwarenessWindow`: `shown` for visible cards only (after the brief's truncation), once
+  per backend fetch via `CardInteractionTracker` (so expanding the brief doesn't inflate the
+  backend's repetition count), and only while the screen is interactive; `tapped` alongside a
+  card's action button; a "x" dismiss button (hidden for `urgent` and identity-less cards) that
+  hides the card immediately and reports `dismissed`.
+- 5 unit tests (`CardInteractionTrackerTest`); detekt, ktlint, full unit suite and
+  `assembleDebug` pass. ktlint baseline regenerated for line shifts (+4 same-style
+  `multiline-expression-wrapping`/`chain-method-continuation` entries in code I added).
+
+**Known gaps:**
+- **Not verified on-device** (none connected). Needs: dismiss a card on the Deck, then confirm a
+  `card_interactions` row (`dismissed`, real `user_id`) lands and the daemon logs
+  `Suppressing ... cooldown`.
+- `mood` and `focus_needed` recommendations are not stamped (they're derived from
+  `MoodInsight`/`FocusInsight`, not a single card lookup), so they never report.
+- The web dashboard and the Deck both report `shown` per fetch, so with both open the backend's
+  repetition run counts roughly double. Revisit the 20-cycle threshold when tuning.
+
 ## Not yet done
 
-- **Android launcher (`alfr3d_deck`) reporting.** The task requires both surfaces to report;
+- ~~**Android launcher (`alfr3d_deck`) reporting.**~~ Built, see above. Original note: The task requires both surfaces to report;
   only the React dashboard was built this session. Same precedent as SA-2's on-device work:
   flagged as a follow-up needing its own session (Kotlin/Gradle build, a connected device). The
   Nexus Launcher's own situational-awareness card consumption path needs the same `cardKey`
