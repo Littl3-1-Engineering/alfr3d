@@ -1,6 +1,6 @@
 # Backend↔Deck Context Exchange Protocol
 
-## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built 2026-10-05 (uncommitted, not deployed, not on-device verified); Phases 4-5 designed
+## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built, deployed and on-device verified 2026-10-05; Phases 4-5 designed
 
 Prompted by a real bug (Deck showed a "Wind down" card on a Saturday at 18:18) that turned out to
 be one symptom of a structural gap: **both sides run a situational-awareness engine, and neither
@@ -287,7 +287,7 @@ Worth stating, because the value isn't only "stop contradicting each other":
   instead. It still **fires** — the useful part is "your call starts in N minutes," and
   suppressing that because the phone is silenced would throw away the alert to preserve the
   footnote. 7 route tests + 11 daemon tests.
-- **Phase 3 — full downlink document. ✅ Built 2026-10-05 (uncommitted; not deployed).**
+- **Phase 3 — full downlink document. ✅ Built, deployed, and on-device verified 2026-10-05** (`cb335998`; Deck `2281098`, unpushed).
   `GET /api/context/snapshot` returns the `{schema_version, generated_at, server_now_local,
   facets}` envelope; each facet is `{value, source: "backend", observed_at}` and is built
   independently — one that raises or has nothing to say is simply omitted (never a 500). Facets:
@@ -305,8 +305,11 @@ Worth stating, because the value isn't only "stop contradicting each other":
   parsed but **no rule reads them yet** — Phase 4 is their consumer.
   Verified: 7 new route tests (envelope/provenance, parity with Phase 1, household-local
   day_mood, per-facet degrade, failed day_context); full backend suite 656 passed; black/flake8
-  clean. Deck: ktlint/detekt/unit tests/`assembleDebug` pass. **Not** verified: live against the
-  NUC, or on-device (the JSON mapping has no unit test — org.json isn't available to JVM tests).
+  clean. Deck: ktlint/detekt/unit tests/`assembleDebug` pass. Live: deployed to the NUC (`service-api` + `service-daemon`, no migration); all five facets
+  return real household data. On-device (ASUS_AI2202, Ambient Brief window open): three
+  `GET /api/context/snapshot` 200s from the phone and **no** `day-context` fallback call after
+  them, window renders its cards normally. Wind-down authoritative branch still unobserved (needs
+  a 21:15-22:00 weeknight). The JSON mapping has no unit test (org.json unavailable to JVM tests).
 - **Phase 4 — reconciliation layer.** The single merge step on each side; retire the hand-mirrored
   tables in `MusicEnergy.localEnergyFor()` and the duplicated mood logic; split the contested
   weekend facet per the ruling above.
