@@ -1,6 +1,6 @@
 # Backend↔Deck Context Exchange Protocol
 
-## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built, deployed and on-device verified 2026-10-05; Phases 4-5 designed
+## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built, deployed and on-device verified 2026-10-05; Phase 4 Deck-side slice shipped (`a3c2b65`); Phase 5 partly verified (connected only)
 
 Prompted by a real bug (Deck showed a "Wind down" card on a Saturday at 18:18) that turned out to
 be one symptom of a structural gap: **both sides run a situational-awareness engine, and neither
@@ -310,7 +310,7 @@ Worth stating, because the value isn't only "stop contradicting each other":
   `GET /api/context/snapshot` 200s from the phone and **no** `day-context` fallback call after
   them, window renders its cards normally. Wind-down authoritative branch still unobserved (needs
   a 21:15-22:00 weeknight). The JSON mapping has no unit test (org.json unavailable to JVM tests).
-- **Phase 4 — reconciliation layer. 🟡 Deck-side slice built 2026-10-05 (uncommitted, not on-device verified).**
+- **Phase 4 — reconciliation layer. 🟡 Deck-side slice shipped 2026-10-05 (Deck `a3c2b65`, pushed); verified on-device only as far as Phase 5 below.**
   Scoped to what the ownership map actually calls for, not the full original wording:
   - `ContextSnapshotProvider.resolveDayMood()` — same precedence ladder as `resolveDayContext()`
     (fresh + understood schema, else `ResolvedDayMood.Unknown`), yielding backend-owned
@@ -331,9 +331,27 @@ Worth stating, because the value isn't only "stop contradicting each other":
   (guest stay times) the `presence` facet doesn't carry, so swapping it would lose data; (b)
   the backend-side `frame.launcher_context` roll-up beyond Phase 2's DND reduce; (c) retiring
   `DEDICATED_SITUATIONAL_MODES`' card-layer dedup. Each needs a real consumer first.
-- **Phase 5 — verify.** On-device against the real household, both reachable and with Wi-Fi off,
-  plus a deliberate backend-version-skew check. Same "verify against real production data before
-  calling it done" discipline as `todo_device_location_reporting.md`.
+- **Phase 5 — verify. 🟡 Connected path verified 2026-10-05; offline and version-skew not run.**
+  Original ask: on-device against the real household, reachable and with Wi-Fi off, plus a
+  deliberate backend-version-skew check.
+  - **Connected — ✅.** Phase 4 build installed on the real phone (ASUS_AI2202, v0.2.10), Ambient
+    Brief window open against the live NUC. Over a 4-minute window the API log shows only
+    `GET /api/context/snapshot` 200s from the phone (alongside `/api/weather`) and **zero**
+    `day-context` fallback calls, so the Deck is reading day context and day mood from the
+    envelope. The window renders normally (greeting line, "ALFR3D flagged something", "Something's
+    off", presence card) and, correctly for mid-morning, no wind-down card.
+  - **Offline — skipped by decision.** Simulating it means toggling the phone's Wi-Fi, which also
+    drops the wireless-adb session used to observe it, and the phone may still reach the backend
+    over Tailscale/mobile data (so it might not be a true outage). Not run; nothing about the
+    result is claimed. The behavior it would check is covered at the unit level: a failed fetch
+    yields null facets, `resolveDayContext`/`resolveDayMood` return `Unknown`, and
+    `localEnergyFor` falls back to its own table (`DayMoodResolutionTest`).
+  - **Version skew — skipped.** Would need an old-backend or a backend that 404s `/snapshot`;
+    not worth taking down production for. The fallback path (snapshot fails -> legacy
+    `getDayContext()` -> local estimate) is straight-line code in `alfr3dSnapshot()` and the
+    resolvers' stale/unknown-schema cases are unit-tested.
+  - **Still unobserved on-device:** a music card exercising the Phase 4 `base_energy` baseline
+    (none was on screen), and the authoritative wind-down branch (needs a 21:15-22:00 weeknight).
 
 Phases 1 and 2 are independently valuable and can ship without 3–5 ever happening. That's
 intentional — 3–5 are the expensive half, and they should be justified by what 1–2 actually reveal.
