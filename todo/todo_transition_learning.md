@@ -1,6 +1,6 @@
 # SA-12: Transition learning & anticipation/surprise
 
-## Status: 🔴 SA-12 still stopped — but for a different reason than Aug 30
+## Status: 🔴 SA-12 still stopped — re-checked 2026-10-04 (Phase 0c): structurally unblocked, but no organic transitions to mine yet; next re-check ~2026-11-01
 
 - **2026-08-30:** stopped at Phase 0 because SA-11 had only ~10 hours of runtime.
 - **2026-09-07 (Phase 0b re-check, real production DB):** elapsed time is no longer the
@@ -173,7 +173,35 @@ containers).
   `flush` didn't deliver before the process exited; not a reliable verification path. Exercise
   it through the real HTTP route instead.
 
-### Re-check reminder: **~2026-09-28** (≈3 weeks out)
+## Phase 0c — re-check (2026-10-04, production DB)
+
+`household_events`: 56,814 rows, 2026-08-30 → 2026-10-05 (~36 days); 7,429 structured. Both
+Branch C producers are now live-verified: `routine/executed` 110 daemon + 1 api rows (4 routines,
+~26 days each, one fire/day), `device/*` 84 rows (`set` 52, `turned_on` 22, `turned_off` 10) from
+2026-09-16 on, after HA came back (45 HA + 8 ESPHome devices online, 16 HA offline).
+
+Candidate pairs, `b` within 10 min after `a`:
+
+| pair | count | verdict |
+|---|---|---|
+| device→device | ~440 | **noise** — dominated by device 60 (a media player; 65 of 84 device events) volume-`set` bursts on the same device, 5 active days. Self-pairs on one entity are a single interaction, not a learnable transition. |
+| routine→device | 1 | **structurally zero** — no routine has a `device` action (Sunrise/Morning/Sunset/Bedtime have `actions=NULL`; only a `speak` test routine has any). Not a producer gap: nothing to emit. |
+| presence→device (`left_area`/`entered_area`/came/went_online → device) | 0 | no household device activity near presence changes; 9 area events total. |
+
+Device events occur on only 7 distinct days, 8 distinct devices (3 with >2 events), in test-like
+bursts (2026-09-16/17, 10-01/02) rather than habitual use.
+
+**Verdict: still stopped (Branch A-ish).** The structural blocker is cleared, but there is no
+genuine recurring cross-entity sequence to mine — the household has barely started using
+controllable devices at the new house, and the routines don't drive devices. Any window or
+threshold chosen now would be invented. Not a feasibility failure.
+
+**Re-check trigger (replaces the date):** revisit when (a) device events span ≥ ~3 weeks of
+*organic* days across ≥ 3 devices, or (b) a routine gains device actions (then also emit
+`device` events from the `service_device` path so routine→device is observable). Next calendar
+re-check: ~2026-11-01.
+
+### Re-check reminder (superseded by Phase 0c above): **~2026-09-28** (≈3 weeks out)
 
 Re-run the Phase 0b queries. Proceed to Phase 1 only if device-state and/or routine-executed
 rows have accumulated real multi-week history with genuine candidate pairs (e.g. a recurring
