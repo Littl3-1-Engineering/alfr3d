@@ -1096,6 +1096,56 @@ class TestDaemonRunLoop:
         assert check_mute() is True
 
 
+class TestCheckMuteDeckRelay:
+    """check_mute bypasses the empty-house gate (only) when a Deck has reported
+    recently with its PHONE SPEECH relay on; quiet hours stay authoritative."""
+
+    @staticmethod
+    def _blob(relay=True, age_minutes=1):
+        observed = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+        facets = {"power": {"is_charging": True}}
+        if relay is not None:
+            facets["speech"] = {"relay_enabled": relay}
+        return orjson.dumps(
+            {"devices": {"dev-1": {"facets": facets, "observed_at": observed.isoformat()}}}
+        ).decode()
+
+    @staticmethod
+    def _run(blob, is_sleeping, is_empty):
+        from common import db_utils
+
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (blob,) if blob is not None else None
+        db = MagicMock()
+        db.cursor.return_value = cursor
+        with (
+            patch.object(db_utils, "get_db_connection", return_value=db),
+            patch.object(db_utils, "get_mute_state", return_value=(is_sleeping, is_empty)),
+        ):
+            return db_utils.check_mute_optimized("test_env")
+
+    def test_empty_house_not_muted_when_deck_relay_on(self):
+        assert self._run(self._blob(), False, True) is False
+
+    def test_empty_house_muted_when_relay_off(self):
+        assert self._run(self._blob(relay=False), False, True) is True
+
+    def test_empty_house_muted_when_relay_unreported(self):
+        assert self._run(self._blob(relay=None), False, True) is True
+
+    def test_empty_house_muted_when_report_is_stale(self):
+        assert self._run(self._blob(age_minutes=60), False, True) is True
+
+    def test_empty_house_muted_when_nothing_ever_reported(self):
+        assert self._run(None, False, True) is True
+
+    def test_quiet_hours_stay_muted_even_with_relay_on(self):
+        assert self._run(self._blob(), True, True) is True
+
+    def test_occupied_house_unchanged(self):
+        assert self._run(self._blob(), False, False) is False
+
+
 class TestDecideDisplays:
     """Tests for MyDaemon.decide_displays() and its DISPLAY_RULES registry."""
 

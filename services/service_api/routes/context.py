@@ -622,6 +622,9 @@ _DEVICE_CONTEXT_FACETS = {
     "network": ("type", "quality"),
     "form": ("orientation",),  # trailing comma is load-bearing -- without it this is a str
     "activity": ("active_surface", "top_app", "terminal_session_active"),
+    # Whether this Deck's PHONE SPEECH relay (Alfr3dTtsRelay) is on -- read by
+    # db_utils.deck_relay_available() so an empty house still speaks when a Deck will carry it.
+    "speech": ("relay_enabled",),
 }
 
 
