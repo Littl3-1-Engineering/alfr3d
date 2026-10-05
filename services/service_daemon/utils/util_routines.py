@@ -554,7 +554,8 @@ def check_routines() -> bool:
                 logger.info(f"Executed {executed} actions for routine {routine_name}")
             try:
                 cursor.execute(
-                    "UPDATE routines SET triggered = 1, last_run = NOW() WHERE id = %s;",
+                    "UPDATE routines SET updated_at = updated_at, triggered = 1, last_run = NOW() "
+                    "WHERE id = %s;",
                     (routine_id,),
                 )
                 db.commit()
@@ -607,7 +608,10 @@ def reset_routines() -> bool:
         # set Triggered flag to false
         try:
             logger.info("Resetting 'triggered' flag for " + routine[1] + " routine")
-            cursor.execute("UPDATE routines SET triggered = 0 WHERE id = %s;", (routine[0],))
+            cursor.execute(
+                "UPDATE routines SET updated_at = updated_at, triggered = 0 WHERE id = %s;",
+                (routine[0],),
+            )
             db.commit()
         except Exception as e:
             logger.error("Failed to update the database")

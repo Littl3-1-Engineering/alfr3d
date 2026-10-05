@@ -183,7 +183,10 @@ async def run_routine(routine_id: int, _perm=Depends(require_permission("routine
 
             actions = orjson.loads(routine["actions"]) if routine.get("actions") else []
 
-            cursor.execute("UPDATE routines SET last_run = NOW() WHERE id = %s", (routine_id,))
+            cursor.execute(
+                "UPDATE routines SET updated_at = updated_at, last_run = NOW() WHERE id = %s",
+                (routine_id,),
+            )
             db.commit()
         _invalidate_cache(f"routines:{ALFR3D_ENV_NAME}")
 
