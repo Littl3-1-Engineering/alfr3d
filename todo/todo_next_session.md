@@ -296,5 +296,20 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
   `todo_esphome_situational_awareness.md`'s own "fix deployed" entry for the full before/after.
   Not yet observed firing live on a genuine future deviation.
 
+- **2026-10-04 (status refresh, no code)**: re-reviewed the open list.
+  - **Closed since 09-23**: `todo_redis_decimal_serialization.md` is deployed and live-verified
+    on the NUC (PR #235). SA-12 was re-checked today (Phase 0c): still stopped, **next re-check
+    ~2026-11-01**.
+  - **Still open, in priority order**: (1) Deck `cardKey` reporting for
+    `todo_card_feedback_loop.md` (SA-1) -- picked as the next item; (2) CEP Phases 3-5; (3) Deck
+    spoken-notifications end-to-end speak check, plus deleting the 2026-09-13 temporary
+    instrumentation logging; (4) `todo_multiuser_integrations.md`, which is unblocked by RBAC but
+    still has open design questions that need Athos's input first.
+  - **Item (1) built same day, uncommitted in `alfr3d_deck`**: Deck `shown`/`tapped`/`dismissed`
+    reporting for SA-1 -- detekt/ktlint/unit tests/`assembleDebug` pass, **not verified
+    on-device** (no device connected). Gaps and the verify steps are in
+    `todo_card_feedback_loop.md`'s "Android launcher reporting" section.
+  - Update this entry and the owning `todo_*.md` as each item is started and finished.
+
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
