@@ -107,7 +107,12 @@ wait_for_healthy() {
 write_status running fetch "Fetching ${TARGET_TAG}"
 PREV_SHA="$(git rev-parse HEAD)"
 
-if ! git fetch --tags origin >>"$LOG_FILE" 2>&1; then
+# The ephemeral container has no ssh client and no keys, but a household's checkout may well have
+# been cloned over SSH (git@github.com:...). The repo is public, so fetch it anonymously over HTTPS
+# regardless of how `origin` is spelled; the stored remote URL is left alone.
+if ! git -c url."https://github.com/".insteadOf="git@github.com:" \
+  -c url."https://github.com/".insteadOf="ssh://git@github.com/" \
+  fetch --tags origin >>"$LOG_FILE" 2>&1; then
   write_status failed fetch "git fetch failed: $(log_tail)"
   exit 1
 fi
