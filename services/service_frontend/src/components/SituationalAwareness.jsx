@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import {
   Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X,
-  Focus, Repeat, DoorOpen, Lightbulb, Users, Activity, Gauge, PartyPopper, Moon,
+  Focus, Repeat, DoorOpen, Lightbulb, Users, Activity, Gauge, PartyPopper, Moon, ServerCrash,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
@@ -127,6 +127,8 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'party_advisory': return <PartyPopper className="text-fui-magenta" />;
       // Late-hour wind-down nudge -- ambient evening, cyan.
       case 'wind_down_signal': return <Moon className="text-fui-accent" />;
+      // An integration is unreachable -- urgent, magenta, never dismissible.
+      case 'system_health': return <ServerCrash className="text-fui-magenta" />;
       default: return <Thermometer className="text-error" />;
     }
   };
