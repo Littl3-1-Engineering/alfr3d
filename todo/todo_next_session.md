@@ -309,6 +309,11 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     reporting for SA-1 -- detekt/ktlint/unit tests/`assembleDebug` pass, **not verified
     on-device** (no device connected). Gaps and the verify steps are in
     `todo_card_feedback_loop.md`'s "Android launcher reporting" section.
+  - **Also 2026-10-05**: item (1) verified end to end on the NUC (dismissals landed with the
+    right `user_id`, daemon logged `Suppressing ... cooldown`); Deck rebased onto 4 Dependabot
+    bumps and pushed. Found and fixed a continuity-card bug: system routine writes bumped
+    `routines.updated_at` (`a9e1c44b`, deployed) -- see `todo_cross_surface_continuity.md`. Still
+    to observe: the card staying away after the next real routine run.
   - Update this entry and the owning `todo_*.md` as each item is started and finished.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
