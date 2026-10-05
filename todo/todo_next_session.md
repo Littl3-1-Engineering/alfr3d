@@ -322,6 +322,10 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     Only the Play data-safety form remains for that feature. Remaining open: item (4)
     `todo_multiuser_integrations.md` (needs Athos's design input). NUC SSH note: plain `ssh` in
     the Claude shell is a kitten alias; use `/usr/bin/ssh alfr3d@192.168.2.200`.
+  - **2026-10-05 (later): event-timestamp fix deployed.** Deck ambient log, Status Surface and Shell now
+    show events in the phone's local timezone (`EventTimeFormat`, deck `2c298a1`/`eb867e0`); backend
+    producers stopped emitting `+00:00Z` / naive-local+`Z`, web `formatLocalTime` tolerates legacy shapes
+    (`7f7326ce`, deployed to the NUC). See `alfr3d_deck/todo/todo_ambient_log_local_timezone.md`.
   - Update this entry and the owning `todo_*.md` as each item is started and finished.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
