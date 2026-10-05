@@ -1,3 +1,43 @@
+# Release v0.4.10
+
+## Release Name: Button Up
+
+### Notes:
+- **Feature:** Cyber HUD buttons are now real device controls. Quick Controls and the Blueprint
+  ControlBlade use a shared `DeviceToggleButton` (HudRing-based) for every literal on/off action --
+  light/switch/fan/climate power, lock/unlock, and a TV's Power -- replacing the old pill toggles
+  and text buttons. A TV (media_player) gains a dedicated Power toggle distinct from Play/Pause and
+  a Volume slider in the compact tile. Also adds the clickable button gallery to Matrix's
+  Customizations tab.
+- **Feature:** `system_health` situational-awareness card. A debounced probe (every 5 minutes, two
+  consecutive failures) of the configured Home Assistant / SmartThings integration fires an urgent,
+  never-suppressible card, so an integration outage no longer reads silently as "every device is
+  offline".
+- **Fix:** `POST /api/context/card-interaction` now stamps `user_id` from the caller's JWT instead
+  of trusting the request body (no client ever sent it, so every stored row had a NULL user).
+- **Fix:** web sessions survive long-lived tabs. The refresh token moved to `localStorage` (with a
+  `sessionStorage` migration); only a 401/403 from `/refresh` clears the session, transient errors
+  retry with backoff; the access token refreshes proactively before expiry and on
+  visibility/online events; cross-tab refreshes are serialized via a Web Lock; the refresh grace
+  window grew from 10s to 60s.
+- **Fix:** the Redis cache could never store the environment record, because MySQL `decimal`
+  coordinates are Python `Decimal` and the serializer had no encoder; the failure was swallowed at
+  WARNING. Coordinates are now cast to float at the source, the serializer has a `Decimal` handler,
+  and a serialization failure logs at ERROR. Deployed and live-verified on the NUC.
+- **Fix:** quips no longer get run through the "rephrase this announcement" prompt (the LLM was
+  replying that the announcement was empty); off-task or over-long LLM replies are discarded in
+  favour of the original text.
+- **Fix:** the greeting's midday boundary is noon, not 11:00 ("Good afternoon" arrived an hour
+  early).
+- **Chore:** dependency updates -- aioesphomeapi, pyjwt, starlette, uvicorn, anthropic, sqlalchemy
+  (2.1 floor for tests and migrations), `@tanstack/react-query`, lucide-react, vite, undici,
+  jsdom 30, brace-expansion. `eslint` 10 deliberately not taken (needs a `react-hooks` 7 upgrade).
+- **Ops:** this is the first release intended to be applied to the production NUC through the
+  v0.4.9 self-service **Update Now** flow rather than by hand over SSH -- see
+  `todo/todo_selfservice_release_update.md`.
+
+pytest: 648 passed, 9 skipped (MySQL-integration-only). npm test: 187/187.
+
 # Release v0.4.9
 
 ## Release Name: Room Service

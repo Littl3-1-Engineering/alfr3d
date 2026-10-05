@@ -1,6 +1,17 @@
 # Todo: SSH-free release update (GitHub release check + "Update Now" banner)
 
-## Status: 🔲 TODO (detailed plan finalized 2026-09-27, implementation starts next session). No code yet.
+## Status: 🟡 Built and released in v0.4.9 "Room Service" (2026-09-27): all three phases, off-NUC dry run
+passed. **Still owed (checked 2026-10-04):** Testing plan step 3 -- the first real update pushed
+through the mechanism on the production NUC. It cannot happen until a release newer than the NUC
+exists: the NUC is on `main` (`v0.4.9-6-g82a70b67`, branch checkout, not a tag), `update-check`
+correctly reports up-to-date, and the status volume is empty. Also open: the "settles within 360 s
+under normal single-stack load" timing, which the scratch dry run could not confirm (resource
+contention from two stacks on one host). Plan: cut the next patch release, then use **Update Now**
+on the NUC as the real test -- after which the NUC will sit on a detached tag HEAD (see the
+detached-HEAD note below; `git pull` there no-ops).
+
+_The plan text below is the original 2026-09-27 design and is kept for the architecture reasoning;
+its "No code yet" / "next session" phrasing is historical._
 
 ## Problem
 
