@@ -5,7 +5,7 @@ DBUtils==3.2.0
 kafka-python-ng==2.2.3
 docker==7.2.0
 cryptography==50.0.1
-werkzeug==3.1.8
+werkzeug==3.1.9
 PyJWT==2.15.0
 requests==2.34.2
 orjson==3.12.0
