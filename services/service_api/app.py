@@ -30,6 +30,7 @@ from dependencies import (  # noqa: E402
 )
 from routes.users import router as users_router  # noqa: E402
 from routes.devices import router as devices_router  # noqa: E402
+from routes.kanji import router as kanji_router  # noqa: E402
 from routes.quips import router as quips_router  # noqa: E402
 from routes.environment import router as environment_router, broadcast_calendar_events  # noqa: E402
 from routes.integrations import router as integrations_router  # noqa: E402
@@ -299,6 +300,7 @@ app.include_router(project_tree_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(devices_router)
+app.include_router(kanji_router)
 app.include_router(quips_router)
 app.include_router(environment_router)
 app.include_router(integrations_router)

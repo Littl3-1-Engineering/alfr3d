@@ -54,6 +54,7 @@ PERMISSIONS = {
         "*": _TECHNOKING_ONLY,
         "update_context": _TECHNOKING_AND_RESIDENT,
     },
+    "kanji": {"*": _TECHNOKING_AND_RESIDENT},
     "quips": {"*": _TECHNOKING_AND_RESIDENT},
     "routines": {"*": _TECHNOKING_AND_RESIDENT},
     "stream": {"*": _TECHNOKING_AND_RESIDENT},
