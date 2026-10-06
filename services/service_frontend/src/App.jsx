@@ -6,6 +6,7 @@ import { LogIn, LogOut } from 'lucide-react';
 import AudioPlayer from './components/AudioPlayer';
 import LoginModal from './components/LoginModal';
 import OnboardingModal from './components/OnboardingModal';
+import KanjiWisdom from './components/KanjiWisdom';
 import SignInRequired from './components/SignInRequired';
 import UpdateBanner from './components/UpdateBanner';
 import socket from './utils/socket';
@@ -117,6 +118,7 @@ function AppContent() {
         </nav>
         <UpdateBanner onVisibilityChange={setUpdateBannerVisible} />
       </div>
+      <KanjiWisdom />
       <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
       <OnboardingModal
         isOpen={onboardingModalOpen}

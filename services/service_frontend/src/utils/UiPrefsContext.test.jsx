@@ -38,4 +38,31 @@ describe('UiPrefsProvider', () => {
     expect(screen.getByRole('button')).toHaveTextContent('tabs')
     expect(localStorage.getItem('alfr3d-nexus-nav')).toBe('tabs')
   })
+
+  describe('kanji wisdom switch', () => {
+    const KanjiProbe = () => {
+      const { kanjiWisdom, setKanjiWisdom } = useUiPrefs()
+      return (
+        <button type="button" onClick={() => setKanjiWisdom(!kanjiWisdom)}>{String(kanjiWisdom)}</button>
+      )
+    }
+    const renderKanji = () => render(<UiPrefsProvider><KanjiProbe /></UiPrefsProvider>)
+
+    it('is on by default', () => {
+      renderKanji()
+      expect(screen.getByRole('button')).toHaveTextContent('true')
+    })
+
+    it('restores a saved off state', () => {
+      localStorage.setItem('alfr3d-kanji-wisdom', 'false')
+      renderKanji()
+      expect(screen.getByRole('button')).toHaveTextContent('false')
+    })
+
+    it('persists a change', () => {
+      renderKanji()
+      fireEvent.click(screen.getByRole('button'))
+      expect(localStorage.getItem('alfr3d-kanji-wisdom')).toBe('false')
+    })
+  })
 })
