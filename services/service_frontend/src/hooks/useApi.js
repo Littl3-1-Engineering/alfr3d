@@ -231,3 +231,22 @@ export const useIotStatus = () => {
     }
   });
 };
+
+// Today's daily kanji quote ({ date, id, kanji, reading, meaning }); 404 when none is enabled.
+// Public endpoint, so a plain fetch. Re-checked every half hour so the day rollover is picked up.
+const KANJI_REFRESH_MS = 30 * 60 * 1000;
+
+export const useKanjiToday = (enabled = true) => {
+  return useQuery({
+    queryKey: ['kanji-today'],
+    enabled,
+    staleTime: KANJI_REFRESH_MS,
+    refetchInterval: KANJI_REFRESH_MS,
+    retry: false,
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/kanji/today`);
+      if (!response.ok) throw new Error('No kanji quote available');
+      return response.json();
+    }
+  });
+};
