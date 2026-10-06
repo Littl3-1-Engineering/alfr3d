@@ -61,6 +61,17 @@ class QuipUpdate(BaseModel):
     category: Optional[str] = "custom"
 
 
+class KanjiQuoteCreate(BaseModel):
+    kanji: str
+    reading: str
+    meaning: str
+    enabled: bool = True
+
+
+class KanjiQuoteUpdate(KanjiQuoteCreate):
+    pass
+
+
 class EnvironmentUpdate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
