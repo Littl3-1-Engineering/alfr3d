@@ -64,6 +64,9 @@ ROUTINE_QUIP_TYPES = {
     "Bedtime": "bedtime",
 }
 
+# Quip types whose speech has a specific intent the speak service should honour.
+ROUTINE_INTENTS = {"bedtime": "goodnight"}
+
 
 def _emit_routine_executed(routine_id, routine_name):
     """Record a routine firing as a structured household event (SA-12 Phase 0b follow-up).
@@ -545,7 +548,15 @@ def check_routines() -> bool:
                             # land on the wrong side of their own boundary and get
                             # silently discarded. bypass_sleeping_gate skips only
                             # that check; the "is anyone home" check still applies.
-                            orjson.dumps({"text": quip, "bypass_sleeping_gate": True}),
+                            orjson.dumps(
+                                {
+                                    "text": quip,
+                                    "bypass_sleeping_gate": True,
+                                    # Bedtime quips are good-night farewells; tell the
+                                    # speak service so its LLM keeps them as one.
+                                    "intent": ROUTINE_INTENTS.get(quip_type),
+                                }
+                            ),
                         )
                         producer.flush()
                         logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")
