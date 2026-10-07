@@ -356,3 +356,32 @@ class TestDatabaseFunctions:
 
         with patch("services.service_speak.personality.get_db_connection", return_value=mock_db):
             assert get_owner_address(env_id=1) is None
+
+
+class TestBuildLlmSystemPromptGoodnight:
+    """The Bedtime routine's farewell must stay a good night (with its quirk), not get
+    rephrased into an unrelated remark or a time-of-day greeting."""
+
+    def test_goodnight_intent_requires_wish_and_keeps_humour(self):
+        prompt = build_llm_system_prompt({"verbal_tics": ""}, intent="goodnight")
+        assert "MUST include a good-night wish" in prompt
+        assert "eccentric humour" in prompt
+        assert '"good night" is expected' in prompt
+        assert "Rephrase the announcement below in your own voice" not in prompt
+
+    def test_default_intent_unchanged(self):
+        prompt = build_llm_system_prompt({"verbal_tics": ""})
+        assert "Rephrase the announcement below in your own voice" in prompt
+        assert "good-night wish" not in prompt
+
+
+def test_bedtime_quip_seeds_are_complete_good_nights():
+    import re
+    from pathlib import Path
+
+    sql = (Path(__file__).resolve().parents[1] / "setup" / "createTables.sql").read_text()
+    quips = re.findall(r"VALUES \('bedtime',\"(.*)\"\);", sql)
+    assert len(quips) >= 5
+    for q in quips:
+        assert q == q.strip() and q[-1] in ".!", q
+        assert not q.endswith(","), q
