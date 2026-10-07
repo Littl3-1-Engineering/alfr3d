@@ -374,8 +374,13 @@ INSERT INTO `quips` (`type`,`quips`) VALUES ('morning',"Good morning. The day wi
 INSERT INTO `quips` (`type`,`quips`) VALUES ('morning',"Awake, then. I have taken the liberty of starting the day without you.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('sunrise',"Sunrise. Somewhere a rooster is taking credit for my work.");
 INSERT INTO `quips` (`type`,`quips`) VALUES ('sunset',"Sunset. The lights and I will take it from here.");
-INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Unless we are burning the midnight oil, ");
-INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"If you are going to invent something new tomorrow, ");
-INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"If you intend on being charming tomorrow");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Unless you are burning the midnight oil, it is time for bed. Good night, everyone.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Good night. Go and rest; tomorrow's inventions will keep until morning.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Sleep well. Tomorrow you will be charming, and I will pretend to be surprised.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Good night, everyone. I shall guard the thermostat with my life.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Sleep well. The house and I will compare notes on your snoring in the morning.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Good night. Should anything go bump, I am fairly sure it is the dishwasher.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Rest now. Tomorrow's problems have been filed under tomorrow.");
+INSERT INTO `quips` (`type`,`quips`) VALUES ('bedtime',"Sweet dreams, all of you. I will keep the lights low and my opinions lower.");
 
 SET FOREIGN_KEY_CHECKS = 1;

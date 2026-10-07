@@ -407,3 +407,32 @@ class TestHeartbeatAndConsumerRetry:
         ]
         # Touched once per attempt before each connect, in addition to the 3 sleeps.
         assert mock_heartbeat.call_count == 3
+
+
+def test_intent_is_passed_to_prompt_builder():
+    """A routine's `intent` in the speak payload reaches build_llm_system_prompt."""
+    import orjson
+
+    message = MagicMock()
+    message.value = orjson.dumps(
+        {"text": "Good night, everyone.", "bypass_sleeping_gate": True, "intent": "goodnight"}
+    )
+    with patch("services.service_speak.app.get_mute_state", lambda: (False, False)), patch(
+        "services.service_speak.app.track_speak_text"
+    ), patch(
+        "services.service_speak.app.get_blended_personality",
+        lambda: {"name": "t", "mood": "neutral", "blended": {}},
+    ), patch(
+        "services.service_speak.app.get_claude_config", lambda: {"api_key": "x"}
+    ), patch(
+        "services.service_speak.app.build_llm_system_prompt", return_value="sys"
+    ) as mock_build, patch(
+        "services.service_speak.app.call_claude_haiku", return_value=None
+    ), patch(
+        "services.service_speak.app.generate_tts", return_value="t.mp3"
+    ), patch(
+        "services.service_speak.app.send_event"
+    ):
+        process_speak_message(message)
+    mock_build.assert_called_once()
+    assert mock_build.call_args.kwargs["intent"] == "goodnight"

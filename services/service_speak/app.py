@@ -280,6 +280,7 @@ def process_speak_message(message):
             speaker_wav = message_data.get("speaker_wav")
             skip_personality = message_data.get("skip_personality", False)
             bypass_sleeping_gate = message_data.get("bypass_sleeping_gate", False)
+            intent = message_data.get("intent")
         except (orjson.JSONDecodeError, TypeError):
             text = str(raw_value)
             engine = "Coqui"
@@ -288,6 +289,7 @@ def process_speak_message(message):
             speaker_wav = None
             skip_personality = False
             bypass_sleeping_gate = False
+            intent = None
 
         logger.info(
             f"Processing speak message: {text[:50]}... "
@@ -323,7 +325,7 @@ def process_speak_message(message):
                         f"mood: {personality.get('mood')}"
                     )
 
-                    system_prompt = build_llm_system_prompt(personality)
+                    system_prompt = build_llm_system_prompt(personality, intent=intent)
                     llm_text = call_claude_haiku(system_prompt, frame_announcement(text), config)
 
                     if llm_text and not llm_reply_is_usable(text, llm_text):

@@ -487,7 +487,7 @@ ADDRESS_FREQUENCY = 4
 _address_call_count = 0
 
 
-def build_llm_system_prompt(personality):
+def build_llm_system_prompt(personality, intent=None):
     global _tics_call_count, _address_call_count
 
     blended = personality.get("blended", {})
@@ -567,6 +567,28 @@ def build_llm_system_prompt(personality):
             '(no "good morning", "good afternoon", "good evening")'
         )
 
+    goodnight = intent == "goodnight"
+    if goodnight:
+        # A bedtime farewell is not a time-of-day greeting, and the generic "rephrase as-is"
+        # instructions turned a complete good-night quip into an unrelated remark.
+        greeting_rule = (
+            '- This is a bedtime farewell: "good night" is expected; never say "good evening", '
+            '"good morning" or "good afternoon"'
+        )
+        task_instructions = (
+            "- The announcement below is a good-night farewell to the whole household as they "
+            "go to bed. Keep its meaning and its dry, slightly eccentric humour\n"
+            '- Your reply MUST include a good-night wish (e.g. "good night", "sleep well", '
+            '"sweet dreams"), kind underneath the wit\n'
+            "- Do not flatten it into generic niceness, and do not turn snarky"
+        )
+        warmth_instruction = "Be warm and gentle beneath the dry wit."
+    else:
+        task_instructions = (
+            "- Rephrase the announcement below in your own voice as a statement, not a request "
+            "for more information"
+        )
+
     return f"""You are ALFR3D, a home assistant named "Alfred".
 
 CRITICAL: NEVER spell out ALFR3D as letters. ALWAYS say "Alfred" when referring to yourself by name.
@@ -593,8 +615,7 @@ meeting? Shocking."), as long as they don't require a response
 {forbidden_instruction}
 
 Instructions:
-- Rephrase the announcement below in your own voice as a statement, not a request for more \
-information
+{task_instructions}
 - Keep it under 20 words for TTS efficiency
 - Stay in character based on the personality traits above
 {formality_instruction}
