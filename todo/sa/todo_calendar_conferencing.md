@@ -1,5 +1,7 @@
 # SA-7: Sync calendar conferencing metadata
 
+> **Layer:** input + consumer (SA-7) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-0 keeps calendar history; LF-1a moves the rule
+
 ## Status: 🟡 Built 2026-08-29, not yet live-verified against a real conferencing event; deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real

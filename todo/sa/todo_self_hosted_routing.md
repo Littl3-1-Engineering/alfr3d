@@ -1,5 +1,7 @@
 # SA-6: Self-hosted routing & leave-by guidance
 
+> **Layer:** consumer (SA-6) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1a moves check_travel into sa-awareness
+
 ## Status: 🟢 Fully live in production — routing container started and end-to-end verified
 2026-08-30; `check_travel()` fired on a real calendar event for the first time 2026-09-10
 
@@ -9,7 +11,7 @@ conference link) produced a real `travel` card on the household dashboard — pu
 47.6`, `traffic_aware: false`. The full runtime path (`environment` coords → Nominatim geocode →
 OSRM `get_route()` → leave-by within `TRAVEL_LEAD_MINUTES`) ran end to end in production for the
 first time. Two daemon fixes shipped alongside it (commits `65dec9e1`, `ecbdccbe`) — see
-`todo/todo_leave_by_demo.md`: a scheduled 15-min calendar sync (events no longer wait for a
+`todo/sa/todo_leave_by_demo.md`: a scheduled 15-min calendar sync (events no longer wait for a
 daemon restart) and household-local card time formatting (`ContextFrame.to_local()` — cards were
 printing UTC wall-clock, not the household's timezone). SA-6 moves Future → Present.
 
@@ -204,7 +206,7 @@ mode-order list) updated for the 18th registered rule. Full suite: **444 passed,
 
 - ~~**`check_travel()` firing on a real calendar event**~~ -- **fired live 2026-09-10** (see
   Status above). The only thing left on the leave-by track is capturing a screen recording of
-  the card for the `littl31.com` hero clip — tracked in `todo/todo_leave_by_demo.md`, not here.
+  the card for the `littl31.com` hero clip — tracked in `todo/sa/todo_leave_by_demo.md`, not here.
 - ~~Deploying the routing container to the household's real production NUC~~ -- **done
   2026-08-30**, explicit go-ahead given; see "Routing container started" above.
 - ~~The 20.83GB of reclaimable Docker build cache found on the production NUC during Phase 0~~ --

@@ -1,5 +1,7 @@
 # Backend↔Deck Context Exchange Protocol
 
+> **Layer:** input (CEP) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-2 absorbs the unbuilt 'is the user home' merge rule into silver presence_intervals
+
 ## Status: 🟢 Phases 1 and 2 built, deployed to the NUC, and live-verified 2026-09-12; Phase 3 built, deployed and on-device verified 2026-10-05; Phase 4 Deck-side slice shipped (`a3c2b65`); Phase 5 partly verified (connected only)
 
 Prompted by a real bug (Deck showed a "Wind down" card on a Saturday at 18:18) that turned out to
@@ -367,7 +369,7 @@ intentional — 3–5 are the expensive half, and they should be justified by wh
 - **No cross-household / multi-tenant concerns.** Single-environment assumption throughout, same
   as everything else in `DISPLAY_RULES` today.
 
-See also: `alfr3d_deck/todo/todo_context_exchange_protocol.md` (stub).
+See also: `alfr3d_deck/todo/sa/todo_context_exchange_protocol.md` (stub).
 
 ## Live verification (2026-09-12, real household + real device `NAAIB7004279WZB`)
 

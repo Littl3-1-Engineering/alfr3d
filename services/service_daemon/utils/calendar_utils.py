@@ -244,7 +244,7 @@ def sync_calendar():
         # sync_calendar() wipes and re-inserts the whole sync window every run (no Google
         # event id is stored to upsert against), so a diff against what was there *before*
         # the delete is the only way to tell a genuinely new/changed event from one that's
-        # just being re-synced unchanged -- see todo/todo_household_event_log.md.
+        # just being re-synced unchanged -- see todo/sa/todo_household_event_log.md.
         cursor.execute(
             f"SELECT title, start_time, end_time, address, notes FROM calendar_events "
             f"WHERE {window_clause}",

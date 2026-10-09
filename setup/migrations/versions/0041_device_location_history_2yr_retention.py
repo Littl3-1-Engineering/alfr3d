@@ -2,7 +2,7 @@
 
 Raises this table's retention to match the other SA event-log tables
 (household_events/attention_telemetry_history/card_interactions -- see
-alfr3ddaemon.SA_EVENT_LOG_RETENTION_DAYS_DEFAULT). See todo/todo_sa_data_retention_3yr.md.
+alfr3ddaemon.SA_EVENT_LOG_RETENTION_DAYS_DEFAULT). See todo/sa/todo_sa_data_retention_3yr.md.
 
 The retention lives in a MySQL-native scheduled EVENT here (migration 036), not a Python-side
 constant like its three siblings -- recreating the event is the minimal correct fix for the

@@ -5,7 +5,7 @@ Per-cycle context frame for MyDaemon.decide_displays() (SA-4).
 
 Before this, decide_displays()'s ~15 DISPLAY_RULES checks each independently opened their own
 DB connection and re-derived their own context every ~60s cycle. Phase 0 investigation (see
-todo/todo_context_frame.md) found these exact duplicates, all fixed by this frame:
+todo/sa/todo_context_frame.md) found these exact duplicates, all fixed by this frame:
 
 - `environment` table read 3x/cycle: check_weather (city/description/low/high/subjective_feel),
   check_weather_advisory (forecast_rain_probability), check_gatherings
@@ -102,7 +102,7 @@ class LauncherContext:
         self.attention_snapshot = None
         self.attention_trend = None
         # {device_id: facets} for every Deck whose reported device context is still fresh
-        # (todo/todo_context_exchange_protocol.md Phase 2). {} when none are -- see
+        # (todo/sa/todo_context_exchange_protocol.md Phase 2). {} when none are -- see
         # MyDaemon._read_fresh_device_contexts(), which owns the staleness gate.
         self.device_contexts = {}
 

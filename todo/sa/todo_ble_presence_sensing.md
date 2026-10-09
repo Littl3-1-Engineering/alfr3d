@@ -1,5 +1,7 @@
 # SA-8: BLE presence sensing from the Kit
 
+> **Layer:** input, dead at Phase 0 (SA-8) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → would feed LF-2 silver presence_intervals if revived
+
 ## Status: 🔴 Dead at Phase 0 — re-verified 2026-09-16, same result, no stably-identifiable
 personal device found in this household's real BLE environment
 
@@ -9,7 +11,7 @@ as a legitimate result, not a failure to force through.
 
 **This doc was previously deleted** (commit `3282a3c9`, `docs(todo): remove 24 fully-completed
 todos`) — a mislabeling; "dead at Phase 0" is not "completed," and the finding below still
-applies today. Restored from git history (`git show a2989c9b:todo/todo_ble_presence_sensing.md`)
+applies today. Restored from git history (`git show a2989c9b:todo/sa/todo_ble_presence_sensing.md`)
 with a 2026-09-16 re-verification appended. `todo/todo_next_session.md`'s SA-8 bullet, which still
 pointed at this filename, is accurate again now that the file exists.
 

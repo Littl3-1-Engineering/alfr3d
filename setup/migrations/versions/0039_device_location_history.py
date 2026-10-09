@@ -3,7 +3,7 @@
 Per-device geolocation history reported by ALFR3D Deck via POST /api/context/device-location
 (routes/context.py). Keyed by the Deck install's stable UUID; user_id denormalized from the
 JWT; device_id NULL until a later device-linking step. Data-collection pipeline only -- no SA
-rule consumes it yet. See todo/todo_device_location_reporting.md.
+rule consumes it yet. See todo/sa/todo_device_location_reporting.md.
 
 Revision ID: 0039
 Revises: 0038

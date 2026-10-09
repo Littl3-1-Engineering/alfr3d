@@ -1,5 +1,7 @@
 # SA-11: Durable Household Event Log
 
+> **Layer:** data (SA-11) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1b bronze source; unstructured producers still to structure
+
 ## Status: 🟢 Phase 1 + Phase 2 built and live-verified 2026-08-29; deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real

@@ -3,7 +3,7 @@
 -- entity_type gains 'room' and 'household' alongside 'device'/'smarthome_device'/'user' (the
 -- last added by SA-3, migration 031). 'room' is added as an enum value only -- its computation
 -- is gated on SA-9 (ESPHome sensor coverage), which stopped at Phase 0 this session with no real
--- sensor hardware to validate against (see todo/todo_esphome_situational_awareness.md). Adding
+-- sensor hardware to validate against (see todo/sa/todo_esphome_situational_awareness.md). Adding
 -- the enum value now, with no rows ever written for it yet, costs nothing and avoids a second
 -- migration purely to add one more enum label later.
 --

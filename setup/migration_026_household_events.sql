@@ -4,7 +4,7 @@
 -- recent_events buffer (last 20, RAM-only, gone on restart). household_events
 -- is a second, durable destination for the same messages -- SA-3/SA-10/SA-12
 -- and future "what usually happens next" reasoning need real accumulated
--- history to query. See todo/todo_household_event_log.md.
+-- history to query. See todo/sa/todo_household_event_log.md.
 
 CREATE TABLE `household_events` (
   `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

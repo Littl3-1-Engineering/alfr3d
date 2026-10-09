@@ -2,7 +2,7 @@
 --
 -- Daily snapshot of row count and on-disk size for the tables
 -- alfr3ddaemon.SA_STORAGE_METRICS_TRACKED_TABLES names, written by
--- record_sa_storage_metrics(). Turns todo/todo_sa_data_retention_3yr.md's ~2-week production
+-- record_sa_storage_metrics(). Turns todo/sa/todo_sa_data_retention_3yr.md's ~2-week production
 -- estimate into a real, growing time series that can be checked against reality directly:
 --
 --   SELECT table_name, recorded_at, row_count,

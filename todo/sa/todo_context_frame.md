@@ -1,5 +1,7 @@
 # SA-4: Shared per-cycle context frame
 
+> **Layer:** awareness runtime (SA-4) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1a moves the frame into sa-awareness, fed by event-stream
+
 ## Status: 🟢 Built and live-verified 2026-08-29; deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real

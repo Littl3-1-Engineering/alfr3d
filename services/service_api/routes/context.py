@@ -9,11 +9,11 @@ alfr3ddaemon.py's DISPLAY_RULES checks can react to it --
 check_cross_surface_continuity() (surface state),
 check_attention_focus()/check_wind_down_signal() (attention telemetry), and
 decide_displays()'s suppression pass (card interactions).
-See todo/todo_cross_surface_continuity.md, todo/todo_attention_telemetry.md,
-todo/todo_card_feedback_loop.md.
+See todo/sa/todo_cross_surface_continuity.md, todo/sa/todo_attention_telemetry.md,
+todo/sa/todo_card_feedback_loop.md.
 
 GET /context/day-context is the first downlink in the same file: Phase 1 of
-todo/todo_context_exchange_protocol.md, which makes each context facet owned by
+todo/sa/todo_context_exchange_protocol.md, which makes each context facet owned by
 whichever side has the better evidence for it. Part-of-day is backend-owned
 (it comes from this household's real Morning/Bedtime routine rows), so the
 Deck subscribes to it here instead of re-deriving it from a fixed clock bucket.
@@ -122,12 +122,12 @@ async def report_attention_telemetry(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# POST /api/context/device-location bounds (todo/todo_device_location_reporting.md).
+# POST /api/context/device-location bounds (todo/sa/todo_device_location_reporting.md).
 _LOCATION_MAX_ACCURACY_M = 20_000.0  # a fix claiming worse than 20 km is a bad reading, not data
 _LOCATION_MAX_FIX_AGE_DAYS = 180  # matches cleanup_device_location_history_event's retention
 _LOCATION_MAX_FUTURE_SKEW_MS = 60_000.0  # tolerate a minute of device-clock skew, no more
 
-# Geofence -> SA-12 household_events producer (todo/todo_transition_learning.md deferred
+# Geofence -> SA-12 household_events producer (todo/sa/todo_transition_learning.md deferred
 # follow-up). "Home" is a circle of this radius around the household's own `environment`
 # coordinates. 3km, not a few houses' width: todo_device_location_reporting.md's Phase 0
 # on-device investigation found ACCESS_COARSE_LOCATION hard-clamps every fix -- network, gps,
@@ -398,7 +398,7 @@ async def report_card_interaction(
 ):
     """Record a `card_interactions` row for one situational-awareness card
     (SA-1). Card identity is `(rule_id, subject_key)` -- see
-    todo/todo_card_feedback_loop.md for why that's the identity instead of
+    todo/sa/todo_card_feedback_loop.md for why that's the identity instead of
     `(mode, content_hash)`. `rule_id` is the DISPLAY_RULES id
     (`alfr3ddaemon.py`), not the card's own `mode` field -- the two aren't
     always the same (`check_gatherings`/rule id "music" and
@@ -444,7 +444,7 @@ async def report_card_interaction(
 
 # Bumped when this payload's shape changes in a way a client must notice. Additive fields do
 # NOT bump it -- clients ignore unknown keys -- so this only moves if an existing field changes
-# meaning or disappears. todo/todo_context_exchange_protocol.md's version-skew rule: an older
+# meaning or disappears. todo/sa/todo_context_exchange_protocol.md's version-skew rule: an older
 # client against a newer backend (or the reverse) degrades to its own local estimate rather
 # than breaking, and a 404 from a backend too old to have this route is indistinguishable from
 # a stale payload -- both mean "fall back to local."

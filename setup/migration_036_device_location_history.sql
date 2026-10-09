@@ -4,7 +4,7 @@
 -- approximate geolocation once per background-sync window. Stored per *device* (keyed by the
 -- Deck install's stable UUID `client_install_id`), not pre-aggregated to a user -- a
 -- phone-in-pocket track and a tablet-left-at-home track are each individually accurate and
--- must not be merged (todo/todo_device_location_reporting.md design decision #3).
+-- must not be merged (todo/sa/todo_device_location_reporting.md design decision #3).
 --
 -- Columns:
 --   client_install_id  stable per-install UUID the Deck generates (the device key)

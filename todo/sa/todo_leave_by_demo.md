@@ -1,5 +1,7 @@
 # Leave-by demo: capture the `travel` card firing on a real event
 
+> **Layer:** consumer (demo) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → no LF change
+
 ## Status: ✅ Done 2026-09-10 — `check_travel()` fired live, both surfaces recorded,
 hero clip wired into `littl31`.
 
@@ -145,6 +147,6 @@ et al. still run their prior images until separately rebuilt.
 
 ## Related
 
-- `todo/todo_self_hosted_routing.md` — SA-6 build + the 2026-08-30 NUC deploy this re-checks
+- `todo/sa/todo_self_hosted_routing.md` — SA-6 build + the 2026-08-30 NUC deploy this re-checks
 - `littl31/todo/todo_site_dial_in.md` — the site A1/A2/A3 workstream this feeds
 - Notion "🎯 Dial-In Plan — Positioning, Product & Launch Execution (Sep 2026)"

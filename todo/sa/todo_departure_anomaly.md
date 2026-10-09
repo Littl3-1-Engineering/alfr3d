@@ -1,5 +1,7 @@
 # SA-3: Presence-transition spike & departure anomaly
 
+> **Layer:** L1 consumer (SA-3) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-3 presence learner replaces its departure baseline; LF-4 cutover
+
 ## Status: 🟢 Built and live-verified 2026-08-29; deployed to production 2026-08-30; **a real
 live firing found in production history 2026-09-26** (occurred 2026-09-12, undetected until this
 review -- see "Live firing confirmed" below)
@@ -205,7 +207,7 @@ baseline recompute changing the trusted bucket -- open question, not yet root-ca
 - The pre-existing `compute_entity_baselines()` device on/off-session quirk found during the
   Phase 0 spike (measuring "on-duration + trailing gap" rather than pure on-duration, due to the
   same `before_device_update` trigger semantics) was flagged but not fixed -- out of scope for
-  this task, belongs with `todo/todo_rhythm_break_anomaly.md` if ever revisited.
+  this task, belongs with `todo/sa/todo_rhythm_break_anomaly.md` if ever revisited.
 
 ## Out of scope (per the task doc, unchanged)
 

@@ -1,5 +1,7 @@
 # Deck: Household Composition Awareness
 
+> **Layer:** L1 consumer (fixed rule) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1a move; visitor anticipation in LF-3/LF-5
+
 ## Status: ✅ Built 2026-08-28 (not yet on-device/live verified)
 
 Backend: `MyDaemon.check_household_composition()` + DISPLAY_RULES registration in

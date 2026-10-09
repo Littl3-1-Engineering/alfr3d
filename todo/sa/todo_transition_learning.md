@@ -1,5 +1,7 @@
 # SA-12: Transition learning & anticipation/surprise
 
+> **Layer:** L1 learner (SA-12) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-5 transition learner, rebuilt on silver
+
 ## Status: 🔴 SA-12 still stopped — re-checked 2026-10-04 (Phase 0c): structurally unblocked, but no organic transitions to mine yet; next re-check ~2026-11-01
 
 - **2026-08-30:** stopped at Phase 0 because SA-11 had only ~10 hours of runtime.

@@ -1,5 +1,7 @@
 # Deck: Cross-Surface Continuity Card
 
+> **Layer:** consumer · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1a moves the rule
+
 ## Status: ✅ Built 2026-08-28 (not yet on-device/live verified)
 
 Backend: migration `0026_routines_updated_at.py` adds `routines.updated_at` (`ON UPDATE

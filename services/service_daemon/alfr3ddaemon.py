@@ -182,7 +182,7 @@ ATTENTION_TELEMETRY_CONFIG_KEY = "launcher_attention_telemetry"
 ATTENTION_TELEMETRY_STALENESS_MINUTES = 30
 
 # `config` table key POST /api/context/device-snapshot writes each Deck's own
-# current device context under (todo/todo_context_exchange_protocol.md Phase 2)
+# current device context under (todo/sa/todo_context_exchange_protocol.md Phase 2)
 # -- battery/charging, DND/headset, network, orientation, foreground activity.
 # These are facets the *launcher* owns: nothing else in this system can observe
 # them, so before this the daemon had no way to know the phone was silenced.
@@ -344,7 +344,7 @@ RHYTHM_BREAK_GRACE_MINUTES = 15
 # (30d) deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
 # device baseline gets from the same window, and the confirmed-home-overnight anchor
 # (_departure_hours_by_bucket()) rejects many days outright. Verified against this household's
-# real history (todo/todo_departure_anomaly.md): 60 days left every resident under the sample
+# real history (todo/sa/todo_departure_anomaly.md): 60 days left every resident under the sample
 # floor; 120 days was the first window where multiple residents actually cleared it. 180 would
 # match device_history's own retention ceiling exactly, leaving no margin before rows this
 # window depends on get pruned daily -- 120 leaves a 60-day cushion.
@@ -1065,7 +1065,7 @@ class MyDaemon:
     def check_travel(self, frame):
         """SA-6: restores what commit 08509ce removed (Google Maps Directions-based
         check_travel()), on self-hosted infrastructure -- see
-        todo/todo_self_hosted_routing.md for the Phase 0 spike that justified self-hosted OSRM
+        todo/sa/todo_self_hosted_routing.md for the Phase 0 spike that justified self-hosted OSRM
         for routing (measured live against real production hardware) plus the public Nominatim
         API for the much rarer geocoding need, over any paid/hosted alternative.
 
@@ -1136,7 +1136,7 @@ class MyDaemon:
         focus_utils' module docstring for the full tier breakdown and known false-positive
         shape of the probable tier. Only fires within FOCUS_LEAD_MINUTES of the event's start.
 
-        DND correlation (todo/todo_context_exchange_protocol.md Phase 2, and the deferred
+        DND correlation (todo/sa/todo_context_exchange_protocol.md Phase 2, and the deferred
         follow-up todo_attention_telemetry.md asked for): when a Deck reports Do Not Disturb
         already on, "Find a quiet spot." is advice the user has visibly already taken, so the
         card drops it and says so instead. It deliberately still *fires* -- the useful part of
@@ -1665,7 +1665,7 @@ class MyDaemon:
     def check_departure_anomaly(self, frame):
         """SA-3: "usually gone by now, still home" -- the human analogue of
         check_rhythm_break_anomaly(), reading compute_entity_baselines()'s `entity_type='user'`
-        rows instead of `'device'`. See todo/todo_departure_anomaly.md for the Phase 0 spike that
+        rows instead of `'device'`. See todo/sa/todo_departure_anomaly.md for the Phase 0 spike that
         justified deriving this from the existing device_history/entity_baselines pattern rather
         than a new table.
 
@@ -1773,7 +1773,7 @@ class MyDaemon:
         """SA-10 Phase 3: "is today unusual for this household" -- the household-level analogue
         of check_rhythm_break_anomaly()/check_departure_anomaly(), reading
         compute_entity_baselines()'s `entity_type='household'` rows. See
-        todo/todo_generalize_entity_baselines.md for the Phase 0 investigation (including real
+        todo/sa/todo_generalize_entity_baselines.md for the Phase 0 investigation (including real
         production-hardware timing) behind generalising entity_baselines rather than adding a
         parallel table.
 
@@ -2013,7 +2013,7 @@ class MyDaemon:
         was most recently left active: paused Spotify playback, an edited
         Matrix routine, or a reported launcher (terminal) session. Reads
         three existing signals rather than tracking anything new -- see
-        todo/todo_cross_surface_continuity.md.
+        todo/sa/todo_cross_surface_continuity.md.
 
         Each candidate is discarded if older than
         CROSS_SURFACE_STALENESS_MINUTES -- a paused track from hours ago
@@ -2239,7 +2239,7 @@ class MyDaemon:
         """A measured, evidence-based focus signal from the launcher's own
         window-switching behavior -- additive alongside (not a replacement
         for) check_focus_needed()'s calendar heuristic; see
-        todo/todo_attention_telemetry.md for why the two coexist rather than
+        todo/sa/todo_attention_telemetry.md for why the two coexist rather than
         one replacing the other.
 
         Fires when the reported window-switch count is genuinely high --
@@ -2791,7 +2791,7 @@ def _departure_hours_by_bucket(timestamps):
     per day this resident's first real departure could be confirmed.
 
     `device_history.state` is not used here (SA-3's Phase 0 spike found it unreliable for this --
-    see todo/todo_departure_anomaly.md: the `before_device_update` trigger logs each row's state
+    see todo/sa/todo_departure_anomaly.md: the `before_device_update` trigger logs each row's state
     from *before* that write, so a per-cycle "still online" ping and the offline-flip event both
     log the same value, and only a reconnect-after-absence row logs the other one). The real
     signal is in the *gaps* between consecutive writes: `device.update()` fires on every arp-scan
@@ -2843,16 +2843,16 @@ def compute_entity_baselines():
     Three independent baseline types share this table and this 6-hourly compute cadence, all
     derived from `device_history`, none needing a new table (SA-10 generalised the mechanism
     rather than letting each new subject bolt on its own):
-    - `device` rows (original, see todo/todo_rhythm_break_anomaly.md): on/off session
+    - `device` rows (original, see todo/sa/todo_rhythm_break_anomaly.md): on/off session
       baselines used by MyDaemon.check_rhythm_break_anomaly(). `smarthome_devices` has no
       equivalent state-history table yet -- `device_command_history` logs issued commands, not
       observed state over time -- so smarthome-device baselines aren't computed;
       `entity_baselines.entity_type` keeps room for that once such a history exists (as does
       `'room'`, gated on SA-9 sensor coverage -- stopped at Phase 0 this session, no real
-      ESPHome node to validate against, see todo/todo_esphome_situational_awareness.md).
-    - `user` rows (SA-3, see todo/todo_departure_anomaly.md): per-resident weekday/weekend
+      ESPHome node to validate against, see todo/sa/todo_esphome_situational_awareness.md).
+    - `user` rows (SA-3, see todo/sa/todo_departure_anomaly.md): per-resident weekday/weekend
       departure-hour baselines used by MyDaemon.check_departure_anomaly(). Guests excluded.
-    - `household` rows (SA-10, see todo/todo_generalize_entity_baselines.md): weekday/weekend
+    - `household` rows (SA-10, see todo/sa/todo_generalize_entity_baselines.md): weekday/weekend
       typical first/last-activity hour and device-count range for the household as a whole,
       used by MyDaemon.check_household_unusual_day(). A singleton -- one row per day_bucket,
       `entity_id` is a fixed sentinel (HOUSEHOLD_BASELINE_ENTITY_ID), not a real foreign key.
@@ -3005,7 +3005,7 @@ def compute_entity_baselines():
         # loops above, this is a single SQL aggregate (GROUP BY local calendar day), not a
         # per-entity Python session-reconstruction loop -- deliberately, since Phase 0 measured
         # the existing device loop alone taking ~175s on the production NUC (see
-        # todo/todo_generalize_entity_baselines.md); adding another loop of that shape for a new
+        # todo/sa/todo_generalize_entity_baselines.md); adding another loop of that shape for a new
         # subject type would multiply that cost, an aggregate query doesn't.
         household_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=HOUSEHOLD_BASELINE_LOOKBACK_DAYS

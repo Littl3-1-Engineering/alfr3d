@@ -3,7 +3,7 @@
 """
 Self-hosted routing + geocoding client for MyDaemon.check_travel() (SA-6).
 
-Phase 0 investigation (see todo/todo_self_hosted_routing.md) measured a real, self-hosted OSRM
+Phase 0 investigation (see todo/sa/todo_self_hosted_routing.md) measured a real, self-hosted OSRM
 deployment live on this household's own production hardware: a metro-sized OpenStreetMap extract
 (98MB source -> 262MB processed) preprocesses in under 2 minutes, serves routes from ~170MB idle
 RAM, and returns real driving directions with zero external network calls per route. That's what

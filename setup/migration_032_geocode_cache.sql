@@ -2,7 +2,7 @@
 --
 -- Self-hosted routing (`check_travel()`) needs coordinates for a calendar event's free-text
 -- `address` before it can call the routing engine. Geocoded via the public Nominatim API
--- (its usage policy caps public use at 1 request/second -- see todo/todo_self_hosted_routing.md
+-- (its usage policy caps public use at 1 request/second -- see todo/sa/todo_self_hosted_routing.md
 -- for why self-hosting Nominatim itself wasn't the right call for this pass), so every distinct
 -- address is looked up at most once, ever, not once per cycle.
 --

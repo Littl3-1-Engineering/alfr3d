@@ -1,5 +1,7 @@
 # SA-2: Retain launcher attention telemetry history
 
+> **Layer:** input + L1 consumer (SA-2) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4 scalar learner replaces the 14-day median trend
+
 ## Status: 🟢 Built and live-verified 2026-08-29; deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real
