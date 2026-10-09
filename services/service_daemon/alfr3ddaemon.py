@@ -3176,7 +3176,7 @@ def init_daemon():
 
     # initial geo check
     logger.info("Running a geoscan")
-    p.send("speak", b"Running a geoscan")
+    p.send("speak", b"Running a geo-scan")
     p = get_producer()
     if p:
         p.send("environment", b"check location")
