@@ -4,6 +4,7 @@ import pymysql
 
 from .db_pool import get_connection
 from . import secrets_utils
+from .device_commands import record_device_command
 
 logger = logging.getLogger("STLog")
 
@@ -226,7 +227,36 @@ def translate_generic_control_params(device_type, command, params=None):
     return None
 
 
-def st_control_device(device_id, capability, command, args=None):
+def st_control_device(
+    device_id,
+    capability,
+    command,
+    args=None,
+    *,
+    origin="system",
+    user_id=None,
+    requested_command=None,
+    context=None,
+):
+    """Send one SmartThings capability command, then record it in device_command_history
+    (see device_commands.py). The recorded command is "<capability>.<command>"."""
+    success, message = _st_control_device(device_id, capability, command, args)
+    record_device_command(
+        source="smartthings",
+        entity_ref=device_id,
+        command=f"{capability}.{command}",
+        params=args,
+        success=success,
+        message=message,
+        origin=origin,
+        user_id=user_id,
+        requested_command=requested_command,
+        context=context,
+    )
+    return success, message
+
+
+def _st_control_device(device_id, capability, command, args=None):
     config = get_st_config()
     st_pat = config.get("st_pat", "")
 

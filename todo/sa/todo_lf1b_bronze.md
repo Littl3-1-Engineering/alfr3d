@@ -14,7 +14,7 @@
       exists, otherwise the table's timestamp column), stored in a small watermark table. Sources:
       `device_history`, `household_events`, `card_interactions`, `attention_telemetry_history`,
       `device_location_history`, `smarthome_sensor_history`, `calendar_events`,
-      `environment_history` (from LF-0), `listening_history`.
+      `environment_history` and `device_command_history` (from LF-0), `listening_history`.
 - [ ] Daily snapshots of current-state tables: `user`, `device`, `smarthome_devices`, `routines`,
       `environment`. These are how user types (resident vs. guest), device ownership and HA device
       churn are known historically.

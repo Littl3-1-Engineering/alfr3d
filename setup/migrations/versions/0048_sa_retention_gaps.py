@@ -16,7 +16,7 @@ import logging
 from alembic import op
 from sqlalchemy.exc import OperationalError
 
-from run_sql import event_exists, run_sql_file, sql_path
+from run_sql import event_exists, run_sql_file, sql_path, storage_metrics_proc_sql
 
 revision = "0048"
 down_revision = "0047"
@@ -106,7 +106,7 @@ def downgrade():
     # Restore the storage-metrics procedure to its pre-0048 table list (migration_040). Built
     # inline: re-running migration_040's file would fail on its plain CREATE TABLE.
     op.execute("DROP PROCEDURE IF EXISTS `record_sa_storage_metrics_proc`;")
-    op.execute(_storage_metrics_proc(_PRE_0048_METRICS_TABLES))
+    op.execute(storage_metrics_proc_sql(_PRE_0048_METRICS_TABLES))
 
 
 _PRE_0048_METRICS_TABLES = (
@@ -118,33 +118,3 @@ _PRE_0048_METRICS_TABLES = (
     "device_history",
     "smarthome_sensor_history",
 )
-
-
-def _storage_metrics_proc(tables):
-    names = "\n      UNION ALL ".join(
-        f"SELECT '{t}'" + (" AS name" if i == 0 else "") for i, t in enumerate(tables)
-    )
-    return f"""
-CREATE PROCEDURE `record_sa_storage_metrics_proc`()
-BEGIN
-  DECLARE done INT DEFAULT 0;
-  DECLARE tbl VARCHAR(64);
-  DECLARE cur CURSOR FOR
-    SELECT name FROM (
-      {names}
-    ) AS tracked_tables;
-  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-
-  OPEN cur;
-  read_loop: LOOP
-    FETCH cur INTO tbl;
-    IF done THEN
-      LEAVE read_loop;
-    END IF;
-    INSERT INTO sa_storage_metrics (table_name, row_count, data_bytes, index_bytes, recorded_at)
-    SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, NOW()
-    FROM information_schema.TABLES
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl;
-  END LOOP;
-  CLOSE cur;
-END"""

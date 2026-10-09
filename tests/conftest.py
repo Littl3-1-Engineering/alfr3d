@@ -81,6 +81,25 @@ def _mysql_config_from_env():
     }
 
 
+@pytest.fixture(autouse=True)
+def _no_device_command_db_writes(monkeypatch):
+    """Every device control call now records itself in device_command_history via
+    common.device_commands._insert(). Unit tests must never open a real DB connection for it
+    (on the NUC, the pool's default localhost:3306 is production), so the write is captured in
+    a list instead. `common` is imported both as `common` and `services.common`, so both module
+    objects are patched. Tests that check the recorded row read `captured`."""
+    import importlib
+
+    captured = []
+    for name in ("common.device_commands", "services.common.device_commands"):
+        try:
+            module = importlib.import_module(name)
+        except Exception:  # noqa: BLE001 -- not importable from this test's path
+            continue
+        monkeypatch.setattr(module, "_insert", lambda sql, args: captured.append((sql, args)))
+    return captured
+
+
 @pytest.fixture(scope="session")
 def kafka_bootstrap_servers():
     """Kafka bootstrap servers for integration tests, skipping if unavailable."""

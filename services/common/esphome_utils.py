@@ -34,6 +34,7 @@ from zeroconf import ServiceBrowser, Zeroconf
 
 from .db_pool import get_connection
 from . import secrets_utils
+from .device_commands import record_device_command
 
 logger = logging.getLogger("ESPHomeLog")
 
@@ -333,7 +334,38 @@ def _fan_speed_command(params):
     return {"state": True}
 
 
-async def control_esphome_device_async(hostname, key, domain, command, params=None):
+async def control_esphome_device_async(
+    hostname,
+    key,
+    domain,
+    command,
+    params=None,
+    *,
+    origin="system",
+    user_id=None,
+    requested_command=None,
+    context=None,
+):
+    """Send a control command to one entity (see _control_esphome_device_async), then record it
+    in device_command_history (see device_commands.py) off the event loop."""
+    success, message = await _control_esphome_device_async(hostname, key, domain, command, params)
+    await asyncio.to_thread(
+        record_device_command,
+        source="esphome",
+        entity_ref=f"{hostname}:{key}",
+        command=command,
+        params=params,
+        success=success,
+        message=message,
+        origin=origin,
+        user_id=user_id,
+        requested_command=requested_command,
+        context=context,
+    )
+    return success, message
+
+
+async def _control_esphome_device_async(hostname, key, domain, command, params=None):
     """Send a control command to one entity. `domain`/`key` come from the smarthome_devices row
     (device_type, esp_entity_id's ':key' suffix) -- see routes/iot.py's unified control endpoint.
     Command vocabulary matches what ControlBlade.jsx already sends for HA/ST (turn_on/turn_off,
