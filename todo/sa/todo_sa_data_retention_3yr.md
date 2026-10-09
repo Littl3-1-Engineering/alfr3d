@@ -1,5 +1,7 @@
 # Situational-Awareness Data Retention — 3-Year Horizon & Disk Sizing
 
+> **Layer:** data · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-0 closes the tables this doc left out
+
 ## Status: 🟢 Implemented and deployed 2026-09-13. All SA event-log tables now retain 2 years; correction below to a claim in the original version of this doc.
 
 **The ask:** the current 180-day retention doesn't span a full year of seasons (winter through

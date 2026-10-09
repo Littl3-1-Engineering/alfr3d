@@ -1,6 +1,6 @@
 # Next session: where the SA roadmap stands
 
-## Status: reference doc, not a task — last refreshed **2026-09-23** (full review pass over all
+## Status: reference doc, not a task — SA section re-pointed **2026-10-09** (see `todo/sa/SA_ROADMAP.md`); last full refresh **2026-09-23** (full review pass over all
 56 todo docs across the three repos; see the final entry under "Since this was written")
 
 Everything in this doc is a pointer, not new information — each item links to its own
@@ -16,49 +16,13 @@ migrated (0026→0035), rebuilt, redeployed, and verified live. A real `mysqldum
 first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each item's own
 `todo/todo_*.md` for the "Deployed to production" note.
 
-## Open items, grouped by what they need
+## SA work now lives in `todo/sa/`
 
-**Waiting on a real-world event — nothing to build, just time:**
-- **SA-3** (`todo_departure_anomaly.md`): fired live once, 2026-09-12 (found 2026-09-26 —
-  this bullet's "has never fired live" was stale). Hasn't recurred on either Saturday since;
-  see the doc's own "Live firing confirmed" section for the open follow-up.
-- **SA-10** (`todo_generalize_entity_baselines.md`): `expected_absent` and
-  `household_unusual_day` have never fired live either, same reasoning — needs a genuine
-  deviation day to occur.
-- **SA-7** (`todo_calendar_conferencing.md`): the tiered confirmed/probable conferencing
-  detection has never seen a real event with structured `conferenceData` from Google. Check
-  `SELECT conference_uri, conference_solution FROM calendar_events WHERE conference_uri IS NOT
-  NULL` next time a Meet/Zoom invite syncs.
-- **SA-12** (`todo_transition_learning.md`, still stopped — Phase 0b re-check 2026-09-07): elapsed
-  time is no longer the blocker (`household_events` now spans ~9 real days). The blocker is
-  structural — the candidate transition pairs (presence→device, routine→device, device→device)
-  had **zero** structured rows because no producer emitted them. Branch C fix shipped (commit
-  `b9e6e36f`): `service_api` now emits structured `device/turned_*` and `routine/executed`
-  events. SA-12 stays stopped; **re-check ~2026-09-28** once those two new streams have real
-  history. `device/*` events are near-zero and will stay that way: HA itself is healthy and
-  syncing (`192.168.2.200:8123`, up since Aug 29), but ~59 of 61 HA entities are `unavailable`
-  because **the household moved** — the Google Home speakers / TVs / tablets stayed at the old
-  place. Only `Moonrise TV` (+`moonrise_tv_2`) followed. Some of the rest *may* be recovered,
-  so removal is deliberate, not automatic: Athos will delete the gone-for-good ones (in the HA
-  UI, then `DELETE /api/iot/devices/{id}` — new endpoint, commit `3dfa3f29` — clears the alfr3d
-  row + its command history; the earlier auto-prune `3b10fadb` was reverted as too aggressive
-  and FK-unsafe). Net for SA-12: the device-transition stream has ~one controllable device
-  until the new house accumulates real smart devices — structurally thin, SA-12 stays stopped.
-- **SA-9** (`todo_esphome_situational_awareness.md`): no longer waiting — a real ESPHome node
-  joined the household 2026-09-16 and Phase 1+2 shipped, migrated, and deployed the same day.
-  See "Since this was written" below.
-- **SA-8** (`todo_ble_presence_sensing.md`, dead at Phase 0, re-verified 2026-09-16 with the same
-  result): revisit only if a BLE wearable/tracker with a genuinely stable, resolvable address
-  enters the household — the adapter itself is confirmed capable, the problem was zero
-  stably-identifiable personal devices in the real scan, and that held again on re-check. (This
-  doc was briefly, wrongly deleted as "completed" by commit `3282a3c9` — restored 2026-09-16;
-  "dead" is a terminal state, not a completed one.)
-
-**Could just be done, no permission needed, just wasn't finished:**
-- **SA-9/SA-8's stopped conditions**: both could be retried in a differently-configured
-  environment (faster network for an ESPHome host-mode virtual device; a real BLE wearable in
-  hand) without needing new code — see each doc's own "Not yet done" section for the concrete
-  retry conditions.
+As of 2026-10-09 every SA doc moved to `todo/sa/`, and **[`todo/sa/SA_ROADMAP.md`](sa/SA_ROADMAP.md)
+is the entry point for all SA work**: the learning-foundation layers (bronze/silver/gold data,
+layer-1 learners with confidence, layer-2 combinations), the LF-0..LF-6 phases, and a table
+re-tagging every existing SA item (SA-1..SA-12) by layer with its current status. The per-item
+"waiting on a real-world event" list that used to be here is in that table.
 
 **All pushed and released as of 2026-09-01 — nothing outstanding here:**
 - **`alfr3d`**: v0.4.0/v0.4.1 plus the 2026-08-31 hardening batch (hung-Kafka-consumer recovery,
@@ -333,6 +297,14 @@ first (`~/db_backups/alfr3d_backup_20260830_024427.sql` on the NUC). See each it
     shipped 2026-08-23). Nothing is queued as "next" now; the remaining open work is all
     waiting-on-real-world-event (SA-3/SA-7/SA-10, `climate_deviation`, SA-12 re-check ~2026-11-01).
   - Update this entry and the owning `todo_*.md` as each item is started and finished.
+
+- **2026-10-09: SA restructured around a learning foundation.** Prompted by a real miss: a
+  Friday at home 9-17 as usual on weekdays, but out all day, and no rule could notice (every rule
+  looks for "still present", none for "expected but absent"). Moved all SA docs into `todo/sa/`,
+  added `SA_ROADMAP.md` and phase docs `todo_lf0_*`..`todo_lf6_*`. Also found that the
+  2026-09-13 "2-year retention" covered only four event-log tables: `device_history` is still
+  180 days, weather and calendar keep no history, `listening_history` is unbounded. LF-0 fixes
+  that. Nothing built yet; LF-0 and LF-1a can start in parallel.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*

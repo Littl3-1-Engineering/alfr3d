@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SA-6: build a regional OSRM dataset for self-hosted routing (see
-# todo/todo_self_hosted_routing.md for the Phase 0 spike this implements, including the real
+# todo/sa/todo_self_hosted_routing.md for the Phase 0 spike this implements, including the real
 # preprocessing numbers this script's own steps reproduce).
 #
 # The Kit ships to unknown geographies, so this derives a region sized to wherever the

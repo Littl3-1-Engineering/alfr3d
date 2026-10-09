@@ -1,5 +1,7 @@
 # Precise (fine) device location -- opt-in tier on top of coarse reporting
 
+> **Layer:** input, not started · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-2 silver presence_intervals; raises location source_quality
+
 ## Status: not started (added 2026-10-04); cross-repo, mirrored in `alfr3d_deck/todo/`
 
 Follow-up to [[todo_device_location_reporting]], which shipped coarse-only,

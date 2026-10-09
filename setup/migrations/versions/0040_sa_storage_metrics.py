@@ -2,8 +2,8 @@
 
 Daily snapshot of row count and on-disk size for the SA-related tables
 alfr3ddaemon.SA_STORAGE_METRICS_TRACKED_TABLES names, written by record_sa_storage_metrics().
-Turns todo/todo_sa_data_retention_3yr.md's short-window production estimate into a real,
-growing time series. See todo/todo_sa_data_retention_3yr.md.
+Turns todo/sa/todo_sa_data_retention_3yr.md's short-window production estimate into a real,
+growing time series. See todo/sa/todo_sa_data_retention_3yr.md.
 
 Revision ID: 0040
 Revises: 0039

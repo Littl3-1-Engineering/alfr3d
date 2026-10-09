@@ -1,5 +1,7 @@
 # Deck: Rhythm-Break Anomaly Cards
 
+> **Layer:** L1 consumer · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4 session-duration learner (on silver device_sessions)
+
 ## Status: ✅ Built 2026-08-28 (not yet on-device/live verified; no real baseline data yet)
 
 Backend: migration `0025_entity_baselines.py` (+ `migration_023_entity_baselines.sql`) creates

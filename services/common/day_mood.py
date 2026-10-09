@@ -17,7 +17,7 @@ dependency-free.
 
 Lives in `common` (not `service_daemon/utils/mood_utils.py`, which re-exports it) so
 `service_api`'s GET /api/context/snapshot can serve the same answer instead of a
-second implementation -- todo/todo_context_exchange_protocol.md Phase 3.
+second implementation -- todo/sa/todo_context_exchange_protocol.md Phase 3.
 """
 
 from datetime import datetime

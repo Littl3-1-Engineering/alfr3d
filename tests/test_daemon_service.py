@@ -405,7 +405,7 @@ class TestCalendarSync:
 class TestSyncCalendarRoutine:
     """Tests for alfr3ddaemon.sync_calendar_routine() -- the scheduled job that keeps
     calendar_events fresh between daemon restarts so check_travel() (SA-6) can fire on a
-    newly-created event. See todo/todo_leave_by_demo.md."""
+    newly-created event. See todo/sa/todo_leave_by_demo.md."""
 
     @patch("services.service_daemon.alfr3ddaemon.get_producer")
     def test_publishes_calendar_sync_message_to_integrations_topic(self, mock_get_producer):
@@ -2694,7 +2694,7 @@ class TestComputeEntityBaselines:
 class TestComputeUserDepartureBaselines:
     """Tests for compute_entity_baselines()'s SA-3 addition: entity_type='user' rows built
     from _departure_hours_by_bucket(), sharing the same table/cadence as the device baselines
-    tested above. See todo/todo_departure_anomaly.md for the Phase 0 spike behind this."""
+    tested above. See todo/sa/todo_departure_anomaly.md for the Phase 0 spike behind this."""
 
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
     @patch("services.service_daemon.alfr3ddaemon.pymysql.connect")
@@ -2805,7 +2805,7 @@ class TestComputeUserDepartureBaselines:
 class TestComputeHouseholdBaselines:
     """Tests for compute_entity_baselines()'s SA-10 addition: entity_type='household' rows,
     computed as a single SQL aggregate rather than a per-entity Python loop -- see
-    todo/todo_generalize_entity_baselines.md for the real production-hardware timing that
+    todo/sa/todo_generalize_entity_baselines.md for the real production-hardware timing that
     motivated keeping it that way."""
 
     @patch("services.service_daemon.alfr3ddaemon.db_utils.get_env_timezone")
@@ -4306,7 +4306,7 @@ class TestCheckEvents:
 
 class TestCheckTravel:
     """Tests for MyDaemon.check_travel() (SA-6) -- restores what commit 08509ce removed, on
-    self-hosted infrastructure. See todo/todo_self_hosted_routing.md for the Phase 0 spike."""
+    self-hosted infrastructure. See todo/sa/todo_self_hosted_routing.md for the Phase 0 spike."""
 
     def _frame_with_event(
         self, now, minutes_to_start=45, address="100 Queen St W", conference_uri=None
@@ -5213,7 +5213,7 @@ class TestContextFrameFetchers:
 
 class TestRoutingUtils:
     """Tests for routing_utils.py (SA-6) -- the self-hosted routing/geocoding client
-    check_travel() depends on. See todo/todo_self_hosted_routing.md for the Phase 0 spike that
+    check_travel() depends on. See todo/sa/todo_self_hosted_routing.md for the Phase 0 spike that
     justified this design."""
 
     @patch("services.service_daemon.utils.routing_utils._write_geocode_cache")

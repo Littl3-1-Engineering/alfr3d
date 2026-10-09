@@ -3,7 +3,7 @@
 -- Per-entity rolling stats (median on-time, typical active hour, typical daily range) computed
 -- from existing device_history/device_command_history by alfr3ddaemon.compute_entity_baselines()
 -- every 6 hours. check_rhythm_break_anomaly() compares current state against these to fire a
--- card only on genuine deviation. See todo/todo_rhythm_break_anomaly.md.
+-- card only on genuine deviation. See todo/sa/todo_rhythm_break_anomaly.md.
 
 CREATE TABLE `entity_baselines` (
   `id` INTEGER UNIQUE AUTO_INCREMENT,

@@ -1,5 +1,7 @@
 # SA-9: ESPHome sensors as a situational-awareness signal
 
+> **Layer:** input + L1 consumer (SA-9) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4 scalar-sensor learner replaces the climate baseline
+
 ## Status: 🟡 Phase 2's `climate_deviation` bug and `climate_advisory`'s threshold miscalibration
 (both found 2026-09-26) fixed and deployed the same day; sensor power-cycled back online same
 day but resurfaced under new `smarthome_devices` ids, orphaning its 11-day baseline (mitigated,

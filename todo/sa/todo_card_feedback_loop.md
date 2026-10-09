@@ -1,5 +1,7 @@
 # SA-1: Card feedback loop & suppression
 
+> **Layer:** consumer feedback (SA-1) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1a moves suppression into sa-awareness; interactions become a learning signal in LF-5
+
 ## Status: 🟢 Backend + React dashboard built and live-verified 2026-08-29; Android launcher reporting built 2026-10-04 (uncommitted, not yet verified on-device); deployed to production 2026-08-30
 
 **Deployed to the household's real NUC 2026-08-30** via PR #156 (squash-merged to `main`). A real

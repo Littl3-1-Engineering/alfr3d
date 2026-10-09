@@ -1,10 +1,12 @@
 # Deck: Attention Telemetry as a Focus/Wind-Down Signal
 
+> **Layer:** input + L1 consumer (pre-SA) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4 scalar learner replaces the 14-day median trend
+
 ## Status: ✅ Built 2026-08-28 (scope corrected, reconciled, not yet on-device/live verified)
 
 **2026-08-29 update (SA-2):** history retention + trend-aware thresholds for
 `check_attention_focus()`/`check_wind_down_signal()` are built and live-verified — see
-`todo/todo_attention_telemetry_history.md`. This doc still covers the original capture/upsert
+`todo/sa/todo_attention_telemetry_history.md`. This doc still covers the original capture/upsert
 work below unchanged; on-device (Android) verification of the launcher side is still outstanding.
 
 Backend: `POST /api/context/attention-telemetry` (routes/context.py, shares the new

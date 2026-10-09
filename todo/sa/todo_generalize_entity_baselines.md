@@ -1,5 +1,7 @@
 # SA-10: Generalise entity_baselines to users, rooms & household
 
+> **Layer:** L1 learner, legacy (SA-10) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4 ports device/user/household baselines; household_unusual_day becomes L2 in LF-6
+
 ## Status: 🟢 Built and live-verified 2026-08-30 (a real MySQL `ONLY_FULL_GROUP_BY` bug caught
 and fixed live); deployed to production 2026-08-30
 
@@ -53,7 +55,7 @@ Migration 0035 (raw SQL `migration_033_entity_baselines_generalize.sql`): `entit
 `'room'` and `'household'`; new `min_sample_count` and `typical_last_activity_hour` columns.
 `'room'` is enum-only this pass — its computation is gated on SA-9's live sensor validation,
 which stopped at Phase 0 this session (no real or virtual ESPHome node reachable, see
-`todo/todo_esphome_situational_awareness.md`).
+`todo/sa/todo_esphome_situational_awareness.md`).
 
 ## Phase 2 — household-level baselines
 

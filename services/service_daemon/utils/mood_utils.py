@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 """Re-export of `common.day_mood` -- the implementation moved there so service_api can serve the
-same day-mood facet (todo/todo_context_exchange_protocol.md Phase 3). Kept so existing daemon
+same day-mood facet (todo/sa/todo_context_exchange_protocol.md Phase 3). Kept so existing daemon
 imports (`mood_utils.get_day_mood`) don't change."""
 
 import sys
