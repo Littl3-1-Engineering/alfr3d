@@ -326,6 +326,39 @@ def test_update_db_forecast_persists_snapshot():
     assert args[2] == "light rain"
 
 
+def test_update_db_forecast_records_environment_history():
+    """After the forecast UPDATE commits, a 'forecast' snapshot goes to environment_history."""
+    import weather_util
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+
+    forecast = {"rain_probability": 55.0, "temp": 14.0, "conditions": "light rain"}
+    weather_util.update_db_forecast(mock_db, mock_cursor, forecast)
+
+    sqls = [c[0][0] for c in mock_cursor.execute.call_args_list]
+    assert sqls[0].startswith("UPDATE environment")
+    history = [c for c in mock_cursor.execute.call_args_list if "environment_history" in c[0][0]]
+    assert len(history) == 1
+    assert history[0][0][1][0] == "forecast"
+    assert mock_db.commit.call_count == 2
+
+
+def test_record_environment_history_failure_does_not_raise():
+    """A failed history insert (e.g. table not migrated yet) is logged and rolled back; it must
+    never propagate into the weather update that called it."""
+    import weather_util
+
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.execute.side_effect = Exception("Table 'environment_history' doesn't exist")
+
+    weather_util.record_environment_history(mock_db, mock_cursor, "weather")
+
+    mock_db.rollback.assert_called_once()
+    mock_db.commit.assert_not_called()
+
+
 @patch("services.service_environment.environment.weather_util.update_db_forecast")
 @patch("services.service_environment.environment.weather_util.get_forecast")
 @patch("services.service_environment.environment.pymysql.connect")

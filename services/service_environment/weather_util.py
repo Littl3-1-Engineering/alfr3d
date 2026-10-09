@@ -184,6 +184,32 @@ def deg_to_compass(deg):
     return directions[int(deg / 22.5 + 0.5) % 16]
 
 
+_ENVIRONMENT_HISTORY_COLUMNS = (
+    "latitude, longitude, city, description, low, high, temperature, wind, wind_dir, "
+    "sunrise, sunset, pressure, pressure_trend, humidity, subjective_feel, "
+    "forecast_rain_probability, forecast_temp, forecast_conditions, forecast_updated_at, timezone"
+)
+
+
+def record_environment_history(db, cursor, kind):
+    """Append a snapshot of this environment's row to environment_history (migration 043),
+    right after a weather or forecast update has committed. Separate commit and its own error
+    handling: a failed history write must never undo or fail the weather update itself.
+    `kind` is 'weather' or 'forecast'."""
+    try:
+        cursor.execute(
+            f"INSERT INTO environment_history (environment_id, kind, recorded_at, "
+            f"{_ENVIRONMENT_HISTORY_COLUMNS}) "
+            f"SELECT id, %s, UTC_TIMESTAMP(), {_ENVIRONMENT_HISTORY_COLUMNS} "
+            f"FROM environment WHERE name = %s",
+            (kind, ALFR3D_ENV_NAME),
+        )
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to record environment history ({kind}): {e}")
+        db.rollback()
+
+
 def update_db_weather(db, cursor, weatherData):
     logger.info("Updating weather data in DB")
 
@@ -235,6 +261,7 @@ def update_db_weather(db, cursor, weatherData):
         )
         db.commit()
         logger.info("Environment weather info updated")
+        record_environment_history(db, cursor, "weather")
         return True
     except Exception as e:
         logger.error("Failed to update Environment database with weather info")
@@ -261,6 +288,7 @@ def update_db_forecast(db, cursor, forecastData):
         )
         db.commit()
         logger.info("Environment forecast info updated")
+        record_environment_history(db, cursor, "forecast")
         return True
     except Exception as e:
         logger.error("Failed to update Environment database with forecast info")

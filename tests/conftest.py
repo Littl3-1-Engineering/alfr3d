@@ -152,6 +152,7 @@ def apply_database_schema(mysql_config):
         "user",
         "smarthome_devices",
         "device_command_history",
+        "environment_history",
         "personality",
         "context",
         "listening_history",
