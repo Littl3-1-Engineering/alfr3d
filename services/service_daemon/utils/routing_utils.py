@@ -64,7 +64,20 @@ def geocode_address(address):
         lat, lon = cached
         return (lat, lon) if lat is not None else None
 
-    coords = _geocode_via_nominatim(address)
+    # Calendar addresses often lead with a business name ("Apple Self Storage, 530 Adelaide St W,
+    # Toronto, ...") that Nominatim can't match as a whole even though the street address
+    # resolves fine -- so on a miss, retry with the leading segment dropped, keeping at least
+    # the last two (street + city/region-ish) segments.
+    segments = [part.strip() for part in address.split(",") if part.strip()]
+    candidates = [address] + [", ".join(segments[i:]) for i in range(1, len(segments) - 1)]
+    coords = None
+    for candidate in candidates:
+        coords = _geocode_via_nominatim(candidate)
+        if coords is _NOMINATIM_ERROR:
+            # Transient failure (network/HTTP): don't cache it as "not found" forever.
+            return None
+        if coords is not None:
+            break
     _write_geocode_cache(address, coords)
     return coords
 
@@ -161,7 +174,11 @@ def _write_geocode_cache(address, coords):
             db.close()
 
 
+_NOMINATIM_ERROR = object()
+
+
 def _geocode_via_nominatim(address):
+    """(lat, lon), None for a genuine no-match, or _NOMINATIM_ERROR for a transient failure."""
     global _last_nominatim_call
     elapsed = time.monotonic() - _last_nominatim_call
     if elapsed < NOMINATIM_MIN_INTERVAL_SECONDS:
@@ -184,4 +201,4 @@ def _geocode_via_nominatim(address):
         # handling free-text personal data (a calendar event's address), unlike a device MAC
         # or a lat/lon pair elsewhere in this file.
         logger.error(f"Routing: Nominatim geocode error: {e}")
-        return None
+        return _NOMINATIM_ERROR
