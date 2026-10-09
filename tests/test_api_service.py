@@ -369,9 +369,9 @@ def test_delete_iot_device_404_when_missing(mock_db_connection, api_client):
 
 
 @patch("routes.iot.db_connection")
-def test_delete_iot_device_clears_command_history_then_the_row(mock_db_connection, api_client):
-    """device_command_history FKs smarthome_devices with no ON DELETE CASCADE, so its rows
-    must be cleared before the device row or the DELETE errors."""
+def test_delete_iot_device_deletes_only_the_device_row(mock_db_connection, api_client):
+    """device_command_history was dropped by migration 043, so removing a device is a single
+    DELETE of the smarthome_devices row."""
     mock_db = MagicMock()
     mock_cursor = MagicMock()
     mock_db_connection.return_value.__enter__.return_value = mock_db
@@ -384,8 +384,8 @@ def test_delete_iot_device_clears_command_history_then_the_row(mock_db_connectio
     assert response.json()["device_id"] == 60
 
     deletes = [c.args[0] for c in mock_cursor.execute.call_args_list if "DELETE" in c.args[0]]
-    assert deletes[0].startswith("DELETE FROM device_command_history")
-    assert deletes[1].startswith("DELETE FROM smarthome_devices")
+    assert len(deletes) == 1
+    assert deletes[0].startswith("DELETE FROM smarthome_devices")
 
 
 # --- PUT /api/users/{id}: self-service profile editing (todo_user_management.md) --

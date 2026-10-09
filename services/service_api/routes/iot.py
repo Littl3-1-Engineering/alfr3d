@@ -706,9 +706,9 @@ async def remove_iot_device(device_id: int, _perm=Depends(require_permission("io
     auto-pruning (a device that drops off for a day mid-recovery must not be destroyed);
     removal is an explicit, technoking-only action instead.
 
-    device_command_history has an FK to smarthome_devices with no ON DELETE CASCADE, so its
-    rows are cleared first; device_favorites cascades on its own. household_events history
-    is keyed by a loose subject_id (not an FK) and is left intact."""
+    device_favorites cascades on its own. household_events history is keyed by a loose
+    subject_id (not an FK) and is left intact. (device_command_history, whose FK used to need
+    clearing first, was dropped by migration 043 -- it never had a writer.)"""
     try:
         with db_connection() as db:
             cursor = db.cursor()
@@ -719,9 +719,6 @@ async def remove_iot_device(device_id: int, _perm=Depends(require_permission("io
             if not row:
                 raise HTTPException(status_code=404, detail="Device not found")
 
-            cursor.execute(
-                "DELETE FROM device_command_history WHERE smarthome_device_id = %s", (device_id,)
-            )
             cursor.execute("DELETE FROM smarthome_devices WHERE id = %s", (device_id,))
             db.commit()
 

@@ -192,6 +192,11 @@ tests assert. 568 tests pass (6 new), ruff/black clean.
 
 ## What was deliberately not touched
 
+> **Superseded 2026-10-09 by LF-0** ([todo_lf0_retention_gaps.md](todo_lf0_retention_gaps.md)):
+> `device_history` now keeps 730 days too, along with calendar events, listening history and a
+> new weather history table. A legacy root-owned `cleanup_device_history_event` was also still
+> deleting at 180 days; it is gone.
+
 **`device_history` stays at 180 days.** It is presence/online-status polling, not narrowly
 "situational awareness," and it is the one table where extending retention is a real multi-GB
 decision (~7.1 GB at 3 years unbounded, per the projection above) rather than the ~500 MB the
