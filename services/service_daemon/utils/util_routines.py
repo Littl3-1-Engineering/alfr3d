@@ -114,8 +114,9 @@ def _get_routine_quip(cursor, quip_type):
     return row[0] if row else None
 
 
-def execute_actions(actions_json):
-    """Execute actions from JSON array via Kafka."""
+def execute_actions(actions_json, routine_id=None):
+    """Execute actions from JSON array via Kafka. `routine_id` only attributes any IoT commands
+    in device_command_history (origin "routine")."""
     if not actions_json:
         return 0
 
@@ -171,7 +172,14 @@ def execute_actions(actions_json):
 
             elif action_type in ("thermostat_set", "lock", "unlock", "cover_open", "cover_close"):
                 success, message = control_iot_device(
-                    action_params.get("device_id"), action_type, action_params
+                    action_params.get("device_id"),
+                    action_type,
+                    action_params,
+                    command_attribution={
+                        "origin": "routine",
+                        "requested_command": action_type,
+                        "context": {"routine_id": routine_id, "trigger": "scheduled"},
+                    },
                 )
                 if success:
                     logger.info(f"Executed {action_type} action")
@@ -236,8 +244,11 @@ def _execute_music_action(params):
         return False, str(e)
 
 
-def control_iot_device(device_id, action_type, params):
-    """Control an IoT device (smarthome_devices) for routine actions."""
+def control_iot_device(device_id, action_type, params, command_attribution=None):
+    """Control an IoT device (smarthome_devices) for routine actions. `command_attribution`
+    is passed through to ha_control_device() so the command is recorded in
+    device_command_history as routine-issued."""
+    attribution = command_attribution or {"origin": "routine"}
     if not device_id:
         return False, "No device_id provided"
     try:
@@ -263,22 +274,28 @@ def control_iot_device(device_id, action_type, params):
     if action_type == "thermostat_set":
         temperature = params.get("temperature")
         success, message = ha_utils.ha_control_device(
-            ha_entity_id, "set_temperature", {"temperature": temperature}
+            ha_entity_id, "set_temperature", {"temperature": temperature}, **attribution
         )
         if not success:
             return success, message
         mode = params.get("mode")
         if mode:
-            return ha_utils.ha_control_device(ha_entity_id, "set_mode", {"mode": mode})
+            return ha_utils.ha_control_device(
+                ha_entity_id, "set_mode", {"mode": mode}, **attribution
+            )
         return success, message
     elif action_type == "lock":
-        return ha_utils.ha_control_device(ha_entity_id, "lock", None)
+        return ha_utils.ha_control_device(ha_entity_id, "lock", None, **attribution)
     elif action_type == "unlock":
-        return ha_utils.ha_control_device(ha_entity_id, "unlock", None)
+        return ha_utils.ha_control_device(ha_entity_id, "unlock", None, **attribution)
     elif action_type == "cover_open":
-        return ha_utils.ha_control_device(ha_entity_id, "set_cover_position", {"position": 100})
+        return ha_utils.ha_control_device(
+            ha_entity_id, "set_cover_position", {"position": 100}, **attribution
+        )
     elif action_type == "cover_close":
-        return ha_utils.ha_control_device(ha_entity_id, "set_cover_position", {"position": 0})
+        return ha_utils.ha_control_device(
+            ha_entity_id, "set_cover_position", {"position": 0}, **attribution
+        )
     return False, "Unknown action type"
 
 
@@ -561,7 +578,7 @@ def check_routines() -> bool:
                         producer.flush()
                         logger.info(f"Spoke routine quip for {routine_name}: {quip[:50]}")
             if actions:
-                executed = execute_actions(actions)
+                executed = execute_actions(actions, routine_id=routine_id)
                 logger.info(f"Executed {executed} actions for routine {routine_name}")
             try:
                 cursor.execute(

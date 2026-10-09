@@ -74,7 +74,7 @@ The Notion row "SA data retention extended to 2 years across event-log tables" (
 | Weather (`environment` row) | no history, overwritten every 1-4 h |
 | `calendar_events` | deleted 24 h after each event ends |
 | `listening_history` | unbounded |
-| `device_command_history` | dead table, no writer |
+| `device_command_history` | dead table, no writer (LF-0 rebuilt it as a full command log: params, outcome, origin) |
 
 ## Inference contract (`sa_inferences`)
 

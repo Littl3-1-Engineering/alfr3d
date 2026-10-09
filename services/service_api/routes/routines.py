@@ -229,6 +229,12 @@ async def run_routine(routine_id: int, _perm=Depends(require_permission("routine
                     action_params.get("device_id"),
                     action_type,
                     action_params,
+                    command_attribution={
+                        "origin": "routine",
+                        "user_id": _perm.id,
+                        "requested_command": action_type,
+                        "context": {"routine_id": routine_id, "trigger": "manual run"},
+                    },
                 )
                 if success:
                     logger.info(f"Routine {routine_id}: {action_type} action ok")
@@ -247,8 +253,11 @@ async def run_routine(routine_id: int, _perm=Depends(require_permission("routine
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _control_iot_device(device_id, action_type, params):
-    """Control an IoT device (smarthome_devices) for routine actions."""
+def _control_iot_device(device_id, action_type, params, command_attribution=None):
+    """Control an IoT device (smarthome_devices) for routine actions. `command_attribution`
+    (origin/user_id/requested_command/context) is passed through to ha_control_device() so the
+    command is recorded in device_command_history as routine-issued."""
+    attribution = command_attribution or {"origin": "routine"}
     with db_connection() as db:
         cursor = db.cursor()
         cursor.execute(
@@ -269,22 +278,28 @@ def _control_iot_device(device_id, action_type, params):
     if action_type == "thermostat_set":
         temperature = params.get("temperature")
         success, message = ha_utils.ha_control_device(
-            ha_entity_id, "set_temperature", {"temperature": temperature}
+            ha_entity_id, "set_temperature", {"temperature": temperature}, **attribution
         )
         if not success:
             return success, message
         mode = params.get("mode")
         if mode:
-            success, message = ha_utils.ha_control_device(ha_entity_id, "set_mode", {"mode": mode})
+            success, message = ha_utils.ha_control_device(
+                ha_entity_id, "set_mode", {"mode": mode}, **attribution
+            )
         return success, message
     elif action_type == "lock":
-        return ha_utils.ha_control_device(ha_entity_id, "lock", None)
+        return ha_utils.ha_control_device(ha_entity_id, "lock", None, **attribution)
     elif action_type == "unlock":
-        return ha_utils.ha_control_device(ha_entity_id, "unlock", None)
+        return ha_utils.ha_control_device(ha_entity_id, "unlock", None, **attribution)
     elif action_type == "cover_open":
-        return ha_utils.ha_control_device(ha_entity_id, "set_cover_position", {"position": 100})
+        return ha_utils.ha_control_device(
+            ha_entity_id, "set_cover_position", {"position": 100}, **attribution
+        )
     elif action_type == "cover_close":
-        return ha_utils.ha_control_device(ha_entity_id, "set_cover_position", {"position": 0})
+        return ha_utils.ha_control_device(
+            ha_entity_id, "set_cover_position", {"position": 0}, **attribution
+        )
     return False, "Unknown action type"
 
 

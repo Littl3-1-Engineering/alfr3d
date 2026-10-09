@@ -167,3 +167,36 @@ def drop_foreign_keys_for_column(op, table, column):
     ).fetchall()
     for (name,) in rows:
         op.execute(f"ALTER TABLE `{table}` DROP FOREIGN KEY `{name}`;")
+
+
+def storage_metrics_proc_sql(tables):
+    """CREATE PROCEDURE statement for record_sa_storage_metrics_proc() over `tables` -- the
+    same body migrations 039/040/043/044 write as raw SQL, for downgrades that must restore an
+    earlier table list."""
+    names = "\n      UNION ALL ".join(
+        f"SELECT '{t}'" + (" AS name" if i == 0 else "") for i, t in enumerate(tables)
+    )
+    return f"""
+CREATE PROCEDURE `record_sa_storage_metrics_proc`()
+BEGIN
+  DECLARE done INT DEFAULT 0;
+  DECLARE tbl VARCHAR(64);
+  DECLARE cur CURSOR FOR
+    SELECT name FROM (
+      {names}
+    ) AS tracked_tables;
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+  OPEN cur;
+  read_loop: LOOP
+    FETCH cur INTO tbl;
+    IF done THEN
+      LEAVE read_loop;
+    END IF;
+    INSERT INTO sa_storage_metrics (table_name, row_count, data_bytes, index_bytes, recorded_at)
+    SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, NOW()
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl;
+  END LOOP;
+  CLOSE cur;
+END"""

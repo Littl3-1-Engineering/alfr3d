@@ -37,9 +37,9 @@ pattern as 039/0042, retention as MySQL EVENTs.
       current/future rows exist (e.g. `check_departure_anomaly`'s "event covers now" check is
       fine; anything doing an unbounded `SELECT` is not).
 - [x] **`listening_history`**: add a 730-day EVENT on `played_at`.
-- [x] **`device_command_history`**: no writer exists (IoT commands go to `household_events`).
-      Drop the table and its 180-day event, and remove the leftover DELETE in
-      `services/service_api/routes/iot.py:723` (the per-device delete endpoint).
+- [x] **`device_command_history`**: dropped by 0048 because it had no writer, then **restored
+      the same day as a real command log** (migration 044 / alembic 0049, see below). Dropping it
+      was the wrong call: the data it was meant to hold is a learning signal.
 - [x] Add `environment_history`, `calendar_events`, `listening_history` and
       `smarthome_sensor_history` to `record_sa_storage_metrics_proc`.
 - [x] Update [todo_sa_data_retention_3yr.md](todo_sa_data_retention_3yr.md)'s "What was
@@ -92,3 +92,33 @@ pattern as 039/0042, retention as MySQL EVENTs.
   `sa_storage_metrics` and the 78% disk usage.
 - Unit suite: 677 passed (non-integration, run in a scratch venv from `tests/requirements.txt`,
   with the test-DB env pointed at an unreachable port so nothing could touch production).
+
+## device_command_history restored as a command log (2026-10-09, migration 044 / alembic 0049)
+
+Athos questioned the drop: command history is SA data. `household_events` keeps only a collapsed
+verb per command (`set_brightness`, `set_temperature`, `lock`, `volume_set` all become `set`), has
+no payload column, records successes only, and the per-source control endpoints
+(`/iot/ha/.../control`, `/iot/st/.../control`, `/iot/esphome/.../control`) recorded nothing at
+all. Parameters are where preferences live (evening brightness, night setpoint, usual volume).
+
+- **Table**: `smarthome_device_id` (resolved at write time, NULL if unknown; **no FK**, so
+  history outlives a removed device and no longer blocks `DELETE /api/iot/devices/{id}`),
+  `source`, `entity_ref` (HA entity_id / ST device id / ESPHome `host:key`), `command` (native),
+  `requested_command` (the generic command asked for), `params` JSON, `success`, `message`,
+  `origin` (`user` | `routine` | `system`), `user_id`, `context` JSON, `issued_at` (UTC, ms).
+  730-day EVENT; added to `record_sa_storage_metrics_proc`.
+- **One writer at the choke point**: `common/device_commands.record_device_command()` is called by
+  the three low-level senders (`ha_control_device`, `st_control_device`,
+  `control_esphome_device_async`) after every send, success or failure. Every caller is covered
+  without remembering to log: all four API control endpoints (`origin="user"` + `user_id`),
+  routines from the API's manual run and the daemon's schedule (`origin="routine"`, routine id in
+  `context`), and audio casting (`origin="system"` by default). Best-effort: never raises.
+- **Tests**: `tests/test_device_commands.py` plus an API attribution test. conftest's autouse
+  `_no_device_command_db_writes` stubs the write in both `common` and `services.common` module
+  objects, because on the NUC the pool's default `localhost:3306` is production.
+- **Deployed**: backup `~/db_backups/alfr3d_backup_20261009_164715_pre_0049.sql.gz`, rehearsed on
+  a restored copy (upgrade, downgrade, upgrade, plus a real insert that resolved
+  `media_player.moonrise_tv` to device 60), migrated 0048 → 0049, rebuilt `service-api`,
+  `service-daemon`, `service-device`. Not exercised with a live device command, to avoid
+  changing a real device and writing a synthetic row into production; the first real command
+  will be the live check.

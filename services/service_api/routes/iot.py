@@ -213,7 +213,15 @@ async def control_ha_device(
     try:
         from common import ha_utils
 
-        success, message = ha_utils.ha_control_device(entity_id, service, data.params)
+        success, message = ha_utils.ha_control_device(
+            entity_id,
+            service,
+            data.params,
+            origin="user",
+            user_id=_perm.id,
+            requested_command=data.command,
+            context={"endpoint": "ha_control"},
+        )
         if success:
             return {"message": message, "entity_id": entity_id, "command": data.command}
         else:
@@ -286,7 +294,13 @@ async def control_st_device(
         from common import st_utils
 
         success, message = st_utils.st_control_device(
-            device_id, data.capability, data.command, data.args
+            device_id,
+            data.capability,
+            data.command,
+            data.args,
+            origin="user",
+            user_id=_perm.id,
+            context={"endpoint": "st_control"},
         )
         if success:
             return {"message": message, "device_id": device_id, "command": data.command}
@@ -496,7 +510,14 @@ async def control_esphome_entity(
             raise HTTPException(status_code=404, detail="Entity not found")
 
         success, message = await esphome_utils.control_esphome_device_async(
-            hostname, key, domain, data.command, data.params
+            hostname,
+            key,
+            domain,
+            data.command,
+            data.params,
+            origin="user",
+            user_id=_perm.id,
+            context={"endpoint": "esphome_control"},
         )
         if not success:
             raise HTTPException(status_code=500, detail=message)
@@ -592,6 +613,7 @@ async def control_iot_device(
             row[4],
         )
         command = data.command
+        _command_context = {"endpoint": "device_control", "device_id": device_id}
 
         if source == "homeassistant" and ha_entity_id:
             from common import ha_utils
@@ -626,7 +648,15 @@ async def control_iot_device(
                 service = command
 
             params = ha_utils.translate_generic_control_params(command, data.params)
-            success, message = ha_utils.ha_control_device(ha_entity_id, service, params)
+            success, message = ha_utils.ha_control_device(
+                ha_entity_id,
+                service,
+                params,
+                origin="user",
+                user_id=_perm.id,
+                requested_command=command,
+                context=_command_context,
+            )
             if success:
                 _emit_device_event(device_id, device_type, command, message)
                 devices = await asyncio.get_event_loop().run_in_executor(
@@ -646,7 +676,14 @@ async def control_iot_device(
 
             hostname, _, key = esp_entity_id.rpartition(":")
             success, message = await esphome_utils.control_esphome_device_async(
-                hostname, int(key), device_type, command, data.params or {}
+                hostname,
+                int(key),
+                device_type,
+                command,
+                data.params or {},
+                origin="user",
+                user_id=_perm.id,
+                context=_command_context,
             )
             if success:
                 _emit_device_event(device_id, device_type, command, message)
@@ -673,7 +710,14 @@ async def control_iot_device(
                 )
             capability, st_command, args = mapped
             success, message = st_utils.st_control_device(
-                st_device_id, capability, st_command, args
+                st_device_id,
+                capability,
+                st_command,
+                args,
+                origin="user",
+                user_id=_perm.id,
+                requested_command=command,
+                context=_command_context,
             )
             if success:
                 _emit_device_event(device_id, device_type, command, message)

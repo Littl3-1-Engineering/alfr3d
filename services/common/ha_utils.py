@@ -5,6 +5,7 @@ import pymysql
 
 from .db_pool import get_connection
 from . import secrets_utils
+from .device_commands import record_device_command
 
 logger = logging.getLogger("HALog")
 
@@ -186,7 +187,36 @@ def translate_generic_control_params(command, params):
     return params
 
 
-def ha_control_device(entity_id, service, data=None):
+def ha_control_device(
+    entity_id,
+    service,
+    data=None,
+    *,
+    origin="system",
+    user_id=None,
+    requested_command=None,
+    context=None,
+):
+    """Call an HA service on one entity, then record the command in device_command_history
+    (see device_commands.py). `origin`/`user_id`/`requested_command`/`context` only describe
+    who asked and why; they don't change what is sent."""
+    success, message = _ha_control_device(entity_id, service, data)
+    record_device_command(
+        source="homeassistant",
+        entity_ref=entity_id,
+        command=service,
+        params=data,
+        success=success,
+        message=message,
+        origin=origin,
+        user_id=user_id,
+        requested_command=requested_command,
+        context=context,
+    )
+    return success, message
+
+
+def _ha_control_device(entity_id, service, data=None):
     config = get_ha_config()
     ha_url = config.get("ha_url", "").rstrip("/")
     ha_token = config.get("ha_token", "")

@@ -388,6 +388,35 @@ def test_delete_iot_device_deletes_only_the_device_row(mock_db_connection, api_c
     assert deletes[0].startswith("DELETE FROM smarthome_devices")
 
 
+@patch("routes.iot._emit_device_event")
+@patch("routes.iot.fetch_iot_devices_data", return_value=[])
+@patch("routes.iot.db_connection")
+def test_control_iot_device_attributes_command_to_the_user(
+    mock_db_connection, _mock_fetch, _mock_emit, api_client
+):
+    """The generic control endpoint records the command as origin 'user' with the caller's id,
+    the generic command they asked for, and which device row it targeted."""
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = ("homeassistant", "light.living_room", "light", None, None)
+
+    with patch("common.ha_utils.ha_control_device", return_value=(True, "Command sent")) as ctl:
+        response = api_client.post(
+            "/api/iot/devices/7/control",
+            json={"command": "set_brightness", "params": {"brightness": 30}},
+            headers=_bearer(4, "owner"),
+        )
+
+    assert response.status_code == 200
+    kwargs = ctl.call_args.kwargs
+    assert kwargs["origin"] == "user"
+    assert kwargs["user_id"] == 4
+    assert kwargs["requested_command"] == "set_brightness"
+    assert kwargs["context"] == {"endpoint": "device_control", "device_id": 7}
+
+
 # --- PUT /api/users/{id}: self-service profile editing (todo_user_management.md) --
 
 
