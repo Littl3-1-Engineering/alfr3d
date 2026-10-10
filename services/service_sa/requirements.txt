@@ -11,3 +11,5 @@ orjson==3.12.0
 redis[hiredis]>=8.1.0
 urllib3>=2.8.0 # not directly required, pinned by Snyk to avoid a vulnerability
 pyasn1>=0.6.4 # not directly required, pinned by Snyk to avoid a vulnerability
+duckdb==1.5.6  # LF-1b/LF-2: query engine over the Parquet lake
+pyarrow==26.0.0  # LF-1b: writes the Parquet bronze layer

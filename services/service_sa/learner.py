@@ -1,10 +1,10 @@
 #!/usr/bin/python
 """sa-learner: the slow path of service_sa.
 
-For now runs only compute_entity_baselines() every 6 hours, the job service_daemon used to run
-on its own schedule (LF-1a, todo/sa/todo_lf1a_sa_service_split.md). It takes minutes on the NUC,
-which is exactly why it no longer shares a loop with anything time-sensitive. LF-1b adds the
-Parquet bronze export here, and later phases the layer-1 learners.
+Runs compute_entity_baselines() every 6 hours (the job service_daemon used to run on its own
+schedule, LF-1a) and the nightly Parquet bronze export (LF-1b, sa/lake.py). Both take minutes on
+the NUC, which is exactly why they don't share a loop with anything time-sensitive. Later phases
+add silver/gold and the layer-1 learners.
 """
 
 import os
@@ -13,7 +13,7 @@ import time
 
 import schedule
 
-from sa import engine
+from sa import engine, lake
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -25,6 +25,19 @@ logger = engine.logger
 HEARTBEAT_PATH = "/tmp/sa_learner_heartbeat"
 HEARTBEAT_STALE_SECONDS = 900
 BASELINE_INTERVAL_HOURS = 6
+# Container time is UTC. 03:30 UTC = 23:30 local, after the day's partitions have mostly settled.
+BRONZE_EXPORT_AT = "03:30"
+
+
+def run_bronze_export():
+    """Nightly Parquet export (LF-1b). Touches the heartbeat as each day is written: a first run
+    on an empty lake is a full backfill that outlasts the watchdog's stale window, and the
+    watchdog exits the process when the heartbeat goes stale."""
+    try:
+        outcome = lake.run_export(progress=lambda: heartbeat.touch(HEARTBEAT_PATH))
+        logger.info(f"bronze export done, failures: {outcome['failures'] or 'none'}")
+    except Exception as e:
+        logger.error(f"bronze export failed: {e}")
 
 
 def run():
@@ -41,4 +54,5 @@ if __name__ == "__main__":
     # Same cadence as the daemon's old `schedule.every(6).hours.do(compute_entity_baselines)`:
     # first run 6h after start, not at start.
     schedule.every(BASELINE_INTERVAL_HOURS).hours.do(engine.compute_entity_baselines)
+    schedule.every().day.at(BRONZE_EXPORT_AT).do(run_bronze_export)
     run()

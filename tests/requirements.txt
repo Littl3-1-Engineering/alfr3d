@@ -19,3 +19,5 @@ aioesphomeapi==46.6.0
 zeroconf==0.151.3
 werkzeug==3.1.8
 PyJWT==2.15.0
+duckdb==1.5.6
+pyarrow==26.0.0
