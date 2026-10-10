@@ -63,6 +63,7 @@ class ContextFrame:
         self.day_ctx = None  # common.day_context.DayContext for this cycle
         self.upcoming_events = None
         self.online_devices = None
+        self.person_presence = None  # each person's current home/away (LF-3)
         self.smarthome_online = None
         self.esphome_climate = None
         self.esphome_climate_baselines = None
@@ -135,6 +136,42 @@ def fetch_online_devices():
         }
     except pymysql.Error as e:
         logger.error(f"Context frame: online_devices fetch error: {e}")
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def fetch_person_presence():
+    """Each person's current state, from `user.state`: the household already logs it from the
+    person's phone (only phones carry the resident/guest tag), so this is the same evidence the
+    presence learner was trained on. Excludes the household system user and the 'unknown'
+    catch-all that unclaimed devices belong to. Returns a list of {user_id, username, user_type,
+    home, last_online} (last_online is naive UTC, the phone's last sighting), or None on a DB
+    error."""
+    db = None
+    try:
+        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
+        cursor = db.cursor()
+        cursor.execute("""
+            SELECT u.id, u.username, t.type, s.state, u.last_online
+            FROM user u
+            JOIN user_types t ON u.type = t.id
+            JOIN states s ON u.state = s.id
+            WHERE t.type <> 'alfr3d' AND u.username <> 'unknown'
+            """)
+        return [
+            {
+                "user_id": row[0],
+                "username": row[1],
+                "user_type": row[2],
+                "home": row[3] == "online",
+                "last_online": row[4],
+            }
+            for row in cursor.fetchall()
+        ]
+    except pymysql.Error as e:
+        logger.error(f"Context frame: person_presence fetch error: {e}")
         return None
     finally:
         if db:

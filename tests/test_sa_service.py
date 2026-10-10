@@ -179,6 +179,19 @@ class TestDecideDisplays:
         "entity_name": "Munja",
         "data": {"typical_departure_hour": 8, "sample_count": 12, "because": ["..."]},
     }
+    PRESENCE_DEVIATION_CARD = {
+        "mode": "presence_deviation",
+        "content": "athos is out — usually home Fridays around 11:00",
+        "priority": 2.75,
+        "entity_name": "athos",
+        "data": {
+            "expected_p_home": 0.9,
+            "away_minutes": 180,
+            "surprise_bits": 3.3,
+            "confidence": 0.39,
+            "because": ["..."],
+        },
+    }
     TRAVEL_CARD = {
         "mode": "travel",
         "content": "Leave by 05:10 PM for Dentist",
@@ -227,6 +240,7 @@ class TestDecideDisplays:
         check_wind_down_signal=None,
         check_empty_house_still_on=None,
         check_departure_anomaly=None,
+        check_presence_deviation=None,
         check_household_unusual_day=None,
         check_system_health=None,
     ):
@@ -257,6 +271,7 @@ class TestDecideDisplays:
         )
         daemon.check_empty_house_still_on = MagicMock(return_value=check_empty_house_still_on)
         daemon.check_departure_anomaly = MagicMock(return_value=check_departure_anomaly)
+        daemon.check_presence_deviation = MagicMock(return_value=check_presence_deviation)
         daemon.check_household_unusual_day = MagicMock(return_value=check_household_unusual_day)
         daemon.check_system_health = MagicMock(return_value=check_system_health)
         return daemon
@@ -326,6 +341,7 @@ class TestDecideDisplays:
             check_wind_down_signal=self.WIND_DOWN_SIGNAL_CARD,
             check_empty_house_still_on=self.EMPTY_HOUSE_STILL_ON_CARD,
             check_departure_anomaly=self.DEPARTURE_ANOMALY_CARD,
+            check_presence_deviation=self.PRESENCE_DEVIATION_CARD,
             check_travel=self.TRAVEL_CARD,
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
@@ -437,6 +453,7 @@ class TestDecideDisplays:
             check_wind_down_signal=self.WIND_DOWN_SIGNAL_CARD,
             check_empty_house_still_on=self.EMPTY_HOUSE_STILL_ON_CARD,
             check_departure_anomaly=self.DEPARTURE_ANOMALY_CARD,
+            check_presence_deviation=self.PRESENCE_DEVIATION_CARD,
             check_travel=self.TRAVEL_CARD,
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
@@ -449,10 +466,10 @@ class TestDecideDisplays:
         assert priorities == sorted(priorities)
 
         # Cap behavior: MAX_DISPLAYS == len(DISPLAY_RULES), and every registered
-        # rule fired exactly once, so all twenty-three cards come back -- nothing dropped.
+        # rule fired exactly once, so all twenty-four cards come back -- nothing dropped.
         from services.service_sa.sa.engine import SAEngine
 
-        assert len(result) == 23 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
+        assert len(result) == 24 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -467,6 +484,7 @@ class TestDecideDisplays:
             "travel",
             "rhythm_break_anomaly",
             "departure_anomaly",
+            "presence_deviation",
             "music",
             "music",
             "guest_overstay_advisory",
