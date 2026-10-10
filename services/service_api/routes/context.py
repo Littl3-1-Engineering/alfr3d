@@ -199,7 +199,7 @@ def _compute_geofence_transitions(home, baseline_state, fixes, radius_m=_HOME_GE
 def _fetch_home_coordinates(cursor):
     """This household's own (latitude, longitude) from the `environment` row for
     `ALFR3D_ENV_NAME`, or `None` if unset. Same source table/columns as
-    `service_daemon.routing_utils.fetch_home_coordinates()` (SA-6) -- service_api can't import
+    `service_sa.sa.routing_utils.fetch_home_coordinates()` (SA-6) -- service_api can't import
     across the service boundary, so this re-reads the same two columns directly."""
     cursor.execute(
         "SELECT latitude, longitude FROM environment WHERE name = %s", (ALFR3D_ENV_NAME,)

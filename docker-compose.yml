@@ -279,8 +279,74 @@ services:
     healthcheck:
       # Mirrors HEARTBEAT_PATH/HEARTBEAT_STALE_SECONDS in service_daemon/alfr3ddaemon.py. The
       # window is 300s, not 90s, because one MyDaemon.run() cycle is a 60s sleep plus the
-      # routine and situational-awareness work - 90s would flap on an ordinary slow pass.
+      # routine work - 90s would flap on an ordinary slow pass.
       test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/daemon_heartbeat", "300" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # LF-1a (todo/sa/todo_lf1a_sa_service_split.md): situational awareness moved out of
+  # service-daemon into one service_sa image with two entries, split by speed. sa-awareness is
+  # the 60s card loop (context frame, rules, suppression, publish to `situational-awareness`);
+  # sa-learner runs the slow jobs (compute_entity_baselines every 6h, later the Parquet lake and
+  # learners) so they can never stall cards. Same network/env/secrets as service-daemon, whose
+  # code they were lifted from (Gmail and HA/ST credentials are read from /secrets).
+  sa-awareness:
+    build:
+      context: ./services
+      dockerfile: ./service_sa/Dockerfile
+    command: [ "python", "awareness.py" ]
+    user: "1000:1000"
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    network_mode: host
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - secrets_data:/secrets
+    cpus: 1.0
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH/HEARTBEAT_STALE_SECONDS in service_sa/awareness.py.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/sa_awareness_heartbeat", "300" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  sa-learner:
+    build:
+      context: ./services
+      dockerfile: ./service_sa/Dockerfile
+    command: [ "python", "learner.py" ]
+    user: "1000:1000"
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_started
+    network_mode: host
+    env_file: .env
+    environment:
+      - MYSQL_DATABASE=localhost
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - secrets_data:/secrets
+    # Below sa-awareness: a long fit must never starve the card loop on the 4-core NUC.
+    cpus: 1.0
+    cpu_shares: 512
+    healthcheck:
+      # Mirrors HEARTBEAT_PATH/HEARTBEAT_STALE_SECONDS in service_sa/learner.py.
+      test: [ "CMD", "python", "-m", "common.heartbeat", "/tmp/sa_learner_heartbeat", "900" ]
       interval: 60s
       timeout: 5s
       retries: 3
