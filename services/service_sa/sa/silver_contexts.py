@@ -134,7 +134,12 @@ def _sql_str(value):
 def setup(con, lake_dir, have, tz):
     """Views over the new bronze tables and the data horizons. Adds what exists to `have`."""
     bronze = Path(lake_dir) / "bronze"
-    for name in ("ha_state_history", "email_messages", "environment_history"):
+    for name in (
+        "ha_state_history",
+        "email_messages",
+        "environment_history",
+        "attention_telemetry_history",
+    ):
         if list((bronze / name).glob("*/part-*.parquet")):
             pattern = f"{bronze / name}/*/part-*.parquet"
             con.execute(
@@ -384,6 +389,16 @@ def build_gold(con, have):
         parts.append("""
             SELECT 'esphome:' || sensor_key AS series_key, 'esphome' AS source, bucket_utc,
                    mean, min, max, LEAST(1.0, n / 4.0) AS coverage FROM g_sensor_hourly""")
+    if "attention_telemetry_history" in have:
+        # The Deck reports a window summary when it is in use: an hour with any report counts as
+        # covered, and the hours with none are simply absent (the phone was down).
+        for column in ("switch_count", "unlock_count"):
+            parts.append(f"""
+            SELECT 'attention:{column}' AS series_key, 'deck' AS source,
+                   time_bucket(INTERVAL 1 HOUR, reported_at) AS bucket_utc,
+                   AVG({column}) AS mean, MIN({column}) AS min, MAX({column}) AS max,
+                   LEAST(1.0, COUNT(*) / 2.0) AS coverage
+            FROM b_attention_telemetry_history GROUP BY 3""")
     if parts:
         queries["scalar_hourly"] = f"""
             SELECT series_key, source, bucket_utc,
