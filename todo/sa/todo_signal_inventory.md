@@ -8,7 +8,7 @@ Capture result, all running in production and in the nightly job:
 
 | Context | Now captured | Size / depth |
 |---|---|---|
-| **Home Assistant**: every entity (80, minus the message-body one), state changes | bronze `ha_state_history`, nightly + backfill | 7,330 points, 79 entities, **11 days** (09-30 to 10-10), the whole of HA's retention |
+| **Home Assistant**: every entity (80, minus the legacy Pushbullet ones), state changes | bronze `ha_state_history`, nightly + backfill | ~7,200 points, 78 entities, **11 days** (09-30 to 10-10), the whole of HA's retention |
 | **Email**: sender, subject, time, labels, read state (never the body) | bronze `email_messages`, nightly, self-healing | **3,656 messages, exactly 12 months**, 533 distinct senders |
 | **ESPHome binary sensors, light, switch** | `smarthome_sensor_history` as 1.0 / 0.0 | first readings 04:01 today; accrues each sync |
 | **Weather** | already captured by `get_weather()` into `environment_history` (LF-0) | since 10-09; HA's OpenWeatherMap entities add the prior ~10 days at finer resolution |
@@ -53,7 +53,7 @@ home" is a state conditioned on presence. Cross-signal findings like that are la
 | **People at home** | state | phone sightings (silver) | since 2026-04-12; **no data in June, ~none in July** (collector outage) | ✅ learner built |
 | **Indoor temp / humidity** (ESPHome) + wifi, uptime | scalar | `smarthome_sensor_history` | 762,739 readings since 09-16 (3.5 weeks) | ✅ captured; too short for seasons |
 | **ESPHome binary sensors (2), light (1)** | state | `smarthome_sensor_history`, 1.0 / 0.0 (mean over a window = fraction of time on) | since 2026-10-10 | ✅ captured |
-| **Home Assistant: 48 sensors, 13 media players, sun, weather, device trackers, scripts** (24 OpenWeatherMap incl. forecasts, phone battery / charger, speedtest, Pushbullet title, version) | scalar / state / event | `bronze/ha_state_history` (state changes, on-change timestamps) | 11 days at capture time; HA keeps ~10, so **nothing older than 09-30 exists anywhere** | ✅ captured from 2026-10-10 |
+| **Home Assistant: 48 sensors, 13 media players, sun, weather, device trackers, scripts** (24 OpenWeatherMap incl. forecasts, phone battery / charger, speedtest, version; the leftover legacy `pushbullet` entities are excluded) | scalar / state / event | `bronze/ha_state_history` (state changes, on-change timestamps) | 11 days at capture time; HA keeps ~10, so **nothing older than 09-30 exists anywhere** | ✅ captured from 2026-10-10 |
 | **Weather / meteorological** | scalar + categorical | `get_weather()` -> `environment_history` (every 4 h, forecast hourly) since 10-09, plus HA's 24 OpenWeatherMap entities (state changes, finer than 4 h) back to 09-30 | ~13 rows + 11 days of HA | ✅ captured. Only the history *before* 09-30 is missing, and accumulating is the decision |
 | **IoT commands** | event | `device_command_history` | since 10-10 (1 row so far) | ✅ captured |
 | **Date, day, time of year, holidays** | context | silver `day_context` | built for the whole span | ✅ (daylight not yet: sunrise and sunset accumulate in `environment_history` from 10-09) |
@@ -75,11 +75,14 @@ switch states. Weather needed no new work (see the status table).
 Still open:
 1. **Calendar.** Retention is fixed since 10-09; earlier history is gone except the created /
    removed notices in `household_events`.
-2. **Deck context** (DND, battery, activity on the phone) is current-only; attention telemetry
-   already has history.
+2. **Deck context** (DND, battery, charging, network, activity) is current-only: see
+   [todo_deck_learning_stream.md](todo_deck_learning_stream.md).
 3. **Notifications.** The Deck reports sender and app only (1,050 since 09-13). Email subjects now
    come from Gmail directly, so the only notification content missing is for apps other than Gmail
-   (Viber, ...). Whether to ask the Deck for more is a privacy decision, not a default.
+   (Viber, ...). Whether to ask the Deck for more is a privacy decision, not a default. The
+   Deck's other reports, and the fact that its device context and surface state keep no history at
+   all, are tracked in [todo_deck_learning_stream.md](todo_deck_learning_stream.md). (Pushbullet and
+   ntfy.sh are legacy and unused: ALFR3D's notifications go over Kafka and the event stream.)
 4. **Weather before 2026-09-30.** Decided: accumulate only. Seasonal context will build slowly.
 5. **HA attributes** are not stored on purpose (signed picture tokens). Anything useful that lives
    only in an attribute (the sun's elevation) has to be computed instead.
@@ -123,8 +126,11 @@ Still open:
   3,655.
 - **One message arrived with `internalDate` = -1 ms** and landed in 1969. The parser now falls back
   to the `Date` header and drops the message only if neither is plausible.
-- **Message text stays out.** `sensor.pushbullet_body` is excluded by name and email bodies are
-  never requested; subjects and Pushbullet *titles* are kept, as the household asked.
+- **Message text stays out.** Email bodies are never requested; subject lines are kept, as the
+  household asked. The `pushbullet` entities were excluded **entirely** once Athos pointed out that
+  Pushbullet and ntfy.sh are legacy channels ALFR3D used before Kafka and the backend event stream
+  existed, and are no longer used. The first backfill had already stored 146 of their points; the
+  exporter now applies exclusions retroactively on every run, which removed them.
 - A `bool` is an `int` in Python: ESPHome binary states were silently skippable only because of the
   domain check, so on/off states now map explicitly to 1.0 / 0.0.
 
