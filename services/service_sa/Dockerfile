@@ -14,6 +14,11 @@ RUN groupadd -r -g 1000 alfr3d && useradd -r -u 1000 -g alfr3d alfr3d
 COPY service_sa/ ./
 COPY common/ ./common/
 
+# The Parquet lake (LF-1b) mounts here on sa-learner. Created and chowned in the image so the
+# named volume inherits uid 1000 ownership on first use; otherwise it comes up root-owned and the
+# non-root learner can't write to it.
+RUN mkdir -p /lake && chown alfr3d:alfr3d /lake
+
 USER alfr3d
 
 CMD ["python", "awareness.py"]
