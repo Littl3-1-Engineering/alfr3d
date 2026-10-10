@@ -76,6 +76,16 @@ The Notion row "SA data retention extended to 2 years across event-log tables" (
 | `listening_history` | unbounded |
 | `device_command_history` | dead table, no writer (LF-0 rebuilt it as a full command log: params, outcome, origin) |
 
+## Signals: not only people and devices
+
+SA covers every context ALFR3D senses: IoT states, weather, date and time of year, indoor climate,
+calendar, email, notifications, geofencing, what the Deck reports. All of it reduces to four signal
+shapes (state, scalar, event stream, transition), each with a learner family; the presence learner is
+the first "state" learner, and the confidence function, tables and walk-forward evaluation are
+shared. The binding constraint is **what is captured**, not modelling: several contexts have little
+or no history, and Home Assistant discards its own after ~10 days. Full inventory, gaps ranked by
+loss rate, and the proposed order: [todo_signal_inventory.md](todo_signal_inventory.md).
+
 ## Inference contract (`sa_inferences`)
 
 `id`, `layer` (1|2), `kind` (profile|deviation|prediction|transition|drift), `subject_type`,
@@ -133,6 +143,7 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 | Phase | Doc | What | Depends on |
 |---|---|---|---|
 | **LF-0** ✅ | [todo_lf0_retention_gaps.md](todo_lf0_retention_gaps.md) | 730-day retention and history capture for every SA variable in MySQL (deployed 2026-10-09) | — |
+| **LF-0b** | [todo_signal_inventory.md](todo_signal_inventory.md) | Capture the missing contexts: Home Assistant entity history (urgent, ~1 day lost per day), email metadata, weather, ESPHome binary sensors / lights | — |
 | **LF-1a** ✅ | [todo_lf1a_sa_service_split.md](todo_lf1a_sa_service_split.md) | Lift the SA engine out of the daemon into `service_sa`, no behaviour change (deployed 2026-10-09; event-driven state deferred to LF-1c) | — |
 | **LF-1b** ✅ | [todo_lf1b_bronze.md](todo_lf1b_bronze.md) | `sa-learner` + Parquet bronze export and backfill (deployed 2026-10-10; 23 MB for 3.8 M rows) | LF-1a |
 | **LF-2** ✅ | [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) | Silver + gold, `sa_data_exclusions` (deployed 2026-10-10; presence = phones only, `observed` flag for collector outages) | LF-1b |
