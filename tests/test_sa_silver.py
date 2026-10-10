@@ -387,6 +387,21 @@ class TestGold:
         assert grid[T0]["observed"] is True
         assert grid[T0]["hour_local"] == 8 and grid[T0]["dow_local"] == 0  # Mon 08:00 EDT
 
+    def test_the_hour_still_in_progress_at_the_horizon_is_not_an_observation(self, lake):
+        """The export runs partway through an hour. Counted as observed, it would read as 'away'
+        for everyone (no one can have 30 minutes at home yet) and bias every learner trained on it.
+        """
+        _build(lake)
+
+        grid = [r for r in _rows(lake, "gold", "presence_grid") if r["user_id"] == 1]
+        last = max(grid, key=lambda r: r["bucket_utc"])
+
+        # The fixture's newest collector row (the laptop's last sighting) is in the 18:00 UTC hour.
+        assert last["bucket_utc"] == datetime(2026, 10, 5, 18, 0)
+        assert last["observed"] is False
+        earlier = [r for r in grid if r["bucket_utc"] < last["bucket_utc"]]
+        assert any(r["observed"] for r in earlier)
+
     def test_presence_grid_only_covers_each_persons_own_span(self, lake):
         _build(lake)
 

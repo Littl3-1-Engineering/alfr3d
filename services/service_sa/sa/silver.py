@@ -49,6 +49,8 @@ import duckdb
 import pyarrow as pa
 import pymysql
 
+from sa import silver_contexts
+
 logger = logging.getLogger("SASilver")
 
 LAKE_DIR = os.environ.get("SA_LAKE_DIR", "/lake")
@@ -84,8 +86,25 @@ SILVER_TABLES = (
     "events_clean",
     "calendar_busy",
     "day_context",
+    # LF-2b: the contexts added by LF-0b (sa/silver_contexts.py)
+    "ha_states",
+    "ha_intervals",
+    "ha_entities",
+    "weather_hourly",
+    "email_events",
 )
-GOLD_TABLES = ("presence_grid", "daily_rhythm", "hourly_rates", "sensor_hourly")
+GOLD_TABLES = (
+    "presence_grid",
+    "daily_rhythm",
+    "hourly_rates",
+    "sensor_hourly",
+    # LF-2b, built in a second gold pass because they read other gold / silver tables
+    "scalar_hourly",
+    "state_hourly",
+    "email_hourly",
+    "sender_daily",
+    "context_hourly",
+)
 
 
 # --- Ontario statutory holidays (day_context.is_holiday) -----------------------------------
@@ -140,8 +159,25 @@ def _season(month):
     )
 
 
-def day_context_rows(start, end):
-    """One row per calendar day in [start, end]: dow (0=Mon), weekend, month, season, holiday."""
+DAY_CONTEXT_SCHEMA = pa.schema(
+    [
+        pa.field("date", pa.date32()),
+        pa.field("dow", pa.int64()),
+        pa.field("is_weekend", pa.bool_()),
+        pa.field("month", pa.int64()),
+        pa.field("season", pa.string()),
+        pa.field("is_holiday", pa.bool_()),
+        pa.field("holiday_name", pa.string()),
+        pa.field("sunrise_utc", pa.timestamp("us")),
+        pa.field("sunset_utc", pa.timestamp("us")),
+        pa.field("daylight_minutes", pa.float64()),
+    ]
+)
+
+
+def day_context_rows(start, end, location=None):
+    """One row per calendar day in [start, end]: dow (0=Mon), weekend, month, season, holiday, and,
+    given a (latitude, longitude), sunrise / sunset (UTC) and the length of daylight."""
     rows = []
     holidays = {}
     day = start
@@ -149,6 +185,11 @@ def day_context_rows(start, end):
         if day.year not in holidays:
             holidays[day.year] = ontario_holidays(day.year)
         name = holidays[day.year].get(day)
+        sunrise = sunset = daylight = None
+        if location is not None:
+            sunrise, sunset = silver_contexts.sun_times(day, location[0], location[1])
+            if sunrise is not None:
+                daylight = (sunset - sunrise).total_seconds() / 60.0
         rows.append(
             {
                 "date": day,
@@ -158,6 +199,9 @@ def day_context_rows(start, end):
                 "season": _season(day.month),
                 "is_holiday": name is not None,
                 "holiday_name": name,
+                "sunrise_utc": sunrise,
+                "sunset_utc": sunset,
+                "daylight_minutes": daylight,
             }
         )
         day += timedelta(days=1)
@@ -232,9 +276,11 @@ def _setup(con, lake, exclusions, aliases, tz):
     ):
         if _view(con, f"b_{name}", lake, "bronze", name):
             have.add(name)
-    for name in ("user", "user_types", "device", "smarthome_devices"):
+    for name in ("user", "user_types", "device", "smarthome_devices", "environment"):
         if _view(con, f"snap_{name}", lake, "bronze", "_snapshots", name):
             have.add(f"snap_{name}")
+
+    silver_contexts.setup(con, lake, have, tz)
 
     con.execute(
         "CREATE TABLE exclusions (source VARCHAR, event_type VARCHAR, subject_id VARCHAR, "
@@ -441,7 +487,9 @@ def _build_gold(con, have, lake):
                    hour(to_local(p.b)) AS hour_local,
                    isodow(to_local(p.b)) - 1 AS dow_local,
                    COALESCE(m.minutes_home, 0) AS minutes_home,
-                   COALESCE(c.ok, false) AS observed
+                   -- The hour containing the newest collector row has not finished: nobody can
+                   -- have accumulated a full hour in it yet, so it is not an observation.
+                   COALESCE(c.ok, false) AND p.b < (SELECT h FROM horizon) AS observed
             FROM person_hours p
             LEFT JOIN home_minutes m ON m.user_id = p.user_id AND m.b = p.b
             LEFT JOIN collector_hours c ON c.b = p.b
@@ -523,6 +571,9 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
         have = _setup(con, lake, exclusions, aliases or {}, tz)
         queries = _build_presence(con, lake, have, gap)
         queries.update(_build_silver_other(con, have))
+        queries.update(silver_contexts.build_ha(con, have))
+        queries.update(silver_contexts.build_weather(con, have))
+        queries.update(silver_contexts.build_email(con, have))
         for table in SILVER_TABLES:
             if table in queries:
                 counts[table] = _write(con, queries[table], "silver", table, lake)
@@ -532,13 +583,29 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
         spine_start = _earliest_day(con, have)
         if spine_start:
             end = (today or datetime.now(timezone.utc).date()) + timedelta(days=1)
-            rows = day_context_rows(spine_start, end)
-            con.register("dc", pa.Table.from_pylist(rows))
-            counts["day_context"] = _write(con, "SELECT * FROM dc", "silver", "day_context", lake)
+            rows = day_context_rows(spine_start, end, _location(con, have))
+            con.register("dc", pa.Table.from_pylist(rows, schema=DAY_CONTEXT_SCHEMA))
+            counts["day_context"] = _write(
+                con,
+                "SELECT *, to_local(sunrise_utc) AS sunrise_local, "
+                "to_local(sunset_utc) AS sunset_local FROM dc",
+                "silver",
+                "day_context",
+                lake,
+            )
         gold = _build_gold(con, have, lake)
         for table in GOLD_TABLES:
             if table in gold:
                 counts[table] = _write(con, gold[table], "gold", table, lake)
+                if progress:
+                    progress()
+        # Second gold pass: tables that read other gold / silver tables, so they go through views
+        # over the Parquet just written (s_* silver, g_* gold).
+        _register_views(con, lake)
+        more = silver_contexts.build_gold(con, have)
+        for table in GOLD_TABLES:
+            if table in more:
+                counts[table] = _write(con, more[table], "gold", table, lake)
                 if progress:
                     progress()
     finally:
@@ -554,6 +621,34 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
     (Path(lake) / "silver" / "_build.json").write_text(json.dumps(meta, indent=2))
     logger.info(f"silver/gold built: {counts}")
     return counts
+
+
+def _location(con, have):
+    """(latitude, longitude) of the household from the newest environment snapshot, or None."""
+    if "snap_environment" not in have:
+        return None
+    row = con.execute(
+        "SELECT latitude, longitude FROM snap_environment "
+        "WHERE date = (SELECT MAX(date) FROM snap_environment) LIMIT 1"
+    ).fetchone()
+    if not row or row[0] is None or row[1] is None:
+        return None
+    return float(row[0]), float(row[1])
+
+
+def _register_views(con, lake):
+    """Views over every silver (s_*) and gold (g_*) table already written."""
+    for layer, prefix, tables in (
+        ("silver", "s", SILVER_TABLES),
+        ("gold", "g", GOLD_TABLES),
+    ):
+        for table in tables:
+            path = Path(lake) / layer / table / "part-0.parquet"
+            if path.exists():
+                con.execute(
+                    f"CREATE OR REPLACE VIEW {prefix}_{table} AS "
+                    f"SELECT * FROM read_parquet('{path}')"
+                )
 
 
 def _earliest_day(con, have):

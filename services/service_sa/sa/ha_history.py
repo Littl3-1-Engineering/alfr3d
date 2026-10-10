@@ -33,6 +33,7 @@ Incremental like the MySQL exports: resume from the newest partition, with a loo
 it reaches the end of Home Assistant's retention (three empty days in a row).
 """
 
+import json
 import logging
 import re
 import shutil
@@ -142,6 +143,42 @@ def purge_excluded(table_dir):
     return removed
 
 
+CONFIG_FILE = "_ha_config.json"
+
+
+def fetch_config(base_url, headers, get=requests.get):
+    """Home Assistant's configured home: the coordinates, timezone and name that its OpenWeatherMap
+    weather, its sun entities and its home zone are all computed for."""
+    response = get(f"{base_url}/api/config", headers=headers, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    body = response.json()
+    return {
+        "latitude": body.get("latitude"),
+        "longitude": body.get("longitude"),
+        "time_zone": body.get("time_zone"),
+        "location_name": body.get("location_name"),
+    }
+
+
+def record_config(table_dir, config, now_utc):
+    """Keep HA's home location in <table>/_ha_config.json: the current value plus a history that
+    gains an entry only when it changes. Home Assistant's home was found to still be the old house
+    in Novi Sad (2026-10-10) after the household moved to Etobicoke, so every HA weather and sun
+    series describes the wrong place; when the location is corrected, this history is what lets
+    silver tell the two regimes apart. Returns True if the location changed."""
+    path = Path(table_dir) / CONFIG_FILE
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        state = {"current": None, "history": []}
+    if state.get("current") == config:
+        return False
+    state["current"] = config
+    state["history"].append({"observed_at": now_utc.replace(microsecond=0).isoformat(), **config})
+    path.write_text(json.dumps(state, indent=2))
+    return True
+
+
 def _merge_rows(table_dir, rows):
     """Group rows by the UTC day of last_changed and merge each day's partition. Returns days
     touched."""
@@ -204,6 +241,12 @@ def export_ha_history(lake_dir=None, now_utc=None, progress=None, get=requests.g
                 progress()
             end, day = day, day - timedelta(days=1)
 
+    try:
+        if record_config(table_dir, fetch_config(base_url, headers, get), now_utc):
+            logger.info("ha history: Home Assistant's configured home location changed (or is new)")
+    except Exception as e:  # noqa: BLE001 -- the location note must never fail the export
+        logger.warning(f"ha history: could not read Home Assistant's config: {e}")
+    lake.write_horizon(table_dir, now_utc)
     logger.info(
         f"ha history: {total_rows} points over {total_days} day(s), {len(entities)} entities"
     )

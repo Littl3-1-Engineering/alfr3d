@@ -464,6 +464,36 @@ class TestEmailParsing:
 
         assert row[2] == datetime(2026, 10, 9, 14, 0)  # 10:00 -0400 is 14:00 UTC
 
+    def test_a_far_future_internal_date_is_rejected_too(self):
+        """Seen live: a real message arrived dated 2611-09-25 (5 million hourly rows downstream)."""
+        message = _gmail_message("m7", datetime(2026, 10, 9, 14, 0))
+        message["internalDate"] = str(
+            int((datetime(2611, 9, 25) - datetime(1970, 1, 1)).total_seconds() * 1000)
+        )
+        message["payload"]["headers"].append(
+            {"name": "Date", "value": "Fri, 09 Oct 2026 10:00:00 -0400"}
+        )
+
+        row = email_log.parse_message(message, now=datetime(2026, 10, 10))
+
+        assert row[2] == datetime(2026, 10, 9, 14, 0)
+
+    def test_an_absurd_date_in_both_places_drops_the_message(self):
+        message = _gmail_message("m8", datetime(2026, 10, 9))
+        message["internalDate"] = "99999999999999999"
+        message["payload"]["headers"].append(
+            {"name": "Date", "value": "Mon, 01 Jan 2999 00:00:00 +0000"}
+        )
+
+        assert email_log.parse_message(message, now=datetime(2026, 10, 10)) is None
+
+    def test_a_date_two_days_ahead_is_tolerated_for_clock_skew(self):
+        row = email_log.parse_message(
+            _gmail_message("m9", datetime(2026, 10, 11, 23, 0)), now=datetime(2026, 10, 10)
+        )
+
+        assert row[2] == datetime(2026, 10, 11, 23, 0)
+
     def test_a_message_with_no_usable_date_anywhere_is_dropped(self):
         message = _gmail_message("m6", datetime(2026, 10, 9))
         message["internalDate"] = "-1"
@@ -596,6 +626,30 @@ class TestEmailExport:
 
         (row,) = _partitions(tmp_path, "email_messages")["2026-10-09"]
         assert row["is_unread"] is False
+
+    def test_a_bad_date_stored_earlier_is_removed_and_the_message_refiled_correctly(self, tmp_path):
+        table_dir = tmp_path / "bronze" / "email_messages"
+        bad = [
+            ["m1", "tm1", datetime(2611, 9, 25), "A", "a@x.com", "x.com", "s", "INBOX", False, 1]
+        ]
+        lake.merge_partition(table_dir, "2611-09-25", email_log.SCHEMA, bad, email_log.KEY)
+        gmail = FakeGmail([_gmail_message("m1", datetime(2026, 10, 9, 9, 0))])
+
+        outcome = self._export(tmp_path, gmail)
+
+        parts = _partitions(tmp_path, "email_messages")
+        assert "2611-09-25" not in parts
+        assert [r["message_id"] for r in parts["2026-10-09"]] == ["m1"]
+        assert outcome["rows"] == 1
+
+    def test_a_message_with_no_usable_date_is_counted_not_silently_lost(self, tmp_path):
+        undated = _gmail_message("u1", datetime(2026, 10, 9, 9, 0))
+        undated["internalDate"] = "-1"
+        gmail = FakeGmail([_gmail_message("ok1", datetime(2026, 10, 9, 9, 0)), undated])
+
+        outcome = self._export(tmp_path, gmail)
+
+        assert outcome["rows"] == 1 and outcome["undated"] == 1 and outcome["failed"] == 0
 
     def test_no_credentials_means_nothing_is_fetched(self, tmp_path):
         with patch("common.gmail_utils.get_credentials", return_value=None):

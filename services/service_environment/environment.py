@@ -354,6 +354,26 @@ def check_weather():
         logger.warning("No location data available for weather check")
 
 
+def record_weather():
+    """Hourly weather sample for the SA history: same location lookup as check_weather(), but it
+    stores the reading without announcing it aloud (see weather_util.record_weather)."""
+    logger.info("Recording a weather sample")
+    db = pymysql.connect(
+        host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+    )
+    try:
+        cursor = db.cursor()
+        cursor.execute("SELECT * from environment WHERE name = %s", (ALFR3D_ENV_NAME,))
+        data = cursor.fetchone()
+    finally:
+        db.close()
+
+    if data and data[2] and data[3]:
+        weather_util.record_weather(data[2], data[3])
+    else:
+        logger.warning("No location data available for weather sample")
+
+
 def check_forecast():
     """Fetch a home-location forecast and persist it to the environment table.
 
@@ -422,5 +442,7 @@ if __name__ == "__main__":
                     check_location()
                 if msg == "check weather":
                     check_weather()
+                if msg == "record weather":
+                    record_weather()
                 if msg == "check forecast":
                     check_forecast()

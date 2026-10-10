@@ -81,33 +81,42 @@ def _decode(value):
         return value
 
 
-# Gmail's internalDate has been seen as -1 ms on a real message. Anything before this is not a real
-# arrival time.
+# Gmail's internalDate follows the arrival time, but has been seen as -1 ms (1969) and, on a real
+# message, as the year 2611. Neither is an arrival time. Anything outside [EARLIEST_PLAUSIBLE,
+# now + MAX_FUTURE] is rejected, and the message's own Date header is tried instead.
 EARLIEST_PLAUSIBLE = datetime(2000, 1, 1)
+MAX_FUTURE = timedelta(days=2)
 
 
-def _received(message, headers):
+def _plausible(moment, now):
+    return EARLIEST_PLAUSIBLE <= moment <= now + MAX_FUTURE
+
+
+def _received(message, headers, now):
     """When the message arrived: Gmail's internalDate, or if that is implausible, the message's own
     Date header (converted to UTC). None if neither is usable."""
     internal = message.get("internalDate")
     if internal is not None:
-        received = datetime.fromtimestamp(int(internal) / 1000, tz=timezone.utc).replace(
-            tzinfo=None
-        )
-        if received >= EARLIEST_PLAUSIBLE:
+        try:
+            received = datetime.fromtimestamp(int(internal) / 1000, tz=timezone.utc)
+            received = received.replace(tzinfo=None)
+        except (ValueError, OverflowError, OSError):
+            received = None
+        if received is not None and _plausible(received, now):
             return received
     try:
         received = parsedate_to_datetime(headers.get("date", ""))
         received = received.astimezone(timezone.utc).replace(tzinfo=None)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return received if received >= EARLIEST_PLAUSIBLE else None
+    return received if _plausible(received, now) else None
 
 
-def parse_message(message):
+def parse_message(message, now=None):
     """One Gmail `format=metadata` response -> a bronze row (or None if it has no usable date)."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     headers = {h["name"].lower(): h["value"] for h in message.get("payload", {}).get("headers", [])}
-    received = _received(message, headers)
+    received = _received(message, headers, now)
     if received is None:
         return None
     # Parse the address first, then decode the display name: an RFC 2047 name decoded up front can
@@ -164,8 +173,9 @@ def _retryable(exception):
 def fetch_metadata(service, ids, progress=None, pause=BATCH_PAUSE_SECONDS, sleep=time.sleep):
     """Metadata rows for message ids, in small rate-limited batches. Returns (rows, stats) where
     stats = {"gone": messages Gmail no longer has, "failed": messages still failing after the
-    retries}. Neither is silent: the caller logs both."""
-    rows, stats = [], {"gone": 0, "failed": 0}
+    retries, "undated": messages with no usable date anywhere}. None of them is silent: the caller
+    logs all three."""
+    rows, stats = [], {"gone": 0, "failed": 0, "undated": 0}
     for i in range(0, len(ids), BATCH_SIZE):
         pending = list(ids[i : i + BATCH_SIZE])
         results, gone = {}, set()
@@ -207,12 +217,33 @@ def fetch_metadata(service, ids, progress=None, pause=BATCH_PAUSE_SECONDS, sleep
         stats["failed"] += len(pending)
         for message_id, message in results.items():
             row = parse_message(message)
-            if row is not None:
+            if row is None:
+                stats["undated"] += 1
+                logger.warning(f"gmail: message {message_id} has no usable date; not stored")
+            else:
                 rows.append(row)
         if progress:
             progress()
         sleep(pause)
     return rows, stats
+
+
+def purge_implausible(table_dir, now):
+    """Delete partitions dated outside the plausible range, so a bad date stored before the parser
+    learned to reject it (the year-2611 message) doesn't linger: the message is then absent from
+    bronze, and the self-healing sync fetches it again and files it under its real date. Returns
+    how many rows were removed."""
+    removed = 0
+    for part in Path(table_dir).glob("date=*/part-0.parquet"):
+        try:
+            day = datetime.fromisoformat(part.parent.name.split("=", 1)[1])
+        except ValueError:
+            continue
+        if _plausible(day, now):
+            continue
+        removed += pq.ParquetFile(part).metadata.num_rows
+        shutil.rmtree(part.parent)
+    return removed
 
 
 def _stored_messages(table_dir):
@@ -244,6 +275,9 @@ def export_email(lake_dir=None, now_utc=None, progress=None, service=None, sleep
     for stale in table_dir.glob(".tmp-date=*"):
         shutil.rmtree(stale, ignore_errors=True)
 
+    purged = purge_implausible(table_dir, now_utc)
+    if purged:
+        logger.info(f"gmail: removed {purged} message(s) filed under an implausible date")
     # Always list the whole window: it is what makes the sync self-healing.
     window_start = datetime.combine(now_utc.date(), datetime.min.time()) - timedelta(
         days=EMAIL_BACKFILL_DAYS
@@ -270,6 +304,9 @@ def export_email(lake_dir=None, now_utc=None, progress=None, service=None, sleep
             f"gmail: {stats['failed']} message(s) still failing after retries; "
             "the next run will try them again"
         )
+    if not stats["failed"]:
+        # Only claim the mailbox is complete through now if every listed message was fetched.
+        lake.write_horizon(table_dir, now_utc)
     logger.info(f"gmail: {len(rows)} message(s) merged into {len(by_day)} day(s)")
     return {
         "rows": len(rows),
@@ -277,6 +314,7 @@ def export_email(lake_dir=None, now_utc=None, progress=None, service=None, sleep
         "listed": len(ids),
         "gone": stats["gone"],
         "failed": stats["failed"],
+        "undated": stats["undated"],
     }
 
 

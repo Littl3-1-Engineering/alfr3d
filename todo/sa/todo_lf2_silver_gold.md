@@ -124,3 +124,81 @@ drift detection (LF-3, LF-5) are what catch it.
   constants at the top of `silver.py`.
 - The two iot bursts on 10-06 00:54 and 10-08 01:16 are candidates for `sa_data_exclusions` if
   anyone recognises them as tests.
+
+
+# LF-2b: silver and gold for the contexts LF-0b added
+
+## Status: 🟢 Deployed to the production NUC 2026-10-10. Code: `sa/silver_contexts.py`, wired into `silver.build()` as a second gold pass.
+
+All of it rebuilds from bronze in about 4 seconds, nightly, after the exports.
+
+| Layer | Table | What it is |
+|---|---|---|
+| silver | `ha_states` | every Home Assistant state change, parsed (numeric value, unavailable flag, midnight-anchor flag), local time |
+| silver | `ha_intervals` | the same as "state held from t1 to t2", identical consecutive states merged, last interval ending at the export horizon |
+| silver | `ha_entities` | dictionary: kind (numeric 25, categorical 21, unavailable 21, metadata 11), counts, first / last seen, friendly name, **`describes_ha_home`** and the distance from HA's home to the household |
+| silver | `weather_hourly` | outdoor conditions by hour from ALFR3D's own Toronto record (see below) |
+| silver | `email_events` | email metadata with local time, Gmail category, in-inbox flag |
+| silver | `day_context` | **now with sunrise, sunset (UTC and local) and daylight minutes** (the LF-2 deferral) |
+| gold | `scalar_hourly` | one shape for every numeric series (ESPHome sensors, ESPHome on/off, Home Assistant): time-weighted mean / min / max and the fraction of the hour covered |
+| gold | `state_hourly` | minutes spent in each state per hour, every categorical HA entity |
+| gold | `email_hourly` | messages per hour, zero-filled to the export horizon, with category and sender counts |
+| gold | `sender_daily` | messages per sender per local day, email and phone notifications |
+| gold | `context_hourly` | one row per hour: weekday, season, holiday, daylight, outdoor weather, calendar busy minutes, people home. The covariates every learner joins to |
+
+## What the real data changed
+
+- **Home Assistant describes the old house.** HA's configured home is still **Novi Sad, Serbia**
+  (45.24 N, 19.81 E, `Europe/Belgrade`, 7,338 km from Toronto). Its OpenWeatherMap entities, its
+  `sun` entities, `zone.home` and its device trackers are all for the wrong place. Checked at the
+  same moment: **15.9 C / 62 % in HA, 19.9 C / 40 % in Etobicoke**. So `weather_hourly` uses only
+  ALFR3D's own `get_weather()` record (Etobicoke), and 20 of HA's 25 numeric entities are flagged
+  `describes_ha_home`. They stay in the lake and are never used as the household's context.
+  **Action for Athos:** set Home Assistant's home location (Settings, System, General). That fixes
+  its weather, sun and zone entities going forward. The exporter records HA's reported location and
+  any change in `bronze/ha_state_history/_ha_config.json`, so the two regimes can be told apart.
+- **Daylight is validated against a second source.** The NOAA calculation matches OpenWeatherMap's
+  own stored sunrise and sunset for Etobicoke to within **0.4 minutes** (07:25 / 18:45 on 10-09).
+  Comparing it with HA's sun entity gave a constant +397 minutes, which is how the wrong-location
+  problem was found.
+- **A state that has not changed is still held.** Sensors report on change, so hourly values need
+  intervals, not points. Each source records when it last exported successfully
+  (`_exported_through.txt`) and the last interval runs to there. Midnight-stamped points are HA's
+  start-of-window anchors (711 of them in the first backfill): flagged, kept, and merged away when
+  the state is identical.
+- **Email arrives with impossible dates in both directions.** One message was dated 1969 (internal
+  date -1 ms), one **2611**; the latter made a zero-filled hourly table 5.1 million rows long.
+  The parser now accepts only [2000, now + 2 days], falls back to the `Date` header, and drops the
+  message if both are absurd. One message has no usable date at all; it is counted and logged, not
+  stored. Implausible partitions already on disk are purged each run.
+- **The in-progress hour was being counted as an observation.** The export runs partway through an
+  hour, so nobody can have 30 minutes at home yet, and the hour read as "everyone away". It sat in
+  `presence_grid`, which the presence learner trains on. Hours at or after the horizon are now
+  `observed = false` (fixed in LF-2's `presence_grid`, so the LF-3 learner benefits too).
+- **A latent bug the older tests caught:** when no HA data existed, the first `UNION` branch of
+  `scalar_hourly` was the unaliased ESPHome one and the column `series_key` did not exist. It only
+  worked in production because the HA branch came first.
+- **Hourly weather, silently.** `get_weather()` also speaks the weather and rewrites the sunrise /
+  sunset routines, which is right every four hours and wrong every hour. A new `record weather`
+  message (`weather_util.record_weather`) stores the reading without either, scheduled hourly from
+  the daemon. First sample landed at 04:48:14 with no announcement.
+
+## Verify
+
+- [x] 66 new tests (`tests/test_sa_contexts.py`, `test_sa_external.py`, `test_service_environment.py`,
+      `test_daemon_service.py`) on synthetic lakes and fakes: sun times pinned to OpenWeatherMap's
+      values, anchors, held intervals, classification, time-weighted hourly means and partial
+      coverage, the old-house flag, weather never taken from HA, carry-forward limits and the
+      horizon, email categories and zero-fill, context joins, idempotent rebuild, a lake with none
+      of the sources.
+- [x] Built on the real lake; the numbers above are from it. 880 tests pass in the full suite.
+      (One run of the full suite hit a failure in `test_heartbeat.py`'s timing-based watchdog test;
+      it passes alone, under load, on the pre-change code, and in three further full runs.)
+
+## Known limits
+
+- `weather_hourly` has hours only since 10-09 (8 at the time of writing) and grows hourly now.
+  Seasonal context needs a year; there is no weather before 10-09 in the right place.
+- HA's weather entities are finer than ALFR3D's hourly sample, but wrong until HA's home is fixed.
+- The last hour of `email_hourly` is zero-filled to the export horizon and may be incomplete.
+- Calendar history only exists from 10-09 (2 events), so `calendar_hourly` is nearly empty.

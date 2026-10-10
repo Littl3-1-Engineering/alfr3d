@@ -589,6 +589,25 @@ def get_weather(lat, lon):
     return True
 
 
+def record_weather(lat, lon):
+    """Fetch current conditions and store them (the environment row and, through
+    update_db_weather(), environment_history) WITHOUT speaking and without touching the sunrise /
+    sunset routines. get_weather() does both of those, which is right every four hours and wrong
+    every hour; this is the cheap hourly sample that gives the SA layer a weather history at a
+    resolution that matches its hourly tables. Returns True if a reading was stored."""
+    db = pymysql.connect(
+        host=MYSQL_DATABASE, user=MYSQL_USER, password=MYSQL_PSWD, database=MYSQL_DB
+    )
+    try:
+        cursor = db.cursor()
+        weatherData = parse_weather(cursor, lat, lon)
+        if not weatherData:
+            return False
+        return update_db_weather(db, cursor, weatherData)
+    finally:
+        db.close()
+
+
 def get_forecast(lat, lon, hours_ahead=6):
     """
     Fetches a forecast for the given latitude/longitude from OpenWeatherMap's
