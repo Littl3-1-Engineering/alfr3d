@@ -23,7 +23,8 @@ import orjson
 
 # Third party imports
 import pymysql
-from sa import context_frame, focus_utils, mood_utils, routing_utils
+from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils
+from sa.learners import presence as presence_learner
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import calendar_utils, gmail_utils, spotify_utils  # noqa: E402
@@ -201,6 +202,8 @@ def _cross_surface_continuity_subject_key(card):
 
 CARD_SUBJECT_KEY_EXTRACTORS = {
     "rhythm_break_anomaly": lambda card: card.get("entity_name") or "",
+    # LF-3: one presence_deviation card per person, so dismissing one doesn't hide another's.
+    "presence_deviation": lambda card: card.get("entity_name") or "",
     "cross_surface_continuity": _cross_surface_continuity_subject_key,
     # SA-3: departure_anomaly is rhythm_break_anomaly's human analogue -- dismissing one
     # resident's "still home" card must not suppress a different resident's.
@@ -420,6 +423,7 @@ class SAEngine:
     #   wind_down_signal:      because
     #   empty_house_still_on:  smarthome_device_names, because
     #   departure_anomaly:      typical_departure_hour, sample_count, because
+    #   presence_deviation:     expected_p_home, away_minutes, surprise_bits, confidence, because
     #   travel:                 duration_minutes, distance_km, traffic_aware, leave_by, because
     #   household_unusual_day:  today_device_count, typical_device_count_range,
     #                           today_first_activity_hour, typical_first_activity_hour, because
@@ -492,6 +496,11 @@ class SAEngine:
         # SA-3: the human analogue of rhythm_break_anomaly, one priority tier below it --
         # "usually gone by now, still home" is a genuine routine deviation, not an alert.
         ("departure_anomaly", 2.7, "check_departure_anomaly"),
+        # LF-3: the learned sibling of departure_anomaly. Not "still home when usually gone" but
+        # "away when usually home" -- the case SA-3 cannot see -- scored against a per-person,
+        # per-weekday, per-hour model of P(home) with a stated probability and confidence
+        # (sa/learners/presence.py). Just below departure_anomaly: same kind of observation.
+        ("presence_deviation", 2.75, "check_presence_deviation"),
         # Helpful, not urgent -- below weather (5), above mood (6.2/2.3): a
         # convenience "resume" offer, not something demanding attention.
         ("cross_surface_continuity", 5.5, "check_cross_surface_continuity"),
@@ -546,6 +555,11 @@ class SAEngine:
             frame.online_devices = context_frame.fetch_online_devices()
         except Exception as e:
             logger.error(f"Context frame: online_devices build failed: {e}")
+
+        try:
+            frame.person_presence = context_frame.fetch_person_presence()
+        except Exception as e:
+            logger.error(f"Context frame: person_presence build failed: {e}")
 
         try:
             frame.smarthome_online = context_frame.fetch_smarthome_online()
@@ -1503,6 +1517,146 @@ class SAEngine:
         finally:
             if db:
                 db.close()
+
+    # --- LF-3: presence deviation ---------------------------------------------------------
+
+    # Only these people get a CARD for being away (a guest being out is just a guest leaving).
+    # Every deviation, for anyone, is still recorded in sa_inferences.
+    PRESENCE_CARD_USER_TYPES = ("owner", "technoking", "resident")
+
+    def _presence_profiles(self):
+        """Presence profiles by user id, reloaded only when sa-learner has written a newer fit:
+        one MAX() query per cycle, a full reload (a handful of rows) only when it changed."""
+        cache = getattr(self, "_presence_cache", {})
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            stamp = inference_store.profiles_stamp(db, presence_learner.NAME)
+            if stamp is None:
+                self._presence_cache, self._presence_stamp = {}, None
+            elif stamp != getattr(self, "_presence_stamp", None):
+                loaded = inference_store.load_profiles(db, presence_learner.NAME)
+                self._presence_cache = {str(p.subject_id): p for p in loaded}
+                self._presence_stamp = stamp
+                logger.info(f"Loaded {len(loaded)} presence profile(s) fitted {stamp}")
+            return getattr(self, "_presence_cache", {})
+        except pymysql.Error as e:
+            logger.error("Presence profile load error: " + str(e))
+            return cache
+        finally:
+            if db:
+                db.close()
+
+    def _persist_inferences(self, inferences):
+        """Record scored inferences (best effort: a write failure must never cost the card)."""
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            for inference in inferences:
+                inference_store.upsert_inference(db, inference)
+        except pymysql.Error as e:
+            logger.error("Inference persist error: " + str(e))
+        finally:
+            if db:
+                db.close()
+
+    def _calendar_busy_at(self, moment):
+        """Whether any household calendar event covers `moment` (naive UTC). A booked absence is
+        not a deviation -- checked directly, like check_departure_anomaly(), since
+        frame.upcoming_events only looks forward."""
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT 1 FROM calendar_events WHERE start_time <= %s AND end_time >= %s LIMIT 1",
+                (moment, moment),
+            )
+            return cursor.fetchone() is not None
+        except pymysql.Error as e:
+            logger.error("Presence calendar check error: " + str(e))
+            return False
+        finally:
+            if db:
+                db.close()
+
+    def check_presence_deviation(self, frame):
+        """LF-3: "out, but usually home at this hour". Scores each person's current state
+        (home/away, from the phone) against their learned P(home | weekday, hour) and records any
+        improbable one in sa_inferences with a probability and a confidence. Fires a card only for
+        an owner/resident who has been away at least MIN_AWAY_MINUTES (phones nap ~30 minutes
+        without leaving), whose confidence clears MIN_CARD_CONFIDENCE, with no household calendar
+        event covering now. One card per cycle: the most surprising, weighted by confidence.
+
+        Tone constraint, inherited from SA-3: an ambient observation, never a welfare check.
+        """
+        if frame.person_presence is None or frame.local_dt is None or frame.now is None:
+            return None
+        profiles = self._presence_profiles()
+        if not profiles:
+            return None
+        learner = presence_learner.PresenceLearner()
+        now_utc = frame.now.replace(tzinfo=None)
+        scored = []
+        for person in frame.person_presence:
+            profile = profiles.get(str(person["user_id"]))
+            if profile is None:
+                continue
+            away_minutes = None
+            if not person["home"] and person["last_online"] is not None:
+                away_minutes = (now_utc - person["last_online"]).total_seconds() / 60.0
+            inference = learner.score(
+                profile,
+                {"home": person["home"], "away_minutes": away_minutes, "local_dt": frame.local_dt},
+                now_utc,
+            )
+            if inference is not None:
+                scored.append((person, inference))
+        if not scored:
+            return None
+        self._persist_inferences([inference for _person, inference in scored])
+
+        candidates = [
+            (person, inference)
+            for person, inference in scored
+            if not person["home"]
+            and person["user_type"] in self.PRESENCE_CARD_USER_TYPES
+            and inference.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not candidates:
+            return None
+        if self._calendar_busy_at(now_utc):
+            return None
+        person, inference = max(candidates, key=lambda c: c[1].surprise * c[1].confidence)
+        day_name = (frame.day_mood or {}).get("day_of_week") or frame.local_dt.strftime("%A")
+        hour = inference.context["hour_local"]
+        away = int(inference.observed["away_minutes"])
+        p_home = inference.expected["p_home"]
+        return {
+            "mode": "presence_deviation",
+            "content": (
+                f"{person['username']} is out — usually home {day_name}s around {hour:02d}:00"
+            ),
+            "priority": 2.75,
+            "entity_name": person["username"],
+            "data": {
+                "expected_p_home": p_home,
+                "away_minutes": away,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
+                "because": [
+                    f"home {round(p_home * 100)}% of {day_name}s at {hour:02d}:00",
+                    f"away {away // 60}h {away % 60:02d}m",
+                    f"confidence {inference.confidence:.2f}",
+                ],
+            },
+        }
 
     def check_household_unusual_day(self, frame):
         """SA-10 Phase 3: "is today unusual for this household" -- the household-level analogue

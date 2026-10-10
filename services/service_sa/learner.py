@@ -14,7 +14,8 @@ import time
 
 import schedule
 
-from sa import engine, lake, silver
+from sa import engine, inference_store, lake, silver
+from sa.learners import presence
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -47,6 +48,22 @@ def run_bronze_export():
         logger.info(f"silver/gold build done: {counts}")
     except Exception as e:
         logger.error(f"silver/gold build failed: {e}")
+    run_learners()
+
+
+def run_learners():
+    """Fit the layer-1 learners on the gold layer and store their profiles and outlooks (LF-3).
+    Runs after every silver/gold rebuild; sa-awareness picks the new fit up on its next cycle."""
+    conn = None
+    try:
+        conn = inference_store.connect()
+        outcome = presence.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"presence learner done: {outcome}")
+    except Exception as e:
+        logger.error(f"presence learner failed: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def run():
