@@ -18,8 +18,11 @@ gain by filtering and a lot to lose by guessing what a future learner will want.
 Left out, on purpose:
 - **Attributes.** They carry signed entity-picture tokens, and the useful values are already their
   own entities (temperature, humidity, pressure, battery are all separate sensors).
-- **Message text.** `sensor.pushbullet_body` is the body of a notification. The title stays (it is
-  the "subject"); the body does not, the same rule as email.
+- **Pushbullet.** Legacy: Pushbullet (like ntfy.sh) is how ALFR3D delivered notifications before
+  Kafka and the backend event stream existed, and neither is used any more. The `pushbullet`
+  entities Home Assistant still exposes are leftovers, and their state is notification text, so the
+  whole family is excluded, not just the body. Exclusions are applied **retroactively** (see
+  `purge_excluded`): changing one removes what was already stored, on the next run.
 
 Home Assistant 2023.8 requires an explicit entity list on history requests, so each run lists the
 current entities from /api/states and fetches them in chunks. An entity that has since been removed
@@ -38,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import requests
 
 from sa import lake
@@ -52,8 +56,9 @@ MAX_BACKFILL_DAYS = 30
 # Stop the backward walk after this many consecutive days with no data at all.
 EMPTY_DAYS_TO_STOP = 3
 
-# Entities whose *state* is private message text. Matched against the full entity id.
-EXCLUDED_ENTITIES = re.compile(r"pushbullet_body", re.IGNORECASE)
+# Entities never stored. Matched against the full entity id. Pushbullet is a legacy notification
+# channel that ALFR3D no longer uses; its entities carry notification text.
+EXCLUDED_ENTITIES = re.compile(r"pushbullet", re.IGNORECASE)
 
 SCHEMA = pa.schema(
     [
@@ -117,6 +122,26 @@ def fetch_window(base_url, headers, entity_ids, start, end, get=requests.get):
     return rows
 
 
+def purge_excluded(table_dir):
+    """Remove rows for excluded entities from partitions already on disk, so tightening
+    EXCLUDED_ENTITIES takes effect on data stored earlier. Returns how many rows were removed."""
+    removed = 0
+    for part in sorted(Path(table_dir).glob("date=*/part-0.parquet")):
+        rows = pq.read_table(part).to_pylist()
+        kept = [r for r in rows if not EXCLUDED_ENTITIES.search(r["entity_id"])]
+        if len(kept) == len(rows):
+            continue
+        removed += len(rows) - len(kept)
+        label = part.parent.name.split("=", 1)[1]
+        if kept:
+            lake._write_partition(
+                Path(table_dir), label, SCHEMA, [[r[n] for n in SCHEMA.names] for r in kept]
+            )
+        else:
+            shutil.rmtree(part.parent)
+    return removed
+
+
 def _merge_rows(table_dir, rows):
     """Group rows by the UTC day of last_changed and merge each day's partition. Returns days
     touched."""
@@ -148,6 +173,9 @@ def export_ha_history(lake_dir=None, now_utc=None, progress=None, get=requests.g
     for stale in table_dir.glob(".tmp-date=*"):
         shutil.rmtree(stale, ignore_errors=True)
 
+    purged = purge_excluded(table_dir)
+    if purged:
+        logger.info(f"ha history: purged {purged} row(s) of excluded entities")
     entities = list_entities(base_url, headers, get)
     since = lake._resume_since(table_dir, now_utc.date())
     total_rows = total_days = 0

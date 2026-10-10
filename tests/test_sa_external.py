@@ -114,14 +114,14 @@ class TestMergePartition:
 
 
 class TestHaEntities:
-    def test_lists_entities_but_never_the_message_body(self):
+    def test_lists_entities_but_never_the_legacy_pushbullet_ones(self):
         ha = FakeHA(
             {}, entities=["sensor.pushbullet_title", "sensor.pushbullet_body", "weather.home"]
         )
 
         ids = ha_history.list_entities("http://ha", {}, ha)
 
-        assert ids == ["sensor.pushbullet_title", "weather.home"]
+        assert ids == ["weather.home"]
 
     def test_a_chunk_of_entities_is_requested_without_attributes(self):
         entities = [f"sensor.s{i:02d}" for i in range(65)]
@@ -248,7 +248,7 @@ class TestHaExport:
 
         assert outcome == {"skipped": "Home Assistant is not configured"} and ha.calls == []
 
-    def test_the_message_body_is_never_requested_or_stored(self, tmp_path):
+    def test_legacy_pushbullet_entities_are_never_requested_or_stored(self, tmp_path):
         history = dict(self.HISTORY)
         history["sensor.pushbullet_body"] = [(datetime(2026, 10, 10, 9, 0), "my private message")]
         history["sensor.pushbullet_title"] = [(datetime(2026, 10, 10, 9, 0), "Dinner?")]
@@ -257,9 +257,60 @@ class TestHaExport:
         self._export(tmp_path, ha)
 
         requested = ",".join(p["filter_entity_id"] for _u, p in ha.history_calls())
-        assert "pushbullet_body" not in requested and "pushbullet_title" in requested
+        assert "pushbullet" not in requested
         stored = str(_partitions(tmp_path, "ha_state_history"))
-        assert "my private message" not in stored and "Dinner?" in stored
+        assert "my private message" not in stored and "Dinner?" not in stored
+
+    def test_tightening_an_exclusion_removes_what_was_already_stored(self, tmp_path):
+        """The first backfill (before Pushbullet was known to be legacy) stored its title entity."""
+        table_dir = tmp_path / "bronze" / "ha_state_history"
+        rows = [
+            [
+                "sensor.pushbullet_title",
+                "sensor",
+                "Dinner?",
+                datetime(2026, 10, 9, 9, 0),
+                datetime(2026, 10, 9, 9, 0),
+            ],
+            [
+                "weather.home",
+                "weather",
+                "sunny",
+                datetime(2026, 10, 9, 10, 0),
+                datetime(2026, 10, 9, 10, 0),
+            ],
+        ]
+        lake.merge_partition(table_dir, "2026-10-09", ha_history.SCHEMA, rows, ha_history.KEY)
+        only_legacy = [
+            ["sensor.pushbullet_body", "sensor", "x", datetime(2026, 10, 8), datetime(2026, 10, 8)]
+        ]
+        lake.merge_partition(
+            table_dir, "2026-10-08", ha_history.SCHEMA, only_legacy, ha_history.KEY
+        )
+
+        removed = ha_history.purge_excluded(table_dir)
+
+        assert removed == 2
+        left = _partitions(tmp_path, "ha_state_history")
+        assert [r["entity_id"] for r in left["2026-10-09"]] == ["weather.home"]
+        assert "2026-10-08" not in left  # a partition that held only excluded rows is deleted
+
+    def test_purge_runs_at_the_start_of_every_export(self, tmp_path):
+        table_dir = tmp_path / "bronze" / "ha_state_history"
+        stale = [
+            [
+                "sensor.pushbullet_title",
+                "sensor",
+                "t",
+                datetime(2026, 10, 9, 9, 0),
+                datetime(2026, 10, 9, 9, 0),
+            ]
+        ]
+        lake.merge_partition(table_dir, "2026-10-09", ha_history.SCHEMA, stale, ha_history.KEY)
+
+        self._export(tmp_path, FakeHA(self.HISTORY))
+
+        assert "pushbullet" not in str(_partitions(tmp_path, "ha_state_history"))
 
     def test_progress_is_reported_so_the_watchdog_is_fed(self, tmp_path):
         progress = MagicMock()
