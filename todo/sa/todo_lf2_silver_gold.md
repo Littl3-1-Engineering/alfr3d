@@ -49,8 +49,8 @@ The plan assumed presence would be merged from arp-scan gaps, user events and ge
 Looking at the household's actual `device_history` first changed that:
 
 - **Hardware is not presence.** The household already tags devices `resident`/`guest`
-  (device_type 5/3) when they stand for a person (their phone) and `HW` (2) for laptops,
-  tablets, Kindles and speakers; that is what the tag is for. On 2026-10-09 Athos's phone was
+  (device_type 5/3) when they stand for a person (only phones carry these tags) and `HW` (2) for
+  laptops, tablets, Kindles and speakers; that is what the tag is for. On 2026-10-09 Athos's phone was
   off the network 08:34-14:25 local while his laptop stayed on at home all day, so a union of his
   devices called him home. Silver builds presence from phones only; hardware feeds
   `device_sessions`. (Athos confirmed the tag's purpose mid-session.)
@@ -64,10 +64,11 @@ Looking at the household's actual `device_history` first changed that:
   (a small bump at 29-33 min is the offline-marking threshold). `PRESENCE_GAP_MINUTES = 45` sits
   just past it and each interval carries `short_gaps_merged`, so a learner can see how much of it
   was inferred rather than observed.
-- **User events and geofence were left out as sources.** `came_online`/`went_offline` appear to
-  come from the same device sightings (~410 events each since 08-30; I did not verify that
-  against the `service_user` code), and geofence has 13 events from one person at 2 km accuracy.
-  The `source` column is there so either can be added when they carry independent information.
+- **User events and geofence were left out as sources.** `came_online`/`went_offline` are logged
+  from the phone's state (confirmed by Athos 2026-10-10: user state is already logged by phone),
+  so they are the same evidence as the phone sightings, not an independent source. Geofence has
+  13 events from one person at 2 km accuracy. The `source` column is there so either can be added
+  when it carries independent information.
 - **The collector had a month-long outage.** `device_history` has *no rows at all* in June 2026 and
   ~38k in July (vs ~1M/month normally). A zero there is a missing measurement, not an absence, so
   the gold grids carry `observed` (the collector wrote at least 10% of its median hourly volume).
