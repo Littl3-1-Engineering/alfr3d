@@ -15,7 +15,7 @@ import time
 import schedule
 
 from sa import engine, external, inference_store, lake, silver
-from sa.learners import presence, scalar
+from sa.learners import presence, rates, scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -74,6 +74,13 @@ def run_learners():
         logger.info(f"scalar learner done: {outcome}")
     except Exception as e:
         logger.error(f"scalar learner failed: {e}")
+    try:
+        if conn is None:
+            conn = inference_store.connect()
+        outcome = rates.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"rate learner done: {outcome}")
+    except Exception as e:
+        logger.error(f"rate learner failed: {e}")
     finally:
         if conn:
             conn.close()
