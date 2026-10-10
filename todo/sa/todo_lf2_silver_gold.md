@@ -2,7 +2,7 @@
 
 > **Layer:** data · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-2
 
-## Status: 🟢 Deployed to the production NUC 2026-10-10 (migration 045 / alembic 0050). The first *scheduled* run (03:30 UTC) has not happened yet; the same function was run by hand and takes 13 s.
+## Status: 🟢 Deployed to the production NUC 2026-10-10 (migration 045 / alembic 0050). The scheduled 03:30 UTC run has since fired on its own (2026-10-10).
 
 All 6 silver and 4 gold tables are built from bronze every night, after the bronze export, in
 `service_sa/sa/silver.py`. Tables, columns and the reasoning behind every choice are in that
@@ -109,7 +109,7 @@ drift detection (LF-3, LF-5) are what catch it.
 - [x] Migration 045: backup `alfr3d_backup_20261009_213442_pre_0050.sql.gz`, rehearsed on a
       restored copy (up, down, up), then production.
 - [x] Real-data check above, including the 2026-10-09 Friday.
-- [ ] Not yet observed: the scheduled 03:30 UTC run.
+- [x] The scheduled 03:30 UTC run rebuilt silver and gold on its own on 2026-10-10 (03:30:22, 8 s).
 
 ## Known limits / follow-ups
 

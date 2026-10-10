@@ -2,7 +2,7 @@
 
 > **Layer:** data · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-1b
 
-## Status: 🟢 Deployed to the production NUC 2026-10-09/10. Backfill done; the first *scheduled* nightly run (03:30 UTC) has not happened yet.
+## Status: 🟢 Deployed to the production NUC 2026-10-09/10. Backfill done; the scheduled nightly run (03:30 UTC) has since fired on its own (2026-10-10).
 
 3.8 M rows across 10 event tables plus 7 daily snapshots are in the lake: **23 MB** on disk
 (`device_history` alone: 2,998,061 rows, 13.1 MB in Parquet vs. 628 MB in MySQL).
@@ -36,7 +36,7 @@
       `NOW()` at insert (`createTables.sql`), so rows arrive in order and a 1-day lookback is
       enough. It is indexed, so the ordered scan is cheap.
 - [x] DuckDB reads the Hive layout directly (`read_parquet(..., hive_partitioning=true)`).
-- [ ] Not yet observed: the scheduled 03:30 UTC run firing on its own. Check
+- [x] The scheduled 03:30 UTC run fired on its own on 2026-10-10: `bronze export done, failures: none` at 03:30:15. Check
       `docker logs alfr3d-sa-learner-1` for `bronze export done` after tonight.
 
 ## What actually happened

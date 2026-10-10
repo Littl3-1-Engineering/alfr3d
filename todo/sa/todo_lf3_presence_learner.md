@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-3
 
-## Status: 🟢 Deployed to the production NUC 2026-10-10 (migration 046 / alembic 0051). 9 profiles and 9 outlooks are stored and the running awareness loop has loaded them. The first *scheduled* fit (03:30 UTC) is unconfirmed at the time of writing; the same function was run by hand.
+## Status: 🟢 Deployed to the production NUC 2026-10-10 (migration 046 / alembic 0051). 9 profiles and 9 outlooks are stored and the running awareness loop has loaded them. The scheduled 03:30 UTC fit has since run on its own (2026-10-10).
 
 New: `sa/confidence.py`, `sa/inference_store.py`, `sa/learners/{base,presence}.py`,
 `SAEngine.check_presence_deviation`, `context_frame.fetch_person_presence`, and a nightly
@@ -81,7 +81,7 @@ evaluated at 11:30 local:
 - [ ] **Not demonstrated live:** the 10-09 absence happened before this rule was running, so
       there is no `sa_inferences` row for it in production, and no real card has fired yet.
       The proof is the walk-forward replay and the tests, not a stored row.
-- [ ] Not yet observed: the scheduled nightly fit.
+- [x] The scheduled nightly fit ran on its own on 2026-10-10 03:30:23: 9 profiles, 0 removed, 9 outlooks.
 
 ## Known limits / follow-ups
 
