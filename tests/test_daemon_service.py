@@ -1153,3 +1153,39 @@ class TestCheckMuteDeckRelay:
 
     def test_occupied_house_unchanged(self):
         assert self._run(self._blob(), False, False) is False
+
+
+class TestRecordWeatherRoutine:
+    """The hourly silent weather sample (LF-0b follow-up): a `record weather` message, not the
+    `check weather` one that makes the environment service announce the weather."""
+
+    @patch.dict(
+        os.environ,
+        {
+            "MYSQL_DATABASE": "test_host",
+            "MYSQL_USER": "root",
+            "MYSQL_PSWD": "testrootpassword",
+            "MYSQL_NAME": "test_alfr3d_db",
+            "ALFR3D_ENV_NAME": "test_env",
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        },
+    )
+    def test_publishes_record_weather_not_check_weather(self):
+        from services.service_daemon import alfr3ddaemon
+
+        producer = MagicMock()
+        with patch.object(alfr3ddaemon, "get_producer", return_value=producer):
+            alfr3ddaemon.record_weather_routine()
+
+        producer.send.assert_called_once_with("environment", b"record weather")
+
+    @patch.dict(os.environ, {"KAFKA_BOOTSTRAP_SERVERS": "localhost:9092"})
+    def test_is_scheduled_hourly_alongside_the_four_hourly_announcement(self):
+        import inspect
+
+        from services.service_daemon import alfr3ddaemon
+
+        source = inspect.getsource(alfr3ddaemon.init_daemon)
+
+        assert "schedule.every(1).hours.do(record_weather_routine)" in source
+        assert "schedule.every(4).hours.do(check_weather_routine)" in source

@@ -211,6 +211,25 @@ def _write_partition(table_dir, label, schema, rows):
     os.replace(tmp, final)
 
 
+HORIZON_FILE = "_exported_through.txt"
+
+
+def write_horizon(table_dir, moment):
+    """Record when an external source was last exported successfully (naive UTC). A state that
+    hasn't changed since Tuesday is still held *now*; without this the silver layer couldn't tell
+    "unchanged" from "we stopped looking", and would have to guess where each interval ends."""
+    Path(table_dir).mkdir(parents=True, exist_ok=True)
+    (Path(table_dir) / HORIZON_FILE).write_text(moment.replace(microsecond=0).isoformat())
+
+
+def read_horizon(table_dir):
+    """The datetime written by write_horizon(), or None if the source was never exported."""
+    try:
+        return datetime.fromisoformat((Path(table_dir) / HORIZON_FILE).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def merge_partition(table_dir, label, schema, rows, key_indexes):
     """Merge `rows` into date=<label>: union with whatever the partition already holds, deduped by
     the key columns (a newer row replaces an older one with the same key), written atomically.

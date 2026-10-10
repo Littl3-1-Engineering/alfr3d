@@ -345,6 +345,19 @@ def check_weather_routine():
         p.send("environment", b"check weather")
 
 
+def record_weather_routine():
+    """
+    Description:
+            Send a record-weather message to the environment topic every hour. Unlike the
+            4-hourly check_weather_routine() it stores the reading silently (no announcement), so
+            the SA layer gets weather history at an hourly resolution.
+    """
+    logger.info("Scheduled weather sample")
+    p = get_producer()
+    if p:
+        p.send("environment", b"record weather")
+
+
 def check_forecast_routine():
     """
     Description:
@@ -476,6 +489,7 @@ def init_daemon():
         # "8.30" in the following function is just a placeholder
         # until i deploy a more configurable alarm clock
         schedule.every(4).hours.do(check_weather_routine)
+        schedule.every(1).hours.do(record_weather_routine)
         schedule.every(1).hours.do(check_forecast_routine)
         schedule.every(15).minutes.do(sync_calendar_routine)
         schedule.every(15).minutes.do(sync_iot_devices)

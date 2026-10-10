@@ -2,7 +2,7 @@
 
 > **Layer:** data + learners · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-0b (new), LF-4, LF-5
 
-## Status: 🟢 LF-0b capture is live (2026-10-10). Silver / gold for the new contexts (LF-2b) and the learner families are next.
+## Status: 🟢 LF-0b capture and LF-2b silver / gold are live (2026-10-10). The learner families are next.
 
 Capture result, all running in production and in the nightly job:
 
@@ -142,3 +142,12 @@ Still open:
   deleted before capture is not recoverable.
 - Subject lines are now stored in the lake on the NUC's volume. They are as sensitive as the
   mailbox itself; the lake should be treated that way (backups, access).
+
+## Found during LF-2b (2026-10-10)
+
+- **Home Assistant is still configured for the old house** (Novi Sad, Serbia), so its weather, sun,
+  home zone and device trackers describe the wrong place. ALFR3D's own `get_weather()` record is the
+  household's weather. Fixing HA's home location is a Home Assistant setting and is Athos's call;
+  see [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) (LF-2b) for the evidence.
+- Weather is now sampled **hourly and silently** (`record weather`), in addition to the four-hourly
+  spoken one.

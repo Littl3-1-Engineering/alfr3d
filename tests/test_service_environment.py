@@ -427,3 +427,71 @@ def test_check_forecast_skips_fetch_when_no_location_data(mock_connect, mock_get
 
     mock_get_forecast.assert_not_called()
     mock_db.close.assert_called_once()
+
+
+# --- Hourly silent weather sample (LF-0b follow-up) ----------------------------------------
+# get_weather() announces the weather aloud and rewrites the sunrise / sunset routines, which is
+# right every four hours. record_weather() stores the same reading for the SA history without
+# either, so it can run every hour.
+
+
+@patch("services.service_environment.environment.weather_util.record_weather")
+@patch("services.service_environment.environment.weather_util.get_weather")
+@patch("services.service_environment.environment.pymysql.connect")
+def test_record_weather_uses_the_household_location_and_never_speaks(
+    mock_connect, mock_get_weather, mock_record
+):
+    import environment
+
+    mock_db = MagicMock()
+    mock_connect.return_value = mock_db
+    mock_db.cursor.return_value.fetchone.return_value = (1, "test", 43.64, -79.59, "Etobicoke")
+
+    environment.record_weather()
+
+    mock_record.assert_called_once_with(43.64, -79.59)
+    mock_get_weather.assert_not_called()  # the speaking path is untouched
+    mock_db.close.assert_called_once()
+
+
+@patch("services.service_environment.environment.weather_util.record_weather")
+@patch("services.service_environment.environment.pymysql.connect")
+def test_record_weather_without_a_location_does_nothing(mock_connect, mock_record):
+    import environment
+
+    mock_connect.return_value.cursor.return_value.fetchone.return_value = (1, "test", None, None)
+
+    environment.record_weather()
+
+    mock_record.assert_not_called()
+
+
+def test_weather_util_record_weather_stores_without_speaking_or_routines():
+    import weather_util
+
+    with patch.object(weather_util.pymysql, "connect") as connect, patch.object(
+        weather_util, "parse_weather", return_value={"main": {}}
+    ), patch.object(weather_util, "update_db_weather", return_value=True) as store, patch.object(
+        weather_util, "speak_weather"
+    ) as speak, patch.object(
+        weather_util, "update_routines"
+    ) as routines:
+        stored = weather_util.record_weather(43.64, -79.59)
+
+    assert stored is True
+    store.assert_called_once()
+    speak.assert_not_called()
+    routines.assert_not_called()
+    connect.return_value.close.assert_called_once()
+
+
+def test_weather_util_record_weather_with_no_reading_stores_nothing():
+    import weather_util
+
+    with patch.object(weather_util.pymysql, "connect") as connect, patch.object(
+        weather_util, "parse_weather", return_value=None
+    ), patch.object(weather_util, "update_db_weather") as store:
+        assert weather_util.record_weather(43.64, -79.59) is False
+
+    store.assert_not_called()
+    connect.return_value.close.assert_called_once()

@@ -1,6 +1,6 @@
 # SA Roadmap: Learning Foundation
 
-## Status: plan approved 2026-10-09. LF-0, LF-0b, LF-1a, LF-1b, LF-2 and LF-3 deployed (2026-10-09/10); LF-2b (silver / gold for the new contexts) and the learner families next. This doc is the entry point for all SA work.
+## Status: plan approved 2026-10-09. LF-0, LF-0b, LF-1a, LF-1b, LF-2 and LF-3 deployed (2026-10-09/10); the learner families (scalar, event stream) and the port of the old baselines next. This doc is the entry point for all SA work.
 
 Every SA doc lives in `todo/sa/` and carries a `Layer:` / `Roadmap:` line under its title that
 points back here. Work proceeds by LF phase (below); each phase has its own `todo_lfN_*.md`.
@@ -148,6 +148,7 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 | **LF-1a** ✅ | [todo_lf1a_sa_service_split.md](todo_lf1a_sa_service_split.md) | Lift the SA engine out of the daemon into `service_sa`, no behaviour change (deployed 2026-10-09; event-driven state deferred to LF-1c) | — |
 | **LF-1b** ✅ | [todo_lf1b_bronze.md](todo_lf1b_bronze.md) | `sa-learner` + Parquet bronze export and backfill (deployed 2026-10-10; 23 MB for 3.8 M rows) | LF-1a |
 | **LF-2** ✅ | [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) | Silver + gold, `sa_data_exclusions` (deployed 2026-10-10; presence = phones only, `observed` flag for collector outages) | LF-1b |
+| **LF-2b** ✅ | [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) | Silver / gold for the LF-0b contexts: HA intervals, hourly scalar and state series, weather, email, daylight, `context_hourly` (deployed 2026-10-10). Found HA's home is still Novi Sad | LF-0b, LF-2 |
 | **LF-3** ✅ | [todo_lf3_presence_learner.md](todo_lf3_presence_learner.md) | Inference contract + presence learner per user (deployed 2026-10-10; the 10-09 absence scores 3.35 bits, confidence 0.39, in walk-forward replay) | LF-2 |
 | **LF-4** | [todo_lf4_port_baselines.md](todo_lf4_port_baselines.md) | Port SA-9/SA-2/rhythm/SA-3/SA-10 to learners, shadow then cut over, retire `entity_baselines` | LF-3 |
 | **LF-5** | [todo_lf5_more_learners.md](todo_lf5_more_learners.md) | Rate, transition (SA-12), drift, visitor-arrival prediction | LF-3 |
