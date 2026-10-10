@@ -15,7 +15,7 @@ import time
 import schedule
 
 from sa import engine, external, inference_store, lake, silver
-from sa.learners import presence, rates, scalar
+from sa.learners import device_rhythm, household_day, presence, rates, scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -81,6 +81,20 @@ def run_learners():
         logger.info(f"rate learner done: {outcome}")
     except Exception as e:
         logger.error(f"rate learner failed: {e}")
+    try:
+        if conn is None:
+            conn = inference_store.connect()
+        outcome = device_rhythm.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"device rhythm learner done: {outcome}")
+    except Exception as e:
+        logger.error(f"device rhythm learner failed: {e}")
+    try:
+        if conn is None:
+            conn = inference_store.connect()
+        outcome = household_day.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"household day learner done: {outcome}")
+    except Exception as e:
+        logger.error(f"household day learner failed: {e}")
     finally:
         if conn:
             conn.close()

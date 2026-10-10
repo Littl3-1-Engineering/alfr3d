@@ -89,6 +89,20 @@ QUALITY_FLOOR = 0.3
 MIN_ABS_Z = 4.0
 
 
+# Count-like series (switches and unlocks per report) are spiky and right-skewed: the natural
+# scale for "unusual" is a multiple, not a difference, so they are modelled as log(1 + value).
+LOG_SERIES_PREFIXES = ("attention:",)
+
+
+def uses_log(series_key):
+    return series_key.startswith(LOG_SERIES_PREFIXES)
+
+
+def to_model(series_key, value):
+    """A raw reading on the scale the series is modelled on."""
+    return math.log1p(max(0.0, value)) if uses_log(series_key) else value
+
+
 def subject_id_for(series_key):
     """sa_profiles.subject_id is VARCHAR(64); a long Home Assistant entity id is shortened with a
     stable hash so two long keys can never collide on a truncated prefix."""
@@ -334,6 +348,7 @@ def fit_points(series_key, points, ref_date, covariate=None, covariate_name="out
             "beta": beta,
             "stability_detail": detail,
             "value_range": [values[0], values[-1]],
+            "log": uses_log(series_key),
         },
         n_eff=round(sum(weights), 3),
         coverage=round(coverage, 4),
@@ -453,7 +468,13 @@ def load_series(lake_dir):
             f"FROM read_parquet('{gold}') WHERE mean IS NOT NULL ORDER BY series_key, bucket_utc"
         ).fetchall():
             grouped.setdefault(key, []).append(
-                {"t": t, "date": d, "hour": h, "value": float(mean), "coverage": float(cov)}
+                {
+                    "t": t,
+                    "date": d,
+                    "hour": h,
+                    "value": to_model(key, float(mean)),
+                    "coverage": float(cov),
+                }
             )
         flags = {}
         entities = os.path.join(lake_dir, "silver", "ha_entities", "part-0.parquet")

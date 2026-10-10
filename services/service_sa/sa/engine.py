@@ -23,7 +23,7 @@ import orjson
 
 # Third party imports
 import pymysql
-from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils
+from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
 from sa.learners import presence as presence_learner
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
@@ -625,11 +625,14 @@ class SAEngine:
         """
         frame = self.build_context_frame()
         collected = []
+        legacy_cards = {}
         for rule_id, _priority, check_name in self.DISPLAY_RULES:
             logger.info(f"Collecting displays: checking {rule_id}")
             card = getattr(self, check_name)(frame)
+            legacy_cards[rule_id] = card
             if card:
                 collected.append((rule_id, card))
+        self._run_shadow(frame, legacy_cards)
 
         displays = []
         for rule_id, card in collected:
@@ -659,6 +662,21 @@ class SAEngine:
 
         logger.debug("Final displays selected: " + str(displays))
         return displays[: self.MAX_DISPLAYS]
+
+    def _run_shadow(self, frame, legacy_cards):
+        """LF-4: score the learners that will replace the legacy rules beside them and log the
+        comparison (sa/shadow.py). Never raises and never changes a card."""
+        try:
+            if getattr(self, "_shadow", None) is None:
+                self._shadow = shadow.ShadowRunner(
+                    lambda: pymysql.connect(
+                        host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+                    ),
+                    self._persist_inferences,
+                )
+            self._shadow.run(frame, legacy_cards)
+        except Exception as e:
+            logger.error(f"Shadow run failed: {e}")
 
     @staticmethod
     def _card_subject_key(rule_id, card):
