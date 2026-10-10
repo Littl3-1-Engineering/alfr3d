@@ -65,6 +65,7 @@ EVENT_TABLES = (
     ("environment_history", "recorded_at"),
     ("device_command_history", "issued_at"),
     ("listening_history", "played_at"),
+    ("deck_context_history", "observed_at"),
 )
 
 # Current-state tables: no history of their own, so a daily snapshot is how user types (resident

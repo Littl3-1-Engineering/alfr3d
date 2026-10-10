@@ -554,6 +554,111 @@ class TestContextHourly:
         assert hours[datetime(2026, 10, 9, 18, 0)]["calendar_busy_minutes"] == 0
 
 
+class TestDeck:
+    DEV = "39bef6ad-a5c8-475d-93a5-36af71a8b8ac"
+
+    def _row(self, minutes, *, device=DEV, source="device_snapshot", heartbeat=0, **state):
+        base = {
+            "battery_bucket": None, "is_charging": None, "dnd_active": None,
+            "headset_connected": None, "network_type": None, "network_quality": None,
+            "orientation": None, "active_surface": None, "top_app": None,
+            "terminal_session_active": None, "relay_enabled": None,
+        }  # fmt: skip
+        base.update(state)
+        return {
+            "id": minutes + 1, "source": source, "device_install_id": device,
+            "observed_at": datetime(2026, 10, 10, 8, 0) + timedelta(minutes=minutes),
+            "is_heartbeat": heartbeat, **base,
+        }  # fmt: skip
+
+    def _lake(self, tmp_path, rows):
+        _bronze_by_day(tmp_path, "deck_context_history", rows, "observed_at")
+        return _run(tmp_path)
+
+    def test_identical_reports_merge_into_one_held_interval(self, tmp_path):
+        rows = [
+            self._row(0, dnd_active=0, battery_bucket=60),
+            self._row(30, dnd_active=0, battery_bucket=60, heartbeat=1),
+            self._row(60, dnd_active=1, battery_bucket=60),
+        ]
+        self._lake(tmp_path, rows)
+
+        runs = _read(tmp_path, "silver", "deck_intervals")
+
+        assert [
+            (r["dnd_active"], r["start_utc"].minute + 60 * (r["start_utc"].hour - 8)) for r in runs
+        ] == [(0, 0), (1, 60)]
+        assert runs[0]["n_reports"] == 2 and runs[0]["n_heartbeats"] == 1
+        # held until the next different report, not past it
+        assert runs[0]["end_utc"] == datetime(2026, 10, 10, 9, 0)
+
+    def test_a_deck_that_goes_quiet_is_not_assumed_to_hold_its_state(self, tmp_path):
+        self._lake(tmp_path, [self._row(0, dnd_active=1)])
+
+        (run,) = _read(tmp_path, "silver", "deck_intervals")
+
+        assert run["end_utc"] - run["start_utc"] == timedelta(
+            minutes=silver_contexts.DECK_SILENCE_MINUTES
+        )
+
+    def test_two_decks_and_the_surface_report_are_separate_streams(self, tmp_path):
+        other = "f05e8522-927c-4758-a424-5ac0dda165e2"
+        rows = [
+            self._row(0, dnd_active=1),
+            self._row(1, device=other, dnd_active=0),
+            self._row(2, device=None, source="surface_state", active_surface="music"),
+        ]
+        self._lake(tmp_path, rows)
+
+        runs = _read(tmp_path, "silver", "deck_intervals")
+
+        assert len(runs) == 3
+
+    def test_unknown_facets_stay_unknown_in_the_hourly_series(self, tmp_path):
+        rows = [self._row(0, dnd_active=1), self._row(30, dnd_active=0)]
+        self._lake(tmp_path, rows)
+
+        series = {r["series_key"] for r in _read(tmp_path, "gold", "state_hourly")}
+
+        assert "deck:39bef6ad:dnd_active" in series
+        assert "deck:39bef6ad:is_charging" not in series  # never reported: no row at all
+
+    def test_state_hourly_splits_the_hour_between_dnd_on_and_off(self, tmp_path):
+        rows = [
+            self._row(0, dnd_active=1),
+            self._row(30, dnd_active=0),
+            self._row(59, dnd_active=0),
+        ]
+        self._lake(tmp_path, rows)
+
+        hour = {
+            r["state"]: r["minutes"]
+            for r in _read(tmp_path, "gold", "state_hourly")
+            if r["series_key"] == "deck:39bef6ad:dnd_active"
+            and r["bucket_utc"] == datetime(2026, 10, 10, 8, 0)
+        }
+
+        assert hour["1"] == pytest.approx(30) and hour["0"] == pytest.approx(30)
+
+    def test_battery_is_a_scalar_series_at_the_bucket_midpoint(self, tmp_path):
+        rows = [self._row(0, battery_bucket=60), self._row(30, battery_bucket=55)]
+        self._lake(tmp_path, rows)
+
+        (hour,) = [
+            r for r in _read(tmp_path, "gold", "scalar_hourly")
+            if r["series_key"] == "deck:39bef6ad:battery"
+            and r["bucket_utc"] == datetime(2026, 10, 10, 8, 0)
+        ]  # fmt: skip
+
+        assert hour["mean"] == pytest.approx((62.5 * 30 + 57.5 * 30) / 60)
+        assert hour["source"] == "deck"
+
+    def test_no_deck_data_builds_nothing(self, tmp_path):
+        counts = _run(tmp_path)
+
+        assert "deck_intervals" not in counts
+
+
 class TestBuild:
     def test_a_lake_with_none_of_the_new_sources_still_builds(self, tmp_path):
         counts = _run(tmp_path)
