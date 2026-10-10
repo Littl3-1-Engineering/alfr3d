@@ -139,6 +139,7 @@ def setup(con, lake_dir, have, tz):
         "email_messages",
         "environment_history",
         "attention_telemetry_history",
+        "deck_context_history",
     ):
         if list((bronze / name).glob("*/part-*.parquet")):
             pattern = f"{bronze / name}/*/part-*.parquet"
@@ -364,6 +365,74 @@ def build_email(con, have):
             FROM b_email_messages ORDER BY received_utc"""}
 
 
+# --- Deck context (LF-0c) ----------------------------------------------------------------------
+
+DECK_SILENCE_MINUTES = 45  # a state is held this long past its last report (heartbeat is 30)
+DECK_FACETS = (
+    "is_charging",
+    "dnd_active",
+    "headset_connected",
+    "network_type",
+    "network_quality",
+    "orientation",
+    "active_surface",
+    "top_app",
+    "terminal_session_active",
+    "relay_enabled",
+)
+
+
+def build_deck(con, have):
+    """deck_intervals: runs of an identical reported state per Deck (and per source), each held
+    until the next different report, or DECK_SILENCE_MINUTES past its last report if the Deck
+    went quiet: a silent Deck is unknown, not 'still in that state'. Also the hour overlaps the
+    gold series are built from."""
+    if "deck_context_history" not in have:
+        return {}
+    columns = ("battery_bucket",) + DECK_FACETS
+    key = ", ".join(f"COALESCE(CAST({c} AS VARCHAR), '~')" for c in columns)
+    anys = ", ".join(f"ANY_VALUE({c}) AS {c}" for c in columns)
+    part = "PARTITION BY source, COALESCE(device_install_id, '')"
+    con.execute(f"""CREATE TABLE deck_intervals AS
+        WITH keyed AS (
+          SELECT *, concat_ws('|', {key}) AS skey FROM b_deck_context_history),
+        flagged AS (
+          SELECT *, CASE WHEN skey IS DISTINCT FROM LAG(skey) OVER w THEN 1 ELSE 0 END AS new_run
+          FROM keyed WINDOW w AS ({part} ORDER BY observed_at, id)),
+        grouped AS (
+          SELECT *, SUM(new_run) OVER ({part} ORDER BY observed_at, id) AS grp FROM flagged),
+        runs AS (
+          SELECT source, device_install_id, grp, MIN(observed_at) AS start_utc,
+                 MAX(observed_at) AS last_utc, COUNT(*) AS n_reports,
+                 SUM(is_heartbeat) AS n_heartbeats, {anys}
+          FROM grouped GROUP BY source, device_install_id, grp)
+        SELECT source, device_install_id, start_utc,
+               LEAST(COALESCE(LEAD(start_utc) OVER ({part} ORDER BY start_utc),
+                              last_utc + INTERVAL {DECK_SILENCE_MINUTES} MINUTE),
+                     last_utc + INTERVAL {DECK_SILENCE_MINUTES} MINUTE) AS end_utc,
+               n_reports, n_heartbeats, {", ".join(columns)}
+        FROM runs""")
+    con.execute("""CREATE TABLE deck_hour_overlaps AS
+        WITH spans AS (
+          SELECT *, UNNEST(generate_series(
+                   time_bucket(INTERVAL 1 HOUR, start_utc),
+                   time_bucket(INTERVAL 1 HOUR,
+                               GREATEST(end_utc - INTERVAL 1 MICROSECOND, start_utc)),
+                   INTERVAL 1 HOUR)) AS bucket_utc
+          FROM deck_intervals)
+        SELECT *, epoch(LEAST(end_utc, bucket_utc + INTERVAL 1 HOUR))
+                    - epoch(GREATEST(start_utc, bucket_utc)) AS seconds
+        FROM spans""")
+    return {"deck_intervals": """
+            SELECT source, device_install_id, start_utc, end_utc,
+                   to_local(start_utc) AS start_local, to_local(end_utc) AS end_local,
+                   epoch(end_utc - start_utc) / 60.0 AS minutes, n_reports, n_heartbeats,
+                   battery_bucket, is_charging, dnd_active, headset_connected, network_type,
+                   network_quality, orientation, active_surface, top_app,
+                   terminal_session_active, relay_enabled
+            FROM deck_intervals ORDER BY source, device_install_id, start_utc"""}
+
+
 # --- Gold ------------------------------------------------------------------------------------
 
 
@@ -371,13 +440,34 @@ def build_gold(con, have):
     """The second gold pass: tables that read other gold / silver tables (views `s_*` and `g_*`
     over the Parquet already written) plus the hourly series built during silver."""
     queries = {}
+    state_parts = []
     if "ha_state_history" in have:
-        queries["state_hourly"] = """
-            SELECT 'ha:' || entity_id AS series_key, bucket_utc,
-                   CAST(to_local(bucket_utc) AS DATE) AS date_local,
+        state_parts.append("""
+            SELECT 'ha:' || entity_id AS series_key, bucket_utc, state, minutes
+            FROM ha_hourly_state""")
+    if "deck_context_history" in have:
+        who = "COALESCE(left(device_install_id, 8), 'launcher')"
+        for facet in DECK_FACETS:
+            state_parts.append(f"""
+            SELECT 'deck:' || {who} || ':{facet}' AS series_key, bucket_utc,
+                   CAST({facet} AS VARCHAR) AS state, SUM(seconds) / 60.0 AS minutes
+            FROM deck_hour_overlaps WHERE {facet} IS NOT NULL AND seconds > 0
+            GROUP BY ALL""")
+    if state_parts:
+        queries["state_hourly"] = f"""
+            SELECT series_key, bucket_utc, CAST(to_local(bucket_utc) AS DATE) AS date_local,
                    hour(to_local(bucket_utc)) AS hour_local, state, minutes
-            FROM ha_hourly_state ORDER BY series_key, bucket_utc, state"""
+            FROM ({" UNION ALL ".join(state_parts)}) ORDER BY series_key, bucket_utc, state"""
     parts = []
+    if "deck_context_history" in have:
+        who = "COALESCE(left(device_install_id, 8), 'launcher')"
+        parts.append(f"""
+            SELECT 'deck:' || {who} || ':battery' AS series_key, 'deck' AS source, bucket_utc,
+                   SUM(LEAST(100.0, battery_bucket + 2.5) * seconds) / SUM(seconds) AS mean,
+                   MIN(battery_bucket) AS min, MAX(LEAST(100, battery_bucket + 5)) AS max,
+                   LEAST(1.0, SUM(seconds) / 3600.0) AS coverage
+            FROM deck_hour_overlaps WHERE battery_bucket IS NOT NULL AND seconds > 0
+            GROUP BY ALL""")
     if "ha_state_history" in have:
         parts.append("""
             SELECT 'ha:' || entity_id AS series_key, 'homeassistant' AS source, bucket_utc,

@@ -2,7 +2,7 @@
 
 > **Layer:** data (input) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-0c (new), [todo_signal_inventory.md](todo_signal_inventory.md)
 
-## Status: 🔲 Not started (filed 2026-10-10 by request). Part of the Deck's data is already in the lake; the rest is reported and thrown away.
+## Status: 🟢 Capture is live (2026-10-10, migration 047 / alembic 0052). The two overwritten reports now append history. No Deck has reported since, so the first rows arrive when one does; learners come after there is data.
 
 ## Why
 
@@ -23,10 +23,10 @@ Every Deck-to-backend endpoint is in `services/service_api/routes/context.py`. C
 | Geofence enter / leave | derived from the fixes | `household_events` (presence/user) | ✅ 13 events | ✅ via events |
 | Card shown / tapped / dismissed | `POST /context/card-interaction` | `card_interactions` | ✅ 49,558 since 08-31 | ✅ bronze |
 | Notification metadata (category, app, sender; **no body**) | `POST /context/notification-event` | `household_events` (notification/sender) | ✅ 1,050 messaged + 66 called since 09-13 | ✅ via events |
-| **Device context**: battery %, charging, **DND**, headset, network type and quality, orientation, active surface, top app, terminal session, speech relay | `POST /context/device-snapshot` | `config` JSON `launcher_device_context`, **one row per Deck, overwritten** | ❌ **current value only** | ❌ |
-| **Surface state**: active surface, terminal session | `POST /context/surface-state` | `config` JSON `launcher_surface_state`, **overwritten** | ❌ **current value only** | ❌ |
+| **Device context**: battery %, charging, **DND**, headset, network type and quality, orientation, active surface, top app, terminal session, speech relay | `POST /context/device-snapshot` | `config` JSON `launcher_device_context` (overwritten) **and now `deck_context_history`** | ✅ from 2026-10-10 | ✅ bronze + silver + gold |
+| **Surface state**: active surface, terminal session | `POST /context/surface-state` | `config` JSON `launcher_surface_state` (overwritten) **and now `deck_context_history`** | ✅ from 2026-10-10 | ✅ bronze + silver + gold |
 
-Two reports carry no history, and they are the ones about *what the person is doing right now*.
+Those two reports used to carry no history, and they are the ones about *what the person is doing right now*. They do from 2026-10-10; everything before that is gone.
 
 ## What is lost, and what it would teach
 
@@ -43,28 +43,38 @@ Two reports carry no history, and they are the ones about *what the person is do
   series, beyond the 15-minute attention aggregates.
 - **Orientation, headset**: weak individually; cheap to keep.
 
-## Proposed design
+## Built (2026-10-10)
 
-- [ ] **`deck_context_history`** (MySQL, 730-day retention EVENT like the other SA tables): one row
-      per *change* in a Deck's context, not per report. Columns: `client_install_id`, `user_id`,
-      `observed_at` (UTC), and the facets from `_DEVICE_CONTEXT_FACETS` flattened (nullable, so the
-      tri-state "not reported" is preserved: `null` means unknown, never "no"), plus the surface
-      state. Written by `report_device_snapshot` / `report_surface_state` after the upsert they
-      already do, best-effort so it can never fail the report. A change-only write keeps it small:
-      battery % is bucketed (5%) so a slow drain doesn't write a row a minute.
-- [ ] Add it to the bronze export (`lake.EVENT_TABLES`), the storage metrics, and the retention
-      doc. One migration; backup and rehearse first.
-- [ ] Silver `deck_context`: per-Deck intervals (charging, DND, on-Wi-Fi) in the same shape as
-      `presence_intervals`, with local time.
-- [ ] Learners (after LF-4): DND rhythm (state family); charging rhythm; **network type as an
-      independent presence cross-check** feeding the presence learner's `source_quality`.
+- [x] **`deck_context_history`** (migration 047 / 0052, 730-day retention EVENT, in the storage
+      metrics). One row per *change* in a Deck's reported state, plus a heartbeat row
+      (`is_heartbeat = 1`) when nothing has changed for 30 minutes, so a held state can be told
+      from a Deck that went quiet. Battery is bucketed to 5 %. A column is NULL when the report did
+      not carry that facet (unknown, never false). `source` is `device_snapshot` (per install id)
+      or `surface_state` (the older single-launcher report, no install id).
+- [x] Written best-effort from `report_device_snapshot` / `report_surface_state` after the
+      existing config upsert (`routes/context._record_deck_context`): a failure is logged and
+      swallowed, never failing the report. Checked against the production schema in a rolled-back
+      transaction (the Decks were not reporting at deploy time).
+- [x] Bronze export (`lake.EVENT_TABLES`).
+- [x] Silver `deck_intervals`: runs of an identical state per Deck, held until the next different
+      report, or 45 minutes past the last report if the Deck went quiet.
+- [x] Gold: every facet as an hourly state series in `state_hourly` (`deck:<install>:dnd_active`,
+      `...:is_charging`, `...:network_type`, ...; minutes per value) and battery as a scalar series
+      in `scalar_hourly` (`deck:<install>:battery`), so the existing learners can read them.
+
+## Still to do
+
+- [ ] Learners (after data accrues): DND rhythm and charging rhythm from `state_hourly`; **network
+      type (wifi vs cellular) as an independent presence cross-check** for the presence learner's
+      `source_quality`. The state-family learner does not exist yet.
+- [ ] Map an install id to a person ("whose phone is this"); today only the location table's
+      `user_id` knows.
 - [ ] **Ask the Deck for more**, in the Deck repo (`alfr3d_deck/todo/`): app-launch counts by
-      category, screen-on intervals, voice-command usage. These are Deck-side changes and a
-      privacy decision for the household before anything is added; metadata only, never content.
-- [ ] Notification metadata stays metadata: the existing rule (category / app / sender, never the
-      body) is the contract. Gmail's own subjects now come from the Gmail API directly
-      ([todo_signal_inventory.md](todo_signal_inventory.md)), so the Deck notification stream does
-      not need to carry them.
+      category, screen-on intervals, voice-command usage. A Deck-side change and a privacy
+      decision for the household first; metadata only, never content.
+- [ ] Notification metadata stays metadata: category / app / sender, never the body. Gmail's own
+      subjects now come from the Gmail API directly, so the Deck notification stream does not need
+      to carry them.
 
 ## Context: legacy notification channels are gone
 

@@ -92,6 +92,7 @@ SILVER_TABLES = (
     "ha_entities",
     "weather_hourly",
     "email_events",
+    "deck_intervals",
 )
 GOLD_TABLES = (
     "presence_grid",
@@ -574,6 +575,7 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
         queries.update(silver_contexts.build_ha(con, have))
         queries.update(silver_contexts.build_weather(con, have))
         queries.update(silver_contexts.build_email(con, have))
+        queries.update(silver_contexts.build_deck(con, have))
         for table in SILVER_TABLES:
             if table in queries:
                 counts[table] = _write(con, queries[table], "silver", table, lake)

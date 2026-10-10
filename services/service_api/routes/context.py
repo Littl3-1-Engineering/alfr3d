@@ -22,7 +22,7 @@ Deck subscribes to it here instead of re-deriving it from a fixed clock bucket.
 import logging
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,6 +52,111 @@ def _upsert_config_json(cursor, key, value_dict):
         cursor.execute("INSERT INTO config (name, value) VALUES (%s, %s)", (key, value))
 
 
+# --- Deck context history (LF-0c, todo/sa/todo_deck_learning_stream.md) ---
+#
+# The two reports above overwrite one config value, so what the Deck said before the last report
+# is gone. This appends a row to deck_context_history when the reported state CHANGES (battery
+# bucketed to 5 %, so a slow drain is not a row a minute), and a heartbeat row when nothing has
+# changed for _DECK_HEARTBEAT: that lets a held state be told from a Deck that went quiet.
+# Columns the report did not carry stay NULL -- unknown, never 0/False (the tri-state rule).
+_DECK_HEARTBEAT = timedelta(minutes=30)
+_DECK_BATTERY_BUCKET = 5
+_DECK_STATE_COLUMNS = (
+    "battery_bucket",
+    "is_charging",
+    "dnd_active",
+    "headset_connected",
+    "network_type",
+    "network_quality",
+    "orientation",
+    "active_surface",
+    "top_app",
+    "terminal_session_active",
+    "relay_enabled",
+)
+_DECK_TEXT_LIMITS = {
+    "network_type": 16,
+    "network_quality": 32,
+    "orientation": 16,
+    "active_surface": 64,
+    "top_app": 128,
+}
+
+
+def _deck_flag(value):
+    return None if value is None else int(bool(value))
+
+
+def _deck_text(column, value):
+    return None if value is None else str(value)[: _DECK_TEXT_LIMITS[column]]
+
+
+def _deck_row_from_facets(facets):
+    """Flatten the cleaned facet blocks into deck_context_history's state columns."""
+    power = facets.get("power", {})
+    interruption = facets.get("interruption", {})
+    network = facets.get("network", {})
+    activity = facets.get("activity", {})
+    battery = power.get("battery_percent")
+    bucket = None
+    if isinstance(battery, (int, float)) and not isinstance(battery, bool):
+        bucket = int(max(0, min(100, battery)) // _DECK_BATTERY_BUCKET * _DECK_BATTERY_BUCKET)
+    return {
+        "battery_bucket": bucket,
+        "is_charging": _deck_flag(power.get("is_charging")),
+        "dnd_active": _deck_flag(interruption.get("dnd_active")),
+        "headset_connected": _deck_flag(interruption.get("headset_connected")),
+        "network_type": _deck_text("network_type", network.get("type")),
+        "network_quality": _deck_text("network_quality", network.get("quality")),
+        "orientation": _deck_text("orientation", facets.get("form", {}).get("orientation")),
+        "active_surface": _deck_text("active_surface", activity.get("active_surface")),
+        "top_app": _deck_text("top_app", activity.get("top_app")),
+        "terminal_session_active": _deck_flag(activity.get("terminal_session_active")),
+        "relay_enabled": _deck_flag(facets.get("speech", {}).get("relay_enabled")),
+    }
+
+
+def _record_deck_context(cursor, source, device_id, state, observed_at):
+    """Append `state` (a dict over _DECK_STATE_COLUMNS) if it differs from this Deck's last row,
+    or as a heartbeat if the last row is older than _DECK_HEARTBEAT. Returns "changed",
+    "heartbeat" or None. Best effort: any database error is logged and swallowed, so recording
+    history can never fail the report that triggered it."""
+    try:
+        cursor.execute(
+            "SELECT observed_at, " + ", ".join(_DECK_STATE_COLUMNS) + " FROM deck_context_history "
+            "WHERE source = %s AND device_install_id <=> %s ORDER BY observed_at DESC, id DESC "
+            "LIMIT 1",
+            (source, device_id),
+        )
+        last = cursor.fetchone()
+        full = {column: state.get(column) for column in _DECK_STATE_COLUMNS}
+        if last is not None:
+            last_state = dict(zip(_DECK_STATE_COLUMNS, last[1:]))
+            if last_state == full:
+                naive = observed_at.replace(tzinfo=None)
+                if naive - last[0] < _DECK_HEARTBEAT:
+                    return None
+                kind, heartbeat = "heartbeat", 1
+            else:
+                kind, heartbeat = "changed", 0
+        else:
+            kind, heartbeat = "changed", 0
+        cursor.execute(
+            "INSERT INTO deck_context_history (source, device_install_id, observed_at, "
+            + ", ".join(_DECK_STATE_COLUMNS)
+            + ", is_heartbeat) VALUES (%s, %s, %s, "
+            + ", ".join(["%s"] * len(_DECK_STATE_COLUMNS))
+            + ", %s)",
+            (source, device_id, observed_at.replace(tzinfo=None))
+            + tuple(full[column] for column in _DECK_STATE_COLUMNS)
+            + (heartbeat,),
+        )
+        return kind
+    except Exception as e:
+        logger.error(f"Error recording deck context history: {e}")
+        return None
+
+
 @router.post("/context/surface-state")
 async def report_surface_state(
     data: dict = None, _perm=Depends(require_permission("context", "surface_state"))
@@ -67,6 +172,16 @@ async def report_surface_state(
         with db_connection() as db:
             cursor = db.cursor()
             _upsert_config_json(cursor, SURFACE_STATE_CONFIG_KEY, state)
+            _record_deck_context(
+                cursor,
+                "surface_state",
+                None,
+                {
+                    "active_surface": _deck_text("active_surface", state["active_surface"]),
+                    "terminal_session_active": _deck_flag(state["terminal_session_active"]),
+                },
+                datetime.now(timezone.utc),
+            )
             db.commit()
         return {"message": "Surface state recorded"}
     except Exception as e:
@@ -514,16 +629,14 @@ def _presence_value():
     `getResidents` summary. Names only; device names/MACs are not exposed."""
     with db_connection() as db:
         cursor = db.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT u.username
             FROM device d
             JOIN states s ON d.state = s.id
             LEFT JOIN user u ON d.user_id = u.id
                 AND u.username NOT IN ('unknown', 'alfr3d')
             WHERE s.state = 'online'
-            """
-        )
+            """)
         rows = cursor.fetchall()
     known = sorted({row[0] for row in rows if row[0]})
     return {
@@ -699,6 +812,9 @@ async def report_device_snapshot(
                 cursor,
                 DEVICE_CONTEXT_CONFIG_KEY,
                 {"schema_version": DEVICE_CONTEXT_SCHEMA_VERSION, "devices": devices},
+            )
+            _record_deck_context(
+                cursor, "device_snapshot", device_id, _deck_row_from_facets(facets), observed_at
             )
             db.commit()
         return {"message": "Device context recorded"}
