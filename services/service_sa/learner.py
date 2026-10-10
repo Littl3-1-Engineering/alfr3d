@@ -2,7 +2,8 @@
 """sa-learner: the slow path of service_sa.
 
 Runs compute_entity_baselines() every 6 hours (the job service_daemon used to run on its own
-schedule, LF-1a) and the nightly Parquet bronze export (LF-1b, sa/lake.py). Both take minutes on
+schedule, LF-1a) and the nightly lake job: Parquet bronze export (LF-1b, sa/lake.py) followed by
+the silver/gold rebuild (LF-2, sa/silver.py). Both take minutes on
 the NUC, which is exactly why they don't share a loop with anything time-sensitive. Later phases
 add silver/gold and the layer-1 learners.
 """
@@ -13,7 +14,7 @@ import time
 
 import schedule
 
-from sa import engine, lake
+from sa import engine, lake, silver
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -30,14 +31,22 @@ BRONZE_EXPORT_AT = "03:30"
 
 
 def run_bronze_export():
-    """Nightly Parquet export (LF-1b). Touches the heartbeat as each day is written: a first run
-    on an empty lake is a full backfill that outlasts the watchdog's stale window, and the
-    watchdog exits the process when the heartbeat goes stale."""
+    """Nightly lake job: export MySQL to bronze (LF-1b), then rebuild silver and gold from it
+    (LF-2). Touches the heartbeat as each piece is written: a first run on an empty lake is a full
+    backfill that outlasts the watchdog's stale window, and the watchdog exits the process when
+    the heartbeat goes stale. The two stages fail independently: a bronze table that couldn't be
+    exported still leaves yesterday's copy, and silver is rebuilt from whatever bronze holds."""
+    touch = lambda: heartbeat.touch(HEARTBEAT_PATH)  # noqa: E731
     try:
-        outcome = lake.run_export(progress=lambda: heartbeat.touch(HEARTBEAT_PATH))
+        outcome = lake.run_export(progress=touch)
         logger.info(f"bronze export done, failures: {outcome['failures'] or 'none'}")
     except Exception as e:
         logger.error(f"bronze export failed: {e}")
+    try:
+        counts = silver.run_build(progress=touch)
+        logger.info(f"silver/gold build done: {counts}")
+    except Exception as e:
+        logger.error(f"silver/gold build failed: {e}")
 
 
 def run():
