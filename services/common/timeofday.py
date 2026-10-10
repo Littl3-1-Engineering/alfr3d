@@ -2,7 +2,7 @@
 
 stdlib-only (no DB, no Kafka, no service imports) so anything can import it,
 including deliberately dependency-light modules like
-``service_daemon/utils/mood_utils.py``. The DB-backed, routine-aware layer that
+``service_sa/sa/mood_utils.py``. The DB-backed, routine-aware layer that
 knows the household's actual wake/sleep/sun times lives in
 ``common/day_context.py`` -- this module is only the clock math everyone agrees
 on, in one place instead of three.
@@ -14,7 +14,7 @@ def coarse_bucket(hour):
 
     This is the 4-way view the music recommender and the day-mood energy table
     use. It used to be copy-pasted in ``common.spotify_utils`` and
-    ``service_daemon/utils/mood_utils.py`` with a "keep these in sync" comment
+    ``service_sa/sa/mood_utils.py`` with a "keep these in sync" comment
     on both -- now there is one definition.
     """
     if 6 <= hour < 12:

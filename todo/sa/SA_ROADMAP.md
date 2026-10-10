@@ -1,6 +1,6 @@
 # SA Roadmap: Learning Foundation
 
-## Status: plan approved 2026-10-09. LF-0 deployed 2026-10-09; LF-1a next. This doc is the entry point for all SA work.
+## Status: plan approved 2026-10-09. LF-0 and LF-1a deployed 2026-10-09; LF-1b next. This doc is the entry point for all SA work.
 
 Every SA doc lives in `todo/sa/` and carries a `Layer:` / `Roadmap:` line under its title that
 points back here. Work proceeds by LF phase (below); each phase has its own `todo_lfN_*.md`.
@@ -133,7 +133,7 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 | Phase | Doc | What | Depends on |
 |---|---|---|---|
 | **LF-0** ✅ | [todo_lf0_retention_gaps.md](todo_lf0_retention_gaps.md) | 730-day retention and history capture for every SA variable in MySQL (deployed 2026-10-09) | — |
-| **LF-1a** | [todo_lf1a_sa_service_split.md](todo_lf1a_sa_service_split.md) | Lift the SA engine out of the daemon into `service_sa`, no behaviour change | — |
+| **LF-1a** ✅ | [todo_lf1a_sa_service_split.md](todo_lf1a_sa_service_split.md) | Lift the SA engine out of the daemon into `service_sa`, no behaviour change (deployed 2026-10-09; event-driven state deferred to LF-1c) | — |
 | **LF-1b** | [todo_lf1b_bronze.md](todo_lf1b_bronze.md) | `sa-learner` + Parquet bronze export and backfill | LF-1a |
 | **LF-2** | [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) | Silver + gold, `sa_data_exclusions` | LF-1b |
 | **LF-3** | [todo_lf3_presence_learner.md](todo_lf3_presence_learner.md) | Inference contract + presence learner per user (first proof) | LF-2 |

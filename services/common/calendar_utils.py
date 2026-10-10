@@ -15,7 +15,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
-from common import get_producer
+from . import get_producer
 
 logger = logging.getLogger("CalendarUtils")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()

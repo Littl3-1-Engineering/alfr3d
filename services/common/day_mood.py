@@ -15,7 +15,7 @@ morning, 12-18 day, 18-22 evening, else night) -- one definition, shared with
 stdlib-only (no DB/Kafka), so importing it here keeps this module effectively
 dependency-free.
 
-Lives in `common` (not `service_daemon/utils/mood_utils.py`, which re-exports it) so
+Lives in `common` (not `service_sa/sa/mood_utils.py`, which re-exports it) so
 `service_api`'s GET /api/context/snapshot can serve the same answer instead of a
 second implementation -- todo/sa/todo_context_exchange_protocol.md Phase 3.
 """

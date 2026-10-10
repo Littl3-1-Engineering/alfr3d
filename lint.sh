@@ -29,6 +29,12 @@ cd ../service_daemon || exit 1
 flake8 alfr3ddaemon.py utils/ --max-line-length=100 --ignore=$FLAKE8_IGNORE || exit 1
 black --check --diff --line-length=100 alfr3ddaemon.py utils/ || exit 1
 
+# Situational awareness service (LF-1a)
+echo "Linting service_sa..."
+cd ../service_sa || exit 1
+flake8 awareness.py learner.py sa/ --max-line-length=100 --ignore=$FLAKE8_IGNORE || exit 1
+black --check --diff --line-length=100 awareness.py learner.py sa/ || exit 1
+
 # User service
 echo "Linting service_user..."
 # Use flake8 to check for Python style violations in app.py, with max line length 100

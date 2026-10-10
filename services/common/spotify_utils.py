@@ -592,7 +592,7 @@ def search_by_seeds(track_ids, artist_names, limit=20):
 
 def _normalize_time_of_day(hour):
     # One definition, in common.timeofday.coarse_bucket() -- also used by
-    # service_daemon/utils/mood_utils.py and the daemon's scheduled music.
+    # service_sa/sa/mood_utils.py and the daemon's scheduled music.
     from . import timeofday
 
     return timeofday.coarse_bucket(hour)
@@ -609,7 +609,7 @@ def is_party_night(now=None):
     """Whether `now` falls in the household's Friday-evening-through-
     Saturday-night party window.
 
-    Lives here (rather than service_daemon/utils/mood_utils.py) so both the
+    Lives here (rather than service_sa/sa/mood_utils.py) so both the
     daemon and the API service's on-demand `/music/recommend/playlist` can
     call it without a cross-service import — same reasoning as `recommend()`
     itself; see that function's docstring.
@@ -801,3 +801,22 @@ def recommend(
         "tempo_hint": tempo,
         "playlist_hint": playlist_hint,
     }
+
+
+def resolve_playlist(playlist_hint, genre=""):
+    """Resolve a playlist hint into a real Spotify playlist (id/name/uri/url/image/source).
+
+    Returns None when Spotify isn't connected or nothing matched -- callers must treat that as
+    "no specific playlist available right now", not an error. Moved here from service_daemon's
+    utils/spotify_utils.py facade in LF-1a, so the daemon and service_sa share one copy.
+    """
+    try:
+        playlist, err = find_playlist_for_hint(playlist_hint, genre)
+        if err or not playlist:
+            if err:
+                logger.info(f"resolve_playlist: no playlist resolved for '{playlist_hint}': {err}")
+            return None
+        return playlist
+    except Exception as e:
+        logger.error(f"resolve_playlist error: {e}")
+        return None

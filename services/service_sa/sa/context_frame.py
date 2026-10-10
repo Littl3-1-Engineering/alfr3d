@@ -117,16 +117,14 @@ def fetch_online_devices():
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT u.username, d.name
             FROM device d
             JOIN states s ON d.state = s.id
             LEFT JOIN user u ON d.user_id = u.id
                 AND u.username NOT IN ('unknown', 'alfr3d')
             WHERE s.state = 'online'
-            """
-        )
+            """)
         rows = cursor.fetchall()
         known_names = sorted({row[0] for row in rows if row[0]})
         return {
