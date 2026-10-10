@@ -211,6 +211,27 @@ def _write_partition(table_dir, label, schema, rows):
     os.replace(tmp, final)
 
 
+def merge_partition(table_dir, label, schema, rows, key_indexes):
+    """Merge `rows` into date=<label>: union with whatever the partition already holds, deduped by
+    the key columns (a newer row replaces an older one with the same key), written atomically.
+
+    The MySQL exports rewrite a whole day because MySQL is the source of truth for that day. The
+    external sources (Home Assistant, Gmail) re-deliver overlapping windows and, for Home Assistant,
+    start-of-window anchor states that belong to an older day, so those partitions are merged, not
+    replaced. Idempotent: merging the same rows twice leaves the partition unchanged."""
+    final = Path(table_dir) / f"date={label}" / "part-0.parquet"
+    names = schema.names
+    merged = {}
+    if final.exists():
+        for record in pq.read_table(final).to_pylist():
+            row = [record.get(n) for n in names]
+            merged[tuple(row[i] for i in key_indexes)] = row
+    for row in rows:
+        merged[tuple(row[i] for i in key_indexes)] = row
+    _write_partition(Path(table_dir), label, schema, list(merged.values()))
+    return len(merged)
+
+
 def _schema_for(columns):
     return pa.schema([pa.field(name, arrow_type(data_type)) for name, data_type in columns])
 

@@ -24,7 +24,6 @@ from aioesphomeapi import (
 
 from common import esphome_utils
 
-
 # --- last_state serialization (sensor/binary_sensor HA-shape normalization) ----------------
 # ControlBlade.jsx/FavoriteDeviceTile.jsx read last_state as HA's {"state": ..., "attributes":
 # {...}} shape directly -- ESPHome's raw per-entity dict nests the actual value one level
@@ -81,11 +80,44 @@ def test_record_sensor_history_inserts_for_numeric_sensor_state():
     assert params[1] == 24.9
 
 
-def test_record_sensor_history_skips_binary_sensor():
+def test_record_sensor_history_records_binary_sensor_as_one_or_zero():
+    """LF-0b: on/off IoT states used to have no history at all. They're kept as 1.0 / 0.0 so the
+    mean over a window is the fraction of time on."""
+    for reported, expected in ((True, 1.0), (False, 0.0)):
+        cursor = MagicMock()
+        state = MagicMock(state=reported, missing_state=False)
+
+        esphome_utils._record_sensor_history(cursor, 7, "binary_sensor", state)
+
+        sql, params = cursor.execute.call_args.args
+        assert "INSERT INTO smarthome_sensor_history" in sql
+        assert params[0] == 7 and params[1] == expected and isinstance(params[1], float)
+
+
+def test_record_sensor_history_records_lights_and_switches():
+    for domain in ("light", "switch"):
+        cursor = MagicMock()
+
+        esphome_utils._record_sensor_history(cursor, 9, domain, MagicMock(state=True))
+
+        assert cursor.execute.call_args.args[1][1] == 1.0
+
+
+def test_record_sensor_history_skips_a_binary_sensor_that_has_not_reported():
     cursor = MagicMock()
-    state = MagicMock(state=True)
+    state = MagicMock(state=False, missing_state=True)
 
     esphome_utils._record_sensor_history(cursor, 7, "binary_sensor", state)
+
+    cursor.execute.assert_not_called()
+
+
+def test_record_sensor_history_skips_nan_and_other_domains():
+    cursor = MagicMock()
+
+    esphome_utils._record_sensor_history(cursor, 7, "sensor", MagicMock(state=float("nan")))
+    esphome_utils._record_sensor_history(cursor, 7, "climate", MagicMock(state=21.0))
+    esphome_utils._record_sensor_history(cursor, 7, "media_player", MagicMock(state=True))
 
     cursor.execute.assert_not_called()
 
@@ -384,7 +416,7 @@ def test_upsert_node_entities_records_history_for_existing_sensor_entity():
     assert history_calls[0].args[1][0] == 99
 
 
-def test_upsert_node_entities_does_not_record_history_for_binary_sensor():
+def test_upsert_node_entities_records_history_for_binary_sensor():
     entity = BinarySensorInfo(object_id="motion", key=1, name="Motion")
     state = BinarySensorState(key=1, state=True)
 
@@ -399,7 +431,8 @@ def test_upsert_node_entities_does_not_record_history_for_binary_sensor():
     history_calls = [
         c for c in mock_cursor.execute.call_args_list if "smarthome_sensor_history" in c.args[0]
     ]
-    assert history_calls == []
+    assert len(history_calls) == 1
+    assert history_calls[0].args[1][0] == 42 and history_calls[0].args[1][1] == 1.0
 
 
 # --- Push (persistent, Phase 5) --------------------------------------------------------------

@@ -2,7 +2,16 @@
 
 > **Layer:** data + learners · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-0b (new), LF-4, LF-5
 
-## Status: 🔲 Inventory written 2026-10-10 from the live lake. Capture work (LF-0b) not started.
+## Status: 🟢 LF-0b capture is live (2026-10-10). Silver / gold for the new contexts (LF-2b) and the learner families are next.
+
+Capture result, all running in production and in the nightly job:
+
+| Context | Now captured | Size / depth |
+|---|---|---|
+| **Home Assistant**: every entity (80, minus the message-body one), state changes | bronze `ha_state_history`, nightly + backfill | 7,330 points, 79 entities, **11 days** (09-30 to 10-10), the whole of HA's retention |
+| **Email**: sender, subject, time, labels, read state (never the body) | bronze `email_messages`, nightly, self-healing | **3,656 messages, exactly 12 months**, 533 distinct senders |
+| **ESPHome binary sensors, light, switch** | `smarthome_sensor_history` as 1.0 / 0.0 | first readings 04:01 today; accrues each sync |
+| **Weather** | already captured by `get_weather()` into `environment_history` (LF-0) | since 10-09; HA's OpenWeatherMap entities add the prior ~10 days at finer resolution |
 
 ## Why this exists
 
@@ -43,13 +52,13 @@ home" is a state conditioned on presence. Cross-signal findings like that are la
 |---|---|---|---|---|
 | **People at home** | state | phone sightings (silver) | since 2026-04-12; **no data in June, ~none in July** (collector outage) | ✅ learner built |
 | **Indoor temp / humidity** (ESPHome) + wifi, uptime | scalar | `smarthome_sensor_history` | 762,739 readings since 09-16 (3.5 weeks) | ✅ captured; too short for seasons |
-| **ESPHome binary sensors (2), light (1)** | state | only the current `last_state` | **none**: sensor history records the numeric `sensor` domain only | ❌ gap |
-| **Home Assistant: 48 sensors, 13 media players** (24 OpenWeatherMap incl. forecasts, phone battery / charger, speedtest, Pushbullet title and body, version) | scalar / state / event | only the current value in `smarthome_devices.last_state` | **none on our side.** HA keeps ~10 days (probed: data back to ~09-30, nothing older) | ❌ gap, **urgent: loses a day every day** |
-| **Weather / meteorological** | scalar + categorical | `environment_history` | 13 rows since 10-09 | ❌ gap (HA's OpenWeatherMap entities hold the last ~10 days) |
+| **ESPHome binary sensors (2), light (1)** | state | `smarthome_sensor_history`, 1.0 / 0.0 (mean over a window = fraction of time on) | since 2026-10-10 | ✅ captured |
+| **Home Assistant: 48 sensors, 13 media players, sun, weather, device trackers, scripts** (24 OpenWeatherMap incl. forecasts, phone battery / charger, speedtest, Pushbullet title, version) | scalar / state / event | `bronze/ha_state_history` (state changes, on-change timestamps) | 11 days at capture time; HA keeps ~10, so **nothing older than 09-30 exists anywhere** | ✅ captured from 2026-10-10 |
+| **Weather / meteorological** | scalar + categorical | `get_weather()` -> `environment_history` (every 4 h, forecast hourly) since 10-09, plus HA's 24 OpenWeatherMap entities (state changes, finer than 4 h) back to 09-30 | ~13 rows + 11 days of HA | ✅ captured. Only the history *before* 09-30 is missing, and accumulating is the decision |
 | **IoT commands** | event | `device_command_history` | since 10-10 (1 row so far) | ✅ captured |
 | **Date, day, time of year, holidays** | context | silver `day_context` | built for the whole span | ✅ (daylight not yet: sunrise and sunset accumulate in `environment_history` from 10-09) |
 | **Calendar events** | interval | `calendar_events` | 2 events kept since 10-09; earlier events were deleted 24 h after ending. `household_events` has 33 created / removed notices since 09-08 | ⚠️ mostly lost |
-| **Email** (frequency, sender, subject) | event stream | Gmail API, but only the top-5 unread are read for a card, and **nothing is stored** | none stored. Deck notifications of Gmail messages give sender and app only (see next row) | ❌ gap, **backfillable** from the Gmail API |
+| **Email** (frequency, sender, subject) | event stream | `bronze/email_messages`: Gmail metadata only, no body | 3,656 messages, 12 months | ✅ captured |
 | **Notifications and calls from the Deck** | event stream | `household_events` notification events | 1,050 messaged + 66 called since 09-13; **sender name and app only, no subject** | ⚠️ partial |
 | **Geofencing / location** | state + scalar | `device_location_history`, enter / leave events | 797 fixes since 09-11, one device, 2 km accuracy; 13 enter / leave events | ⚠️ thin |
 | **Phone / attention** (unlocks, switches, dwell) | scalar | `attention_telemetry_history` | 1,491 rows since 08-30 | ✅ captured. DND and battery on the Deck are current-only |
@@ -58,31 +67,26 @@ home" is a state conditioned on presence. Cross-signal findings like that are la
 | **Routines** | event | `routine/executed` events | 145 since 09-08 | ✅ |
 | **Network health** (speedtest) | scalar | HA entities | none (inside the HA gap) | ❌ gap |
 
-## Capture gaps, ranked by how fast they are being lost
+## Capture gaps: what was closed and what remains
 
-1. **Home Assistant entity history: ~1 day lost per day.** HA's recorder keeps ~10 days. Fix: a
-   nightly export of every entity's state changes from HA's history API straight into bronze
-   Parquet, plus a **one-time backfill of the ~10 days still available**. No new MySQL table; HA is
-   the source of truth and a 10-day window leaves plenty of margin for a missed night.
-2. **Weather.** `environment_history` has accumulated since 10-09. HA's OpenWeatherMap entities
-   cover the last ~10 days. Years of past weather exist in free historical archives but would
-   require sending the household's coordinates to a third party: **a decision, not a default.**
-3. **Email.** Not stored at all. The Gmail API holds years: a metadata-only capture (received time,
-   sender, sender domain, subject, labels, read state; never the body) can be incrementally synced
-   and **backfilled** deep into the past, so email learners could start with real history. Needs a
-   decision on subject retention and on how far to backfill.
-4. **ESPHome state domains** other than numeric sensors (binary sensors, lights): extend the
-   existing recorder.
-5. **Calendar.** Retention is fixed since 10-09; earlier history is gone except the created /
-   removed notices.
-6. **Deck context** (DND, battery, activity) is current-only; attention telemetry already has
-   history.
+Closed by LF-0b (2026-10-10): Home Assistant history, email metadata, ESPHome binary / light /
+switch states. Weather needed no new work (see the status table).
+
+Still open:
+1. **Calendar.** Retention is fixed since 10-09; earlier history is gone except the created /
+   removed notices in `household_events`.
+2. **Deck context** (DND, battery, activity on the phone) is current-only; attention telemetry
+   already has history.
+3. **Notifications.** The Deck reports sender and app only (1,050 since 09-13). Email subjects now
+   come from Gmail directly, so the only notification content missing is for apps other than Gmail
+   (Viber, ...). Whether to ask the Deck for more is a privacy decision, not a default.
+4. **Weather before 2026-09-30.** Decided: accumulate only. Seasonal context will build slowly.
+5. **HA attributes** are not stored on purpose (signed picture tokens). Anything useful that lives
+   only in an attribute (the sun's elevation) has to be computed instead.
 
 ## Proposed order
 
-- **LF-0b: capture the missing contexts (do first, before more learners).** Items 1, 3 and 4 above
-  (and 2 if approved). Pure capture: bronze exports, one Gmail metadata sync, extended recorders.
-  Each is small and independent; the first has a clock on it.
+- **LF-0b: capture the missing contexts. Done 2026-10-10** (see the status table).
 - **LF-2b: silver and gold for the new contexts** (`ha_states`, `weather_hourly`, `email_events`,
   daylight in `day_context`, calendar density) and signal-shape-generic gold grids, so each learner
   family reads one common shape.
@@ -101,3 +105,34 @@ home" is a state conditioned on presence. Cross-signal findings like that are la
 - Indoor climate has one sensor in one room. "Indoor humidity and temperature" is a single series.
 - A learner is only as good as its context: until weather and calendar history exist, "unusual for
   this weather" cannot be asked.
+
+## What LF-0b taught (2026-10-10)
+
+- **Home Assistant 2023.8 requires an explicit entity list** on history requests (an unfiltered
+  call is HTTP 400), so each run lists `/api/states` first and fetches in chunks of 30.
+- **HA stamps the state in effect at the start of a window at that start** (711 points at exactly
+  00:00:00 across the backfill). These midnight anchors are what let a series be rebuilt for an
+  entity that rarely changes. Partitions are therefore *merged* by (entity, time), not replaced.
+- **Gmail rate-limited a batch of 50 on 19 of 50 messages (HTTP 429)**, and my first version
+  treated per-message errors as "message gone" and dropped them silently: 1,230 of 3,655 messages
+  were missing after the first run, with no error. Found by comparing listed against stored. Now:
+  batches of 10, per-message retry with backoff, and a count of anything still failing. The sync
+  also lists the whole 12-month window every run and fetches what is not stored, so a miss repairs
+  itself.
+- **Gmail's own estimate was wrong**: it said 201 messages in the last 12 months; the real list is
+  3,655.
+- **One message arrived with `internalDate` = -1 ms** and landed in 1969. The parser now falls back
+  to the `Date` header and drops the message only if neither is plausible.
+- **Message text stays out.** `sensor.pushbullet_body` is excluded by name and email bodies are
+  never requested; subjects and Pushbullet *titles* are kept, as the household asked.
+- A `bool` is an `int` in Python: ESPHome binary states were silently skippable only because of the
+  domain check, so on/off states now map explicitly to 1.0 / 0.0.
+
+## Known limits
+
+- HA history older than ~10 days at the time of the first run is gone for good. If `sa-learner`
+  is down for more than about nine days, the same will happen again.
+- Email is only as complete as Gmail's non-spam, non-trash list for the last 12 months; mail
+  deleted before capture is not recoverable.
+- Subject lines are now stored in the lake on the NUC's volume. They are as sensitive as the
+  mailbox itself; the lake should be treated that way (backups, access).

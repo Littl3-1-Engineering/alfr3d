@@ -14,7 +14,7 @@ import time
 
 import schedule
 
-from sa import engine, inference_store, lake, silver
+from sa import engine, external, inference_store, lake, silver
 from sa.learners import presence
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
@@ -32,17 +32,23 @@ BRONZE_EXPORT_AT = "03:30"
 
 
 def run_bronze_export():
-    """Nightly lake job: export MySQL to bronze (LF-1b), then rebuild silver and gold from it
-    (LF-2). Touches the heartbeat as each piece is written: a first run on an empty lake is a full
-    backfill that outlasts the watchdog's stale window, and the watchdog exits the process when
-    the heartbeat goes stale. The two stages fail independently: a bronze table that couldn't be
-    exported still leaves yesterday's copy, and silver is rebuilt from whatever bronze holds."""
+    """Nightly lake job: export MySQL to bronze (LF-1b), pull the external sources that keep their
+    own history -- Home Assistant and Gmail (LF-0b) -- then rebuild silver and gold from it (LF-2).
+    Touches the heartbeat as each piece is written: a first run on an empty lake is a full backfill
+    that outlasts the watchdog's stale window, and the watchdog exits the process when the
+    heartbeat goes stale. The stages fail independently: a bronze table that couldn't be exported
+    still leaves yesterday's copy, and silver is rebuilt from whatever bronze holds."""
     touch = lambda: heartbeat.touch(HEARTBEAT_PATH)  # noqa: E731
     try:
         outcome = lake.run_export(progress=touch)
         logger.info(f"bronze export done, failures: {outcome['failures'] or 'none'}")
     except Exception as e:
         logger.error(f"bronze export failed: {e}")
+    try:
+        outcomes = external.run_all(progress=touch)
+        logger.info(f"external exports done: {outcomes}")
+    except Exception as e:
+        logger.error(f"external exports failed: {e}")
     try:
         counts = silver.run_build(progress=touch)
         logger.info(f"silver/gold build done: {counts}")

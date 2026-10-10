@@ -465,21 +465,38 @@ def _entity_last_state(domain, entity, state):
     }
 
 
+# Domains whose readings are kept for learning. A numeric `sensor` is recorded as its value; an
+# on/off domain is recorded as 1.0 / 0.0, so the same FLOAT column holds a duty cycle (the mean of a
+# binary sensor, light or switch over a window is the fraction of time it was on).
+_HISTORY_DOMAINS = ("sensor", "binary_sensor", "switch", "light")
+
+
 def _record_sensor_history(cursor, smarthome_device_id, domain, state):
-    """Best-effort append to smarthome_sensor_history (SA-9 Phase 2) -- one row per numeric
-    `sensor` reading, so compute_entity_baselines() has something to learn "typical for this
-    time of day" from. binary_sensor is skipped (no numeric range to learn); a missing/non-
-    numeric state is skipped too. Shares the caller's connection/cursor, but a failure here must
-    never break the smarthome_devices upsert it's riding along with -- same "must never affect
-    the thing that already succeeded" discipline service_api._persist_household_events() uses.
+    """Best-effort append to smarthome_sensor_history (SA-9 Phase 2, extended in LF-0b) -- one row
+    per reading, so the SA layer has something to learn "typical for this time of day" from.
+
+    Numeric `sensor` readings were always kept; binary sensors, lights and switches were skipped
+    ("no numeric range to learn"), which left every on/off IoT state without history. They are now
+    kept as 1.0 / 0.0. A missing / non-numeric / NaN reading is skipped (a binary sensor that
+    hasn't reported yet has `missing_state`). Shares the caller's connection/cursor, but a failure
+    here must never break the smarthome_devices upsert it's riding along with -- same "must never
+    affect the thing that already succeeded" discipline service_api._persist_household_events()
+    uses.
     """
-    if domain != "sensor" or state is None or not isinstance(state.state, (int, float)):
+    if domain not in _HISTORY_DOMAINS or state is None:
+        return
+    if getattr(state, "missing_state", False) is True:
+        return
+    value = state.state
+    if isinstance(value, bool):
+        value = 1.0 if value else 0.0
+    elif not isinstance(value, (int, float)) or value != value:  # not a number, or NaN
         return
     try:
         cursor.execute(
             "INSERT INTO smarthome_sensor_history (smarthome_device_id, value, recorded_at) "
             "VALUES (%s, %s, %s)",
-            (smarthome_device_id, state.state, datetime.now(timezone.utc)),
+            (smarthome_device_id, value, datetime.now(timezone.utc)),
         )
     except Exception as e:
         logger.error(f"Failed to record sensor history for device {smarthome_device_id}: {e}")

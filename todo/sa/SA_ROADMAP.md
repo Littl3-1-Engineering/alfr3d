@@ -1,6 +1,6 @@
 # SA Roadmap: Learning Foundation
 
-## Status: plan approved 2026-10-09. LF-0, LF-1a, LF-1b, LF-2 and LF-3 deployed (2026-10-09/10); LF-4 (port the existing baselines) next. This doc is the entry point for all SA work.
+## Status: plan approved 2026-10-09. LF-0, LF-0b, LF-1a, LF-1b, LF-2 and LF-3 deployed (2026-10-09/10); LF-2b (silver / gold for the new contexts) and the learner families next. This doc is the entry point for all SA work.
 
 Every SA doc lives in `todo/sa/` and carries a `Layer:` / `Roadmap:` line under its title that
 points back here. Work proceeds by LF phase (below); each phase has its own `todo_lfN_*.md`.
@@ -143,7 +143,7 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 | Phase | Doc | What | Depends on |
 |---|---|---|---|
 | **LF-0** ✅ | [todo_lf0_retention_gaps.md](todo_lf0_retention_gaps.md) | 730-day retention and history capture for every SA variable in MySQL (deployed 2026-10-09) | — |
-| **LF-0b** | [todo_signal_inventory.md](todo_signal_inventory.md) | Capture the missing contexts: Home Assistant entity history (urgent, ~1 day lost per day), email metadata, weather, ESPHome binary sensors / lights | — |
+| **LF-0b** ✅ | [todo_signal_inventory.md](todo_signal_inventory.md) | Capture the missing contexts (deployed 2026-10-10): Home Assistant entity history (79 entities, 11 days), 12 months of Gmail metadata (3,656), ESPHome binary sensors / lights | — |
 | **LF-1a** ✅ | [todo_lf1a_sa_service_split.md](todo_lf1a_sa_service_split.md) | Lift the SA engine out of the daemon into `service_sa`, no behaviour change (deployed 2026-10-09; event-driven state deferred to LF-1c) | — |
 | **LF-1b** ✅ | [todo_lf1b_bronze.md](todo_lf1b_bronze.md) | `sa-learner` + Parquet bronze export and backfill (deployed 2026-10-10; 23 MB for 3.8 M rows) | LF-1a |
 | **LF-2** ✅ | [todo_lf2_silver_gold.md](todo_lf2_silver_gold.md) | Silver + gold, `sa_data_exclusions` (deployed 2026-10-10; presence = phones only, `observed` flag for collector outages) | LF-1b |
