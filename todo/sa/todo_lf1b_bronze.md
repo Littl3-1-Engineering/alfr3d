@@ -54,9 +54,10 @@
   to export any column that looks like a secret, so a future `api_token` column fails loudly. The
   lake still holds household PII that already lives in MySQL (location fixes, message text in
   `household_events`); it lives on a Docker volume, not in the repo.
-- **Bronze is not subject to the 730-day cap.** MySQL deletes at 730 days; the lake keeps
-  everything it has exported. At roughly 20 MB per month that is a decision worth keeping, since
-  it is what lets learners see more than two years later. Say so if you would rather cap it.
+- **Bronze is not subject to the 730-day cap, by decision (Athos, 2026-10-09).** MySQL deletes at
+  730 days; the lake keeps everything it has exported, at roughly 20 MB per month, so learners
+  can see more than two years later. Growth monitoring and a low-disk alert are tracked in
+  [todo_disk_and_lake_monitoring.md](todo_disk_and_lake_monitoring.md).
 - **One lock, one process at a time.** A manual backfill and the nightly job can't interleave
   (`.export.lock`, non-blocking). The nightly job touches the learner's heartbeat per day written,
   because the watchdog kills the process when it goes stale and a first run is a multi-minute

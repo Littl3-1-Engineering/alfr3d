@@ -143,6 +143,9 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 
 LF-0 and LF-1a are independent and can run in parallel.
 
+Cross-cutting, not an LF phase: [todo_disk_and_lake_monitoring.md](todo_disk_and_lake_monitoring.md)
+(alert before disk, lake or MySQL growth runs out of room; the lake is deliberately uncapped).
+
 ## Existing SA items by layer
 
 | Item | Doc | Layer | Status (2026-10-09) | LF impact |
