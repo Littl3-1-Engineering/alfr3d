@@ -148,15 +148,24 @@ All of it rebuilds from bronze in about 4 seconds, nightly, after the exports.
 
 ## What the real data changed
 
-- **Home Assistant describes the old house.** HA's configured home is still **Novi Sad, Serbia**
-  (45.24 N, 19.81 E, `Europe/Belgrade`, 7,338 km from Toronto). Its OpenWeatherMap entities, its
-  `sun` entities, `zone.home` and its device trackers are all for the wrong place. Checked at the
-  same moment: **15.9 C / 62 % in HA, 19.9 C / 40 % in Etobicoke**. So `weather_hourly` uses only
-  ALFR3D's own `get_weather()` record (Etobicoke), and 20 of HA's 25 numeric entities are flagged
-  `describes_ha_home`. They stay in the lake and are never used as the household's context.
-  **Action for Athos:** set Home Assistant's home location (Settings, System, General). That fixes
-  its weather, sun and zone entities going forward. The exporter records HA's reported location and
-  any change in `bronze/ha_state_history/_ha_config.json`, so the two regimes can be told apart.
+- **Home Assistant described the wrong house (resolved 2026-10-11).** When LF-2b ran, HA's
+  configured home was **Novi Sad, Serbia** (45.24 N, 19.81 E, `Europe/Belgrade`, 7,338 km from
+  Toronto). Its OpenWeatherMap entities, its `sun` entities, `zone.home` and its device trackers
+  were all for the wrong place. Checked at the same moment: **15.9 C / 62 % in HA, 19.9 C / 40 % in
+  Etobicoke**. So `weather_hourly` uses only ALFR3D's own `get_weather()` record (Etobicoke), and
+  20 of HA's 25 numeric entities are flagged `describes_ha_home`. They stay in the lake and are
+  never used as the household's context.
+  **Resolution:** HA's home changed on 2026-10-10 (`_ha_config.json` history: 04:48 Novi Sad /
+  `Europe/Belgrade`; 11:37 time zone to `America/Toronto`; 11:41 coordinates to the previous
+  Etobicoke house, 43.643972, -79.588917). After the move it was set to Triburnham Place
+  (43.642907, -79.5776371) with the websocket `config/core/update` call, and `zone.home` followed;
+  the exporter records that on its next nightly run. The exporter keeps HA's reported location and
+  every change in `bronze/ha_state_history/_ha_config.json`, so the regimes can be told apart.
+  **Still to check:** whether any HA device trackers still point at the old house.
+  **Decision:** keep `describes_ha_home` as is for now. Only about a day of HA history post-dates
+  the change, and weather already comes from ALFR3D's own record. Revisit once a few weeks of
+  correct-regime HA data exist: make the flag time-aware (valid from the first `_ha_config` entry
+  within a few km of ALFR3D's home) and let the scalar learner use post-change points only.
 - **Daylight is validated against a second source.** The NOAA calculation matches OpenWeatherMap's
   own stored sunrise and sunset for Etobicoke to within **0.4 minutes** (07:25 / 18:45 on 10-09).
   Comparing it with HA's sun entity gave a constant +397 minutes, which is how the wrong-location
