@@ -363,10 +363,33 @@ def _build_presence(con, lake, have, gap):
             FROM phone_islands i JOIN persons p ON p.user_id = i.user_id
             ORDER BY p.user_id, i.start_utc"""
     if "device_history" in have:
+        con.execute("""CREATE TABLE device_latest AS
+            SELECT device_id, arg_max(name, timestamp) AS name,
+                   arg_max(user_id, timestamp) AS user_id,
+                   arg_max(device_type, timestamp) AS device_type,
+                   MAX(last_online) AS last_seen
+            FROM b_device_history GROUP BY device_id""")
+        # One logical device can own several rows: a phone that rotates its private MAC gets a
+        # new `device` row each time and the old one stays offline. Rows with the same name and the
+        # same owning person are one device; the row seen most recently is its identity. A name
+        # shared by different owners ("iPhone") or owned by nobody ("unknown") is not an identity.
+        owned = (
+            "l.user_id IN (SELECT user_id FROM persons)"
+            if "persons" in have
+            else ("l.user_id IS NOT NULL")
+        )
+        con.execute(f"""CREATE TABLE device_identity AS
+            SELECT l.device_id,
+                   CASE WHEN {owned} AND l.name IS NOT NULL AND l.name <> 'unknown'
+                        THEN arg_max(l.device_id, l.last_seen)
+                               OVER (PARTITION BY l.user_id, l.name)
+                        ELSE l.device_id END AS identity_id
+            FROM device_latest l""")
         con.execute(f"""CREATE TABLE device_islands AS
-            WITH s AS (SELECT DISTINCT device_id, last_online AS ts FROM b_device_history
-                       WHERE last_online IS NOT NULL
-                         AND last_online >= (SELECT t FROM collector_start)),
+            WITH s AS (SELECT DISTINCT i.identity_id AS device_id, h.last_online AS ts
+                       FROM b_device_history h JOIN device_identity i USING (device_id)
+                       WHERE h.last_online IS NOT NULL
+                         AND h.last_online >= (SELECT t FROM collector_start)),
             g AS (SELECT device_id, ts,
                          date_diff('second', LAG(ts) OVER (PARTITION BY device_id ORDER BY ts), ts)
                            / 60.0 AS gap_min FROM s),
@@ -376,16 +399,13 @@ def _build_presence(con, lake, have, gap):
             SELECT device_id, island, MIN(ts) AS start_utc, MAX(ts) AS end_utc,
                    COUNT(*) AS sightings
             FROM i GROUP BY device_id, island""")
-        con.execute("""CREATE TABLE device_latest AS
-            SELECT device_id, arg_max(name, timestamp) AS name,
-                   arg_max(user_id, timestamp) AS user_id,
-                   arg_max(device_type, timestamp) AS device_type
-            FROM b_device_history GROUP BY device_id""")
         results["device_sessions"] = """
             SELECT i.device_id, l.name, l.user_id, l.device_type,
                    i.start_utc, i.end_utc,
                    to_local(i.start_utc) AS start_local, to_local(i.end_utc) AS end_local,
-                   i.sightings
+                   i.sightings,
+                   (SELECT COUNT(*) FROM device_identity m
+                    WHERE m.identity_id = i.device_id) AS merged_rows
             FROM device_islands i JOIN device_latest l USING (device_id)
             ORDER BY i.device_id, i.start_utc"""
     return results
