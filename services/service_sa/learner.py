@@ -15,7 +15,7 @@ import time
 import schedule
 
 from sa import engine, external, inference_store, lake, silver
-from sa.learners import device_rhythm, household_day, presence, rates, scalar
+from sa.learners import device_rhythm, drift, household_day, presence, rates, scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
@@ -95,6 +95,14 @@ def run_learners():
         logger.info(f"household day learner done: {outcome}")
     except Exception as e:
         logger.error(f"household day learner failed: {e}")
+    # Last: the learners above rewrite their own stability, and drift caps it afterwards.
+    try:
+        if conn is None:
+            conn = inference_store.connect()
+        outcome = drift.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"drift detector done: {outcome}")
+    except Exception as e:
+        logger.error(f"drift detector failed: {e}")
     finally:
         if conn:
             conn.close()
