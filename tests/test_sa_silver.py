@@ -225,6 +225,48 @@ class TestDeviceSessions:
         assert laptop[0]["device_type"] == 2 and laptop[0]["name"] == "laptop"
 
 
+class TestDeviceIdentity:
+    def _sightings(self, tmp_path, rows):
+        _snapshot(tmp_path, "user_types", [{"id": 2, "type": "owner"}, {"id": 3, "type": "guest"}])
+        _snapshot(
+            tmp_path,
+            "user",
+            [
+                {"id": 1, "username": "athos", "type": 2},
+                {"id": 2, "username": "visitor", "type": 3},
+            ],
+        )
+        _bronze(tmp_path, "device_history", rows, "timestamp")
+        _build(tmp_path)
+        return _rows(tmp_path, "silver", "device_sessions")
+
+    def test_rotated_mac_rows_with_one_name_and_owner_are_one_device(self, tmp_path):
+        t = datetime(2026, 10, 5, 12, 0)
+        old = [_history_row(t + timedelta(minutes=10 * i), 7, 1, 5, "Pixel") for i in range(3)]
+        new = [_history_row(t + timedelta(minutes=30 + 10 * i), 9, 1, 5, "Pixel") for i in range(3)]
+
+        rows = self._sightings(tmp_path, old + new)
+
+        # The old row's last sighting abuts the new row's first one: a single session on the
+        # newest id, not an "offline" ghost on 7.
+        assert {r["device_id"] for r in rows} == {9}
+        assert len(rows) == 1 and rows[0]["merged_rows"] == 2
+
+    def test_shared_names_across_owners_and_unknown_are_not_merged(self, tmp_path):
+        t = datetime(2026, 10, 5, 12, 0)
+        rows = self._sightings(
+            tmp_path,
+            [
+                _history_row(t, 1, 1, 5, "iPhone"),
+                _history_row(t, 2, 2, 5, "iPhone"),
+                _history_row(t, 3, 3, 5, "unknown"),
+                _history_row(t, 4, 3, 5, "unknown"),
+            ],
+        )
+
+        assert {r["device_id"] for r in rows} == {1, 2, 3, 4}
+
+
 class TestEventsClean:
     def _events(self, lake, exclusions):
         _bronze(

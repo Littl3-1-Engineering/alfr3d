@@ -40,7 +40,7 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
   is offline when it is normally on. Real ones (a Kindle offline four hours) and **identity
   churn**: a phone gets a new `device` row (MAC rotation), the old row stays offline while the new
   one is online. Fixed in shadow by skipping an offline row whose name is online under another id;
-  the real fix is merging device rows by name/owner in silver (like `sa_sensor_aliases`).
+  the real fix, now in silver (2026-10-11): `device_identity` merges rows with the same name and the same owning person, and `device_sessions.device_id` is the identity (the most recently seen row), with `merged_rows` counting what was folded in. Names shared across owners (`iPhone`) or owned by nobody (`unknown`) are never merged. On the real lake it folds 8 named devices (Pixel-6a 4 rows, Littl3-Zen 4, leonardo 5, ...). Takes effect on the next silver build and learner fit; the shadow-side skip can be removed after one comparison.
 - Devices not seen for 14 days, or offline for more than 3 days, are "gone", not "late", and are
   excluded from availability.
 
@@ -49,7 +49,7 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
 - [ ] `climate_deviation` reads the scalar inference instead of `entity_baselines` room rows.
 - [ ] `attention_focus` / `wind_down_signal` read `attention:*` scalar inferences.
 - [ ] `departure_anomaly` reads the presence inference (home, improbable).
-- [ ] `rhythm_break_anomaly` reads device-rhythm inferences once device rows are merged by identity.
+- [ ] `rhythm_break_anomaly` reads device-rhythm inferences (device rows are now merged by identity in silver; deploy and refit first).
 - [ ] `household_unusual_day` reads the layer-2 inference.
 - [ ] Then delete `compute_entity_baselines` and the `entity_baselines` table (back up first).
 
