@@ -2,9 +2,9 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-5
 
-## Status: 🔲 Not started (planned 2026-10-09). Depends on LF-3.
+## Status: 🟡 Rate learner done (LF-5a, see [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md)). Drift, transition, visitor-arrival cards and the feedback signal are not started.
 
-- [ ] **Rate / count**: Poisson or negative-binomial expected rate per dow × hour over gold
+- [x] **Rate / count** (`learners/rates.py`, nightly; live hourly scoring still open): Poisson or negative-binomial expected rate per dow × hour over gold
       `hourly_rates` (device activity, event rates per stream).
 - [ ] **Transition** (SA-12, [todo_transition_learning.md](todo_transition_learning.md)):
       P(B within 10 min of A) over silver `events_clean`, Beta confidence, sample floor. Keep that

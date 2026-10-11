@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4
 
-## Status: 🔲 Not started (planned 2026-10-09). Depends on LF-3.
+## Status: 🟡 Learners for every row below are built and running in shadow (see [todo_lf4a_scalar_learner.md](todo_lf4a_scalar_learner.md) and [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md), which hold the cutover checklist). Remaining here: the cutovers, merging device rows by identity in silver (needed before `rhythm_break_anomaly`), and retiring `entity_baselines`. Not before ~2026-10-17.
 
 ## Scope
 
