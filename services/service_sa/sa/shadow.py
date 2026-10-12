@@ -21,7 +21,16 @@ from datetime import datetime, timedelta
 from sa import inference_store, layer2
 from sa import silver
 from sa.learners.base import Inference, utcnow
-from sa.learners import away_unusual, day_off, device_rhythm, household_day, presence, rates, scalar
+from sa.learners import (
+    away_unusual,
+    day_off,
+    device_rhythm,
+    household_day,
+    presence,
+    rates,
+    scalar,
+    stay,
+)
 
 logger = logging.getLogger("SALog")
 
@@ -40,6 +49,7 @@ class ShadowRunner:
         self._persist = persist
         self._profiles = {}  # learner name -> (stamp, [Profile])
         self._last = {}  # rule -> signature last logged
+        self._stay_starts = {}  # user id -> start of the stay in progress (see departure)
         self._household = {}  # local date -> learner finding (or None)
         self._rates_window = None  # UTC start of the hour whose event rates were last scored
 
@@ -289,22 +299,56 @@ class ShadowRunner:
             db.close()
 
     def departure(self, frame):
-        if not frame.person_presence or frame.local_dt is None:
+        """`departure_anomaly` as an overstay: a resident whose stay so far is improbably long
+        for them (sa/learners/stay.py). The presence learner's marginal p(home) cannot answer this
+        (a part-time resident is rarely home at any hour), so this reads the stay profile."""
+        if not frame.person_presence or frame.local_dt is None or frame.now is None:
             return []
-        profiles = {str(p.subject_id): p for p in self.profiles(presence.NAME)}
-        learner = presence.PresenceLearner()
+        profiles = {str(p.subject_id): p for p in self.profiles(stay.NAME)}
+        learner = stay.StayLearner()
         now_utc = frame.now.replace(tzinfo=None)
         findings = []
         for person in frame.person_presence:
-            profile = profiles.get(str(person["user_id"]))
-            if profile is None or not person["home"]:
-                continue  # departure_anomaly is about people who are STILL home
-            inference = learner.score(
-                profile, {"home": True, "away_minutes": None, "local_dt": frame.local_dt}, now_utc
-            )
+            uid = str(person["user_id"])
+            if not person["home"]:
+                self._stay_starts.pop(uid, None)  # the next arrival starts a new stay
+                continue
+            profile = profiles.get(uid)
+            if profile is None or person["user_type"] not in stay.OVERSTAY_USER_TYPES:
+                continue
+            start = self._stay_start(person["user_id"], now_utc)
+            if start is None:
+                continue
+            inference = learner.score(profile, {"stay_start": start}, now_utc)
             if inference is not None:
                 findings.append(inference)
         return findings
+
+    def _stay_start(self, user_id, now_utc):
+        """When this person's current stay began, from their phones' sightings in device_history,
+        cached for as long as they stay home (the query takes ~1.5 s for a busy phone)."""
+        key = str(user_id)
+        cached = self._stay_starts.get(key)
+        if cached is not None:
+            return cached
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT DISTINCT last_online FROM device_history WHERE timestamp >= %s "
+                "AND user_id = %s AND device_type IN %s AND last_online IS NOT NULL",
+                (
+                    now_utc - timedelta(days=stay.LOOKBACK_DAYS),
+                    user_id,
+                    silver.PERSONAL_DEVICE_TYPES,
+                ),
+            )
+            start = stay.stay_start_from_sightings([row[0] for row in cursor.fetchall()])
+        finally:
+            db.close()
+        if start is not None:
+            self._stay_starts[key] = start
+        return start
 
     def rhythm(self, frame):
         profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
