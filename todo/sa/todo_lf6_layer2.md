@@ -142,3 +142,12 @@ column, so every one failed to persist ("Data too long") and `household_unusual_
 reach layer 2; and the cached rows were re-persisted with their creation time, which layer 2's
 five-minute freshness filter would have dropped. Both fixed, with tests that check every
 inference fits the column widths.
+
+Third household fix, found after the first two shipped: the live day was measured differently from
+the fitted days. Live counted `DISTINCT device_id` over `device_history` rows (every state change
+writes a row), 43-67 devices against the lake's 21-27, so every evening scored as wildly unusual
+(78 devices, z = 38) and the cut-over card would have fired nightly. It now counts sightings
+(`last_online`) with rows of one named, owned device merged, exactly silver's `device_islands`
+rule, and reproduces the lake for 10-06..10-10 (devices 25/27/24/23/21, first-online minutes
+identical) in 0.3 s. Lesson for any live-scored learner: replay the live query for past days and
+compare it with the lake's value before trusting a verdict.
