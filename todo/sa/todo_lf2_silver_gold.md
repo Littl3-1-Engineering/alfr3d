@@ -161,7 +161,9 @@ All of it rebuilds from bronze in about 4 seconds, nightly, after the exports.
   (43.642907, -79.5776371) with the websocket `config/core/update` call, and `zone.home` followed;
   the exporter records that on its next nightly run. The exporter keeps HA's reported location and
   every change in `bronze/ha_state_history/_ha_config.json`, so the regimes can be told apart.
-  **Still to check:** whether any HA device trackers still point at the old house.
+  **Checked 2026-10-11:** `zone.home` is Triburnham Place (43.642907, -79.5776371); the old house
+  is only a separate zone, `zone.burnham_glen` (43.643972, -79.588917, 100 m), and the two device
+  trackers report `unknown` with no coordinates, so nothing tracks the old house as home.
   **Decision:** keep `describes_ha_home` as is for now. Only about a day of HA history post-dates
   the change, and weather already comes from ALFR3D's own record. Revisit once a few weeks of
   correct-regime HA data exist: make the flag time-aware (valid from the first `_ha_config` entry
