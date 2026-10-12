@@ -68,7 +68,7 @@ climate and attention, so the cutover must scope it to those series.*
 
 - [ ] `climate_deviation` reads the scalar inference instead of `entity_baselines` room rows.
 - [ ] `attention_focus` / `wind_down_signal` read `attention:*` scalar inferences.
-- [ ] `departure_anomaly` reads the presence inference (home, improbable).
+- [ ] `departure_anomaly` reads the **stay** inference (`sa/learners/stay.py`, signal `presence.stay`). Not the presence inference: its marginal p(home) flags every visit by a part-time resident (Vanja, 2026-10-12 DIFFER) and can't see an overstay. The stay model scores the stay so far against this person's comparable past stays. Replay 08-17..10-11 over the lake: Vanja 5 flag days -> 3 (all 19-28 h stays), residents 20 flag days in 8 weeks, legacy's one firing (Athos, Saturday 09-12 evening) not flagged. Wired 2026-10-12: nightly `stay.run_fit`, drift caps its stability, `ShadowRunner.departure` compares it (residents and owners only, like legacy; no calendar suppression yet, that is for layer 2). Open: measured stability (fixed at 0.5), the ~2.5 flag days a week need a human look.
 - [ ] `rhythm_break_anomaly` reads device-rhythm inferences (device rows are now merged by identity in silver; deploy and refit first).
 - [ ] `household_unusual_day` reads the layer-2 inference.
 - [ ] Then delete `compute_entity_baselines` and the `entity_baselines` table (back up first).

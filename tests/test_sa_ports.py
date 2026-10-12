@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 
 from services.service_sa.sa import shadow
-from services.service_sa.sa.learners import device_rhythm, household_day, presence, rates, scalar
+from services.service_sa.sa.learners import device_rhythm, household_day, rates, scalar
 
 REF = date(2026, 10, 9)  # a Friday
 
@@ -297,25 +297,53 @@ class TestShadowRunner:
         runner.run(MagicMock(), {"time": None})
         runner.climate.assert_not_called()
 
-    def test_departure_compares_people_still_home_with_the_presence_profile(self):
+    def _stay_profile(self):
+        from sa.learners import stay
+
+        ivs = []
+        for i in range(20):
+            start = datetime(2026, 10, 8) - timedelta(days=i) + timedelta(hours=13)
+            ivs.append((start, start + timedelta(hours=2 + i % 2), 100))
+        return stay.StayLearner().fit_user(1, "athos", sorted(ivs), REF, 0.95, 0.8, 1.0)
+
+    def _departure_runner(self, stay_start, user_type="owner"):
+        from sa.learners import stay
+
         runner, _ = self._runner()
-        rows = []
-        for i in range(24 * 40):
-            day, hour = REF - timedelta(days=i // 24), i % 24
-            at_home = day.weekday() < 5 and not 9 <= hour < 17
-            rows.append((day, hour, day.weekday(), 60.0 if at_home else 0.0, True))
-        profile = presence.PresenceLearner().fit_user(1, "athos", rows, [], REF)
-        runner._profiles[presence.NAME] = ("x", [profile])
-        runner._connect = MagicMock()
+        profile = self._stay_profile()
+        runner.profiles = lambda name: [profile] if name == stay.NAME else []
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(stay_start,), (stay_start + timedelta(minutes=30),)]
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
         frame = MagicMock()
         frame.person_presence = [
-            {"user_id": 1, "home": True, "user_type": "owner", "last_online": None}
+            {"user_id": 1, "home": True, "user_type": user_type, "last_online": None}
         ]
-        frame.local_dt = datetime(2026, 10, 9, 11, 0)  # Friday, mid-workday
-        frame.now = datetime(2026, 10, 9, 15, 0)
-        runner.profiles = lambda name: [profile]
+        frame.local_dt = datetime(2026, 10, 9, 20, 0)
+        frame.now = datetime(2026, 10, 9, 23, 30)  # 19:30 local; the stay began at 09:00 local
+        return runner, frame
+
+    def test_departure_flags_a_resident_whose_stay_is_far_longer_than_usual(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+
         findings = runner.departure(frame)
+
         assert findings and findings[0].observed["state"] == "home"
+        assert runner._stay_starts["1"] == datetime(2026, 10, 9, 13, 0)
+
+    def test_departure_does_not_look_at_guests(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), user_type="guest")
+
+        assert runner.departure(frame) == []
+
+    def test_departure_forgets_the_stay_when_the_person_leaves(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+        runner.departure(frame)
+        frame.person_presence[0]["home"] = False
+
+        runner.departure(frame)
+
+        assert runner._stay_starts == {}
 
     def test_rhythm_ignores_an_offline_row_replaced_by_an_online_row_of_the_same_name(self):
         runner, _ = self._runner()
