@@ -24,6 +24,8 @@ import orjson
 # Third party imports
 import pymysql
 from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
+from sa import layer2
+from sa.learners import household_day
 from sa.learners import presence as presence_learner
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
@@ -356,17 +358,11 @@ HOUSEHOLD_BASELINE_ENTITY_ID = 0
 HOUSEHOLD_BASELINE_LOOKBACK_DAYS = DEPARTURE_BASELINE_LOOKBACK_DAYS
 
 # A household-level per-day-bucket baseline needs at least this many observed days before
-# check_household_unusual_day() trusts it -- same "degrade to silence below a reliability floor"
+# the household baseline's consumers trust it -- same "degrade to silence below a reliability floor"
 # precedent as every other baseline-gated check in this file. Set a bit higher than
 # DEPARTURE_BASELINE_MIN_SAMPLES (8): a household-wide "is today unusual" call is a broader,
 # higher-consequence claim than one resident's departure time, and deserves more evidence first.
 HOUSEHOLD_BASELINE_MIN_SAMPLES = 14
-
-# check_household_unusual_day() requires BOTH the device-count range and the first-activity hour
-# to deviate before firing -- a single off metric isn't "today is different," it's normal
-# day-to-day noise. This is how far (in hours) today's first-activity hour must differ from
-# typical_active_hour to count as part of that deviation.
-HOUSEHOLD_FIRST_ACTIVITY_HOUR_TOLERANCE = 2
 
 # check_rhythm_break_anomaly()'s "unusual hour" branch: how far (in hours, allowing for midnight
 # wraparound) a currently-online device's *current* hour may differ from its own
@@ -975,13 +971,15 @@ class SAEngine:
         hasn't started per service_user.app.update_user_state()) is treated as a fresh
         arrival (0 days) rather than fabricating an overstay from missing data.
         """
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT username, continuous_stay_since
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
-            """)
+            """
+        )
         results = []
         for username, continuous_stay_since in cursor.fetchall():
             if continuous_stay_since:
@@ -1011,7 +1009,8 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -1019,7 +1018,8 @@ class SAEngine:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """)
+                """
+            )
             row = cursor.fetchone()
             # SUM() returns decimal.Decimal via pymysql (unlike COUNT()'s plain int) -- cast
             # so guest_count is safe to embed directly in the "data" dict's JSON payload (SA-5),
@@ -1677,111 +1677,53 @@ class SAEngine:
         }
 
     def check_household_unusual_day(self, frame):
-        """SA-10 Phase 3: "is today unusual for this household" -- the household-level analogue
-        of check_rhythm_break_anomaly()/check_departure_anomaly(), reading
-        compute_entity_baselines()'s `entity_type='household'` rows. See
-        todo/sa/todo_generalize_entity_baselines.md for the Phase 0 investigation (including real
-        production-hardware timing) behind generalising entity_baselines rather than adding a
-        parallel table.
+        """SA-10: "is today unusual for this household". Since the LF-4 cutover (2026-10-12) this
+        reads the layer-2 inference `household_unusual_day` (sa/learners/household_day.py) instead
+        of computing a verdict from entity_baselines: the shadow pass scores the day once it is
+        past CUTOFF_HOUR local, combines the day's features (devices active, first device online,
+        resident-minutes at home) weighted by confidence, and stores the result in sa_inferences.
+        This card is that row, shown while it stays fresh (the shadow pass refreshes it every
+        cycle, so it lags the inference by at most one).
 
-        Fires only late enough in the day that "today" has had a real chance to look normal --
-        past the household's own typical_last_activity_hour for today's bucket, so this can only
-        ever produce one card per day (there's no repeat-earlier-in-the-day path) -- and only on
-        a genuinely STRONG, multi-signal deviation: BOTH the device-count range and the
-        first-activity hour must be off, not just one. A single noisy metric is normal day-to-day
-        variance, not "today is different"; the task's own tone constraint (an observation, never
-        a concern) is easier to earn when the bar to fire is this high.
-
-        Uses ALL of today's device_history activity (every device, not just claimed ones) --
-        household-level "is the house awake" is a broader question than SA-3's per-resident
-        departure signal, and an unclaimed smart-home device's own schedule is still real
-        evidence of household rhythm.
+        Tone constraint, inherited from SA-10: an observation, never a concern.
         """
-        if frame.local_dt is None or frame.day_mood is None or frame.now is None:
+        if frame.day_mood is None or frame.now is None:
             return None
-        local_dt = frame.local_dt
-        day_bucket = "weekend" if local_dt.weekday() >= 5 else "weekday"
-
+        now_utc = frame.now.replace(tzinfo=None)
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-            cursor = db.cursor()
-            cursor.execute(
-                """
-                SELECT typical_active_hour, typical_last_activity_hour, typical_daily_min,
-                       typical_daily_max, sample_count, min_sample_count
-                FROM entity_baselines
-                WHERE entity_type = 'household' AND entity_id = %s AND day_bucket = %s
-                """,
-                (HOUSEHOLD_BASELINE_ENTITY_ID, day_bucket),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return None
-            (
-                typical_first_hour,
-                typical_last_hour,
-                typical_min,
-                typical_max,
-                sample_count,
-                min_sample_count,
-            ) = row
-            if sample_count < min_sample_count:
-                return None
-            if typical_last_hour is None or local_dt.hour < typical_last_hour:
-                return None
-
-            # Local midnight, expressed on frame.now's UTC timeline -- local_dt and frame.now
-            # differ by a constant offset, so subtracting local_dt's own time-of-day from it
-            # lands exactly on local midnight without a separate timezone lookup.
-            midnight_utc = frame.now - timedelta(
-                hours=local_dt.hour,
-                minutes=local_dt.minute,
-                seconds=local_dt.second,
-                microseconds=local_dt.microsecond,
-            )
-            cursor.execute(
-                "SELECT HOUR(MIN(timestamp)), COUNT(DISTINCT device_id) "
-                "FROM device_history WHERE timestamp >= %s",
-                (midnight_utc,),
-            )
-            today_first_hour, today_device_count = cursor.fetchone()
-            if today_first_hour is None:
-                return None
-
-            count_deviates = today_device_count < typical_min or today_device_count > typical_max
-            hour_deviates = (
-                abs(today_first_hour - typical_first_hour) > HOUSEHOLD_FIRST_ACTIVITY_HOUR_TOLERANCE
-            )
-            if not (count_deviates and hour_deviates):
-                return None
-
-            day_of_week = frame.day_mood["day_of_week"]
-            return {
-                "mode": "household_unusual_day",
-                "content": f"{day_of_week} is running differently than usual",
-                "priority": 6.5,
-                "data": {
-                    "today_device_count": today_device_count,
-                    "typical_device_count_range": [typical_min, typical_max],
-                    "today_first_activity_hour": today_first_hour,
-                    "typical_first_activity_hour": int(typical_first_hour),
-                    "because": [
-                        f"{today_device_count} devices active today, "
-                        f"typically {int(typical_min)}-{int(typical_max)}",
-                        f"first activity at {today_first_hour:02d}:00, "
-                        f"typically around {int(typical_first_hour):02d}:00",
-                    ],
-                },
-            }
+            found = [
+                i
+                for i in inference_store.load_recent(
+                    db, 2, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+                )
+                if i.learner == household_day.NAME
+            ]
         except pymysql.Error as e:
             logger.error("Household unusual day check error: " + str(e))
             return None
         finally:
             if db:
                 db.close()
+        if not found:
+            return None
+        inference = found[0]
+        day_of_week = frame.day_mood["day_of_week"]
+        return {
+            "mode": "household_unusual_day",
+            "content": f"{day_of_week} is running differently than usual",
+            "priority": 6.5,
+            "data": {
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
+                "observed": inference.observed,
+                "expected": inference.expected,
+                "because": household_day.explain(inference),
+            },
+        }
 
     def _read_config_json(self, key):
         """Return the JSON value stored under `config.name = key` as a dict,
@@ -2718,13 +2660,15 @@ def compute_entity_baselines():
         departure_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=DEPARTURE_BASELINE_LOOKBACK_DAYS
         )
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT DISTINCT u.id, u.username
             FROM user u
             JOIN user_types ut ON u.type = ut.id
             JOIN device d ON d.user_id = u.id
             WHERE ut.type IN ('owner', 'technoking', 'resident')
-            """)
+            """
+        )
         eligible_users = cursor.fetchall()
 
         for user_id, username in eligible_users:
