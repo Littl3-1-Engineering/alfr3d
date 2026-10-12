@@ -59,9 +59,12 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
 
 ## Not done
 
-- Rates are fitted nightly and flag the last 48 h on each run; they are not scored live between
-  fits. An hourly rates job would close that gap. Household day is scored live, once a day at 18:00
-  local.
+- Rates are fitted nightly. Event-stream rates are now also scored live (2026-10-11,
+  `ShadowRunner.live_rates`): once per completed local hour, two minutes in, the hour's
+  `household_events` counts (zero-filled) are scored against the stored profiles and findings go to
+  `sa_inferences` as `LIVE rates:` log lines. Email volume has no live counter and stays nightly;
+  live counts ignore `sa_data_exclusions`, so a test burst can flag live and vanish at the next
+  nightly run. Household day is scored live once a day at 18:00 local.
 - Cards on rate deviations (email burst, notification storm) are a product decision, not built.
 - Occasional-visitor learner (LF-5): parked, see [todo_lf5_more_learners.md](todo_lf5_more_learners.md).
   Drift detection is done (2026-10-11).

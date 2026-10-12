@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.service_sa.sa import shadow
-from services.service_sa.sa.learners import device_rhythm, household_day, presence, scalar
+from services.service_sa.sa.learners import device_rhythm, household_day, presence, rates, scalar
 from services.service_sa.sa.learners.base import Profile
 
 REF = date(2026, 10, 9)  # a Friday
@@ -187,6 +187,59 @@ class TestHouseholdDay:
         assert household_day.fisher_p([0.001, 0.001], [0.1, 0.1]) > household_day.fisher_p(
             [0.001, 0.001], [1, 1]
         )
+
+
+class TestLiveRates:
+    STREAM = "event:notification/sender/messaged"
+
+    def _profile(self):
+        pts = []
+        for i in range(14 * 24):
+            t = datetime(2026, 9, 1) + timedelta(hours=i)
+            n = 3 if 9 <= t.hour < 17 else 0
+            pts.append({"date": t.date(), "hour": t.hour, "n": n + (i % 3 == 0), "t": t})
+        return rates.fit_stream(self.STREAM, "hour", pts, date(2026, 9, 14), {})
+
+    def _runner(self, counts):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = counts
+        db = MagicMock()
+        db.cursor.return_value = cursor
+        persisted = []
+        runner = shadow.ShadowRunner(lambda: db, persisted.extend)
+        runner.profiles = lambda name: [self._profile()]
+        return runner, persisted
+
+    def _frame(self, minute=5):
+        from types import SimpleNamespace
+        from datetime import timezone
+
+        # 14:05 Toronto on a Tuesday = 18:05 UTC: the hour that just ended is 13:00-14:00 local.
+        return SimpleNamespace(
+            now=datetime(2026, 10, 13, 18, minute, tzinfo=timezone.utc),
+            local_dt=datetime(2026, 10, 13, 14, minute),
+        )
+
+    def test_an_unusual_burst_in_the_hour_that_just_ended_is_flagged_and_persisted(self):
+        runner, persisted = self._runner([("notification", "sender", "messaged", 40)])
+
+        found = runner.live_rates(self._frame())
+
+        assert len(found) == 1 and persisted == found
+        assert found[0].observed["direction"] == "high"
+        assert found[0].window_start == datetime(2026, 10, 13, 17, 0)  # 13:00 local, UTC
+
+    def test_a_normal_hour_is_quiet_and_a_missing_stream_counts_as_zero(self):
+        runner, persisted = self._runner([("notification", "sender", "messaged", 3)])
+
+        assert runner.live_rates(self._frame()) == [] and persisted == []
+
+    def test_each_hour_is_scored_once_and_not_before_the_events_have_landed(self):
+        runner, _ = self._runner([("notification", "sender", "messaged", 40)])
+
+        assert runner.live_rates(self._frame(minute=1)) == []  # too early
+        assert len(runner.live_rates(self._frame(minute=5))) == 1
+        assert runner.live_rates(self._frame(minute=20)) == []  # already scored this hour
 
 
 class TestShadowRunner:

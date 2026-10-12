@@ -19,7 +19,8 @@ import logging
 from datetime import datetime, timedelta
 
 from sa import inference_store
-from sa.learners import device_rhythm, household_day, presence, scalar
+from sa import silver
+from sa.learners import device_rhythm, household_day, presence, rates, scalar
 
 logger = logging.getLogger("SALog")
 
@@ -35,6 +36,7 @@ class ShadowRunner:
         self._profiles = {}  # learner name -> (stamp, [Profile])
         self._last = {}  # rule -> signature last logged
         self._household = {}  # local date -> learner finding (or None)
+        self._rates_window = None  # UTC start of the hour whose event rates were last scored
 
     # --- plumbing -------------------------------------------------------------------------
 
@@ -95,6 +97,69 @@ class ShadowRunner:
                 self.record(name, self.legacy_desc(cards.get(name)), fn(frame))
             except Exception as e:  # shadow must never reach a card
                 logger.error(f"SHADOW {name} failed: {e}")
+        try:
+            self.live_rates(frame)
+        except Exception as e:
+            logger.error(f"Live rates failed: {e}")
+
+    def live_rates(self, frame):
+        """Score the hour that just ended against the event-stream rate profiles (LF-5a left this
+        to the nightly fit, which only looks back at the last 48 h of the lake). Once per
+        completed local hour, two minutes in so late events have landed. Event streams only: email
+        volume comes from a polled API and has no live counter. Counts come from household_events
+        with no sa_data_exclusions applied (the lake applies them), so a test burst can flag here
+        and be gone from the next nightly run. Findings go to sa_inferences, never to a card."""
+        if frame.local_dt is None or frame.now is None or frame.local_dt.minute < 2:
+            return []
+        end = frame.now.replace(tzinfo=None, minute=0, second=0, microsecond=0)
+        start = end - timedelta(hours=1)
+        if self._rates_window == start:
+            return []
+        profiles = [
+            p
+            for p in self.profiles(rates.NAME)
+            if p.params.get("window") == "hour" and p.params["stream"].startswith("event:")
+        ]
+        self._rates_window = start
+        if not profiles:
+            return []
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT event_type, COALESCE(subject_type, '-'), COALESCE(verb, '-'), COUNT(*) "
+                "FROM household_events WHERE occurred_at >= %s AND occurred_at < %s "
+                "GROUP BY 1, 2, 3",
+                (start, end),
+            )
+            counts = {f"event:{a}/{b}/{c}": n for a, b, c, n in cursor.fetchall()}
+        finally:
+            db.close()
+        local_start = frame.local_dt.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        day = local_start.date()
+        off = day.weekday() >= 5 or day in silver.ontario_holidays(day.year)
+        learner = rates.RateLearner()
+        now = frame.now.replace(tzinfo=None)
+        findings = []
+        for profile in profiles:
+            found = learner.score(
+                profile,
+                {
+                    "count": counts.get(profile.params["stream"], 0),
+                    "hour": local_start.hour,
+                    "daytype": "off" if off else "work",
+                    "window_start": start,
+                },
+                now,
+            )
+            if found is not None:
+                findings.append(found)
+        if findings:
+            self._persist(findings)
+            logger.info(
+                "LIVE rates: " + "; ".join(self.describe(f) for f in findings) + f" at {start}"
+            )
+        return findings
 
     def _scalar_state(self, db, query, params, frame, key, value):
         """A scalar learner state: hourly means from `query` (rows of (hour_start, mean))."""
