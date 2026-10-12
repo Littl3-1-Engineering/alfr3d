@@ -24,9 +24,9 @@ from sa.learners.base import Inference, utcnow
 from sa.learners import (
     away_unusual,
     day_off,
+    daytime,
     device_rhythm,
     household_day,
-    presence,
     rates,
     scalar,
     stay,
@@ -49,6 +49,7 @@ class ShadowRunner:
         self._persist = persist
         self._profiles = {}  # learner name -> (stamp, [Profile])
         self._last = {}  # rule -> signature last logged
+        self._daytime = (None, {})  # ((local day, checkpoint), {user id: Inference or None})
         self._stay_starts = {}  # user id -> start of the stay in progress (see departure)
         self._household = {}  # local date -> learner finding (or None)
         self._rates_window = None  # UTC start of the hour whose event rates were last scored
@@ -138,6 +139,10 @@ class ShadowRunner:
             self.household_features(frame)
         except Exception as e:
             logger.error(f"Household features failed: {e}")
+        try:
+            self.daytime_rows(frame)
+        except Exception as e:
+            logger.error(f"Daytime failed: {e}")
         try:
             self.layer2(frame, cards)
         except Exception as e:
@@ -486,7 +491,7 @@ class ShadowRunner:
         a home deviation is."""
         ctx = {"owners": {}, "owned_with_profile": {}}
         if frame.local_dt is not None and any(
-            p.signal == presence.SIGNAL and (p.observed or {}).get("state") == "home"
+            p.signal == daytime.SIGNAL and (p.observed or {}).get("state") == "home"
             for p in parents
         ):
             day_start = frame.now.replace(tzinfo=None) - (
@@ -510,6 +515,78 @@ class ShadowRunner:
             if user is not None:
                 ctx["owned_with_profile"][user] = ctx["owned_with_profile"].get(user, 0) + 1
         return ctx
+
+    def daytime_rows(self, frame):
+        """Layer-1 `presence.daytime` rows (sa/learners/daytime.py): residents who have been home
+        unusually long in today's 09:00-17:00 window so far. Scored once per local hour for
+        everyone with one device_history pass, cached, and re-persisted each cycle so layer 2
+        (`day_off`) keeps seeing them as fresh."""
+        if frame.local_dt is None or frame.now is None or not frame.person_presence:
+            return []
+        checkpoint = daytime.eval_hour(frame.local_dt.hour)
+        if checkpoint is None:
+            return []
+        day = frame.local_dt.date()
+        if self._daytime[0] != (day, checkpoint):
+            self._daytime = ((day, checkpoint), self._score_daytime(frame, day, checkpoint))
+        rows = [r for r in self._daytime[1].values() if r is not None]
+        now = utcnow()
+        for row in rows:
+            row.computed_at = now
+        if rows:
+            self._persist(rows)
+        return rows
+
+    def _score_daytime(self, frame, day, checkpoint):
+        profiles = {str(p.subject_id): p for p in self.profiles(daytime.NAME)}
+        residents = [
+            p["user_id"]
+            for p in frame.person_presence
+            if p["user_type"] in household_day.HOME_USER_TYPES and str(p["user_id"]) in profiles
+        ]
+        if not residents:
+            return {}
+        now_utc = frame.now.replace(tzinfo=None)
+        midnight = now_utc - (frame.local_dt - datetime.combine(day, datetime.min.time()))
+        window_start = midnight + timedelta(hours=daytime.WINDOW_START_HOUR)
+        window_end = midnight + timedelta(hours=checkpoint)
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            # Same filter as household(): the indexed `timestamp`, phones only, one gap of lookback
+            # for a stay already in progress at the window's start.
+            lookback = window_start - timedelta(minutes=household_day.PRESENCE_GAP_MINUTES)
+            cursor.execute(
+                "SELECT DISTINCT user_id, last_online FROM device_history WHERE user_id IN "
+                f"({','.join(['%s'] * len(residents))}) AND device_type IN %s "
+                "AND timestamp >= %s AND timestamp < %s AND last_online >= %s "
+                "AND last_online < %s",
+                (
+                    *residents,
+                    silver.PERSONAL_DEVICE_TYPES,
+                    lookback,
+                    window_end + timedelta(minutes=5),
+                    lookback,
+                    window_end,
+                ),
+            )
+            seen = {}
+            for user_id, last_online in cursor.fetchall():
+                seen.setdefault(user_id, []).append(last_online)
+        finally:
+            db.close()
+        learner = daytime.DaytimeLearner()
+        scored = {}
+        for user_id in residents:
+            minutes = household_day.home_minutes(
+                {user_id: seen.get(user_id, [])}, window_start, window_end
+            )
+            scored[user_id] = learner.score(
+                profiles[str(user_id)],
+                {"hours_home": minutes / 60.0, "local_dt": frame.local_dt, "day_start": midnight},
+                now_utc,
+            )
+        return scored
 
     def household(self, frame):
         """The household's day so far as layer-1 feature rows (household_day.score_features),
@@ -595,5 +672,8 @@ class ShadowRunner:
         """Refresh this day's household feature rows in sa_inferences (a handful of upserts)."""
         rows = self.household(frame)
         if rows:
+            now = utcnow()
+            for row in rows:
+                row.computed_at = now  # layer 2 only reads rows refreshed in the last few minutes
             self._persist(rows)
         return rows

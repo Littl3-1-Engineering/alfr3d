@@ -174,7 +174,7 @@ class HouseholdDayLearner(Learner):
             rows.append(
                 Inference(
                     kind="state",
-                    subject_type="household_feature",
+                    subject_type="household",  # sa_inferences.subject_type is VARCHAR(16)
                     subject_id=feature,
                     signal=SIGNAL_FEATURE,
                     learner=self.name,
