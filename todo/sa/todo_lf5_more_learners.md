@@ -25,8 +25,13 @@
       streams change level every few weeks, so their stability is often below 1; the days around the
       HA home change (10-10) are not yet a test case because scalar skips the `describes_ha_home`
       series.
-- [ ] **Visitor-arrival prediction cards** from the presence learner's next-24 h predictions for
-      guest-type users.
+- [ ] **Visitor-arrival prediction cards**: **parked 2026-10-11, nothing to predict yet.** The
+      presence outlooks exist, but at the current house only Elenka and Predrag are guest-type
+      users with data, and both are near-daily presences (62 and 59 days since July, ~7-10 h a
+      visit), so they are routine rather than arrivals; their outlook confidence is 0.2-0.23
+      (below the 0.3 card floor) because of the move. Vesna, Gorango and Kuma were last seen in
+      April-May, before the move. Revisit when a genuinely occasional visitor shows up; that needs
+      an occasional-visitor model (days since last visit, inter-visit gaps), not an hourly P(home).
 - [ ] **Card feedback as a learning signal** (SA-1 Phase 3 "earned priority",
       [todo_card_feedback_loop.md](todo_card_feedback_loop.md)): fix the double-counted `shown`
       (web and Deck both report it) before using it.
