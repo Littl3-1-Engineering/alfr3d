@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 from sa import inference_store, layer2
 from sa import silver
-from sa.learners.base import Inference
+from sa.learners.base import Inference, utcnow
 from sa.learners import away_unusual, day_off, device_rhythm, household_day, presence, rates, scalar
 
 logger = logging.getLogger("SALog")
@@ -68,6 +68,21 @@ class ShadowRunner:
             self._last[rule] = signature
             agree = "AGREE" if (legacy == "quiet") == (not findings) else "DIFFER"
             logger.info(f"SHADOW {rule} {agree}: legacy={legacy} learner={learner_desc}")
+            self._save_comparison(rule, agree, legacy, learner_desc, len(findings))
+
+    def _save_comparison(self, rule, verdict, legacy, learner_desc, learner_count):
+        """Keep the comparison past a restart (sa_shadow_comparison). Best effort: the shadow
+        must never fail a cycle."""
+        try:
+            db = self._connect()
+            try:
+                inference_store.save_comparison(
+                    db, rule, utcnow(), verdict, legacy, learner_desc, learner_count
+                )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"SHADOW {rule} comparison not saved: {e}")
 
     @staticmethod
     def describe(inference):

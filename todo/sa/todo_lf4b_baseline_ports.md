@@ -57,6 +57,15 @@ legacy rule by design. The cutover is not safe to call on this evidence; wait fo
 10-17) and for at least one real firing per rule, or replay the lake against the legacy card
 history first.*
 
+*2026-10-12: the comparison is now kept. Each time a rule's (legacy, learner) pair changes,
+`ShadowRunner.record` appends a row to `sa_shadow_comparison` (migration 048 / alembic 0053: rule,
+observed_at, verdict AGREE or DIFFER, legacy, learner, learner_count; 730-day retention). Count a
+week with `SELECT rule_id, verdict, COUNT(*) FROM sa_shadow_comparison GROUP BY 1, 2`. Before this
+the AGREE/DIFFER history lived only in the container log and reset on every restart, so the 10-12
+review had to fall back on `sa_inferences` and `card_interactions`. The review also found that the
+scalar learner scores every series (battery, speedtest) while the legacy rule covers only room
+climate and attention, so the cutover must scope it to those series.*
+
 - [ ] `climate_deviation` reads the scalar inference instead of `entity_baselines` room rows.
 - [ ] `attention_focus` / `wind_down_signal` read `attention:*` scalar inferences.
 - [ ] `departure_anomaly` reads the presence inference (home, improbable).
