@@ -414,6 +414,34 @@ class TestHouseholdDayAsRule:
             assert len(inference.subject_id) <= 64 and len(inference.learner) <= 48
             assert len(inference.learner_version) <= 16
 
+    def test_the_live_day_is_measured_by_sightings_and_identities_like_the_fitted_days(self):
+        """Regression: the live count used raw history rows (every state change writes one), so
+        78 'devices' were scored against a profile of ~21 and every evening looked unusual."""
+        tests = TestHouseholdDay()
+        profile = household_day.HouseholdDayLearner().fit_days(tests._days(), REF)
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (26, datetime(2026, 10, 12, 7, 50))
+        cursor.fetchall.return_value = []
+        persisted = []
+        runner = shadow.ShadowRunner(lambda: MagicMock(cursor=lambda: cursor), persisted.extend)
+        runner.profiles = lambda name: [profile]
+        frame = MagicMock()
+        frame.now = datetime(2026, 10, 12, 22, 5)
+        frame.local_dt = datetime(2026, 10, 12, 18, 5)
+        frame.person_presence = [
+            {"user_id": 1, "user_type": "owner"},
+            {"user_id": 9, "user_type": "guest"},
+        ]
+
+        rows = runner.household(frame)
+
+        sql, params = cursor.execute.call_args_list[0].args
+        assert "last_online AS ts" in sql and "CONCAT('p', user_id" in sql
+        assert 1 in params and 9 in params  # every person's rows merge by name, not just residents
+        by_feature = {r.evidence["feature"]: r for r in rows}
+        assert by_feature["devices"].observed["value"] == 26
+        assert by_feature["first_minute"].observed["value"] == 230.0
+
     def test_household_rows_are_refreshed_before_each_persist(self):
         """Regression: cached rows were re-persisted with their creation time, so layer 2 (which
         reads rows refreshed in the last five minutes) stopped seeing them after five minutes."""

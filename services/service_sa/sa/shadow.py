@@ -609,16 +609,37 @@ class ShadowRunner:
         db = self._connect()
         try:
             cursor = db.cursor()
-            # One pass over the day: distinct devices, and the first device to COME online (a row
-            # with no row of the same device in the gap before it). The earlier correlated
-            # NOT EXISTS form took minutes on device_history and wedged the awareness loop.
+            # The day's devices and the first to COME online, measured the way silver measures the
+            # fitted days (sa/silver.py device_islands): by SIGHTINGS (`last_online`), not by
+            # history rows (every state change writes a row, which inflated the count 2-3x), with
+            # rows of one named device owned by one person merged into one identity, and a device
+            # "comes online" when its previous sighting is more than a gap earlier. One window pass
+            # (a correlated NOT EXISTS took minutes on device_history and wedged the loop). Filtered
+            # on the indexed `timestamp`, which trails the sighting by about a minute.
+            person_ids = [p["user_id"] for p in (frame.person_presence or [])] or [-1]
             cursor.execute(
-                "SELECT COUNT(DISTINCT device_id), "
-                "MIN(CASE WHEN prev IS NULL OR prev < t - INTERVAL %s MINUTE THEN t END) FROM ("
-                "SELECT device_id, timestamp AS t, LAG(timestamp) OVER "
-                "(PARTITION BY device_id ORDER BY timestamp) AS prev FROM device_history "
-                "WHERE timestamp >= %s - INTERVAL %s MINUTE AND timestamp < %s) x WHERE t >= %s",
-                (COME_ONLINE_GAP_MINUTES, midnight, COME_ONLINE_GAP_MINUTES, cutoff, midnight),
+                "SELECT COUNT(DISTINCT ident), "
+                "MIN(CASE WHEN prev IS NULL OR prev < ts - INTERVAL %s MINUTE THEN ts END) FROM ("
+                "SELECT ident, ts, LAG(ts) OVER (PARTITION BY ident ORDER BY ts) AS prev FROM ("
+                "SELECT DISTINCT CASE WHEN user_id IN ("
+                + ",".join(["%s"] * len(person_ids))
+                + ") AND name IS NOT NULL AND name <> 'unknown' "
+                "THEN CONCAT('p', user_id, ':', name) ELSE CONCAT('d', device_id) END AS ident, "
+                "last_online AS ts FROM device_history "
+                "WHERE timestamp >= %s - INTERVAL %s MINUTE AND timestamp < %s + INTERVAL 5 MINUTE "
+                "AND last_online IS NOT NULL AND last_online >= %s - INTERVAL %s MINUTE "
+                "AND last_online < %s) s) x WHERE ts >= %s",
+                (
+                    COME_ONLINE_GAP_MINUTES,
+                    *person_ids,
+                    midnight,
+                    COME_ONLINE_GAP_MINUTES,
+                    cutoff,
+                    midnight,
+                    COME_ONLINE_GAP_MINUTES,
+                    cutoff,
+                    midnight,
+                ),
             )
             devices, first = cursor.fetchone()
             # Person-minutes at home: owners' and residents' phones (device types 3 and 5), the
