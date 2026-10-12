@@ -50,6 +50,13 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
 
 ## Cutover checklist (per rule, after a week of shadow)
 
+*2026-10-11 check (36 h of shadow): no `DIFFER` lines, no shadow/live-rate errors. But every
+climate, attention, departure and household line is quiet on both sides, so nothing has yet shown
+a learner firing where the legacy rule fires. `rhythm_break_anomaly` names more devices than the
+legacy rule by design. The cutover is not safe to call on this evidence; wait for the week (about
+10-17) and for at least one real firing per rule, or replay the lake against the legacy card
+history first.*
+
 - [ ] `climate_deviation` reads the scalar inference instead of `entity_baselines` room rows.
 - [ ] `attention_focus` / `wind_down_signal` read `attention:*` scalar inferences.
 - [ ] `departure_anomaly` reads the presence inference (home, improbable).
