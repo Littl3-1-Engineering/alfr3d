@@ -79,21 +79,20 @@ class TestCalendarState:
 
 
 class TestShadowHouseholdComparison:
-    def test_the_layer_two_result_is_logged_against_the_legacy_card(self, monkeypatch, caplog):
+    def test_a_rule_naming_a_legacy_card_is_logged_against_it(self, monkeypatch, caplog):
         import logging
-
-        from services.service_sa.sa.learners import household_day
 
         db = MagicMock()
         db.cursor.return_value = MagicMock()
         runner = shadow.ShadowRunner(lambda: db, lambda inferences: None)
         runner.profiles = lambda name: []
+        monkeypatch.setattr(
+            shadow.household_day.RULE, "legacy_rule", "household_unusual_day", raising=False
+        )
         monkeypatch.setattr(shadow.inference_store, "load_recent", lambda *a, **k: [])
         frame = SimpleNamespace(now=NOW.replace(tzinfo=timezone.utc), local_dt=None)
 
         with caplog.at_level(logging.INFO, logger="SALog"):
             runner.layer2(frame, {"household_unusual_day": None})
 
-        assert any(
-            "SHADOW household_unusual_day AGREE" in r.getMessage() for r in caplog.records
-        ), household_day.RULE.legacy_rule
+        assert any("SHADOW household_unusual_day AGREE" in r.getMessage() for r in caplog.records)

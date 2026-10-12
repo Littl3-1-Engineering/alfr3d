@@ -401,8 +401,21 @@ class TestHouseholdDayAsRule:
         assert layer2.run_rules([household_day.RULE], self._rows(26, 700), {}, now) == []
         assert layer2.run_rules([household_day.RULE], self._rows(26, 230), {}, now) == []
 
-    def test_the_rule_names_the_legacy_card_shadow_compares_it_with(self):
-        assert household_day.RULE.legacy_rule == "household_unusual_day"
+    def test_after_the_cutover_the_rule_has_no_legacy_card_to_compare_with(self):
+        assert not hasattr(household_day.RULE, "legacy_rule")
+
+    def test_the_card_explains_only_the_features_that_were_off(self):
+        from services.service_sa.sa import layer2
+
+        rows = self._rows(12, 700)
+        now = datetime(2026, 10, 12, 22, 0)
+        out = layer2.run_rules([household_day.RULE], rows, {}, now)[0]
+
+        lines = household_day.explain(out)
+
+        assert any(line.startswith("12 devices") for line in lines)
+        assert any(line.startswith("first device online at 11:40") for line in lines)
+        assert len(lines) == 2 and all("typically" in line for line in lines)
 
 
 class TestShadowComparisonIsKept:

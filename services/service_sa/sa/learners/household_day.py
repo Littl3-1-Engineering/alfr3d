@@ -215,7 +215,6 @@ class HouseholdUnusualDayRule(layer2.Rule):
     version = VERSION
     signal = SIGNAL
     subject_type = "household"
-    legacy_rule = "household_unusual_day"  # the card this replaces; shadow compares the two
     min_bits = -math.log2(P_FLAG)
     cap_at_best = False
     ttl_hours = 12
@@ -237,6 +236,38 @@ class HouseholdUnusualDayRule(layer2.Rule):
 
 
 RULE = HouseholdUnusualDayRule()
+
+
+def _clock(minute):
+    return f"{int(minute) // 60:02d}:{int(minute) % 60:02d}"
+
+
+def explain(inference):
+    """The card's 'because' lines for a household_unusual_day inference: one per feature that was
+    off (p <= MIN_EACH_P), plain units, value against the household's usual."""
+    observed, expected = inference.observed or {}, inference.expected or {}
+    off = {
+        ref["feature"]
+        for ref in (inference.evidence or {}).get("parents", [])
+        if ref.get("feature") and ref["p"] is not None and ref["p"] <= MIN_EACH_P
+    }
+    lines = []
+    if "devices" in off:
+        lines.append(
+            f"{round(observed['devices'])} devices active today, "
+            f"typically about {round(expected['devices'])}"
+        )
+    if "first_minute" in off:
+        lines.append(
+            f"first device online at {_clock(observed['first_minute'])}, "
+            f"typically around {_clock(expected['first_minute'])}"
+        )
+    if "home_minutes" in off:
+        lines.append(
+            f"{observed['home_minutes'] / 60:.1f} h of resident time at home, "
+            f"typically about {expected['home_minutes'] / 60:.1f} h"
+        )
+    return lines
 
 
 def home_minutes(sightings, window_start, window_end, gap_minutes=PRESENCE_GAP_MINUTES):

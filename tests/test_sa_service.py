@@ -2120,122 +2120,86 @@ class TestCheckDepartureAnomaly:
 
 
 class TestCheckHouseholdUnusualDay:
-    """Tests for SAEngine.check_household_unusual_day() (SA-10 Phase 3). Not a frame field --
-    this entity_baselines/device_history join isn't duplicated elsewhere, so it stays its own
-    query; only frame.local_dt/frame.day_mood/frame.now are shared."""
+    """SAEngine.check_household_unusual_day() reads the layer-2 inference (the LF-4 cutover,
+    2026-10-12); the verdict itself is tested with the rule in test_sa_ports.py."""
+
+    NOW = datetime(2026, 10, 12, 22, 0)
+
+    def _inference(self):
+        from services.service_sa.sa import layer2
+        from services.service_sa.sa.learners import household_day
+        from services.service_sa.sa.learners.base import Inference
+
+        def row(feature, p, value, median):
+            return Inference(
+                kind="state",
+                subject_type="household_feature",
+                subject_id=feature,
+                signal=household_day.SIGNAL_FEATURE,
+                learner=household_day.NAME,
+                learner_version="2",
+                window_start=self.NOW,
+                observed={"value": value, "z": 3.0},
+                expected={"median": median, "sigma": 1.0},
+                probability=p,
+                surprise=0.0,
+                confidence=0.9,
+                n_eff=30.0,
+                evidence={"family": "household_day:" + feature, "feature": feature},
+            )
+
+        rows = [row("devices", 0.001, 30, 12), row("first_minute", 0.01, 700, 230)]
+        rows.append(row("home_minutes", 0.9, 500, 500))
+        return layer2.run_rules([household_day.RULE], rows, {}, self.NOW)[0]
 
     @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_fires_when_both_count_and_hour_deviate_and_day_is_over(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_fresh_inference_becomes_the_card(self, mock_connect, monkeypatch):
+        from services.service_sa.sa import engine as engine_module
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        # typical_active_hour=7, typical_last_activity_hour=20, range=[5,10], sample_count=20,
-        # min_sample_count=14.
-        mock_cursor.fetchone.side_effect = [
-            (7, 20, 5, 10, 20, 14),
-            (11, 2),  # today: first activity at 11:00 (vs typical 7), only 2 devices (vs 5-10)
-        ]
+        monkeypatch.setattr(
+            engine_module.inference_store, "load_recent", lambda *a, **k: [self._inference()]
+        )
+        frame = _frame_with_day_mood(self.NOW)
 
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))  # Tuesday 9pm, past 20:00
-        daemon = SAEngine()
-        card = daemon.check_household_unusual_day(frame)
+        card = engine_module.SAEngine().check_household_unusual_day(frame)
 
-        assert card is not None
         assert card["mode"] == "household_unusual_day"
         assert card["priority"] == 6.5
-        assert "Tuesday" in card["content"]
-        assert card["data"]["today_device_count"] == 2
-        assert card["data"]["today_first_activity_hour"] == 11
+        assert "Monday" in card["content"]
         assert card["data"]["because"]
+        assert card["data"]["confidence"] > 0
+        mock_connect.return_value.close.assert_called_once()
 
     @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_no_household_baseline_exists(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
+    def test_no_inference_means_no_card(self, mock_connect, monkeypatch):
+        from services.service_sa.sa import engine as engine_module
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
+        monkeypatch.setattr(engine_module.inference_store, "load_recent", lambda *a, **k: [])
 
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))
-        daemon = SAEngine()
-        assert daemon.check_household_unusual_day(frame) is None
+        assert (
+            engine_module.SAEngine().check_household_unusual_day(_frame_with_day_mood(self.NOW))
+            is None
+        )
 
     @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_below_the_sample_floor(self, mock_connect):
+    def test_other_learners_layer_two_rows_are_not_this_card(self, mock_connect, monkeypatch):
+        from services.service_sa.sa import engine as engine_module
+
+        other = self._inference()
+        other.learner = "away_unusual"
+        monkeypatch.setattr(engine_module.inference_store, "load_recent", lambda *a, **k: [other])
+
+        assert (
+            engine_module.SAEngine().check_household_unusual_day(_frame_with_day_mood(self.NOW))
+            is None
+        )
+
+    def test_returns_none_when_frame_is_missing_day_mood_or_now(self):
         from services.service_sa.sa.engine import SAEngine
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = (7, 20, 5, 10, 3, 14)  # sample_count < min
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))
-        daemon = SAEngine()
-        assert daemon.check_household_unusual_day(frame) is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_before_the_days_typical_last_activity_hour(self, mock_connect):
-        """Too early to judge "today" -- the day hasn't finished looking normal or not yet."""
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = (7, 20, 5, 10, 20, 14)
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 14, 0))  # 2pm, before 20:00
-        daemon = SAEngine()
-        assert daemon.check_household_unusual_day(frame) is None
-        mock_cursor.execute.assert_called_once()  # never reached the "today's activity" query
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_only_device_count_deviates(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [
-            (7, 20, 5, 10, 20, 14),
-            (7, 2),  # first-activity hour matches typical; only device count is off
-        ]
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))
-        daemon = SAEngine()
-        assert daemon.check_household_unusual_day(frame) is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_only_first_activity_hour_deviates(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [
-            (7, 20, 5, 10, 20, 14),
-            (11, 7),  # device count within typical range; only the hour is off
-        ]
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))
-        daemon = SAEngine()
-        assert daemon.check_household_unusual_day(frame) is None
-
-    def test_returns_none_when_frame_is_missing_local_dt_or_day_mood(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
         with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
             frame = _make_frame(local_dt=None, day_mood=None)
-            assert daemon.check_household_unusual_day(frame) is None
+            assert SAEngine().check_household_unusual_day(frame) is None
             mock_connect.assert_not_called()
 
     @patch("services.service_sa.sa.engine.pymysql.connect")
@@ -2244,14 +2208,10 @@ class TestCheckHouseholdUnusualDay:
         from services.service_sa.sa.engine import SAEngine
 
         mock_db = MagicMock()
-        mock_cursor = MagicMock()
         mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
+        mock_db.cursor.return_value.execute.side_effect = pymysql.err.OperationalError("down")
 
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 21, 0))
-        daemon = SAEngine()
-        card = daemon.check_household_unusual_day(frame)
+        card = SAEngine().check_household_unusual_day(_frame_with_day_mood(self.NOW))
 
         assert card is None
         mock_db.close.assert_called_once()
