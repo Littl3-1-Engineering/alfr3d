@@ -5,11 +5,9 @@ import random
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock
 
-import pytest
 
 from services.service_sa.sa import shadow
 from services.service_sa.sa.learners import device_rhythm, household_day, presence, rates, scalar
-from services.service_sa.sa.learners.base import Profile
 
 REF = date(2026, 10, 9)  # a Friday
 
@@ -278,7 +276,7 @@ class TestShadowRunner:
             profile,
             {
                 "value": 40.0,
-                "recent": [(l, (24 - l) % 24, 20.2) for l in range(1, 25)],
+                "recent": [(lag, (24 - lag) % 24, 20.2) for lag in range(1, 25)],
                 "local_dt": datetime(2026, 9, 11, 3, 0),
             },
             datetime(2026, 9, 11, 3, 0),
@@ -334,3 +332,46 @@ class TestShadowRunner:
         frame = MagicMock()
         frame.local_dt, frame.now = datetime(2026, 10, 10, 14, 0), now
         assert runner.rhythm(frame) == []
+
+
+class TestHouseholdDayAsRule:
+    def _rows(self, devices, first, home=None):
+        learner = household_day.HouseholdDayLearner()
+        days = TestHouseholdDay()._days(home=(lambda d: 2600.0) if home is not None else None)
+        profile = learner.fit_days(days, REF)
+        state = {
+            "devices": devices,
+            "first_minute": first,
+            "home_minutes": home,
+            "local_dt": datetime(2026, 10, 12, 18, 0),
+        }
+        return learner.score_features(profile, state, datetime(2026, 10, 12, 22, 0))
+
+    def test_features_are_layer_one_state_rows_each_in_its_own_family(self):
+        from services.service_sa.sa import layer2
+
+        rows = self._rows(26, 230)  # an unremarkable day still yields rows
+
+        assert {r.evidence["feature"] for r in rows} == {"devices", "first_minute"}
+        assert all(r.layer == 1 and r.kind == "state" and 0 < r.probability <= 1 for r in rows)
+        assert len({layer2.family_of(r) for r in rows}) == 2
+
+    def test_the_rule_flags_two_odd_features_and_matches_the_learner(self):
+        from services.service_sa.sa import layer2
+
+        rows = self._rows(12, 700)
+        out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
+
+        assert len(out) == 1 and out[0].layer == 2 and out[0].signal == "household.day"
+        assert out[0].probability <= household_day.P_FLAG
+        assert out[0].observed == {"devices": 12, "first_minute": 700}
+
+    def test_one_odd_feature_or_a_normal_day_is_quiet(self):
+        from services.service_sa.sa import layer2
+
+        now = datetime(2026, 10, 12, 22, 0)
+        assert layer2.run_rules([household_day.RULE], self._rows(26, 700), {}, now) == []
+        assert layer2.run_rules([household_day.RULE], self._rows(26, 230), {}, now) == []
+
+    def test_the_rule_names_the_legacy_card_shadow_compares_it_with(self):
+        assert household_day.RULE.legacy_rule == "household_unusual_day"

@@ -36,13 +36,14 @@ import logging
 import math
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import duckdb
 
-from sa import confidence, inference_store
+from sa import confidence, inference_store, layer2
+from sa.layer2 import fisher_p  # noqa: F401  (re-exported: tests and backtests import it here)
 from sa.learners import presence
-from sa.learners.base import Inference, Learner, Profile, utcnow
+from sa.learners.base import Inference, Learner, Profile
 from sa.learners.scalar import weighted_mad_sigma
 
 logger = logging.getLogger("SAHouseholdDay")
@@ -50,6 +51,7 @@ logger = logging.getLogger("SAHouseholdDay")
 NAME = "household_day"
 VERSION = "2"
 SIGNAL = "household.day"
+SIGNAL_FEATURE = "household.day_feature"
 
 CUTOFF_HOUR = 18
 HALF_LIFE_DAYS = 28.0
@@ -64,19 +66,7 @@ MIN_FEATURES_OFF = 2  # one noisy metric is just a day
 P_FLAG = 0.01  # chosen from the backtest (see todo_lf4b_baseline_ports.md)
 STABILITY_UNKNOWN = 0.5
 QUALITY = 1.0
-
-
-def fisher_p(ps, weights):
-    """P(chi-square_{2k} >= X) for X = -2 * sum(w * ln p). Closed form for even degrees of
-    freedom: exp(-X/2) * sum_{j<k} (X/2)^j / j!."""
-    k = len(ps)
-    x = -2.0 * sum(w * math.log(max(p, 1e-300)) for p, w in zip(ps, weights))
-    half = x / 2.0
-    term, total = 1.0, 1.0
-    for j in range(1, k):
-        term *= half / j
-        total += term
-    return min(1.0, math.exp(-half) * total)
+FAMILY_PREFIX = "household_day:"
 
 
 def two_sided_p(z):
@@ -157,12 +147,17 @@ class HouseholdDayLearner(Learner):
         profile = self.fit_days(data["days"], ref, data["coverage"])
         return [profile] if profile else []
 
-    def score(self, profile, state, now):
-        """A layer-2 deviation if the combined p <= P_FLAG, else None. state: {"devices",
-        "first_minute", "local_dt"}; `first_minute` may be None (nothing active yet)."""
+    def score_features(self, profile, state, now):
+        """Layer-1 rows, one per feature the day has a value for: how improbable that value is for
+        this household on this day type, with its confidence. Unremarkable features are included
+        (state rows, any p): the layer-2 rule combines all of them, so picking which to combine
+        after looking cannot flatter the p-value. state: {"devices", "first_minute",
+        "home_minutes", "local_dt"}; a value may be None (nothing measured yet)."""
         day = state["local_dt"].date()
         kind = presence._daytype(day)
-        parents, ps, cs = [], [], []
+        midnight = datetime.combine(day, datetime.min.time())
+        window_start = (now - (state["local_dt"] - midnight)).replace(microsecond=0)
+        rows = []
         for feature in FEATURES:
             value = state.get(feature)
             if value is None or feature not in profile.params["features"]:
@@ -176,49 +171,72 @@ class HouseholdDayLearner(Learner):
                 profile.source_quality,
                 profile.stability,
             )
-            parents.append(
-                {
-                    "feature": feature,
-                    "value": round(value, 2),
-                    "expected": cell["median"],
-                    "z": round(z, 3),
-                    "p": round(p, 8),
-                    "confidence": round(c.value, 4),
-                }
+            rows.append(
+                Inference(
+                    kind="state",
+                    subject_type="household_feature",
+                    subject_id=feature,
+                    signal=SIGNAL_FEATURE,
+                    learner=self.name,
+                    learner_version=self.version,
+                    window_start=window_start,
+                    window_end=now.replace(microsecond=0),
+                    context={"daytype": kind, "cutoff_hour": CUTOFF_HOUR},
+                    observed={"value": round(value, 2), "z": round(z, 3)},
+                    expected={"median": cell["median"], "sigma": cell["sigma"]},
+                    # Unrounded: the layer-2 rule fuses these, and rounding a tiny p to 12 places
+                    # changes the combined p by percent.
+                    probability=p,
+                    surprise=round(-math.log2(p), 3),
+                    confidence=c.value,
+                    n_eff=cell["weight"],
+                    # Each feature is its own family: the legacy rule treated them as independent
+                    # evidence and P_FLAG was calibrated on that.
+                    evidence={"family": FAMILY_PREFIX + feature, "feature": feature},
+                    expires_at=now + timedelta(hours=12),
+                )
             )
-            ps.append(p)
-            cs.append(c.value)
-        if len(ps) < MIN_FEATURES_OFF:
+        return rows
+
+    def score(self, profile, state, now):
+        """The layer-2 deviation if the day is unusual, else None: the features scored above,
+        fused by RULE. Kept for backtests and callers holding a profile rather than rows."""
+        rows = self.score_features(profile, state, now)
+        if len(rows) < MIN_FEATURES_OFF:
             return None
-        if sum(1 for p in ps if p <= MIN_EACH_P) < MIN_FEATURES_OFF:
-            return None
-        p_comb = fisher_p(ps, cs)
-        if p_comb > P_FLAG:
-            return None
-        p_comb = max(p_comb, 1e-12)
-        conf = sum(cs) / len(cs)
-        midnight = datetime.combine(day, datetime.min.time())
-        local = state["local_dt"]
-        return Inference(
-            layer=2,
-            kind="deviation",
-            subject_type="household",
-            subject_id="household",
-            signal=SIGNAL,
-            learner=self.name,
-            learner_version=self.version,
-            window_start=now - (local - midnight),
-            window_end=now.replace(microsecond=0),
-            context={"daytype": kind, "cutoff_hour": CUTOFF_HOUR},
-            observed={f["feature"]: f["value"] for f in parents},
-            expected={f["feature"]: f["expected"] for f in parents},
-            probability=round(p_comb, 12),
-            surprise=round(-math.log2(p_comb), 3),
-            confidence=round(conf, 4),
-            n_eff=profile.n_eff,
-            evidence={"method": "fisher_confidence_weighted", "parents": parents},
-            expires_at=now + timedelta(hours=12),
-        )
+        return layer2.fuse(RULE, layer2.Group("household", rows[0], rows), now)
+
+
+class HouseholdUnusualDayRule(layer2.Rule):
+    """SA-10 as a layer-2 rule: at least MIN_FEATURES_OFF of the day's features mildly off, and the
+    confidence-weighted Fisher p of all of them at most P_FLAG."""
+
+    name = NAME
+    version = VERSION
+    signal = SIGNAL
+    subject_type = "household"
+    legacy_rule = "household_unusual_day"  # the card this replaces; shadow compares the two
+    min_bits = -math.log2(P_FLAG)
+    cap_at_best = False
+    ttl_hours = 12
+
+    def groups(self, parents, ctx):
+        features = [p for p in parents if p.signal == SIGNAL_FEATURE]
+        if len(features) < MIN_FEATURES_OFF:
+            return []
+        return [layer2.Group("household", features[0], features)]
+
+    def accept(self, voters):
+        return sum(1 for v in voters if v.probability <= MIN_EACH_P) >= MIN_FEATURES_OFF
+
+    def observed(self, group):
+        return {p.evidence["feature"]: p.observed["value"] for p in group.parents}
+
+    def expected(self, group):
+        return {p.evidence["feature"]: p.expected["median"] for p in group.parents}
+
+
+RULE = HouseholdUnusualDayRule()
 
 
 def home_minutes(sightings, window_start, window_end, gap_minutes=PRESENCE_GAP_MINUTES):

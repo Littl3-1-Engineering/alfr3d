@@ -18,11 +18,16 @@ swallowed, and no result of this module reaches a card.
 import logging
 from datetime import datetime, timedelta
 
-from sa import inference_store
+from sa import inference_store, layer2
 from sa import silver
-from sa.learners import away_unusual, device_rhythm, household_day, presence, rates, scalar
+from sa.learners.base import Inference
+from sa.learners import away_unusual, day_off, device_rhythm, household_day, presence, rates, scalar
 
 logger = logging.getLogger("SALog")
+
+# Every layer-2 inference the awareness loop computes. A new one is a Rule in sa/learners/ and a
+# line here (sa/layer2.py).
+RULES = (away_unusual.RULE, day_off.RULE, household_day.RULE)
 
 HOURS_BACK = 24
 COME_ONLINE_GAP_MINUTES = 45  # a device unseen this long is 'coming online' (silver's gap)
@@ -53,9 +58,9 @@ class ShadowRunner:
         finally:
             db.close()
 
-    def record(self, rule, legacy, findings):
+    def record(self, rule, legacy, findings, persist=True):
         """Persist the learner's findings and log when (legacy, learner) differs from last time."""
-        if findings:
+        if findings and persist:
             self._persist(findings)
         learner_desc = "; ".join(self.describe(f) for f in findings) or "quiet"
         signature = (legacy, learner_desc)
@@ -89,7 +94,6 @@ class ShadowRunner:
             ("attention_focus", self.attention),
             ("departure_anomaly", self.departure),
             ("rhythm_break_anomaly", self.rhythm),
-            ("household_unusual_day", self.household),
         ):
             if name not in cards:
                 continue
@@ -102,9 +106,17 @@ class ShadowRunner:
         except Exception as e:
             logger.error(f"Live rates failed: {e}")
         try:
-            self.away(frame)
+            self.calendar_state(frame)
         except Exception as e:
-            logger.error(f"Away-unusual failed: {e}")
+            logger.error(f"Calendar state failed: {e}")
+        try:
+            self.household_features(frame)
+        except Exception as e:
+            logger.error(f"Household features failed: {e}")
+        try:
+            self.layer2(frame, cards)
+        except Exception as e:
+            logger.error(f"Layer 2 failed: {e}")
 
     def live_rates(self, frame):
         """Score the hour that just ended against the event-stream rate profiles (LF-5a left this
@@ -323,87 +335,128 @@ class ShadowRunner:
                     findings.append(found)
         return findings
 
-    def away(self, frame):
-        """LF-6 away_unusual: for each person who is out and improbably so, combine their presence
-        deviation with the deviations of the devices they own (layer 2). Persisted to
-        sa_inferences and logged when the set of people changes; never a card."""
-        if not frame.person_presence or frame.local_dt is None or frame.now is None:
+    def calendar_state(self, frame):
+        """Layer-1 observation for layer 2: an event on the household calendar covers now. A state
+        row, not a deviation (no probability): rules use it to EXPLAIN an absence. Refreshed each
+        cycle while the event lasts, so it drops out of layer 2 within minutes of ending. The title
+        is deliberately not stored."""
+        if frame.now is None:
             return []
-        presence_profiles = {str(p.subject_id): p for p in self.profiles(presence.NAME)}
-        device_profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
-        away = [
-            p
-            for p in frame.person_presence
-            if not p["home"] and str(p["user_id"]) in presence_profiles
+        now = frame.now.replace(tzinfo=None)
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT id, start_time, end_time FROM calendar_events "
+                "WHERE start_time <= %s AND end_time >= %s",
+                (now, now),
+            )
+            rows = cursor.fetchall()
+        finally:
+            db.close()
+        found = [
+            Inference(
+                kind="state",
+                subject_type="household",
+                subject_id="calendar",
+                signal=layer2.SIGNAL_CALENDAR_BUSY,
+                learner="calendar_observer",
+                learner_version="1",
+                window_start=start,
+                window_end=end,
+                observed={"state": "busy"},
+                confidence=1.0,
+                evidence={"family": "calendar", "event_id": event_id},
+                expires_at=end,
+            )
+            for event_id, start, end in rows
         ]
+        if found:
+            self._persist(found)
+        return found
+
+    def layer2(self, frame, cards=None):
+        """Layer 2: combine the fresh layer-1 rows in sa_inferences (sa/layer2.py), one pass for
+        every registered rule. Persisted to sa_inferences and logged when the set of results
+        changes; never a card. Rows are only read after the layer-1 passes above have refreshed
+        them this cycle."""
+        if frame.now is None:
+            return []
         now_utc = frame.now.replace(tzinfo=None)
-        findings = []
-        if away:
-            db = self._connect()
-            try:
-                cursor = db.cursor()
-                cursor.execute(
-                    "SELECT d.id, s.state, d.last_online, d.user_id FROM device d "
-                    "JOIN states s ON d.state = s.id WHERE d.last_online IS NOT NULL"
-                )
-                rows = cursor.fetchall()
-            finally:
-                db.close()
-            rhythm = device_rhythm.DeviceRhythmLearner()
-            learner = presence.PresenceLearner()
-            for person in away:
-                if person["last_online"] is None:
-                    continue
-                minutes = (now_utc - person["last_online"]).total_seconds() / 60.0
-                found = learner.score(
-                    presence_profiles[str(person["user_id"])],
-                    {"home": False, "away_minutes": minutes, "local_dt": frame.local_dt},
-                    now_utc,
-                )
-                if found is None:
-                    continue
-                owned = [
-                    r for r in rows if r[3] == person["user_id"] and str(r[0]) in device_profiles
-                ]
-                devices = []
-                for device_id, state, last_online, _user in owned:
-                    if state == "online":
-                        continue
-                    d = rhythm.score(
-                        device_profiles[str(device_id)],
-                        {"online": False,
-                         "offline_minutes": (now_utc - last_online).total_seconds() / 60.0,
-                         "local_dt": frame.local_dt},
-                        now_utc,
-                    )  # fmt: skip
-                    if d is not None:
-                        devices.append(d)
-                combined = away_unusual.combine(
-                    str(person["user_id"]), person["username"], found, devices, len(owned), now_utc
-                )
-                if combined is not None:
-                    findings.append(combined)
-        signature = tuple(sorted(f.subject_id for f in findings))
+        db = self._connect()
+        try:
+            parents = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES)
+            )
+            ctx = self._layer2_context(db, parents, frame)
+        finally:
+            db.close()
+        findings = layer2.run_rules(RULES, parents, ctx, now_utc) if parents else []
         if findings:
             self._persist(findings)
-        if self._last.get("away_unusual") != signature:
-            self._last["away_unusual"] = signature
+        for rule in RULES:
+            legacy_rule = getattr(rule, "legacy_rule", None)
+            if legacy_rule and cards and legacy_rule in cards:
+                self.record(
+                    legacy_rule,
+                    self.legacy_desc(cards[legacy_rule]),
+                    [f for f in findings if f.learner == rule.name],
+                    persist=False,
+                )
+        signature = tuple(sorted((f.learner, f.subject_id) for f in findings))
+        if self._last.get("layer2") != signature:
+            self._last["layer2"] = signature
             if findings:
                 logger.info(
-                    "LIVE away_unusual: "
+                    "LIVE layer2: "
                     + "; ".join(
-                        f"{f.evidence['username']} {f.surprise:.1f} bits conf={f.confidence:.2f} "
-                        f"devices_off={f.evidence['devices_offline']}"
-                        f"/{f.evidence['devices_with_profile']}"
+                        f"{f.learner} {f.evidence.get('username') or f.subject_id} "
+                        f"{f.surprise:.1f} bits conf={f.confidence:.2f} "
+                        f"families={','.join(f.evidence['families'])}"
                         for f in findings
                     )
                 )
             else:
-                logger.info("LIVE away_unusual: quiet")
+                logger.info("LIVE layer2: quiet")
         return findings
 
+    def _layer2_context(self, db, parents, frame):
+        """What the rules need beyond the parents themselves: who owns each device, and how many
+        of each person's devices have a rhythm profile (the corroboration base). Queried only when a
+        rule needs it: owners when a device deviation is among the parents, today's calendar when
+        a home deviation is."""
+        ctx = {"owners": {}, "owned_with_profile": {}}
+        if frame.local_dt is not None and any(
+            p.signal == presence.SIGNAL and (p.observed or {}).get("state") == "home"
+            for p in parents
+        ):
+            day_start = frame.now.replace(tzinfo=None) - (
+                frame.local_dt - frame.local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            )
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time >= %s",
+                (day_start + timedelta(days=1), day_start),
+            )
+            ctx["day_start_utc"] = day_start.replace(microsecond=0)
+            ctx["calendar_events_today"] = cursor.fetchone()[0]
+        if not any(p.signal == device_rhythm.SIGNAL_AVAILABILITY for p in parents):
+            return ctx
+        cursor = db.cursor()
+        cursor.execute("SELECT id, user_id FROM device WHERE user_id IS NOT NULL")
+        owners = {str(device_id): str(user_id) for device_id, user_id in cursor.fetchall()}
+        ctx["owners"] = owners
+        for profile in self.profiles(device_rhythm.NAME):
+            user = owners.get(str(profile.subject_id))
+            if user is not None:
+                ctx["owned_with_profile"][user] = ctx["owned_with_profile"].get(user, 0) + 1
+        return ctx
+
     def household(self, frame):
-        """Once per day, the first cycle at or after the cutoff hour: the household's day so far."""
+        """The household's day so far as layer-1 feature rows (household_day.score_features),
+        computed once per day at the first cycle at or after the cutoff hour; the layer-2 rule
+        household_unusual_day combines them. The rows are cached for the day and re-persisted by
+        household_features() each cycle so layer 2 keeps seeing them as fresh."""
         if frame.local_dt is None or frame.local_dt.hour < household_day.CUTOFF_HOUR:
             return []
         day = frame.local_dt.date()
@@ -466,7 +519,7 @@ class ShadowRunner:
         first_minute = (
             (first - midnight).total_seconds() / 60.0 if first else household_day.CUTOFF_HOUR * 60.0
         )
-        inference = household_day.HouseholdDayLearner().score(
+        rows = household_day.HouseholdDayLearner().score_features(
             profiles[0],
             {
                 "devices": devices,
@@ -476,5 +529,12 @@ class ShadowRunner:
             },
             frame.now.replace(tzinfo=None),
         )
-        self._household[day] = [inference] if inference else []
-        return self._household[day]
+        self._household[day] = rows
+        return rows
+
+    def household_features(self, frame):
+        """Refresh this day's household feature rows in sa_inferences (a handful of upserts)."""
+        rows = self.household(frame)
+        if rows:
+            self._persist(rows)
+        return rows
