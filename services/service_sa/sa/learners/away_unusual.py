@@ -5,8 +5,10 @@ The second LAYER-2 inference. It reads layer-1 rows only, never raw data:
 - the person's `presence.home` deviation where the observed state is "away" (the presence
   learner has already required >= 3 bits of surprise and >= 60 minutes away),
 - `device.online` deviations (offline when usually on) for devices that person owns,
-- optional parents from other source families (calendar, Home Assistant trackers) when a learner
-  for them exists. None does yet, so today every parent is in the "network" family.
+- a `calendar.busy` row (an event covers now) EXPLAINS the absence: it discounts the surprise
+  (layer2.Rule.explained_discount) rather than voting, so a booked absence stops being unusual,
+- optional parents from other source families (Home Assistant trackers) when a learner for them
+  exists.
 
 Combination follows todo/sa/todo_lf6_layer2.md:
 
@@ -30,12 +32,8 @@ Combination follows todo/sa/todo_lf6_layer2.md:
 runs it over the lake's presence history to check a past day.
 """
 
-import math
-from datetime import timedelta
-
+from sa import layer2
 from sa.learners import device_rhythm, presence
-from sa.learners.base import Inference
-from sa.learners.household_day import fisher_p
 
 NAME = "away_unusual"
 VERSION = "1"
@@ -44,93 +42,99 @@ SIGNAL = "presence.away_unusual"
 MIN_SURPRISE_BITS = 3.0
 CORROBORATION_FLOOR = 0.6
 FAMILY_NETWORK = "network"
-FAMILIES = {presence.SIGNAL: FAMILY_NETWORK, device_rhythm.SIGNAL_AVAILABILITY: FAMILY_NETWORK}
-
-
-def _family(inference):
-    return (inference.evidence or {}).get("family") or FAMILIES.get(inference.signal)
 
 
 def _is_away(inference):
     return (inference.observed or {}).get("state") in ("away", "offline")
 
 
-def combine(user_id, username, presence_inf, device_infs, owned_with_profile, now, extra=()):
-    """The layer-2 inference for one person, or None.
+class AwayUnusualRule(layer2.Rule):
+    """One group per person with a fresh away presence deviation. ctx: {"owners": {device_id:
+    user_id}, "owned_with_profile": {user_id: n}}, loaded by the runner."""
+
+    name = NAME
+    version = VERSION
+    signal = SIGNAL
+    subject_type = "user"
+    min_bits = MIN_SURPRISE_BITS
+    corroboration_floor = CORROBORATION_FLOOR
+
+    def groups(self, parents, ctx):
+        owners = ctx.get("owners", {})
+        owned = ctx.get("owned_with_profile", {})
+        devices = {}
+        for parent in parents:
+            if parent.signal == device_rhythm.SIGNAL_AVAILABILITY and _is_away(parent):
+                user = owners.get(str(parent.subject_id))
+                if user is not None:
+                    devices.setdefault(str(user), []).append(parent)
+        # A booked event covering now explains an absence: it discounts the surprise instead of
+        # silencing the result (the household calendar has no per-person owner).
+        explained = [p for p in parents if p.signal == layer2.SIGNAL_CALENDAR_BUSY]
+        out = []
+        for parent in parents:
+            if parent.signal != presence.SIGNAL or parent.kind != "deviation":
+                continue
+            if not _is_away(parent):
+                continue
+            user = str(parent.subject_id)
+            mine = devices.get(user, [])
+            with_profile = owned.get(user, 0)
+            out.append(
+                layer2.Group(
+                    user,
+                    parent,
+                    [parent] + mine,
+                    share=min(1.0, len(mine) / with_profile) if with_profile else None,
+                    explained_by=explained,
+                    evidence={
+                        "username": (parent.evidence or {}).get("username"),
+                        "devices_offline": len(mine),
+                        "devices_with_profile": with_profile,
+                    },
+                )
+            )
+        return out
+
+    def observed(self, group):
+        return {
+            "state": "away",
+            "away_minutes": (group.anchor.observed or {}).get("away_minutes"),
+        }
+
+
+RULE = AwayUnusualRule()
+
+
+def combine(
+    user_id, username, presence_inf, device_infs, owned_with_profile, now, extra=(), explained_by=()
+):
+    """The layer-2 inference for one person, or None, from already-scored parents. A thin wrapper
+    over the generic rule for callers (and replays) that hold Inference objects rather than rows.
 
     presence_inf: that person's presence.home deviation (None if there isn't one);
     device_infs: device.online deviations for devices they own;
     owned_with_profile: how many of their devices have a rhythm profile (the corroboration base);
-    extra: further layer-1 deviations from other families (each needs evidence["family"]).
+    extra: further layer-1 deviations from other families (each needs evidence["family"]);
+    explained_by: rows (a booked calendar event) that make the absence less surprising.
     """
     if presence_inf is None or presence_inf.kind != "deviation" or not _is_away(presence_inf):
         return None
-    parents = [presence_inf] + [d for d in device_infs if _is_away(d)] + list(extra)
-    families = {}
-    for parent in parents:
-        family = _family(parent)
-        if family is None or parent.probability is None:
-            continue
-        best = families.get(family)
-        if best is None or parent.probability < best.probability:
-            families[family] = parent
-    voters = list(families.values())
-    ps = [max(p.probability, 1e-12) for p in voters]
-    cs = [max(p.confidence or 0.0, 1e-6) for p in voters]
-    p_comb = ps[0]
-    if len(voters) > 1:
-        # Weighting by confidence dilutes: a second, weakly trusted family could otherwise make the
-        # result LESS surprising than the best family alone. More evidence never lowers surprise.
-        p_comb = min(min(ps), max(fisher_p(ps, cs), 1e-12))
-    surprise = -math.log2(p_comb)
-    if surprise < MIN_SURPRISE_BITS:
-        return None
-    confidence_mean = sum(cs) / len(cs)
     devices_off = [d for d in device_infs if _is_away(d)]
-    share = None
-    if owned_with_profile:
-        share = min(1.0, len(devices_off) / owned_with_profile)
-        confidence_mean *= CORROBORATION_FLOOR + (1.0 - CORROBORATION_FLOOR) * share
-    return Inference(
-        layer=2,
-        kind="deviation",
-        subject_type="user",
-        subject_id=user_id,
-        signal=SIGNAL,
-        learner=NAME,
-        learner_version=VERSION,
-        window_start=presence_inf.window_start,
-        window_end=now.replace(microsecond=0),
-        context=presence_inf.context,
-        observed={
-            "state": "away",
-            "away_minutes": (presence_inf.observed or {}).get("away_minutes"),
-        },
-        expected=presence_inf.expected,
-        probability=round(p_comb, 12),
-        surprise=round(surprise, 3),
-        confidence=round(confidence_mean, 4),
-        n_eff=presence_inf.n_eff,
+    share = min(1.0, len(devices_off) / owned_with_profile) if owned_with_profile else None
+    group = layer2.Group(
+        user_id,
+        presence_inf,
+        [presence_inf] + devices_off + list(extra),
+        share=share,
+        explained_by=explained_by,
         evidence={
-            "method": "fisher_by_family" if len(voters) > 1 else "single_family",
             "username": username,
-            "families": sorted(families),
-            "parents": [
-                {
-                    "signal": p.signal,
-                    "subject_id": p.subject_id,
-                    "p": p.probability,
-                    "confidence": p.confidence,
-                    "family": _family(p),
-                }
-                for p in parents
-            ],
             "devices_offline": len(devices_off),
             "devices_with_profile": owned_with_profile,
-            "corroboration": None if share is None else round(share, 3),
         },
-        expires_at=now + timedelta(hours=6),
     )
+    return layer2.fuse(RULE, group, now)
 
 
 def replay_day(lake_dir, user_id, day, hours=range(6, 23), learner=None):

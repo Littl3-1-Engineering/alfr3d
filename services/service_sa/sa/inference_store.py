@@ -185,17 +185,8 @@ def replace_predictions(conn, learner, inferences):
     return len(inferences)
 
 
-def latest_prediction(conn, learner, subject_id):
-    """The stored 24 h outlook for a subject, as an Inference, or None."""
-    cursor = conn.cursor()
-    cursor.execute(
-        f"SELECT {_INFERENCE_COLUMNS} FROM sa_inferences WHERE learner = %s AND kind = "
-        "'prediction' AND subject_id = %s ORDER BY computed_at DESC LIMIT 1",
-        (learner, str(subject_id)),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return None
+def _inference_from_row(row):
+    """An Inference from a row selected with _INFERENCE_COLUMNS."""
     return Inference(
         layer=row[0],
         kind=row[1],
@@ -217,3 +208,35 @@ def latest_prediction(conn, learner, subject_id):
         computed_at=row[17],
         expires_at=row[18],
     )
+
+
+def latest_prediction(conn, learner, subject_id):
+    """The stored 24 h outlook for a subject, as an Inference, or None."""
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT {_INFERENCE_COLUMNS} FROM sa_inferences WHERE learner = %s AND kind = "
+        "'prediction' AND subject_id = %s ORDER BY computed_at DESC LIMIT 1",
+        (learner, str(subject_id)),
+    )
+    row = cursor.fetchone()
+    return _inference_from_row(row) if row else None
+
+
+def load_recent(conn, layer, since, kinds=("deviation", "state")):
+    """Deviations and observed states of one layer refreshed since `since` (naive UTC), each
+    carrying its row id as `row_id`. An ongoing deviation is re-upserted every cycle, so
+    `computed_at` is when it was last seen; one that has ended stops refreshing and drops out. This
+    is layer 2's only input.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        f"SELECT {_INFERENCE_COLUMNS}, id FROM sa_inferences "
+        f"WHERE layer = %s AND kind IN ({','.join(['%s'] * len(kinds))}) AND computed_at >= %s",
+        (layer, *kinds, since),
+    )
+    found = []
+    for row in cursor.fetchall():
+        inference = _inference_from_row(row)
+        inference.row_id = row[19]
+        found.append(inference)
+    return found

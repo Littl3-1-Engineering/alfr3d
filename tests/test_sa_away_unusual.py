@@ -91,49 +91,68 @@ class TestCombine:
         assert out.evidence["devices_offline"] == 1 and out.evidence["devices_with_profile"] == 2
 
 
-class TestShadowAway:
-    def _runner(self, rows, presence_inf):
+class TestCalendarExplainsAbsence:
+    def _busy(self):
+        return _inf("calendar.busy", None, 1.0, subject="calendar", state="busy")
+
+    def test_a_booked_event_discounts_the_absence(self):
+        parent = _presence(p=2**-12, conf=0.5)  # 12 bits
+        plain = away_unusual.combine("1", "a", parent, [], 0, NOW)
+        booked = away_unusual.combine("1", "a", parent, [], 0, NOW, explained_by=[self._busy()])
+
+        assert plain.surprise == 12.0
+        assert abs(booked.surprise - 3.6) < 0.01  # 70 % of the bits explained
+        assert booked.evidence["explained_by"][0]["signal"] == "calendar.busy"
+
+    def test_a_modest_absence_with_a_booked_event_is_quiet(self):
+        parent = _presence(p=2**-5, conf=0.5)
+
+        assert (
+            away_unusual.combine("1", "a", parent, [], 0, NOW, explained_by=[self._busy()]) is None
+        )
+
+
+class TestShadowLayer2:
+    def _runner(self, parents, monkeypatch, device_rows=()):
         cursor = MagicMock()
-        cursor.fetchall.return_value = rows
+        cursor.fetchall.return_value = list(device_rows)
         db = MagicMock()
         db.cursor.return_value = cursor
         persisted = []
         runner = shadow.ShadowRunner(lambda: db, persisted.extend)
-        runner.profiles = lambda name: (
-            [SimpleNamespace(subject_id="1")] if name == presence.NAME else []
-        )
+        runner.profiles = lambda name: []
+        monkeypatch.setattr(shadow.inference_store, "load_recent", lambda *a, **k: parents)
         return runner, persisted
 
-    def _frame(self, home):
-        return SimpleNamespace(
-            now=datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc),
-            local_dt=datetime(2026, 10, 9, 11, 0),
-            person_presence=[
-                {
-                    "user_id": 1,
-                    "username": "athos",
-                    "user_type": "owner",
-                    "home": home,
-                    "last_online": datetime(2026, 10, 9, 12, 0),
-                }
-            ],
-        )
+    def _frame(self):
+        return SimpleNamespace(now=datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc), local_dt=None)
 
-    def test_everyone_home_is_quiet_and_touches_nothing(self):
-        runner, persisted = self._runner([], None)
+    def test_no_fresh_layer_one_rows_is_quiet_and_touches_nothing(self, monkeypatch):
+        runner, persisted = self._runner([], monkeypatch)
 
-        assert runner.away(self._frame(home=True)) == [] and persisted == []
+        assert runner.layer2(self._frame()) == [] and persisted == []
 
-    def test_an_away_person_with_an_improbable_absence_is_combined_and_persisted(self, monkeypatch):
-        runner, persisted = self._runner([], None)
-        monkeypatch.setattr(
-            shadow.presence.PresenceLearner, "score", lambda self, profile, state, now: _presence()
-        )
+    def test_a_fresh_away_presence_row_is_combined_and_persisted(self, monkeypatch):
+        runner, persisted = self._runner([_presence()], monkeypatch)
 
-        found = runner.away(self._frame(home=False))
+        found = runner.layer2(self._frame())
 
         assert len(found) == 1 and persisted == found and found[0].layer == 2
         assert found[0].subject_id == "1"
+
+    def test_owned_device_rows_corroborate_their_owner(self, monkeypatch):
+        parents = [_presence(), _device("7"), _device("8")]
+        runner, persisted = self._runner(parents, monkeypatch, device_rows=[(7, 1), (8, 1)])
+        runner.profiles = lambda name: (
+            [SimpleNamespace(subject_id="7"), SimpleNamespace(subject_id="8")]
+            if name == device_rhythm.NAME
+            else []
+        )
+
+        found = runner.layer2(self._frame())
+
+        assert found[0].evidence["devices_offline"] == 2
+        assert found[0].evidence["devices_with_profile"] == 2
 
     def test_a_weakly_trusted_second_family_never_lowers_the_surprise(self):
         weak = _inf("calendar.free", 0.5, 0.1, family="calendar")
