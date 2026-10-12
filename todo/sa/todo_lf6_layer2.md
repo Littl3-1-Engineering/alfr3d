@@ -123,3 +123,22 @@ stay fresh for layer 2. `HouseholdDayLearner.score()` remains as a wrapper for b
 Open: no second independent family for people beyond the calendar (HA trackers are next); "away trip" is not
 built; layer-1 live scoring only persists the signals shadow scores (see the review of
 2026-10-12: most scalar and rate profiles are scored nightly only).
+
+## day_off reads a day-level model (2026-10-12)
+
+`day_off` first read the presence learner's hourly `presence.home` deviation, which flagged every
+visit by a part-time resident (Vanja: hourly p(home) 0.05-0.14 at all hours, yet 4+ hours at home
+in 09:00-17:00 on about one day in five). It now reads `presence.daytime`
+(`sa/learners/daytime.py`, profile `daytime_profile`): cumulative hours at home since 09:00 at each
+checkpoint hour (12:00-17:00) against comparable past days (same weekday-or-offday kind, 42-day
+half-life), Laplace-smoothed survival, 3-bit bar, upward only. Walk-forward replay 08-17..10-11:
+Vanja 1 flag day (was 5), Athos 1, Jenna 2-3, Munja 0. `ShadowRunner.daytime_rows` scores the
+residents once per local hour (one `device_history` pass) and re-persists the rows each cycle.
+Open: stability is fixed at 0.5 (not measured); the calendar still only corroborates.
+
+Found while building it (production regression from the first layer-2 deploy, fixed here): the
+household feature rows used `subject_type="household_feature"` (17 characters) in a VARCHAR(16)
+column, so every one failed to persist ("Data too long") and `household_unusual_day` could never
+reach layer 2; and the cached rows were re-persisted with their creation time, which layer 2's
+five-minute freshness filter would have dropped. Both fixed, with tests that check every
+inference fits the column widths.

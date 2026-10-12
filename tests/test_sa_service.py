@@ -2133,7 +2133,7 @@ class TestCheckHouseholdUnusualDay:
         def row(feature, p, value, median):
             return Inference(
                 kind="state",
-                subject_type="household_feature",
+                subject_type="household",
                 subject_id=feature,
                 signal=household_day.SIGNAL_FEATURE,
                 learner=household_day.NAME,

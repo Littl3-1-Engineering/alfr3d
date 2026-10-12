@@ -76,6 +76,7 @@ MIN_RATE_HOURS = 20
 # profiled learner -> (profile-subject family, feature)
 TARGETS = {
     "presence_profile": "user",
+    "daytime_profile": "user",
     "stay_profile": "user",  # same daily at-home minutes: a changed routine changes stay lengths
     "scalar_baseline": "series",
     "event_rate": "stream",
@@ -291,7 +292,7 @@ def load_features(lake_dir, wanted):
                 f"SELECT user_id, date_local, minutes_home FROM read_parquet('{daily}') "
                 f"WHERE observed ORDER BY user_id, date_local"
             ).fetchall():
-                for target in ("presence_profile", "stay_profile"):
+                for target in ("presence_profile", "stay_profile", "daytime_profile"):
                     key = (target, "user", str(uid))
                     if key in wanted:
                         out.setdefault(key, {"feature": "minutes_home", "points": []})

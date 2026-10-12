@@ -401,6 +401,34 @@ class TestHouseholdDayAsRule:
         assert layer2.run_rules([household_day.RULE], self._rows(26, 700), {}, now) == []
         assert layer2.run_rules([household_day.RULE], self._rows(26, 230), {}, now) == []
 
+    def test_every_row_fits_the_sa_inferences_columns(self):
+        """Regression: subject_type 'household_feature' (17 chars) overflowed VARCHAR(16), so
+        every household row failed to persist in production and the verdict never ran."""
+        from services.service_sa.sa import layer2
+
+        rows = self._rows(12, 700)
+        out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
+
+        for inference in [*rows, *out]:
+            assert len(inference.subject_type) <= 16 and len(inference.signal) <= 48
+            assert len(inference.subject_id) <= 64 and len(inference.learner) <= 48
+            assert len(inference.learner_version) <= 16
+
+    def test_household_rows_are_refreshed_before_each_persist(self):
+        """Regression: cached rows were re-persisted with their creation time, so layer 2 (which
+        reads rows refreshed in the last five minutes) stopped seeing them after five minutes."""
+        persisted = []
+        runner = shadow.ShadowRunner(MagicMock(), persisted.extend)
+        rows = self._rows(12, 700)
+        stale = datetime(2026, 1, 1)
+        for row in rows:
+            row.computed_at = stale
+        runner.household = lambda frame: rows
+
+        runner.household_features(MagicMock())
+
+        assert persisted == rows and all(r.computed_at > stale for r in rows)
+
     def test_after_the_cutover_the_rule_has_no_legacy_card_to_compare_with(self):
         assert not hasattr(household_day.RULE, "legacy_rule")
 

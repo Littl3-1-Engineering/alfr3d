@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from services.service_sa.sa import layer2, shadow
-from services.service_sa.sa.learners import day_off, presence
+from services.service_sa.sa.learners import day_off, daytime
 from services.service_sa.sa.learners.base import Inference
 
 NOW = datetime(2026, 10, 12, 15, 0)
@@ -17,11 +17,11 @@ def _home_dev(p=2**-5, conf=0.5, subject="1"):
         kind="deviation",
         subject_type="user",
         subject_id=subject,
-        signal=presence.SIGNAL,
-        learner="presence_profile",
+        signal=daytime.SIGNAL,
+        learner="daytime_profile",
         learner_version="1",
         window_start=NOW.replace(minute=0),
-        observed={"state": "home"},
+        observed={"state": "home", "hours_home": 5.0},
         probability=p,
         surprise=5.0,
         confidence=conf,
@@ -52,11 +52,11 @@ class TestDayOffRule:
 
         assert out[0].confidence == 0.5
 
-    def test_an_away_deviation_is_not_a_day_off(self):
-        away = _home_dev()
-        away.observed = {"state": "away"}
+    def test_the_hourly_presence_deviation_is_no_longer_an_input(self):
+        hourly = _home_dev()
+        hourly.signal = "presence.home"
 
-        assert layer2.run_rules([day_off.RULE], [away], {}, NOW) == []
+        assert layer2.run_rules([day_off.RULE], [hourly], {}, NOW) == []
 
 
 class TestCalendarState:
