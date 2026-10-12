@@ -420,20 +420,18 @@ class ShadowRunner:
         db = self._connect()
         try:
             cursor = db.cursor()
+            # One pass over the day: distinct devices, and the first device to COME online (a row
+            # with no row of the same device in the gap before it). The earlier correlated
+            # NOT EXISTS form took minutes on device_history and wedged the awareness loop.
             cursor.execute(
-                "SELECT COUNT(DISTINCT device_id), MIN(timestamp) FROM device_history "
-                "WHERE timestamp >= %s AND timestamp < %s",
-                (midnight, cutoff),
+                "SELECT COUNT(DISTINCT device_id), "
+                "MIN(CASE WHEN prev IS NULL OR prev < t - INTERVAL %s MINUTE THEN t END) FROM ("
+                "SELECT device_id, timestamp AS t, LAG(timestamp) OVER "
+                "(PARTITION BY device_id ORDER BY timestamp) AS prev FROM device_history "
+                "WHERE timestamp >= %s - INTERVAL %s MINUTE AND timestamp < %s) x WHERE t >= %s",
+                (COME_ONLINE_GAP_MINUTES, midnight, COME_ONLINE_GAP_MINUTES, cutoff, midnight),
             )
-            devices, _first = cursor.fetchone()
-            cursor.execute(
-                "SELECT MIN(h.timestamp) FROM device_history h WHERE h.timestamp >= %s "
-                "AND h.timestamp < %s AND NOT EXISTS (SELECT 1 FROM device_history p WHERE "
-                "p.device_id = h.device_id AND p.timestamp < h.timestamp AND "
-                "p.timestamp >= h.timestamp - INTERVAL %s MINUTE)",
-                (midnight, cutoff, COME_ONLINE_GAP_MINUTES),
-            )
-            first = cursor.fetchone()[0]
+            devices, first = cursor.fetchone()
             # Person-minutes at home: owners' and residents' phones (device types 3 and 5), the
             # same stay rule as silver. Filtered on the indexed `timestamp` (a history row is
             # stamped about a minute after the sighting it logs): `last_online` has no index and

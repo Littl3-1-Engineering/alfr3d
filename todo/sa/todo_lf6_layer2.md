@@ -2,7 +2,7 @@
 
 > **Layer:** L2 · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-6
 
-## Status: 🟡 Design settled 2026-10-11 (below); first build = `away_unusual` (not started). One L2 inference already exists: `household_unusual_day` (`learners/household_day.py`).
+## Status: 🟡 Design settled 2026-10-11 (below); `away_unusual` built and live in shadow (2026-10-11). One L2 inference already exists: `household_unusual_day` (`learners/household_day.py`).
 
 Layer 2 consumes L1 inferences, never raw data. Its inputs are rows in `sa_inferences` with
 `layer = 1`. Its outputs are rows with `layer = 2` whose `evidence` lists the parent inference ids.
@@ -63,3 +63,23 @@ parent rows so the replay needs no DB.
 
 "Day off" (presence + empty calendar + skipped morning routine), "away trip" (multi-day, residents,
 geofence far), "gathering likely tonight" (visitor predictions + calendar + history).
+
+## Built: `away_unusual` (2026-10-11)
+
+`learners/away_unusual.py`: pure `combine()` over L1 rows, `ShadowRunner.away()` scores each person
+who is out against their presence profile, adds the deviations of devices they own, persists the
+layer-2 row to `sa_inferences` and logs `LIVE away_unusual:` when the set of people changes. Never
+a card. Rules as designed, plus one correction found by testing: a weakly trusted extra family
+could dilute the confidence-weighted Fisher p above the best single family, so the result is capped
+at the best family's p (more evidence never lowers surprise). Corroboration (owned devices offline
+over owned devices with a rhythm profile) scales confidence from 0.6x to 1.0x, not probability.
+
+Replay on the lake (presence only, walk-forward), 08-15 to 10-11: Athos 10-09 fires 11:30-13:30 at
+3.3-4.4 bits, conf 0.39 (it is quiet before 11:00 because he is not yet 60 minutes away). Over the
+whole period 23 person-days flag across the four residents (about 10 %), 4.8 bits at most, which is
+the presence learner's own rate: **today it adds no selectivity over L1.** What it adds is the
+structure (parents, families, corroboration) and the slot for the first genuinely independent
+family (calendar free/busy, HA trackers). Live: Elenka and Jenna flagged 6 bits at midnight.
+
+Next: an independent family (calendar busy from `calendar_busy`: a booked absence should lower the
+surprise, not just gate the card), then "day off" and "away trip".

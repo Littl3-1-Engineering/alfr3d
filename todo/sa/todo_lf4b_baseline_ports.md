@@ -64,6 +64,14 @@ history first.*
 - [ ] `household_unusual_day` reads the layer-2 inference.
 - [ ] Then delete `compute_entity_baselines` and the `entity_baselines` table (back up first).
 
+## Fixed 2026-10-11: household day wedged the awareness loop
+
+The first-device-online query used a correlated NOT EXISTS over `device_history` and took 100+ s;
+the shadow computes it on the first cycle after 18:00 local, so a restart after 18:00 (the watchdog
+kills the loop after 300 s) made `sa-awareness` restart every five minutes until midnight UTC. It
+is now one window-function pass (LAG over device_id), ~20 s once per day. Watch: `live_rates` still
+takes ~14 s once an hour in the loop.
+
 ## Not done
 
 - Rates are fitted nightly. Event-stream rates are now also scored live (2026-10-11,
