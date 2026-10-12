@@ -99,24 +99,26 @@ class TestDeviceRhythm:
 
 
 class TestHouseholdDay:
-    def _days(self, n=45, devices=lambda d: 26, first=lambda d: 230.0):
+    def _days(self, n=45, devices=lambda d: 26, first=lambda d: 230.0, home=None):
         out, d = [], REF - timedelta(days=n - 1)
         rnd = random.Random(3)
         while d <= REF:
-            out.append(
-                {
-                    "date": d,
-                    "devices": devices(d) + rnd.choice([-1, 0, 0, 1]),
-                    "first_minute": first(d) + rnd.choice([-10, 0, 10]),
-                }
-            )
+            day = {
+                "date": d,
+                "devices": devices(d) + rnd.choice([-1, 0, 0, 1]),
+                "first_minute": first(d) + rnd.choice([-10, 0, 10]),
+            }
+            if home:
+                day["home_minutes"] = home(d) + rnd.choice([-60, 0, 60])
+            out.append(day)
             d += timedelta(days=1)
         return out
 
-    def _score(self, profile, devices, first):
+    def _score(self, profile, devices, first, home=None):
         state = {
             "devices": devices,
             "first_minute": first,
+            "home_minutes": home,
             "local_dt": datetime(2026, 10, 12, 18, 0),
         }
         return household_day.HouseholdDayLearner().score(
@@ -141,6 +143,42 @@ class TestHouseholdDay:
         profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
         assert self._score(profile, 26, 700) is None  # normal device count, odd first activity
         assert self._score(profile, 8, 230) is None  # odd device count, normal first activity
+
+    def test_home_minutes_is_a_third_feature_and_two_of_three_must_be_off(self):
+        learner = household_day.HouseholdDayLearner()
+        profile = learner.fit_days(self._days(home=lambda d: 2600.0), REF)
+
+        assert set(profile.params["features"]) == set(household_day.FEATURES)
+        # Nobody home and the house still awake: devices and first activity look normal, so a
+        # single odd feature is not a day.
+        assert self._score(profile, 26, 230, home=900) is None
+        # Out of the house and the devices followed: two features off.
+        inf = self._score(profile, 12, 230, home=900)
+        assert {p["feature"] for p in inf.evidence["parents"]} == set(household_day.FEATURES)
+        assert inf.observed["home_minutes"] == 900
+
+    def test_a_v1_profile_without_home_minutes_still_scores(self):
+        profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
+
+        assert "home_minutes" not in profile.params["features"]
+        assert self._score(profile, 12, 700, home=900) is not None
+
+    def test_home_minutes_uses_silvers_stay_rule(self):
+        t = datetime(2026, 10, 12, 8, 0)
+        sightings = {
+            1: [t + timedelta(minutes=m) for m in (0, 20, 40, 60)]  # one stay, 60 min
+            + [t + timedelta(minutes=300)],  # a lone sighting later: zero length
+            2: [t - timedelta(minutes=20), t + timedelta(minutes=20)],  # starts before window
+        }
+        window = (t, t + timedelta(hours=10))
+
+        assert household_day.home_minutes(sightings, *window) == 60 + 20
+
+    def test_a_gap_longer_than_the_stay_rule_splits_the_stay(self):
+        t = datetime(2026, 10, 12, 8, 0)
+        sightings = {1: [t, t + timedelta(minutes=30), t + timedelta(minutes=120)]}
+
+        assert household_day.home_minutes(sightings, t, t + timedelta(hours=5)) == 30
 
     def test_fisher_combines_mild_evidence(self):
         assert household_day.fisher_p([0.05, 0.05], [1, 1]) < 0.05

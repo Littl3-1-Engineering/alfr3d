@@ -286,6 +286,35 @@ class ShadowRunner:
                 (midnight, cutoff, COME_ONLINE_GAP_MINUTES),
             )
             first = cursor.fetchone()[0]
+            # Person-minutes at home: owners' and residents' phones (device types 3 and 5), the
+            # same stay rule as silver. Filtered on the indexed `timestamp` (a history row is
+            # stamped about a minute after the sighting it logs): `last_online` has no index and
+            # device_history is huge. Looks back one gap before midnight for a stay in progress.
+            resident_ids = [
+                p["user_id"]
+                for p in (frame.person_presence or [])
+                if p["user_type"] in household_day.HOME_USER_TYPES
+            ]
+            home = None
+            lookback = midnight - timedelta(minutes=household_day.PRESENCE_GAP_MINUTES)
+            if resident_ids:
+                cursor.execute(
+                    "SELECT DISTINCT user_id, last_online FROM device_history WHERE user_id IN "
+                    f"({','.join(['%s'] * len(resident_ids))}) AND device_type IN (3, 5) "
+                    "AND timestamp >= %s AND timestamp < %s "
+                    "AND last_online >= %s AND last_online < %s",
+                    (
+                        *resident_ids,
+                        lookback,
+                        cutoff + timedelta(minutes=5),
+                        lookback,
+                        cutoff,
+                    ),
+                )
+                seen = {}
+                for user_id, last_online in cursor.fetchall():
+                    seen.setdefault(user_id, []).append(last_online)
+                home = household_day.home_minutes(seen, midnight, cutoff)
         finally:
             db.close()
         first_minute = (
@@ -293,7 +322,12 @@ class ShadowRunner:
         )
         inference = household_day.HouseholdDayLearner().score(
             profiles[0],
-            {"devices": devices, "first_minute": first_minute, "local_dt": frame.local_dt},
+            {
+                "devices": devices,
+                "first_minute": first_minute,
+                "home_minutes": home,
+                "local_dt": frame.local_dt,
+            },
             frame.now.replace(tzinfo=None),
         )
         self._household[day] = [inference] if inference else []
