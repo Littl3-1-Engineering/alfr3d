@@ -155,6 +155,18 @@ reported from a card list:
 - The web dashboard and the Deck both report `shown` per fetch, so with both open the backend's
   repetition run counts roughly double. Revisit the 20-cycle threshold when tuning.
 
+## Finding 2026-10-11: repetition damping has never fired
+
+`_card_suppression_reason` fetches `CARD_SUPPRESSION_HISTORY_LIMIT` (10) rows but the repetition
+threshold is `CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES` (20), so the run can never reach it: zero
+`Suppressing ... repetition` log lines against 7,000+ `shown` rows per card since 2026-08-31. The
+unit tests pass because their mocked cursor returns 20 rows whatever the LIMIT. Cooldown after a
+dismiss is unaffected (it needs one row). Not fixed, on purpose: making it work would start hiding
+every non-urgent card (time, weather, mood, email) after about 20 minutes of display with no tap,
+which is a product change. Needs a decision (threshold in distinct minutes, which rules opt in)
+before anything is enabled; counting distinct minutes of `shown` rather than rows would also remove
+the web + Deck double count.
+
 ## Not yet done
 
 - ~~**Android launcher (`alfr3d_deck`) reporting.**~~ Built, see above. Original note: The task requires both surfaces to report;
