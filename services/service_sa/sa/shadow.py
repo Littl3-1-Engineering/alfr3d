@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 from sa import inference_store
 from sa import silver
-from sa.learners import device_rhythm, household_day, presence, rates, scalar
+from sa.learners import away_unusual, device_rhythm, household_day, presence, rates, scalar
 
 logger = logging.getLogger("SALog")
 
@@ -101,6 +101,10 @@ class ShadowRunner:
             self.live_rates(frame)
         except Exception as e:
             logger.error(f"Live rates failed: {e}")
+        try:
+            self.away(frame)
+        except Exception as e:
+            logger.error(f"Away-unusual failed: {e}")
 
     def live_rates(self, frame):
         """Score the hour that just ended against the event-stream rate profiles (LF-5a left this
@@ -317,6 +321,85 @@ class ShadowRunner:
                 )
                 if found is not None:
                     findings.append(found)
+        return findings
+
+    def away(self, frame):
+        """LF-6 away_unusual: for each person who is out and improbably so, combine their presence
+        deviation with the deviations of the devices they own (layer 2). Persisted to
+        sa_inferences and logged when the set of people changes; never a card."""
+        if not frame.person_presence or frame.local_dt is None or frame.now is None:
+            return []
+        presence_profiles = {str(p.subject_id): p for p in self.profiles(presence.NAME)}
+        device_profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
+        away = [
+            p
+            for p in frame.person_presence
+            if not p["home"] and str(p["user_id"]) in presence_profiles
+        ]
+        now_utc = frame.now.replace(tzinfo=None)
+        findings = []
+        if away:
+            db = self._connect()
+            try:
+                cursor = db.cursor()
+                cursor.execute(
+                    "SELECT d.id, s.state, d.last_online, d.user_id FROM device d "
+                    "JOIN states s ON d.state = s.id WHERE d.last_online IS NOT NULL"
+                )
+                rows = cursor.fetchall()
+            finally:
+                db.close()
+            rhythm = device_rhythm.DeviceRhythmLearner()
+            learner = presence.PresenceLearner()
+            for person in away:
+                if person["last_online"] is None:
+                    continue
+                minutes = (now_utc - person["last_online"]).total_seconds() / 60.0
+                found = learner.score(
+                    presence_profiles[str(person["user_id"])],
+                    {"home": False, "away_minutes": minutes, "local_dt": frame.local_dt},
+                    now_utc,
+                )
+                if found is None:
+                    continue
+                owned = [
+                    r for r in rows if r[3] == person["user_id"] and str(r[0]) in device_profiles
+                ]
+                devices = []
+                for device_id, state, last_online, _user in owned:
+                    if state == "online":
+                        continue
+                    d = rhythm.score(
+                        device_profiles[str(device_id)],
+                        {"online": False,
+                         "offline_minutes": (now_utc - last_online).total_seconds() / 60.0,
+                         "local_dt": frame.local_dt},
+                        now_utc,
+                    )  # fmt: skip
+                    if d is not None:
+                        devices.append(d)
+                combined = away_unusual.combine(
+                    str(person["user_id"]), person["username"], found, devices, len(owned), now_utc
+                )
+                if combined is not None:
+                    findings.append(combined)
+        signature = tuple(sorted(f.subject_id for f in findings))
+        if findings:
+            self._persist(findings)
+        if self._last.get("away_unusual") != signature:
+            self._last["away_unusual"] = signature
+            if findings:
+                logger.info(
+                    "LIVE away_unusual: "
+                    + "; ".join(
+                        f"{f.evidence['username']} {f.surprise:.1f} bits conf={f.confidence:.2f} "
+                        f"devices_off={f.evidence['devices_offline']}"
+                        f"/{f.evidence['devices_with_profile']}"
+                        for f in findings
+                    )
+                )
+            else:
+                logger.info("LIVE away_unusual: quiet")
         return findings
 
     def household(self, frame):
