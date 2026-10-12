@@ -185,6 +185,17 @@ def replace_predictions(conn, learner, inferences):
     return len(inferences)
 
 
+def save_comparison(conn, rule_id, observed_at, verdict, legacy, learner, learner_count):
+    """Append one shadow comparison row (sa_shadow_comparison, migration 048)."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO sa_shadow_comparison (rule_id, observed_at, verdict, legacy, learner, "
+        "learner_count) VALUES (%s, %s, %s, %s, %s, %s)",
+        (rule_id, observed_at, verdict, legacy, learner, learner_count),
+    )
+    conn.commit()
+
+
 def _inference_from_row(row):
     """An Inference from a row selected with _INFERENCE_COLUMNS."""
     return Inference(

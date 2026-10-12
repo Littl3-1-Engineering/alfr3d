@@ -375,3 +375,45 @@ class TestHouseholdDayAsRule:
 
     def test_the_rule_names_the_legacy_card_shadow_compares_it_with(self):
         assert household_day.RULE.legacy_rule == "household_unusual_day"
+
+
+class TestShadowComparisonIsKept:
+    """The comparison outlives the container log (sa_shadow_comparison, migration 048)."""
+
+    def _runner(self):
+        cursor = MagicMock()
+        db = MagicMock()
+        db.cursor.return_value = cursor
+        return shadow.ShadowRunner(lambda: db, lambda inferences: None), cursor
+
+    def _rows(self, cursor):
+        return [
+            c.args[1] for c in cursor.execute.call_args_list if "sa_shadow_comparison" in c.args[0]
+        ]
+
+    def test_a_change_of_outcome_is_saved_once(self):
+        runner, cursor = self._runner()
+
+        runner.record("climate_deviation", "quiet", [])
+        runner.record("climate_deviation", "quiet", [])
+
+        rows = self._rows(cursor)
+        assert len(rows) == 1
+        assert rows[0][0] == "climate_deviation"
+        assert rows[0][2:] == ("AGREE", "quiet", "quiet", 0)
+
+    def test_a_disagreement_is_saved_as_differ(self):
+        runner, cursor = self._runner()
+        finding = MagicMock(probability=0.01, confidence=0.5, expected={}, observed={})
+        finding.evidence = {"series": "x"}
+
+        runner.record("climate_deviation", "quiet", [finding])
+
+        assert self._rows(cursor)[0][2] == "DIFFER"
+        assert self._rows(cursor)[0][5] == 1
+
+    def test_a_failed_save_does_not_break_the_cycle(self):
+        runner, cursor = self._runner()
+        cursor.execute.side_effect = RuntimeError("table missing")
+
+        runner.record("climate_deviation", "quiet", [])
