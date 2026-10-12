@@ -26,10 +26,14 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
 - **Device rhythm (14 days, 33 devices):** 2.1 % of device-hours reach the 3-bit surprise bar
   (about one per device every two days); the card gates (60 min offline, still in use, not
   replaced) are stricter.
-- **Household day (58 backtested days):** none flagged at P <= 0.01 (lowest p 0.06), which is the
-  honest answer: nothing in that period was unusual on both features. The first-online feature is
-  dominated by a nightly 03:50 event, so it is a weak signal; revisit when an at-home/away-day
-  feature (from presence) is added.
+- **Household day (v2, 50 backtested days, 08-15 to 10-11):** a third feature, `home_minutes`
+  (person-minutes at home before 18:00 for owners' and residents' phones, silver's stay rule, live
+  from `device_history` in shadow), and the rule is now "at least two of three features off".
+  One day flags at P <= 0.01: **10-02**, when Munja was home 124 minutes against a usual 1,080
+  and the device count followed. v1 flagged none. **10-09 (Athos out all day) is still not a
+  household-unusual day** (p 0.998): the other residents were home, so the household total is
+  normal. That absence is a per-person deviation, which the presence learner already scores (3.35
+  bits); the household-day learner is the wrong place to catch it.
 - **Attention:** `switch_count` on a log scale flags 16 of 242 hours at z >= 4 in 14 days (heavy
   use really is bursty); `unlock_count` flags none.
 
@@ -55,7 +59,9 @@ are written to `sa_inferences`. Nothing in it can reach a card (every comparison
 
 ## Not done
 
-- Rates and household-day are fitted nightly and not scored live between fits (rates flag the last
-  48 h on each run). An hourly rates job would close that gap.
+- Rates are fitted nightly and flag the last 48 h on each run; they are not scored live between
+  fits. An hourly rates job would close that gap. Household day is scored live, once a day at 18:00
+  local.
 - Cards on rate deviations (email burst, notification storm) are a product decision, not built.
-- Occasional-visitor learner and drift detection (LF-5) are still to do.
+- Occasional-visitor learner (LF-5): parked, see [todo_lf5_more_learners.md](todo_lf5_more_learners.md).
+  Drift detection is done (2026-10-11).
