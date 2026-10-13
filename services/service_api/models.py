@@ -12,6 +12,10 @@ class UserCreate(BaseModel):
     title: Optional[str] = ""
 
 
+class ThemeUpdate(BaseModel):
+    theme: str
+
+
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None

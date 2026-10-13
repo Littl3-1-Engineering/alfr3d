@@ -7,6 +7,7 @@ import AudioPlayer from './components/AudioPlayer';
 import LoginModal from './components/LoginModal';
 import OnboardingModal from './components/OnboardingModal';
 import KanjiWisdom from './components/KanjiWisdom';
+import ThemeSync from './components/ThemeSync';
 import SignInRequired from './components/SignInRequired';
 import UpdateBanner from './components/UpdateBanner';
 import socket from './utils/socket';
@@ -119,6 +120,7 @@ function AppContent() {
         <UpdateBanner onVisibilityChange={setUpdateBannerVisible} />
       </div>
       <KanjiWisdom />
+      <ThemeSync />
       <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
       <OnboardingModal
         isOpen={onboardingModalOpen}
