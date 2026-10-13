@@ -21,6 +21,7 @@ CREATE TABLE `user` (
   `password_hash` VARCHAR(128) NULL DEFAULT NULL, -- Hashed password for authentication
   `about_me` VARCHAR(256) NULL DEFAULT NULL, -- Short description or bio of the user
   `title` VARCHAR(64) NULL DEFAULT NULL, -- Free-text form of address the user prefers Alfred to use (e.g. "boss", "Dr. Athos", or a first name)
+  `ui_theme` VARCHAR(32) NULL DEFAULT NULL, -- Chosen UI theme id shared by web and Deck (dark, amber, light, matrix, graphite); NULL = never chosen
   `state` INTEGER(1) NULL DEFAULT 0, -- User's current state (references states table: 1=offline, 2=online)
   `last_online` DATETIME NULL DEFAULT NULL, -- Timestamp of last user activity
   `continuous_stay_since` DATETIME NULL DEFAULT NULL, -- Start of this guest's current unbroken stay; NULL for non-guests or a guest not currently mid-stay

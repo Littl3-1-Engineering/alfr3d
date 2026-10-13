@@ -11,12 +11,16 @@ from dependencies import (
     manager,
     ALFR3D_ENV_NAME,
 )
-from models import UserCreate, UserUpdate
+from models import ThemeUpdate, UserCreate, UserUpdate
 from auth import permissions
 from auth.dependencies import CurrentUser, require_auth, require_permission
 
 logger = logging.getLogger("ApiLog")
 router = APIRouter(prefix="/api", tags=["users"])
+
+# Shared theme ids (web `utils/themes.js` keys). Deck maps its own presets onto these; ids it has
+# no counterpart for are simply left alone on that surface. See todo/todo_theme_sync_deck.md.
+UI_THEMES = ("dark", "amber", "light", "matrix", "graphite")
 
 
 @router.get("/users")
@@ -75,6 +79,39 @@ async def get_users(online: bool = Query(False)):
             ]
         )
         return mock_users
+
+
+@router.get("/users/me/theme")
+async def get_my_theme(user: CurrentUser = Depends(require_auth)):
+    """The caller's chosen theme id, or null if they never picked one."""
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT ui_theme FROM user WHERE id = %s", (user.id,))
+            row = cursor.fetchone()
+        return {"theme": row[0] if row else None}
+    except pymysql.Error as e:
+        logger.error(f"Error fetching theme: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/users/me/theme")
+async def set_my_theme(data: ThemeUpdate, user: CurrentUser = Depends(require_auth)):
+    """Last write wins. Any authenticated user may set their own theme (no role gate: it is a
+    personal preference, like the profile fields). Broadcast carries the user id so open
+    surfaces apply only their own user's change."""
+    if data.theme not in UI_THEMES:
+        raise HTTPException(status_code=422, detail=f"Unknown theme; expected one of {UI_THEMES}")
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("UPDATE user SET ui_theme = %s WHERE id = %s", (data.theme, user.id))
+            db.commit()
+    except pymysql.Error as e:
+        logger.error(f"Error saving theme: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    await manager.broadcast("theme", {"user_id": user.id, "theme": data.theme})
+    return {"theme": data.theme}
 
 
 @router.post("/users", status_code=201)
