@@ -1,6 +1,6 @@
 # Fix the 9 failing frontend (vitest) tests
 
-## Status: 🔲 Not started (filed 2026-10-13). Already failing on a clean `main`; not caused by the disk-monitoring work.
+## Status: ✅ Fixed 2026-10-13. Not a code bug: this checkout's `node_modules` was stale (`lottie-react` 2.4.1 installed, `package.json`/lockfile want 3.1.2). `npm ci` brought it back; vitest is now 40 files / 213 tests green. No repo change needed. CI was never affected (it runs `npm ci` then `npm test -- --run`).
 
 `cd services/service_frontend && npx vitest run` → 3 files failed, 9 tests failed, 8 unhandled errors
 (200 passed). Same result with and without the 2026-10-13 changes.
@@ -28,3 +28,12 @@
 - [ ] Fix or update the mood-icon assertion.
 - [ ] Confirm `npx vitest run` is green, then check whether CI runs the frontend tests (if it did,
       this would not have gone unnoticed); wire them in if not.
+
+## Resolution
+
+- `LottieSubscription` only exists in `lottie-react` v3 (the migration in `138dce52`, PR #195); the
+  local install was still v2, so `Core` crashed in every test that rendered it, and the other
+  failures came from the same stale install (including the mood-icon test).
+- The leads above about a missing mock and a changed icon were wrong. Lesson: when only the local run
+  fails, run `npm ci` before reading the code.
+- Work items 1 and 2 are moot; item 3 is answered: CI already runs the frontend tests.
