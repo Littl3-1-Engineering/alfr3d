@@ -14,7 +14,7 @@ import time
 
 import schedule
 
-from sa import engine, external, inference_store, lake, silver
+from sa import disk, engine, external, inference_store, lake, silver
 from sa.learners import daytime, device_rhythm, drift, household_day, presence, rates, scalar, stay
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
@@ -29,6 +29,7 @@ HEARTBEAT_STALE_SECONDS = 900
 BASELINE_INTERVAL_HOURS = 6
 # Container time is UTC. 03:30 UTC = 23:30 local, after the day's partitions have mostly settled.
 BRONZE_EXPORT_AT = "03:30"
+DISK_SAMPLE_INTERVAL_HOURS = 4
 
 
 def run_bronze_export():
@@ -55,6 +56,20 @@ def run_bronze_export():
     except Exception as e:
         logger.error(f"silver/gold build failed: {e}")
     run_learners()
+
+
+def record_disk_sample():
+    """Sample host disk free/total into sa_storage_metrics (sa/disk.py) for check_disk_health."""
+    conn = None
+    try:
+        conn = inference_store.connect()
+        total, free = disk.record_disk_sample(conn)
+        logger.info(f"disk sample: {free / 1024**3:.1f} GB free of {total / 1024**3:.1f} GB")
+    except Exception as e:
+        logger.error(f"disk sample failed: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def run_learners():
@@ -137,4 +152,8 @@ if __name__ == "__main__":
     # first run 6h after start, not at start.
     schedule.every(BASELINE_INTERVAL_HOURS).hours.do(engine.compute_entity_baselines)
     schedule.every().day.at(BRONZE_EXPORT_AT).do(run_bronze_export)
+    # Sampled on its own, short job so a long export can't delay it, and a sample at start so the
+    # trend has a fresh point after every deploy.
+    schedule.every(DISK_SAMPLE_INTERVAL_HOURS).hours.do(record_disk_sample)
+    record_disk_sample()
     run()

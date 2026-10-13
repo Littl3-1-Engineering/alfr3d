@@ -2,7 +2,7 @@
 
 > **Layer:** cross-cutting (data layer health) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → not an LF phase; do before the lake or MySQL gets anywhere near the limit
 
-## Status: 🔲 Not started (filed 2026-10-09 by request). Nothing alerts on low disk today.
+## Status: 🟡 Core built 2026-10-13 (`sa/disk.py`, `check_disk_health`, 4-hourly sample in `sa-learner`), uncommitted and not deployed. Docker usage, backup-folder size and backup rotation are still open.
 
 ## Why
 
@@ -48,18 +48,18 @@ Reuse what exists rather than a new channel:
 
 ## Work items
 
-- [ ] Add a daily `disk.root` sample (free bytes, total bytes) to `sa_storage_metrics` from
-      `sa-learner`, next to `record_lake_sizes()`. No migration: same table, new `table_name`.
-- [ ] Days-until-full estimate from the last 30 days of samples, with a floor on history so a
+- [x] Add a `disk.root` sample (free bytes, total bytes) to `sa_storage_metrics` from
+      `sa-learner`, every 4 h from `sa-learner` (`learner.record_disk_sample`; `row_count` = total bytes, `data_bytes` = free bytes). No migration: same table, new `table_name`.
+- [x] Days-until-full estimate from the last 30 days of samples, with a floor on history so a
       fresh install doesn't alert from two points.
-- [ ] `check_disk_health(frame)` rule with the warn/critical tiers above; `because` lists the
+- [x] `check_disk_health(frame)` rule with the warn/critical tiers above; `because` lists the
       current free space, the 30-day growth and the three biggest consumers.
 - [ ] Decide how to see Docker usage and `~/db_backups` (socket mount vs. a host cron that writes
       a small JSON file the learner reads).
-- [ ] **Automatic backup rotation** (related, same root cause): keep the N newest in
+- [ ] **Automatic backup rotation** (tracked in [../todo_db_backup_cron.md](../todo_db_backup_cron.md): daily dump, keep 7): keep the N newest in
       `~/db_backups`, compress on write (`.sql.gz` is ~16x smaller). Today it is a manual step in
       the migration routine.
-- [ ] Tests: threshold tiers, debounce, no alert on thin history.
+- [x] Tests: threshold tiers, debounce, no alert on thin history (`tests/test_sa_disk.py`). Debounce = two consecutive samples must agree.
 - [ ] Document the prune commands that are safe on this host (build cache older than 24 h,
       unreferenced images) in the README's operations section.
 
