@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4
 
-## Status: 🟢 Learner deployed 2026-10-10 (`sa/learners/scalar.py`). Shadow comparison with `climate_deviation` and the live awareness path are still to do.
+## Status: 🟢 Learner deployed 2026-10-10 (`sa/learners/scalar.py`). Live scoring and the `climate_deviation` / `attention_focus` shadow comparison run in `sa-awareness` (persisted to `sa_shadow_comparison` since 2026-10-12). Cutover waits on the 2026-10-16 review; scoping the learner to the climate and attention series is still to do.
 
 One learner for every numeric series in gold `scalar_hourly` (indoor temperature / humidity, Wi-Fi,
 battery, speed tests, later anything). Model: hour-of-day effect + local 24 h level + robust (MAD)
@@ -25,7 +25,7 @@ A normal has median abs z 0.67, so the scale is calibrated. `MIN_ABS_Z = 4.0` fr
 
 ## Remaining
 
-- [ ] Live scoring in `sa-awareness` for indoor climate (needs the last 24 h per series in memory).
-- [ ] Shadow log beside `climate_deviation` for a week, then cut over and retire `entity_baselines` climate rows.
+- [x] Live scoring in `sa-awareness` for indoor climate and attention (`shadow.py`, 2026-10-11).
+- [ ] Shadow log beside `climate_deviation` for a week (running, persisted), then cut over and retire `entity_baselines` climate rows.
 - [ ] Turn the covariate on when >= 72 h of Toronto weather overlap exists and it earns its place.
 - [ ] Event-stream learner family (rates per context / sender) and the SA-2, rhythm, SA-3, SA-10 ports.

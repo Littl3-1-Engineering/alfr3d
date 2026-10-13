@@ -1,6 +1,6 @@
 # SA Roadmap: Learning Foundation
 
-## Status: plan approved 2026-10-09. LF-0 to LF-3 deployed (2026-10-09/10). The scalar, rate, device-rhythm and household-day learners (LF-4a/4b, LF-5a) run in shadow beside every legacy rule; cutover after a week of shadow data (not before ~10-17). The drift detector (2026-10-11) is deployed and now caps `stability`. Transitions, visitor-arrival cards and layer-2 design remain. This doc is the entry point for all SA work.
+## Status: plan approved 2026-10-09. LF-0 to LF-3 deployed (2026-10-09/10). Every legacy rule has a learner running in shadow, persisted to `sa_shadow_comparison` (2026-10-12). Layer 2 is built (`sa/layer2.py`: fusion, calendar family, `away_unusual`, `day_off`, `household_unusual_day`); `presence_deviation` and, since 2026-10-12, `household_unusual_day` are cut over. The stay-length and daytime learners (2026-10-12) back `departure_anomaly` and `day_off`. Climate, attention, rhythm-break and departure cutovers wait on the 2026-10-16 shadow review. The drift detector (2026-10-11) caps `stability`. Transitions and visitor-arrival cards remain. This doc is the entry point for all SA work.
 
 Every SA doc lives in `todo/sa/` and carries a `Layer:` / `Roadmap:` line under its title that
 points back here. Work proceeds by LF phase (below); each phase has its own `todo_lfN_*.md`.
@@ -154,7 +154,7 @@ First L2 candidate: `household_unusual_day`, rebuilt as a confidence-weighted co
 | **LF-3** ✅ | [todo_lf3_presence_learner.md](todo_lf3_presence_learner.md) | Inference contract + presence learner per user (deployed 2026-10-10; the 10-09 absence scores 3.35 bits, confidence 0.39, in walk-forward replay) | LF-2 |
 | **LF-4** 🟡 | [todo_lf4_port_baselines.md](todo_lf4_port_baselines.md) | Learners built and in shadow (see LF-4a/4b); remaining: per-rule cutover, device-row identity merge, retire `entity_baselines` | LF-3 |
 | **LF-5** 🟡 | [todo_lf5_more_learners.md](todo_lf5_more_learners.md) | Rate learner done (LF-5a); drift done (2026-10-11); remaining: transition (SA-12, ~11-01), visitor-arrival cards, card feedback signal | LF-3 |
-| **LF-6** | [todo_lf6_layer2.md](todo_lf6_layer2.md) | Layer-2 design | LF-4, LF-5 |
+| **LF-6** 🟡 | [todo_lf6_layer2.md](todo_lf6_layer2.md) | Layer-2 engine built and live (generic fusion, calendar family, `away_unusual`, `day_off`, `household_unusual_day` cut over 2026-10-12); remaining: per-rule cutovers, a second independent family beyond the calendar | LF-4, LF-5 |
 
 LF-0 and LF-1a are independent and can run in parallel.
 

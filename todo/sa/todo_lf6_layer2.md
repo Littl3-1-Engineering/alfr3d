@@ -174,3 +174,30 @@ system). Changes (profile version 3):
 Consequence worth knowing: an empirical tail is limited by the number of comparable days, so a
 holiday (about 11 weighted comparable days) can look at most ~1 / 12 unusual per feature and the
 rule needs all three features off to flag it; a weekday needs about two.
+
+## Stay start: the 45-minute rule stays (2026-10-13)
+
+Live shadow showed Vanja's iPhone sighted at 17:24-17:33, 18:58, then from 21:06 (gaps of 85 and 128
+minutes), so the live stay start read 21:06 and the stay 7 minutes long. Questions asked: is a
+sleeping phone making the stay model under-flag, and can the gap be bridged?
+
+- **Rule, decided:** a gap of up to `PRESENCE_GAP_MINUTES` (45) is a sleeping phone, the person never
+  left; a sighting after a longer gap is a return after an absence and starts a new stay. Silver
+  (training) and the live stay start (`stay_start_from_sightings`) share it, so the profile is
+  calibrated against the same fragmentation it is scored on. Unchanged.
+- **No threshold in the data:** between-interval gaps since May spread smoothly over 45 min to 12 h+
+  (45-60: 91, 60-90: 166, 90-120: 78, 120-180: 113, 180-240: 35, 240-360: 41, 6-12 h: 65,
+  12 h+: 73), for every resident, not just Vanja.
+- **No independent presence signal to check against:** Vanja has only phone sessions (no hardware).
+  HA has no household-member trackers (`device_tracker.littl3zen`, `pixel_tablet` and
+  `person.alfr3d_ha` only ever report `unknown`; no `home`/`not_home` anywhere in the lake).
+  ALFR3D must not depend on HA settings. The nightly lake export already keeps tracker states, so
+  any HA signal that appears later is usable without new code.
+- **Two-reading idea (score the stay split and bridged, each against its own profile) replayed,
+  Aug 17 - Oct 11, flag-days/week split / bridged / both / either:** bridge 180 min: athos 0.6/0.0/
+  0.0/0.6, Jenna 1.0/0.4/0.0/1.4, Vanja 0.4/0.0/0.0/0.4, Munja 0.5/0.0/0.0/0.5; bridge 120 min:
+  athos 0.6/0.8/0.0/1.4, Jenna 1.0/1.1/0.2/1.9, Vanja 0.4/0.1/0.1/0.4, Munja 0.5/0.4/0.2/0.6. The
+  readings flag different days, so "both" almost never fires, and "either" adds flags that move with
+  the bridge length (no way to tell which are real). Not built. Vanja's flags do not rise under any
+  setting, so the sleeping-phone gap is not hiding overstays for her.
+- Revisit only if the 2026-10-16 shadow review shows the stay model missing real overstays.
