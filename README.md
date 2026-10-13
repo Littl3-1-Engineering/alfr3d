@@ -177,6 +177,7 @@ All configured conditions must evaluate true:
   - Matrix / Green — near-black substrate with a phosphor-green terminal look
   - Steel / Graphite — cold blue-gray slate with a steel-blue accent
 - **Live Picker**: Matrix → Customizations lets you switch themes instantly; changes persist across sessions
+- **Account Sync**: when signed in, your theme is saved to your ALFR3D account (`GET`/`PUT /api/users/me/theme`, `user.ui_theme`) and follows you between the web dashboard and the Android Deck. Deep Cyan, Tactical Amber and Light map to the web's Cyan/Navy, Amber/Charcoal and Light/Teal; Matrix and Graphite stay web-only, and the Deck's Wallpaper and Custom themes stay on the device. Changes from the Deck show up live on the web; web changes reach the Deck on its next background sync (about 30 minutes)
 - Components use only theme tokens — no hardcoded colors
 
 ### Nexus Navigation
@@ -368,7 +369,7 @@ The ALFR3D dashboard provides real-time monitoring and control across three page
 - **Routines**: WHEN/IF/THEN recipe builder with triggers, conditions, and actions
 - **Personality**: Persona configuration, presets, context, and LLM settings
 - **Integrations**: Home Assistant, SmartThings, Gmail, Calendar, OpenWeather, and Google setup
-- **Customizations**: Live theme picker (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite)
+- **Customizations**: Live theme picker (Cyan/Navy, Amber/Charcoal, Light/Teal, Matrix/Green, Steel/Graphite), synced to your account and the Deck
 - **Music**: Spotify player with now-playing, visualizer, playlists, devices, and speaker casting
 - **System**: Network, database, config editor, and service management
 
