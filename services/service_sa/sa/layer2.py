@@ -116,6 +116,10 @@ class Rule:
     # Cap the combined p at the best family's, so more evidence never lowers surprise. A rule whose
     # threshold was calibrated on the plain weighted Fisher p (household day) turns this off.
     cap_at_best = True
+    # Weight each family's log p by its confidence in the Fisher combination. A rule whose inputs
+    # are empirical tail probabilities (bounded away from 0 by smoothing) turns this off: with
+    # confidences around 0.25 the weighted statistic can never reach a small combined p.
+    weight_by_confidence = True
     ttl_hours = 6  # how long a result outlives the cycle that last refreshed it
 
     def accept(self, voters):
@@ -168,7 +172,7 @@ def fuse(rule, group, now):
     if not rule.accept(voters):
         return None
     if len(voters) > 1:
-        p_comb = max(fisher_p(ps, cs), 1e-12)
+        p_comb = max(fisher_p(ps, cs if rule.weight_by_confidence else [1.0] * len(ps)), 1e-12)
         if rule.cap_at_best:
             p_comb = min(min(ps), p_comb)
     surprise = -math.log2(p_comb)

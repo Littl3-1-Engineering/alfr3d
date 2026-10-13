@@ -151,3 +151,26 @@ writes a row), 43-67 devices against the lake's 21-27, so every evening scored a
 rule, and reproduces the lake for 10-06..10-10 (devices 25/27/24/23/21, first-online minutes
 identical) in 0.3 s. Lesson for any live-scored learner: replay the live query for past days and
 compare it with the lake's value before trusting a verdict.
+
+## household_unusual_day v3: robust features (2026-10-12)
+
+After the measurement fix the first live verdict still flagged on two features that are poor
+signals: `first_minute` is bimodal (the nightly ~03:51 reconnect on ~60 % of days, an earlier phone
+nap on the rest, six of the last eighteen days), so a Gaussian z at the median called a 00:07 nap
+"7 sigma"; and a device count drifts as hardware is retired (devices are being deleted from the
+system). Changes (profile version 3):
+
+- every feature is scored by an **empirical two-sided tail** of its own comparable past days
+  (`household_day.empirical_p`, smoothed `(S + 0.5) / (W + 1)`), not a Gaussian z. The median and
+  sigma stay in the row for display;
+- `devices` became **`device_share`**: devices active in 00:00-18:00 over the devices seen in the
+  14 days before. A deleted device leaves the denominator after two weeks instead of reading as a
+  quiet house. Silver and the live query agree on the inventory (30 and 32 on 10-06 / 10-10);
+- the rule combines by **unweighted Fisher** (`Rule.weight_by_confidence = False`): with p bounded
+  below by ~1 / (days + 1) and confidences near 0.25, the confidence-weighted statistic could never
+  reach a small p. `P_FLAG` is now 0.02. Walk-forward over the 58 scored lake days: lowest p 0.063,
+  no flags (the old Gaussian version flagged 10-02, a day of test-burst device spam).
+
+Consequence worth knowing: an empirical tail is limited by the number of comparable days, so a
+holiday (about 11 weighted comparable days) can look at most ~1 / 12 unusual per feature and the
+rule needs all three features off to flag it; a weekday needs about two.

@@ -49,7 +49,7 @@ from sa.learners.scalar import weighted_mad_sigma
 logger = logging.getLogger("SAHouseholdDay")
 
 NAME = "household_day"
-VERSION = "2"
+VERSION = "3"
 SIGNAL = "household.day"
 SIGNAL_FEATURE = "household.day_feature"
 
@@ -57,13 +57,25 @@ CUTOFF_HOUR = 18
 HALF_LIFE_DAYS = 28.0
 MIN_DAYS = 21
 MIN_CELL_WEIGHT = 5.0
-SIGMA_FLOOR = {"devices": 1.0, "first_minute": 30.0, "home_minutes": 60.0}
-FEATURES = ("devices", "first_minute", "home_minutes")
+SIGMA_FLOOR = {"device_share": 0.05, "first_minute": 30.0, "home_minutes": 60.0}
+# device_share is the devices active today over the devices seen in the 14 days before: a device
+# the household stops owning (deleted from the system) leaves the denominator after two weeks
+# instead of reading as a permanently quiet house. first_minute is bimodal (a nightly reconnect at
+# ~03:51 on most days, an earlier phone nap on the rest), so no feature is scored with a Gaussian z:
+# each is its own empirical two-sided tail (see empirical_p).
+FEATURES = ("device_share", "first_minute", "home_minutes")
+INVENTORY_DAYS = 14
+MIN_INVENTORY = 5
+SAMPLE_DAYS = 180
 HOME_USER_TYPES = ("owner", "technoking", "resident")  # whose phones count as "the household"
 PRESENCE_GAP_MINUTES = 45  # silver's rule: sightings further apart than this are separate stays
 MIN_EACH_P = 0.25  # a feature this unlikely counts as "off"
 MIN_FEATURES_OFF = 2  # one noisy metric is just a day
-P_FLAG = 0.01  # chosen from the backtest (see todo_lf4b_baseline_ports.md)
+# Chosen from the walk-forward backtest (todo_lf4b_baseline_ports.md): over 58 scored days of real
+# history the lowest unweighted Fisher p was 0.063 and none were extreme, so 0.02 is a day in about
+# fifty by chance at most. An empirical tail cannot be smaller than ~1 / (days + 1), which also
+# caps how extreme a holiday (few comparable days) can look.
+P_FLAG = 0.02
 STABILITY_UNKNOWN = 0.5
 QUALITY = 1.0
 FAMILY_PREFIX = "household_day:"
@@ -73,13 +85,29 @@ def two_sided_p(z):
     return math.erfc(abs(z) / math.sqrt(2.0))
 
 
+def empirical_p(samples, value):
+    """Two-sided tail probability of `value` among weighted past `samples` [(value, weight)],
+    smoothed so a short history cannot claim certainty: twice the smaller of the weighted shares
+    at or below and at or above it, each (S + 0.5) / (W + 1)."""
+    total = sum(w for _, w in samples)
+    lower = (sum(w for v, w in samples if v <= value) + 0.5) / (total + 1.0)
+    upper = (sum(w for v, w in samples if v >= value) + 0.5) / (total + 1.0)
+    return min(1.0, 2.0 * min(lower, upper))
+
+
 class HouseholdDayLearner(Learner):
     name = NAME
     version = VERSION
 
     def fit_days(self, days, ref, coverage=1.0):
         """Profile from [{"date","devices","first_minute"}] completed days up to `ref`, or None."""
-        days = [d for d in days if d["date"] <= ref and d["devices"] is not None]
+        days = [
+            d
+            for d in days
+            if d["date"] <= ref
+            and d["devices"] is not None
+            and (ref - d["date"]).days <= SAMPLE_DAYS
+        ]
         if len(days) < MIN_DAYS:
             return None
         weights = {
@@ -106,6 +134,7 @@ class HouseholdDayLearner(Learner):
                     "sigma": round(max(sigma, SIGMA_FLOOR[feature]), 3),
                     "weight": round(sum(w), 3),
                     "pooled": use is pooled,
+                    "samples": [[round(x, 4), round(y, 4)] for x, y in use],
                 }
             params["features"][feature] = cells
             recent = [
@@ -151,7 +180,7 @@ class HouseholdDayLearner(Learner):
         """Layer-1 rows, one per feature the day has a value for: how improbable that value is for
         this household on this day type, with its confidence. Unremarkable features are included
         (state rows, any p): the layer-2 rule combines all of them, so picking which to combine
-        after looking cannot flatter the p-value. state: {"devices", "first_minute",
+        after looking cannot flatter the p-value. state: {"device_share", "first_minute",
         "home_minutes", "local_dt"}; a value may be None (nothing measured yet)."""
         day = state["local_dt"].date()
         kind = presence._daytype(day)
@@ -164,7 +193,7 @@ class HouseholdDayLearner(Learner):
                 continue
             cell = profile.params["features"][feature][kind]
             z = (value - cell["median"]) / cell["sigma"]
-            p = max(two_sided_p(z), 1e-12)
+            p = max(empirical_p([(v, w) for v, w in cell["samples"]], value), 1e-12)
             c = confidence.Confidence(
                 confidence.sufficiency(cell["weight"]),
                 profile.coverage,
@@ -209,7 +238,9 @@ class HouseholdDayLearner(Learner):
 
 class HouseholdUnusualDayRule(layer2.Rule):
     """SA-10 as a layer-2 rule: at least MIN_FEATURES_OFF of the day's features mildly off, and the
-    confidence-weighted Fisher p of all of them at most P_FLAG."""
+    Fisher p of all of them at most P_FLAG. Unweighted: the inputs are empirical tail
+    probabilities, which smoothing keeps above ~0.5 / (days + 1), and weighting their logs by a
+    confidence near 0.25 would make a small combined p unreachable."""
 
     name = NAME
     version = VERSION
@@ -217,6 +248,7 @@ class HouseholdUnusualDayRule(layer2.Rule):
     subject_type = "household"
     min_bits = -math.log2(P_FLAG)
     cap_at_best = False
+    weight_by_confidence = False
     ttl_hours = 12
 
     def groups(self, parents, ctx):
@@ -252,10 +284,10 @@ def explain(inference):
         if ref.get("feature") and ref["p"] is not None and ref["p"] <= MIN_EACH_P
     }
     lines = []
-    if "devices" in off:
+    if "device_share" in off:
         lines.append(
-            f"{round(observed['devices'])} devices active today, "
-            f"typically about {round(expected['devices'])}"
+            f"{round(observed['device_share'] * 100)}% of the household's devices active today, "
+            f"typically about {round(expected['device_share'] * 100)}%"
         )
     if "first_minute" in off:
         lines.append(
@@ -315,6 +347,12 @@ act AS (
   FROM days d JOIN sess s
     ON s.start_local < CAST(d.d AS TIMESTAMP) + INTERVAL {cutoff} HOUR
    AND s.end_local > CAST(d.d AS TIMESTAMP)),
+inv AS (  -- the devices seen in the INVENTORY_DAYS before the day: what "all devices" meant then
+  SELECT d.d, COUNT(DISTINCT s.device_id) AS n
+  FROM days d JOIN sess s
+    ON s.start_local < CAST(d.d AS TIMESTAMP)
+   AND s.end_local > CAST(d.d AS TIMESTAMP) - INTERVAL {inventory} DAY
+  GROUP BY d.d),
 firsts AS (  -- the first device to COME ONLINE that day (always-on gear spans midnight)
   SELECT d.d, MIN(epoch(s.start_local - CAST(d.d AS TIMESTAMP)) / 60.0) AS first_minute
   FROM days d JOIN sess s
@@ -322,11 +360,12 @@ firsts AS (  -- the first device to COME ONLINE that day (always-on gear spans m
    AND s.start_local < CAST(d.d AS TIMESTAMP) + INTERVAL {cutoff} HOUR
   GROUP BY d.d){home_cte}
 SELECT days.d, COUNT(DISTINCT act.device_id), COALESCE(firsts.first_minute, {cutoff} * 60.0),
-       {home_select}
+       {home_select}, COALESCE(inv.n, 0)
 FROM days JOIN ok ON ok.d = days.d
 LEFT JOIN act ON act.d = days.d LEFT JOIN firsts ON firsts.d = days.d
+LEFT JOIN inv ON inv.d = days.d
 {home_join}
-GROUP BY days.d, firsts.first_minute{home_group} ORDER BY days.d
+GROUP BY days.d, firsts.first_minute, inv.n{home_group} ORDER BY days.d
 """
 
 # Person-minutes at home before the cutoff, for the people who live here (gold presence_grid joined
@@ -356,6 +395,7 @@ def load_days(lake_dir):
         has_home = os.path.exists(intervals_file)
         sql = _DAYS_SQL.format(
             cutoff=CUTOFF_HOUR,
+            inventory=INVENTORY_DAYS,
             home_cte=_HOME_SQL.format(cutoff=CUTOFF_HOUR) if has_home else "",
             home_select="COALESCE(homes.m, 0.0)" if has_home else "NULL",
             home_join="LEFT JOIN homes ON homes.d = days.d" if has_home else "",
@@ -370,8 +410,15 @@ def load_days(lake_dir):
             )
         rows = con.execute(sql).fetchall()
         days = [
-            {"date": d, "devices": n, "first_minute": fm if n else None, "home_minutes": hm}
-            for d, n, fm, hm in rows
+            {
+                "date": d,
+                "devices": n,
+                "inventory": inv,
+                "device_share": (n / inv) if inv >= MIN_INVENTORY else None,
+                "first_minute": fm if n else None,
+                "home_minutes": hm,
+            }
+            for d, n, fm, hm, inv in rows
         ]
         total = con.execute(
             f"SELECT COUNT(DISTINCT date_local) FROM grid WHERE hour_local < {CUTOFF_HOUR}"
@@ -392,8 +439,8 @@ def run_fit(lake_dir, conn, now_utc=None):
 
 
 def backtest(lake_dir, start, end, learner=None):
-    """Walk-forward: [{"date","devices","first_minute","p","flagged"}] for each day in [start,
-    end], each scored on a profile fitted on the days before it."""
+    """Walk-forward: the day's features plus {"p","flagged"} for each day in [start, end], each
+    scored on a profile fitted on the days before it."""
     learner = learner or HouseholdDayLearner()
     data = load_days(lake_dir)
     out = []
@@ -404,23 +451,12 @@ def backtest(lake_dir, start, end, learner=None):
         if profile is None or day["first_minute"] is None:
             continue
         # p without the threshold: score() returns None when unremarkable, so recompute directly.
-        kind = presence._daytype(day["date"])
-        ps, cs = [], []
-        for feature in FEATURES:
-            if feature not in profile.params["features"] or day.get(feature) is None:
-                continue
-            cell = profile.params["features"][feature][kind]
-            z = (day[feature] - cell["median"]) / cell["sigma"]
-            ps.append(max(two_sided_p(z), 1e-12))
-            cs.append(
-                confidence.Confidence(
-                    confidence.sufficiency(cell["weight"]),
-                    profile.coverage,
-                    profile.source_quality,
-                    profile.stability,
-                ).value
-            )
-        p = fisher_p(ps, cs)
+        local_dt = datetime.combine(day["date"], datetime.min.time()).replace(hour=CUTOFF_HOUR)
+        rows = learner.score_features(profile, {**day, "local_dt": local_dt}, local_dt)
+        ps = [r.probability for r in rows]
+        if len(ps) < MIN_FEATURES_OFF:
+            continue
+        p = fisher_p(ps, [1.0] * len(ps))
         off = sum(1 for q in ps if q <= MIN_EACH_P)
         out.append({**day, "p": p, "flagged": p <= P_FLAG and off >= MIN_FEATURES_OFF})
     return out
