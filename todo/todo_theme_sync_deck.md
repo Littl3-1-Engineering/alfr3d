@@ -1,6 +1,6 @@
 # Sync themes between Alfr3d (web frontend) and Alfr3d Deck
 
-## Status: built 2026-10-12, uncommitted and not deployed; NOT yet verified live or on-device (added 2026-10-03); cross-repo, mirrored in `alfr3d_deck/todo/`
+## Status: built 2026-10-12, committed (`55ab354e`); web-to-Deck and Deck-to-web both verified working by Athos 2026-10-13 (added 2026-10-03); cross-repo, mirrored in `alfr3d_deck/todo/`
 
 ## What was built (2026-10-12)
 
