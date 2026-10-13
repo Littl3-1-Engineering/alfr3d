@@ -56,7 +56,7 @@ Reuse what exists rather than a new channel:
       current free space, the 30-day growth and the three biggest consumers.
 - [ ] Decide how to see Docker usage and `~/db_backups` (socket mount vs. a host cron that writes
       a small JSON file the learner reads).
-- [ ] **Automatic backup rotation** (tracked in [../todo_db_backup_cron.md](../todo_db_backup_cron.md): daily dump, keep 7): keep the N newest in
+- [x] **Automatic backup rotation** (done 2026-10-13, tracked in [../todo_db_backup_cron.md](../todo_db_backup_cron.md): daily dump, keep 7): keep the N newest in
       `~/db_backups`, compress on write (`.sql.gz` is ~16x smaller). Today it is a manual step in
       the migration routine.
 - [x] Tests: threshold tiers, debounce, no alert on thin history (`tests/test_sa_disk.py`). Debounce = two consecutive samples must agree.

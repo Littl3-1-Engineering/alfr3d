@@ -835,7 +835,8 @@ Some imports must come after `sys.path.insert()` for Docker container path resol
 The codebase uses `orjson` instead of the standard `json` module. Ensure any JSON operations use `orjson.dumps()`/`orjson.loads()` and `orjson.JSONDecodeError`.
 
 ### Maintenance Scripts
-- **`backup_db.sh`**: Automated database backup script
+- **`backup_db.sh`**: Older one-off database backup script (uncompressed, keeps 3, root password hardcoded for the dev stack)
+- **`db_backup_daily.sh`**: Daily production backup. Gzipped `mysqldump` (routines, events, triggers) of the running `mysql` service into `~/db_backups/alfr3d_daily_*.sql.gz`, verified before it counts, newest 7 kept; hand-made `*_pre_*` dumps are never rotated. Credentials are read from the mysql container, nothing is hardcoded. Installed on the NUC as a user crontab entry (`0 4 * * *`, log in `~/db_backups/backup.log`). Restore with `gzip -dc <file> | docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"'` (try it on `test-mysql` first). Still take a manual `*_pre_*` dump before every migration.
 - **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
 - **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
 - **`reset_owner_password.py`**: Solo-owner lockout recovery — resets a user's password directly against the DB (`--list` to see usernames, `--username <name>` to reset)
