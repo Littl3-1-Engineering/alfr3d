@@ -1,6 +1,6 @@
 # Sync themes between Alfr3d (web frontend) and Alfr3d Deck
 
-## Status: built 2026-10-12, committed (`55ab354e`); web-to-Deck and Deck-to-web both verified working by Athos 2026-10-13 (added 2026-10-03); cross-repo, mirrored in `alfr3d_deck/todo/`
+## Status: committed and pushed 2026-10-13 (alfr3d `55ab354e`, alfr3d_deck `d63dfcd`); backend + web DEPLOYED to the NUC 2026-10-13 (alembic 0054, backup `pre_0054`); Deck debug build installed on a device and VERIFIED both ways 2026-10-13 (Deck to server seeded `amber`; web change to Light reached the Deck on sync, and switching back to Amber did too) (added 2026-10-03); cross-repo, mirrored in `alfr3d_deck/todo/`
 
 ## What was built (2026-10-12)
 
@@ -24,7 +24,7 @@
 - The "last synced" id is in memory only, so a push that failed offline is dropped after a restart.
 - Not run on a device or against the live backend; the interaction with
   `todo_device_controls_visual_refresh.md` is untouched.
-- Notion Timeline and README not yet updated (do it when this ships).
+- README and the Notion Timeline (two rows) updated 2026-10-13; the littl31 `timeline.json` mirror is not done.
 
 Ask: the theme chosen on one surface should carry to the other.
 
