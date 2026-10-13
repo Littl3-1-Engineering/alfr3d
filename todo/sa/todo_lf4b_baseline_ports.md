@@ -66,6 +66,17 @@ review had to fall back on `sa_inferences` and `card_interactions`. The review a
 scalar learner scores every series (battery, speedtest) while the legacy rule covers only room
 climate and attention, so the cutover must scope it to those series.*
 
+*2026-10-13: the review is now a script. `docker compose exec -T sa-awareness python - < scripts/sa_shadow_review.py`
+(read-only; `--days N` limits the window) prints per rule the hours spent in each of both quiet / both
+fire / learner only / legacy only, the stretches where they differed, and whether the data clears the
+bar (7 days of shadow, the rule seen to fire, no unexplained learner-only time). First run, 0.9 days of
+data (the table only began recording 2026-10-12 21:13 UTC, so the 10-16 review has ~3.9 days and a full
+week lands ~10-19/20): `attention_focus` has fired on both sides for 1 h (the only real firing so far);
+climate and household day are quiet on both; `rhythm_break_anomaly` fires on both continuously (the
+learner names more devices by design); **`departure_anomaly` learner fired alone for 12.5 h**, the last
+10 h of it one person's stay at p=0.12, confidence 0.21 (`p_stay_at_least`), which is at the edge of the
+flag bar and wants a human look before the cutover.*
+
 - [ ] `climate_deviation` reads the scalar inference instead of `entity_baselines` room rows.
 - [ ] `attention_focus` / `wind_down_signal` read `attention:*` scalar inferences.
 - [ ] `departure_anomaly` reads the **stay** inference (`sa/learners/stay.py`, signal `presence.stay`). Not the presence inference: its marginal p(home) flags every visit by a part-time resident (Vanja, 2026-10-12 DIFFER) and can't see an overstay. The stay model scores the stay so far against this person's comparable past stays. Replay 08-17..10-11 over the lake: Vanja 5 flag days -> 3 (all 19-28 h stays), residents 20 flag days in 8 weeks, legacy's one firing (Athos, Saturday 09-12 evening) not flagged. Wired 2026-10-12: nightly `stay.run_fit`, drift caps its stability, `ShadowRunner.departure` compares it (residents and owners only, like legacy; no calendar suppression yet, that is for layer 2). Open: measured stability (fixed at 0.5), the ~2.5 flag days a week need a human look.
