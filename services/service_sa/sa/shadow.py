@@ -617,15 +617,17 @@ class ShadowRunner:
             # (a correlated NOT EXISTS took minutes on device_history and wedged the loop). Filtered
             # on the indexed `timestamp`, which trails the sighting by about a minute.
             person_ids = [p["user_id"] for p in (frame.person_presence or [])] or [-1]
+            ident = (
+                "CASE WHEN user_id IN ("
+                + ",".join(["%s"] * len(person_ids))
+                + ") AND name IS NOT NULL AND name <> 'unknown' "
+                "THEN CONCAT('p', user_id, ':', name) ELSE CONCAT('d', device_id) END"
+            )
             cursor.execute(
                 "SELECT COUNT(DISTINCT ident), "
                 "MIN(CASE WHEN prev IS NULL OR prev < ts - INTERVAL %s MINUTE THEN ts END) FROM ("
-                "SELECT ident, ts, LAG(ts) OVER (PARTITION BY ident ORDER BY ts) AS prev FROM ("
-                "SELECT DISTINCT CASE WHEN user_id IN ("
-                + ",".join(["%s"] * len(person_ids))
-                + ") AND name IS NOT NULL AND name <> 'unknown' "
-                "THEN CONCAT('p', user_id, ':', name) ELSE CONCAT('d', device_id) END AS ident, "
-                "last_online AS ts FROM device_history "
+                f"SELECT ident, ts, LAG(ts) OVER (PARTITION BY ident ORDER BY ts) AS prev FROM ("
+                f"SELECT DISTINCT {ident} AS ident, last_online AS ts FROM device_history "
                 "WHERE timestamp >= %s - INTERVAL %s MINUTE AND timestamp < %s + INTERVAL 5 MINUTE "
                 "AND last_online IS NOT NULL AND last_online >= %s - INTERVAL %s MINUTE "
                 "AND last_online < %s) s) x WHERE ts >= %s",
@@ -642,6 +644,17 @@ class ShadowRunner:
                 ),
             )
             devices, first = cursor.fetchone()
+            # The devices seen in the INVENTORY_DAYS before today: what "all the devices" is now.
+            # A device deleted from the system leaves it after two weeks, so retiring hardware
+            # does not read as a quiet house (silver measures the fitted days the same way).
+            since = midnight - timedelta(days=household_day.INVENTORY_DAYS)
+            cursor.execute(
+                f"SELECT COUNT(DISTINCT {ident}) FROM device_history "
+                "WHERE timestamp >= %s AND timestamp < %s + INTERVAL 5 MINUTE "
+                "AND last_online IS NOT NULL AND last_online >= %s AND last_online < %s",
+                (*person_ids, since, midnight, since, midnight),
+            )
+            (inventory,) = cursor.fetchone()
             # Person-minutes at home: owners' and residents' phones (device types 3 and 5), the
             # same stay rule as silver. Filtered on the indexed `timestamp` (a history row is
             # stamped about a minute after the sighting it logs): `last_online` has no index and
@@ -680,6 +693,9 @@ class ShadowRunner:
             profiles[0],
             {
                 "devices": devices,
+                "device_share": (
+                    devices / inventory if inventory >= household_day.MIN_INVENTORY else None
+                ),
                 "first_minute": first_minute,
                 "home_minutes": home,
                 "local_dt": frame.local_dt,

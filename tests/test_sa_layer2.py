@@ -113,3 +113,38 @@ class TestExplainedBy:
         busy = self._busy()
 
         assert layer2.family_of(busy) == "calendar" and busy.probability is None
+
+
+class TestUnweightedRules:
+    def _parent(self, feature, p, conf):
+        from services.service_sa.sa.learners.base import Inference
+
+        return Inference(
+            kind="state",
+            subject_type="household",
+            subject_id=feature,
+            signal="household.day_feature",
+            learner="x",
+            learner_version="1",
+            window_start=datetime(2026, 10, 13),
+            probability=p,
+            confidence=conf,
+            evidence={"family": "f:" + feature, "feature": feature},
+        )
+
+    def test_a_rule_can_combine_by_p_alone_not_by_confidence(self):
+        parents = [self._parent("a", 0.03, 0.25), self._parent("b", 0.03, 0.25)]
+
+        class Weighted(layer2.Rule):
+            name, signal, subject_type, min_bits, cap_at_best = "w", "s", "household", 0, False
+
+        class Unweighted(Weighted):
+            name, weight_by_confidence = "u", False
+
+        group = layer2.Group("h", parents[0], parents)
+        now = datetime(2026, 10, 13, 22)
+
+        weighted = layer2.fuse(Weighted(), group, now)
+        unweighted = layer2.fuse(Unweighted(), group, now)
+
+        assert unweighted.probability < weighted.probability

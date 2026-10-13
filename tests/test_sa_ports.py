@@ -97,13 +97,16 @@ class TestDeviceRhythm:
 
 
 class TestHouseholdDay:
-    def _days(self, n=45, devices=lambda d: 26, first=lambda d: 230.0, home=None):
+    def _days(self, n=170, share=lambda d: 0.75, first=lambda d: 230.0, home=None):
+        """A long history: an empirical tail cannot be smaller than about 1 / (days + 1), so the
+        rule's bar is only reachable with a few months of days, as in production."""
         out, d = [], REF - timedelta(days=n - 1)
         rnd = random.Random(3)
         while d <= REF:
             day = {
                 "date": d,
-                "devices": devices(d) + rnd.choice([-1, 0, 0, 1]),
+                "devices": 26,
+                "device_share": share(d) + rnd.choice([-0.03, 0, 0, 0.03]),
                 "first_minute": first(d) + rnd.choice([-10, 0, 10]),
             }
             if home:
@@ -112,15 +115,17 @@ class TestHouseholdDay:
             d += timedelta(days=1)
         return out
 
-    def _score(self, profile, devices, first, home=None):
+    def _score(self, profile, share, first, home=None):
         state = {
-            "devices": devices,
+            "device_share": share,
             "first_minute": first,
             "home_minutes": home,
-            "local_dt": datetime(2026, 10, 12, 18, 0),
+            "local_dt": datetime(
+                2026, 10, 13, 18, 0
+            ),  # a Tuesday: holidays have few comparable days
         }
         return household_day.HouseholdDayLearner().score(
-            profile, state, datetime(2026, 10, 12, 22, 0)
+            profile, state, datetime(2026, 10, 13, 22, 0)
         )
 
     def test_too_little_history_gives_no_profile(self):
@@ -128,19 +133,19 @@ class TestHouseholdDay:
 
     def test_a_normal_day_is_quiet(self):
         profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
-        assert self._score(profile, 26, 230) is None
+        assert self._score(profile, 0.75, 230) is None
 
     def test_a_day_odd_on_both_features_is_a_layer_2_deviation_with_its_parents(self):
         profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
-        inf = self._score(profile, 12, 700)
+        inf = self._score(profile, 0.3, 700)
         assert inf.layer == 2 and inf.signal == "household.day"
-        assert {p["feature"] for p in inf.evidence["parents"]} == {"devices", "first_minute"}
+        assert {p["feature"] for p in inf.evidence["parents"]} == {"device_share", "first_minute"}
         assert inf.probability <= household_day.P_FLAG and 0 < inf.confidence <= 1
 
     def test_one_odd_feature_alone_is_not_enough(self):
         profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
-        assert self._score(profile, 26, 700) is None  # normal device count, odd first activity
-        assert self._score(profile, 8, 230) is None  # odd device count, normal first activity
+        assert self._score(profile, 0.75, 700) is None  # normal device count, odd first activity
+        assert self._score(profile, 0.25, 230) is None  # odd device count, normal first activity
 
     def test_home_minutes_is_a_third_feature_and_two_of_three_must_be_off(self):
         learner = household_day.HouseholdDayLearner()
@@ -149,9 +154,11 @@ class TestHouseholdDay:
         assert set(profile.params["features"]) == set(household_day.FEATURES)
         # Nobody home and the house still awake: devices and first activity look normal, so a
         # single odd feature is not a day.
-        assert self._score(profile, 26, 230, home=900) is None
-        # Out of the house and the devices followed: two features off.
-        inf = self._score(profile, 12, 230, home=900)
+        assert self._score(profile, 0.75, 230, home=900) is None
+        # Fisher runs over every feature, the normal ones included, so two odd features out of
+        # three are diluted below the bar; all three off is a day.
+        assert self._score(profile, 0.3, 230, home=900) is None
+        inf = self._score(profile, 0.3, 700, home=900)
         assert {p["feature"] for p in inf.evidence["parents"]} == set(household_day.FEATURES)
         assert inf.observed["home_minutes"] == 900
 
@@ -177,6 +184,18 @@ class TestHouseholdDay:
         sightings = {1: [t, t + timedelta(minutes=30), t + timedelta(minutes=120)]}
 
         assert household_day.home_minutes(sightings, t, t + timedelta(hours=5)) == 30
+
+    def test_empirical_tail_handles_a_bimodal_feature_a_gaussian_z_cannot(self):
+        # First activity: a nightly reconnect at ~231 min on 60 % of days, an earlier phone nap on
+        # the rest. 7 minutes is unusual but not 7 sigma from the 231 median.
+        samples = [(231.0, 1.0)] * 60 + [(v, 1.0) for v in (5, 36, 70, 83, 87, 131, 140, 150) * 5]
+
+        assert 0.05 < household_day.empirical_p(samples, 7.0) < 0.3
+        assert household_day.empirical_p(samples, 231.0) == 1.0
+        assert household_day.empirical_p(samples, -1000.0) < 0.05  # beyond all history
+
+    def test_a_short_history_cannot_claim_certainty(self):
+        assert household_day.empirical_p([(1.0, 1.0)] * 4, 99.0) >= 1.0 / 5.0
 
     def test_fisher_combines_mild_evidence(self):
         assert household_day.fisher_p([0.05, 0.05], [1, 1]) < 0.05
@@ -363,50 +382,50 @@ class TestShadowRunner:
 
 
 class TestHouseholdDayAsRule:
-    def _rows(self, devices, first, home=None):
+    def _rows(self, share, first, home=None):
         learner = household_day.HouseholdDayLearner()
         days = TestHouseholdDay()._days(home=(lambda d: 2600.0) if home is not None else None)
         profile = learner.fit_days(days, REF)
         state = {
-            "devices": devices,
+            "device_share": share,
             "first_minute": first,
             "home_minutes": home,
-            "local_dt": datetime(2026, 10, 12, 18, 0),
+            "local_dt": datetime(2026, 10, 13, 18, 0),
         }
-        return learner.score_features(profile, state, datetime(2026, 10, 12, 22, 0))
+        return learner.score_features(profile, state, datetime(2026, 10, 13, 22, 0))
 
     def test_features_are_layer_one_state_rows_each_in_its_own_family(self):
         from services.service_sa.sa import layer2
 
-        rows = self._rows(26, 230)  # an unremarkable day still yields rows
+        rows = self._rows(0.75, 230)  # an unremarkable day still yields rows
 
-        assert {r.evidence["feature"] for r in rows} == {"devices", "first_minute"}
+        assert {r.evidence["feature"] for r in rows} == {"device_share", "first_minute"}
         assert all(r.layer == 1 and r.kind == "state" and 0 < r.probability <= 1 for r in rows)
         assert len({layer2.family_of(r) for r in rows}) == 2
 
     def test_the_rule_flags_two_odd_features_and_matches_the_learner(self):
         from services.service_sa.sa import layer2
 
-        rows = self._rows(12, 700)
+        rows = self._rows(0.3, 700)
         out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
 
         assert len(out) == 1 and out[0].layer == 2 and out[0].signal == "household.day"
         assert out[0].probability <= household_day.P_FLAG
-        assert out[0].observed == {"devices": 12, "first_minute": 700}
+        assert out[0].observed == {"device_share": 0.3, "first_minute": 700}
 
     def test_one_odd_feature_or_a_normal_day_is_quiet(self):
         from services.service_sa.sa import layer2
 
         now = datetime(2026, 10, 12, 22, 0)
-        assert layer2.run_rules([household_day.RULE], self._rows(26, 700), {}, now) == []
-        assert layer2.run_rules([household_day.RULE], self._rows(26, 230), {}, now) == []
+        assert layer2.run_rules([household_day.RULE], self._rows(0.75, 700), {}, now) == []
+        assert layer2.run_rules([household_day.RULE], self._rows(0.75, 230), {}, now) == []
 
     def test_every_row_fits_the_sa_inferences_columns(self):
         """Regression: subject_type 'household_feature' (17 chars) overflowed VARCHAR(16), so
         every household row failed to persist in production and the verdict never ran."""
         from services.service_sa.sa import layer2
 
-        rows = self._rows(12, 700)
+        rows = self._rows(0.3, 700)
         out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
 
         for inference in [*rows, *out]:
@@ -420,7 +439,7 @@ class TestHouseholdDayAsRule:
         tests = TestHouseholdDay()
         profile = household_day.HouseholdDayLearner().fit_days(tests._days(), REF)
         cursor = MagicMock()
-        cursor.fetchone.return_value = (26, datetime(2026, 10, 12, 7, 50))
+        cursor.fetchone.side_effect = [(26, datetime(2026, 10, 12, 7, 50)), (30,)]
         cursor.fetchall.return_value = []
         persisted = []
         runner = shadow.ShadowRunner(lambda: MagicMock(cursor=lambda: cursor), persisted.extend)
@@ -438,8 +457,10 @@ class TestHouseholdDayAsRule:
         sql, params = cursor.execute.call_args_list[0].args
         assert "last_online AS ts" in sql and "CONCAT('p', user_id" in sql
         assert 1 in params and 9 in params  # every person's rows merge by name, not just residents
+        inventory_sql = cursor.execute.call_args_list[1].args[0]
+        assert "COUNT(DISTINCT CASE WHEN user_id IN" in inventory_sql
         by_feature = {r.evidence["feature"]: r for r in rows}
-        assert by_feature["devices"].observed["value"] == 26
+        assert by_feature["device_share"].observed["value"] == round(26 / 30, 2)
         assert by_feature["first_minute"].observed["value"] == 230.0
 
     def test_household_rows_are_refreshed_before_each_persist(self):
@@ -447,7 +468,7 @@ class TestHouseholdDayAsRule:
         reads rows refreshed in the last five minutes) stopped seeing them after five minutes."""
         persisted = []
         runner = shadow.ShadowRunner(MagicMock(), persisted.extend)
-        rows = self._rows(12, 700)
+        rows = self._rows(0.3, 700)
         stale = datetime(2026, 1, 1)
         for row in rows:
             row.computed_at = stale
@@ -463,13 +484,13 @@ class TestHouseholdDayAsRule:
     def test_the_card_explains_only_the_features_that_were_off(self):
         from services.service_sa.sa import layer2
 
-        rows = self._rows(12, 700)
+        rows = self._rows(0.3, 700)
         now = datetime(2026, 10, 12, 22, 0)
         out = layer2.run_rules([household_day.RULE], rows, {}, now)[0]
 
         lines = household_day.explain(out)
 
-        assert any(line.startswith("12 devices") for line in lines)
+        assert any(line.startswith("30% of the household's devices") for line in lines)
         assert any(line.startswith("first device online at 11:40") for line in lines)
         assert len(lines) == 2 and all("typically" in line for line in lines)
 

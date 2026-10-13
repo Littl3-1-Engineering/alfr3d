@@ -2148,7 +2148,7 @@ class TestCheckHouseholdUnusualDay:
                 evidence={"family": "household_day:" + feature, "feature": feature},
             )
 
-        rows = [row("devices", 0.001, 30, 12), row("first_minute", 0.01, 700, 230)]
+        rows = [row("device_share", 0.01, 0.3, 0.75), row("first_minute", 0.01, 700, 230)]
         rows.append(row("home_minutes", 0.9, 500, 500))
         return layer2.run_rules([household_day.RULE], rows, {}, self.NOW)[0]
 
