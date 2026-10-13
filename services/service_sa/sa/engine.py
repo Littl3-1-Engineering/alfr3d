@@ -24,7 +24,7 @@ import orjson
 # Third party imports
 import pymysql
 from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
-from sa import layer2
+from sa import disk, layer2
 from sa.learners import household_day
 from sa.learners import presence as presence_learner
 
@@ -104,6 +104,12 @@ SYSTEM_HEALTH_INTEGRATIONS = (
     ("home_assistant", "Home Assistant", "ha_utils", "is_ha_configured", "test_ha_connection"),
     ("smartthings", "SmartThings", "st_utils", "is_st_configured", "test_st_connection"),
 )
+
+# check_disk_health(): sa-learner samples the disk every few hours, so the rule re-reads the
+# history at most this often; the critical tier speaks at most once per cooldown.
+DISK_HEALTH_CHECK_INTERVAL_SECONDS = 900
+DISK_HEALTH_SPEAK_COOLDOWN_SECONDS = 24 * 3600
+DISK_HEALTH_STATE = {"checked": 0.0, "result": None, "spoke": 0.0}
 
 # Per-integration probe state: {key: {"failures": int, "last_probe": float}}. In-memory only --
 # a restart just re-probes, and the alert needs fresh consecutive failures anyway.
@@ -486,6 +492,9 @@ class SAEngine:
         # sits just above household_composition's elevated variant (2.3) -- the system itself
         # being blind outranks any single card it would have produced.
         ("system_health", 2.2, "check_system_health"),
+        # Disk running out is the same kind of "the system is about to go blind" as system_health:
+        # critical is urgent (2.1, just above it), warn is an ambient heads-up near mood.
+        ("disk_health", 5.9, "check_disk_health"),
         # Actionable, near event/gathering: a genuine deviation from a device's
         # established on/off rhythm is worth surfacing promptly.
         ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),
@@ -783,6 +792,74 @@ class SAEngine:
                     f"{name}: {n} consecutive failed checks (every {minutes} min)"
                     for _key, name, n in down
                 ],
+            },
+        }
+
+    def check_disk_health(self, frame=None):
+        """Card when host disk, the Parquet lake or MySQL growth is running out of room, from the
+        `disk.root` and `lake.*` rows sa-learner writes to sa_storage_metrics (sa/disk.py).
+
+        warn is an ambient card; critical sets `urgent` (never suppressed) and speaks once a day.
+        Debounced by sa.disk.assess() -- two consecutive samples must agree -- and the history
+        read is cached for DISK_HEALTH_CHECK_INTERVAL_SECONDS. Never deletes anything: the card
+        only says what the numbers are.
+        """
+        del frame
+        now = time.time()
+        state = DISK_HEALTH_STATE
+        if now - state["checked"] >= DISK_HEALTH_CHECK_INTERVAL_SECONDS:
+            state["checked"] = now
+            db = None
+            try:
+                db = pymysql.connect(
+                    host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+                )
+                utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                state["result"] = disk.assess(
+                    disk.load_samples(db, utc_now), disk.load_lake_totals(db, utc_now)
+                )
+            except Exception as e:
+                # Keep the last result: a DB blip must not clear or raise a disk alert.
+                logger.error(f"Disk health check error: {e}")
+            finally:
+                if db:
+                    db.close()
+        result = state["result"]
+        if not result or result["level"] == "ok":
+            return None
+
+        critical = result["level"] == "critical"
+        free_gb = result["free"] / 1024**3
+        if critical and now - state["spoke"] >= DISK_HEALTH_SPEAK_COOLDOWN_SECONDS:
+            p = get_producer()
+            if p:
+                p.send(
+                    "speak",
+                    (
+                        f"Heads up, the server is down to {free_gb:.0f} gigabytes of free disk."
+                        " It needs some cleaning soon."
+                    ).encode("utf-8"),
+                )
+                state["spoke"] = now
+        return {
+            "mode": "disk_health",
+            "content": (
+                f"Disk space {'critically ' if critical else ''}low: {free_gb:.1f} GB free"
+                + (
+                    f", full in about {result['days_left']:.0f} days"
+                    if result["days_left"] is not None and result["days_left"] < 365
+                    else ""
+                )
+            ),
+            "priority": 2.1 if critical else 5.9,
+            **({"urgent": True} if critical else {}),
+            "data": {
+                "level": result["level"],
+                "free_bytes": result["free"],
+                "total_bytes": result["total"],
+                "days_left": result["days_left"],
+                "lake_bytes": result["lake_bytes"],
+                "because": result["because"],
             },
         }
 
