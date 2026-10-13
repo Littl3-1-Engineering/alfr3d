@@ -3,7 +3,7 @@ schedule
 python-dotenv
 pymysql==1.2.3
 DBUtils==3.2.0
-cryptography==50.0.1
+cryptography==50.0.2
 requests
 google-api-python-client
 google-auth-oauthlib
