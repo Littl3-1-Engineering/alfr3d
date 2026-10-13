@@ -22,14 +22,14 @@ const UpdateBanner = ({ onVisibilityChange }) => {
   const [dismissedTag, setDismissedTag] = useState(() => {
     try {
       return sessionStorage.getItem(DISMISSED_TAG_KEY);
-    } catch (e) {
+    } catch {
       return null; // private browsing / storage blocked -- fall back to always showing
     }
   });
   const [dismissedStatusAt, setDismissedStatusAt] = useState(() => {
     try {
       return sessionStorage.getItem(DISMISSED_STATUS_KEY);
-    } catch (e) {
+    } catch {
       return null;
     }
   });
@@ -49,14 +49,14 @@ const UpdateBanner = ({ onVisibilityChange }) => {
   const dismissAvailable = () => {
     try {
       sessionStorage.setItem(DISMISSED_TAG_KEY, updateInfo.latest_tag);
-    } catch (e) { /* nothing to persist to -- banner just won't stay dismissed this tab */ }
+    } catch { /* nothing to persist to -- banner just won't stay dismissed this tab */ }
     setDismissedTag(updateInfo.latest_tag);
   };
 
   const dismissStatus = () => {
     try {
       sessionStorage.setItem(DISMISSED_STATUS_KEY, updateStatus.updated_at);
-    } catch (e) { /* nothing to persist to -- banner just won't stay dismissed this tab */ }
+    } catch { /* nothing to persist to -- banner just won't stay dismissed this tab */ }
     setDismissedStatusAt(updateStatus.updated_at);
   };
 
