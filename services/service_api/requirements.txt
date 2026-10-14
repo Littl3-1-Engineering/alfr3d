@@ -8,7 +8,7 @@ cryptography==50.0.2
 werkzeug==3.1.9
 PyJWT==2.15.1
 requests==2.34.2
-orjson==3.12.0
+orjson==3.13.0
 aioesphomeapi==46.6.0
 zeroconf==0.151.5
 pydantic>=2.13.5
