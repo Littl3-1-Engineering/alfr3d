@@ -34,9 +34,9 @@ rolling-window reports.
 one commit, both destinations, `config` snapshot behavior unchanged.
 
 Retention: `prune_attention_telemetry_history()` in `alfr3ddaemon.py`, scheduled every 6h
-alongside `compute_entity_baselines()`/`prune_household_events()`. Default 90 days
-(`ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS`), same default as SA-11 though actual volume here
-is far lower (one row per 15-min report vs. one per `event-stream` message).
+alongside `compute_entity_baselines()`/`prune_household_events()`. Originally a 90-day
+env knob (`ATTENTION_TELEMETRY_HISTORY_RETENTION_DAYS`, since removed; retention is now 730 days via a
+MySQL-native EVENT), with volume far lower (one row per 15-min report vs. one per `event-stream` message).
 
 ## Phase 2 — Trend-aware checks
 
