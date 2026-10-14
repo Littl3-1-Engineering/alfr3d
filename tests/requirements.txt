@@ -4,7 +4,7 @@ pytest-mock==3.16.0
 kafka-python-ng==2.2.3
 pymysql==1.2.3
 DBUtils==3.2.0
-orjson==3.12.0
+orjson==3.13.0
 python-dotenv==1.2.4
 requests==2.34.2
 fastapi>=0.141.1
