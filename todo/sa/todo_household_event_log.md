@@ -21,7 +21,8 @@ survived a restart, so nothing downstream had real history to query.
 untouched — persistence is a parallel, best-effort destination; a DB error there is caught and
 logged, never allowed to break the live feed. Retention: `prune_household_events()` in
 `alfr3ddaemon.py`, scheduled on the same 6-hourly cadence as `compute_entity_baselines()`,
-default 90 days (`HOUSEHOLD_EVENTS_RETENTION_DAYS`).
+originally a 90-day env knob (`HOUSEHOLD_EVENTS_RETENTION_DAYS`). That variable no longer exists:
+retention is 730 days and enforced by a MySQL-native EVENT (see `todo_sa_data_retention_3yr.md`).
 
 **Phase 2** (`subject_type`/`subject_id`/`verb`, migration 0029): nullable, additive columns.
 Producers migrated so far, each its own commit:

@@ -1,6 +1,6 @@
 # Next session: where the SA roadmap stands
 
-## Status: reference doc, not a task — SA section re-pointed **2026-10-09** (see `todo/sa/SA_ROADMAP.md`); last full refresh **2026-09-23** (full review pass over all
+## Status: reference doc, not a task — SA section re-pointed **2026-10-09** (see `todo/sa/SA_ROADMAP.md`); last full refresh **2026-09-23**; running log current to **2026-10-13** (full review pass over all
 56 todo docs across the three repos; see the final entry under "Since this was written")
 
 Everything in this doc is a pointer, not new information — each item links to its own
@@ -305,6 +305,30 @@ re-tagging every existing SA item (SA-1..SA-12) by layer with its current status
   2026-09-13 "2-year retention" covered only four event-log tables: `device_history` is still
   180 days, weather and calendar keep no history, `listening_history` is unbounded. LF-0 fixes
   that. Nothing built yet; LF-0 and LF-1a can start in parallel.
+
+- **2026-10-13: a housekeeping and operations day, no SA-roadmap phase moved.**
+  - **Theme sync** (`55ab354e`): web-to-Deck and Deck-to-web both verified working by Athos.
+  - **Disk and lake monitoring** (`e19abbad`, deployed): `sa-learner` samples host disk every 4 h
+    into `sa_storage_metrics` (`disk.root`); `check_disk_health` (`sa/disk.py`) raises an ambient
+    warn card or an urgent, once-a-day-spoken critical card, debounced over two samples. First live
+    reading ok (35 GB free of 109). Open: Docker usage and backup-folder size are not visible to the
+    containers. See `sa/todo_disk_and_lake_monitoring.md`.
+  - **Daily DB backup** (`788fbf12`): `setup/db_backup_daily.sh`, cron `0 4 * * *`, gzipped, verified,
+    newest 7 kept, `*_pre_*` dumps never rotated; restore proven on `test-mysql`. First scheduled run
+    2026-10-14 04:00. Open: failure is only in `~/db_backups/backup.log`; no off-box copy. See
+    `todo_db_backup_cron.md`.
+  - **Frontend tests**: the 9 "failures" were a stale local `node_modules` (`lottie-react` 2.4.1 vs
+    3.1.2), fixed with `npm ci`. **ESLint** had been crashing since `eslint-plugin-react-hooks` 7;
+    fixed (`331b8a21`), React Compiler rules downgraded to warnings (51 to refactor, see
+    `todo_frontend_eslint_config.md`).
+  - **Dependabot**: 25 of 26 bot branches merged locally, tested (1061 backend tests, 213 frontend,
+    8 images built) and pushed. `framer-motion` 11 to 14 deliberately left open until the HUD
+    animations are looked at in a browser. Containers have **not** been rebuilt with the bumps yet.
+  - **Shadow review prep**: `scripts/sa_shadow_review.py` (see `sa/todo_lf4b_baseline_ports.md`).
+    Shadow data only starts 2026-10-12 21:13 UTC, so the cutover bar of a week is met ~10-19/20, not
+    10-16. `departure_anomaly`'s learner fired alone for 12.5 h and needs a human look first.
+  - Next: shadow review ~10-16 (preliminary) and ~10-19 (cutovers); rebuild with the dependency bumps;
+    backup-staleness card; framer-motion; lint warnings.
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*

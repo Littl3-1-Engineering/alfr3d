@@ -6,7 +6,9 @@ Consumes messages from 'speak' Kafka topic, generates audio, and notifies fronte
 
 # Standard libraries
 import os
+import queue
 import re
+import subprocess
 import sys
 import logging
 import random
@@ -59,6 +61,17 @@ AUDIO_RETENTION_MINUTES = int(os.environ.get("AUDIO_RETENTION_MINUTES", "5"))
 # LLM-path verbal tics.
 QUIP_ODDS = int(os.environ.get("SPEAK_QUIP_ODDS", "8"))
 
+# ALSA device the host's DAC/speaker is exposed as inside the container (see /dev/snd in
+# docker-compose.yml). "plughw" lets ALSA convert rate/channels for whatever the DAC supports.
+# Set empty to disable local playback (browser/Deck playback via the `audio` event is unaffected).
+SPEAK_ALSA_DEVICE = os.environ.get("SPEAK_ALSA_DEVICE", "plughw:CARD=S207,DEV=0")
+PLAYBACK_TIMEOUT_SECONDS = 120
+# After a failed playback (no speaker attached, device busy, player missing) skip local playback
+# for this long instead of failing - and logging - on every utterance. Retrying afterwards lets a
+# hot-plugged DAC start working without a restart.
+PLAYBACK_COOLDOWN_SECONDS = 60
+PLAYBACK_QUEUE_MAX = 10
+
 # Heartbeat file the Kafka consumer touches on every connect attempt and poll cycle. A stale
 # heartbeat means the consumer thread is stuck (e.g. hung inside a blocking Kafka connect at
 # boot, racing the broker before it's healthy) even though the process itself looks alive -
@@ -73,6 +86,60 @@ os.makedirs(AUDIO_STORAGE_PATH, exist_ok=True)
 
 # Global TTS instances (cache multiple models)
 tts_instances = {}
+
+
+_playback_queue = queue.Queue(maxsize=PLAYBACK_QUEUE_MAX)
+_playback_disabled_until = 0.0
+
+
+def play_audio_file(filepath):
+    """Play an audio file on the local DAC via ALSA (blocking). Returns True on success.
+
+    Never raises: a missing speaker must not affect speech generation or browser playback.
+    """
+    global _playback_disabled_until
+    if time.time() < _playback_disabled_until:
+        logger.debug("Local playback in cooldown, skipping")
+        return False
+    if filepath.endswith(".mp3"):
+        cmd = ["mpg123", "-q", "-a", SPEAK_ALSA_DEVICE, filepath]
+    else:
+        cmd = ["aplay", "-q", "-D", SPEAK_ALSA_DEVICE, filepath]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=PLAYBACK_TIMEOUT_SECONDS
+        )
+        if result.returncode == 0:
+            return True
+        reason = result.stderr.strip()[:200] or f"exit code {result.returncode}"
+    except (OSError, subprocess.SubprocessError) as e:
+        reason = str(e)
+    _playback_disabled_until = time.time() + PLAYBACK_COOLDOWN_SECONDS
+    logger.warning(
+        f"Local playback unavailable ({cmd[0]} on {SPEAK_ALSA_DEVICE}): {reason}; "
+        f"skipping local audio for {PLAYBACK_COOLDOWN_SECONDS}s (browser/Deck playback unaffected)"
+    )
+    return False
+
+
+def _playback_worker():
+    """Play queued files one at a time so overlapping speak messages never talk over each other."""
+    while True:
+        filepath = _playback_queue.get()
+        try:
+            play_audio_file(filepath)
+        except Exception as e:
+            logger.error(f"Playback worker error: {str(e)}")
+
+
+def enqueue_local_playback(filename):
+    """Queue a generated audio file for the local DAC, if local playback is configured."""
+    if not SPEAK_ALSA_DEVICE or time.time() < _playback_disabled_until:
+        return
+    try:
+        _playback_queue.put_nowait(os.path.join(AUDIO_STORAGE_PATH, filename))
+    except queue.Full:
+        logger.warning("Local playback queue full, dropping audio for local speaker")
 
 
 def get_mute_state() -> tuple[bool, bool]:
@@ -357,6 +424,11 @@ def process_speak_message(message):
         if filename:
             audio_url = f"/api/audio/{filename}"
             send_event("audio", f"Playing: {text[:50]}...", audio_url=audio_url, text=text)
+            if not is_empty_house:
+                try:
+                    enqueue_local_playback(filename)
+                except Exception as e:
+                    logger.warning(f"Local playback skipped: {str(e)}")
         else:
             logger.error("Failed to generate audio for message")
 
@@ -488,6 +560,8 @@ def main():
     schedule.every(1).day.do(reset_daily_llm_calls)
 
     shutdown_event = threading.Event()
+
+    threading.Thread(target=_playback_worker, daemon=True).start()
 
     consumer_thread = threading.Thread(target=consume_speak, daemon=True)
     consumer_thread.start()
