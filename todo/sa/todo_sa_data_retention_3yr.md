@@ -152,9 +152,8 @@ about suppression behavior — this exists purely to bound disk, same as its two
 
 **Retention raised to 730 days (2 years)** for `household_events`,
 `attention_telemetry_history`, and `card_interactions`, all off one new shared constant
-(`SA_EVENT_LOG_RETENTION_DAYS_DEFAULT = 730`) so the three don't drift independently. Each
-remains individually overridable via its own existing env var
-(`HOUSEHOLD_EVENTS_RETENTION_DAYS`, etc.).
+(`SA_EVENT_LOG_RETENTION_DAYS_DEFAULT = 730`) so the three don't drift independently. (Superseded: `fb97695e` moved pruning into MySQL-native EVENTs, so the per-table env vars
+(`HOUSEHOLD_EVENTS_RETENTION_DAYS`, etc.) are no longer read and were removed from `.env.example`.)
 
 **`device_location_history` raised to 730 days** via migrations 037/038 (raw SQL) wrapped by
 alembic 0040/0041 — `DROP EVENT` + `CREATE EVENT` with `INTERVAL 730 DAY` replacing `180 DAY`.

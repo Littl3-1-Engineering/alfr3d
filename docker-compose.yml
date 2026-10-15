@@ -244,6 +244,12 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
       - LOG_LEVEL=${LOG_LEVEL}
+    # Host DAC/speaker for local playback (SPEAK_ALSA_DEVICE). 29 = host `audio` group, which
+    # owns /dev/snd; entrypoint.sh's gosu keeps alfr3d's own audio membership from the image.
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - "29"
     volumes:
       - audio_data:/tmp/audio
       - secrets_data:/secrets
