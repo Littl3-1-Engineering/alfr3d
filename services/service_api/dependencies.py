@@ -1,5 +1,6 @@
 """Shared state, helpers, and dependencies for ALFR3D API routes."""
 
+import asyncio
 import os
 import sys
 import logging
@@ -70,6 +71,35 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 recent_events: List[Any] = []
+
+# Live subscribers to the event-stream (GET /api/events/stream). Each gets its own bounded queue
+# so one slow/stalled client can never back up consume_events() or other subscribers: when a
+# queue is full the event is dropped for that client only.
+EVENT_SUBSCRIBER_QUEUE_MAX = 100
+_event_subscribers: set = set()
+
+
+def subscribe_events():
+    """Register a new live-event subscriber; returns its queue. Pair with unsubscribe_events()."""
+    q = asyncio.Queue(maxsize=EVENT_SUBSCRIBER_QUEUE_MAX)
+    _event_subscribers.add(q)
+    return q
+
+
+def unsubscribe_events(q):
+    _event_subscribers.discard(q)
+
+
+def publish_events(events):
+    """Fan newly received events out to every live subscriber (non-blocking, drops on full)."""
+    for q in list(_event_subscribers):
+        for event in events:
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                break
+
+
 recent_sa: List[Any] = []
 
 
