@@ -3892,6 +3892,48 @@ class TestContextFrameFetchers:
         assert result["unknown_count"] == 1
 
     @patch("services.service_sa.sa.context_frame.pymysql.connect")
+    def test_fetch_online_devices_treats_alfr3d_owned_as_infrastructure(self, mock_connect):
+        """Devices owned by the `alfr3d` system user (smart speakers, camera, hub, router)
+        are the house's own gear: not members, and not "unrecognized" either."""
+        from services.service_sa.sa.context_frame import fetch_online_devices
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            ("athos", "Athos's Phone"),
+            ("alfr3d", "Google Home Mini"),
+            ("alfr3d", "C200"),
+            ("alfr3d", "Router"),
+        ]
+
+        result = fetch_online_devices()
+
+        assert result["known_names"] == ["athos"]
+        assert result["known_count"] == 1
+        assert result["unknown_count"] == 0
+        assert result["infrastructure_count"] == 3
+
+    @patch("services.service_sa.sa.context_frame.pymysql.connect")
+    def test_fetch_online_devices_counts_unknown_owner_and_unowned_as_unrecognized(
+        self, mock_connect
+    ):
+        from services.service_sa.sa.context_frame import fetch_online_devices
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [
+            ("athos", "Athos's Phone"),
+            ("unknown", "Claimed-as-unknown"),
+            (None, "Unowned"),
+            ("alfr3d", "Router"),
+        ]
+
+        result = fetch_online_devices()
+
+        assert result["unknown_count"] == 2
+        assert result["infrastructure_count"] == 1
+
+    @patch("services.service_sa.sa.context_frame.pymysql.connect")
     def test_fetch_online_devices_returns_none_on_db_error(self, mock_connect):
         import pymysql
         from services.service_sa.sa.context_frame import fetch_online_devices
