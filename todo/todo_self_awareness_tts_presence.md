@@ -19,6 +19,13 @@ Both bugs fixed per the design sketch below, using the "safer default" option fo
    doc's own open question: both TTS paths were suppressed together since they fire on the same
    transition.
 
+**Re-checked 2026-10-15 (no device/NUC access this pass):** both fixes are still in the tree
+(`normalize_pronunciation` at `service_speak/app.py:260`, called at `:355`; the `is_alfr3d_self` guard in
+`service_user/app.py:368-416`). The pronunciation tests pass (`tests/test_speak_service.py`). The self-greeting guard
+had **no test**; added `tests/test_user_self_greeting.py` (the `alfr3d` row gets no `speak` message and no
+`speak_welcome`, but its `state` UPDATE and `event-stream` event still happen; a household member is still greeted).
+Both pass, black/flake8 clean. Still unverified live, same as below.
+
 **Not yet done**: on-device/live verification that `alfr3d`'s user row still actually transitions
 offline→online during real use (needed to know whether this code path is even reachable, and to
 confirm the suppression is visibly correct) — no live device session in this pass.
