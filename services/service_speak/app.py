@@ -102,7 +102,10 @@ def play_audio_file(filepath):
         logger.debug("Local playback in cooldown, skipping")
         return False
     if filepath.endswith(".mp3"):
-        cmd = ["mpg123", "-q", "-a", SPEAK_ALSA_DEVICE, filepath]
+        # -o alsa pins the output module: without it mpg123 probes PulseAudio and JACK first,
+        # which fail noisily in this container (no pulse server, no home dir) and mask the real
+        # ALSA error (e.g. the speaker being unplugged).
+        cmd = ["mpg123", "-q", "-o", "alsa", "-a", SPEAK_ALSA_DEVICE, filepath]
     else:
         cmd = ["aplay", "-q", "-D", SPEAK_ALSA_DEVICE, filepath]
     try:
