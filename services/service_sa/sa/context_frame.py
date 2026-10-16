@@ -41,6 +41,7 @@ from datetime import timedelta, timezone
 
 import orjson
 import pymysql
+from common.presence_utils import summarize_online_devices
 
 logger = logging.getLogger("DaemonLog")
 
@@ -111,29 +112,26 @@ class LauncherContext:
 def fetch_online_devices():
     """Every currently-online device, joined to its claiming user (if any) -- the same query
     check_household_composition() used to run inline. Returns a dict with `known_names` (sorted
-    list of distinct claiming usernames), `known_count`, `unknown_count`, or None on a DB error.
+    list of distinct claiming usernames), `known_count`, `unknown_count`, `infrastructure_count`
+    (devices owned by the `alfr3d` system user -- neither members nor unrecognized), or None on a
+    DB error.
     Not scoped to a single environment -- devices aren't environment-scoped in this schema.
     """
     db = None
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT u.username, d.name
             FROM device d
             JOIN states s ON d.state = s.id
             LEFT JOIN user u ON d.user_id = u.id
-                AND u.username NOT IN ('unknown', 'alfr3d')
             WHERE s.state = 'online'
-            """)
+            """
+        )
         rows = cursor.fetchall()
-        known_names = sorted({row[0] for row in rows if row[0]})
-        return {
-            "rows": rows,
-            "known_names": known_names,
-            "known_count": len(known_names),
-            "unknown_count": sum(1 for row in rows if not row[0]),
-        }
+        return {"rows": rows, **summarize_online_devices(rows)}
     except pymysql.Error as e:
         logger.error(f"Context frame: online_devices fetch error: {e}")
         return None
@@ -153,13 +151,15 @@ def fetch_person_presence():
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT u.id, u.username, t.type, s.state, u.last_online
             FROM user u
             JOIN user_types t ON u.type = t.id
             JOIN states s ON u.state = s.id
             WHERE t.type <> 'alfr3d' AND u.username <> 'unknown'
-            """)
+            """
+        )
         return [
             {
                 "user_id": row[0],

@@ -28,6 +28,7 @@ import orjson
 from fastapi import APIRouter, Depends, HTTPException
 
 from common import db_connection, get_day_context
+from common.presence_utils import summarize_online_devices
 from common.day_mood import get_day_mood
 from auth.dependencies import require_permission
 from dependencies import ALFR3D_ENV_NAME, get_producer
@@ -629,21 +630,18 @@ def _presence_value():
     `getResidents` summary. Names only; device names/MACs are not exposed."""
     with db_connection() as db:
         cursor = db.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT u.username
             FROM device d
             JOIN states s ON d.state = s.id
             LEFT JOIN user u ON d.user_id = u.id
-                AND u.username NOT IN ('unknown', 'alfr3d')
             WHERE s.state = 'online'
-            """)
+            """
+        )
         rows = cursor.fetchall()
-    known = sorted({row[0] for row in rows if row[0]})
-    return {
-        "known_names": known,
-        "known_count": len(known),
-        "unknown_count": sum(1 for row in rows if not row[0]),
-    }
+    summary = summarize_online_devices(rows)
+    return {key: summary[key] for key in ("known_names", "known_count", "unknown_count")}
 
 
 def _smarthome_online_value():
