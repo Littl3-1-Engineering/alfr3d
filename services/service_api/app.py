@@ -22,6 +22,7 @@ from common import db_connection  # noqa: E402
 
 from dependencies import (  # noqa: E402
     manager,
+    publish_events,
     recent_events,
     recent_sa,
     KAFKA_URL,
@@ -209,6 +210,7 @@ async def consume_events():
                 recent_events[:] = recent_events[-20:]
                 logger.info(f"Received events: {data}")
                 await manager.broadcast("events", recent_events)
+                publish_events(events_to_send)
                 await _persist_household_events(events_to_send)
             except orjson.JSONDecodeError as e:
                 logger.error(f"Error processing event message: {str(e)}")

@@ -242,6 +242,81 @@ def test_api_get_events(api_client):
     assert isinstance(data, list)
 
 
+# --- GET /api/events/stream (SSE, Deck phone-speech relay) ---------------------------------
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+def test_publish_events_fans_out_and_drops_when_full():
+    import dependencies as deps
+
+    q1, q2 = deps.subscribe_events(), deps.subscribe_events()
+    try:
+        deps.publish_events([{"id": "a"}, {"id": "b"}])
+        assert q1.qsize() == 2 and q2.qsize() == 2
+        # A full subscriber drops events without raising or affecting the other one.
+        for _ in range(deps.EVENT_SUBSCRIBER_QUEUE_MAX - q1.qsize()):
+            q1.put_nowait({"id": "fill"})
+        deps.publish_events([{"id": "c"}])
+        assert q2.qsize() == 3
+    finally:
+        deps.unsubscribe_events(q1)
+        deps.unsubscribe_events(q2)
+    assert not deps._event_subscribers
+
+
+def test_sse_message_format_includes_id_and_json_data():
+    from routes.events import _sse_message
+
+    msg = _sse_message({"id": "speak_1", "type": "audio", "text": "hi"})
+    assert msg.startswith("id: speak_1\ndata: ")
+    assert msg.endswith("\n\n")
+    assert orjson.loads(msg.split("data: ", 1)[1]) == {
+        "id": "speak_1",
+        "type": "audio",
+        "text": "hi",
+    }
+    assert _sse_message({"type": "x"}).startswith("data: ")  # no id line when the event has none
+
+
+def test_events_stream_pushes_new_events_filters_types_and_cleans_up():
+    import dependencies as deps
+    from routes import events as events_route
+
+    async def scenario():
+        response = await events_route.stream_events(types="audio")
+        assert response.media_type == "text/event-stream"
+        assert response.headers["x-accel-buffering"] == "no"
+        gen = response.body_iterator
+        assert await gen.__anext__() == ": connected\n\n"
+        deps.publish_events([{"id": "1", "type": "device", "message": "ignored"}])
+        deps.publish_events([{"id": "2", "type": "audio", "text": "hello"}])
+        msg = await gen.__anext__()
+        assert "id: 2" in msg and '"text":"hello"' in msg
+        await gen.aclose()
+        assert not deps._event_subscribers
+
+    _run(scenario())
+
+
+def test_events_stream_sends_keepalive_when_quiet():
+    from routes import events as events_route
+
+    async def scenario():
+        with patch.object(events_route, "SSE_HEARTBEAT_SECONDS", 0.01):
+            response = await events_route.stream_events()
+            gen = response.body_iterator
+            await gen.__anext__()
+            assert await gen.__anext__() == ": keepalive\n\n"
+            await gen.aclose()
+
+    _run(scenario())
+
+
 @patch("routes.music.db_connection")
 def test_api_get_now_playing_returns_persisted_state(mock_db_connection, api_client):
     """GET /api/music/now-playing returns the daemon's last-persisted config
