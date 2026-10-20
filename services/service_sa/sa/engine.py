@@ -258,6 +258,18 @@ ENTITY_BASELINE_LOOKBACK_DAYS = 30
 # publishing one would produce noisy false-positive anomalies.
 ENTITY_BASELINE_MIN_SAMPLES = 5
 
+# device_history is written about once a minute while the scanner runs. A silence longer than this
+# inside an "online" session means the offline transition was never observed (scanner/daemon
+# outage), so the session is closed at the last row seen online instead of being stretched across
+# the gap -- otherwise one lost transition becomes a phantom multi-day session that poisons
+# typical_daily_max and the still-on-past-typical rule.
+ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES = 180
+
+# An hour of the (UTC) day is part of a device's usual window when the device was online during it
+# on at least this share of the days it was seen at all. Stored as a 24-bit mask in
+# entity_baselines.active_hours_mask and read by check_rhythm_break_anomaly()'s unusual-hour branch.
+ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
+
 # SA-9 Phase 2: how far back compute_entity_baselines() looks in smarthome_sensor_history when
 # building each ESPHome sensor's per-time-of-day-bucket climate baseline.
 CLIMATE_BASELINE_LOOKBACK_DAYS = 30
@@ -370,15 +382,15 @@ HOUSEHOLD_BASELINE_LOOKBACK_DAYS = DEPARTURE_BASELINE_LOOKBACK_DAYS
 # higher-consequence claim than one resident's departure time, and deserves more evidence first.
 HOUSEHOLD_BASELINE_MIN_SAMPLES = 14
 
-# check_rhythm_break_anomaly()'s "unusual hour" branch: how far (in hours, allowing for midnight
-# wraparound) a currently-online device's *current* hour may differ from its own
-# typical_active_hour before it counts as an unusual-hour deviation.
-UNUSUAL_HOUR_TOLERANCE = 4
-
 # check_rhythm_break_anomaly()'s "expected absent" branch: an offline device with a reliable
 # baseline is flagged only within this many hours *after* its typical_active_hour -- catches "it
 # should be on by now" without nagging forever about a device that's simply been off for days.
 EXPECTED_ABSENT_WINDOW_HOURS = 3
+
+# ...and only if it was online this recently. A longer-offline device is retired, moved, or a stale
+# duplicate record (e.g. the same machine's second network adapter, which has its own device row
+# keyed by MAC) -- not "late". Four days spans a long weekend for a work machine.
+EXPECTED_ABSENT_MAX_OFFLINE_DAYS = 4
 
 
 class SAEngine:
@@ -1048,15 +1060,13 @@ class SAEngine:
         hasn't started per service_user.app.update_user_state()) is treated as a fresh
         arrival (0 days) rather than fabricating an overstay from missing data.
         """
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT username, continuous_stay_since
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
-            """
-        )
+            """)
         results = []
         for username, continuous_stay_since in cursor.fetchall():
             if continuous_stay_since:
@@ -1086,8 +1096,7 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -1095,8 +1104,7 @@ class SAEngine:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """
-            )
+                """)
             row = cursor.fetchone()
             # SUM() returns decimal.Decimal via pymysql (unlike COUNT()'s plain int) -- cast
             # so guest_count is safe to embed directly in the "data" dict's JSON payload (SA-5),
@@ -1363,9 +1371,11 @@ class SAEngine:
 
         1. `still_on_past_typical` (original): a currently-online device has been on
            RHYTHM_BREAK_GRACE_MINUTES+ past its typical_daily_max for this session.
-        2. `unusual_hour` (SA-10): a currently-online device's *current* hour is
-           UNUSUAL_HOUR_TOLERANCE+ hours away from its typical_active_hour (circular distance,
-           so 23:00 vs. a typical_active_hour of 1 counts as 2 hours apart, not 22).
+        2. `unusual_hour` (SA-10): a currently-online device's *current* hour (and the hours either
+           side of it) are all outside its active_hours_mask -- the hours it was actually online
+           on a meaningful share of days. (This used to measure distance from typical_active_hour,
+           the modal session *start* hour, which flagged any session running longer than the
+           tolerance -- i.e. every ordinary workday afternoon.)
         3. `expected_absent` (SA-10): a currently-*offline* device is still absent within
            EXPECTED_ABSENT_WINDOW_HOURS of its typical_active_hour -- "it should be on by now."
            Known limitation: doesn't handle a typical_active_hour that wraps past midnight (e.g.
@@ -1426,28 +1436,28 @@ class SAEngine:
                     },
                 }
 
+            current_hour = now.hour
+            nearby_hours_mask = sum(1 << ((current_hour + offset) % 24) for offset in (-1, 0, 1))
             cursor.execute(
                 """
-                SELECT d.name, HOUR(%s) AS current_hour, eb.typical_active_hour,
-                       LEAST(
-                           ABS(HOUR(%s) - eb.typical_active_hour),
-                           24 - ABS(HOUR(%s) - eb.typical_active_hour)
-                       ) AS hour_distance
+                SELECT d.name, eb.typical_active_hour, eb.active_hours_mask
                 FROM device d
                 JOIN states s ON d.state = s.id
                 JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
                 WHERE s.state = 'online'
-                  AND eb.typical_active_hour IS NOT NULL
+                  AND eb.active_hours_mask IS NOT NULL
+                  AND eb.active_hours_mask <> 0
                   AND eb.sample_count >= eb.min_sample_count
-                HAVING hour_distance > %s
-                ORDER BY hour_distance DESC
+                  AND (eb.active_hours_mask & %s) = 0
+                ORDER BY d.id
                 LIMIT 1
                 """,
-                (now, now, now, UNUSUAL_HOUR_TOLERANCE),
+                (nearby_hours_mask,),
             )
             row = cursor.fetchone()
             if row:
-                name, current_hour, typical_hour, hour_distance = row
+                name, typical_hour, active_mask = row
+                active_hours = [h for h in range(24) if active_mask >> h & 1]
                 return {
                     "mode": "rhythm_break_anomaly",
                     "content": f"{name} is on at an unusual hour",
@@ -1455,11 +1465,11 @@ class SAEngine:
                     "entity_name": name,
                     "deviation_type": "unusual_hour",
                     "data": {
-                        "current_hour": int(current_hour),
+                        "current_hour": current_hour,
                         "typical_active_hour": int(typical_hour),
                         "because": [
-                            f"on at {int(current_hour):02d}:00, typically active around "
-                            f"{int(typical_hour):02d}:00"
+                            f"on at {current_hour:02d}:00, but usually only on between "
+                            f"{active_hours[0]:02d}:00 and {active_hours[-1]:02d}:59"
                         ],
                     },
                 }
@@ -1471,6 +1481,7 @@ class SAEngine:
                 JOIN states s ON d.state = s.id
                 JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
                 WHERE s.state = 'offline'
+                  AND d.last_online >= %s - INTERVAL %s DAY
                   AND eb.typical_active_hour IS NOT NULL
                   AND eb.sample_count >= eb.min_sample_count
                   AND HOUR(%s) >= eb.typical_active_hour
@@ -1478,7 +1489,14 @@ class SAEngine:
                 ORDER BY (HOUR(%s) - eb.typical_active_hour) DESC
                 LIMIT 1
                 """,
-                (now, now, now, EXPECTED_ABSENT_WINDOW_HOURS, now),
+                (
+                    now,
+                    EXPECTED_ABSENT_MAX_OFFLINE_DAYS,
+                    now,
+                    now,
+                    EXPECTED_ABSENT_WINDOW_HOURS,
+                    now,
+                ),
             )
             row = cursor.fetchone()
             if row:
@@ -2633,6 +2651,51 @@ def _departure_hours_by_bucket(timestamps):
     return buckets
 
 
+def _device_sessions(rows):
+    """Reconstruct complete online sessions from a device's ordered (timestamp, state) history
+    rows, as a list of (start, end) datetimes. A session ends at the next 'offline' row, or --
+    when the history goes silent for more than ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES while the
+    device is 'online' -- at the last row seen online. Sessions still open at the end of the rows
+    and zero-length sessions are dropped."""
+    max_gap = timedelta(minutes=ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES)
+    sessions = []
+    start = last_online = prev_ts = None
+    for ts, state in rows:
+        if start is not None and prev_ts is not None and ts - prev_ts > max_gap:
+            if last_online > start:
+                sessions.append((start, last_online))
+            start = None
+        if state == "online":
+            if start is None:
+                start = ts
+            last_online = ts
+        elif state == "offline" and start is not None:
+            if ts > start:
+                sessions.append((start, ts))
+            start = None
+        prev_ts = ts
+    return sessions
+
+
+def _active_hours_mask(sessions):
+    """24-bit mask (bit h = UTC hour h) of the hours a device is usually online: hours covered by
+    a session on at least ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE of the days it had any session.
+    Unlike a session's start hour, this describes the whole window the device is normally on."""
+    days_seen = set()
+    days_by_hour = {}
+    for start, end in sessions:
+        cursor_ts = start.replace(minute=0, second=0, microsecond=0)
+        while cursor_ts <= end:
+            days_seen.add(cursor_ts.date())
+            days_by_hour.setdefault(cursor_ts.hour, set()).add(cursor_ts.date())
+            cursor_ts += timedelta(hours=1)
+    mask = 0
+    for hour, days in days_by_hour.items():
+        if len(days) / len(days_seen) >= ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE:
+            mask |= 1 << hour
+    return mask
+
+
 def compute_entity_baselines():
     """Recompute per-entity rhythm/routine baselines into `entity_baselines`.
 
@@ -2684,18 +2747,9 @@ def compute_entity_baselines():
             )
             rows = cursor.fetchall()
 
-            durations_minutes = []
-            start_hours = []
-            session_start = None
-            for row_timestamp, state in rows:
-                if state == "online" and session_start is None:
-                    session_start = row_timestamp
-                elif state == "offline" and session_start is not None:
-                    duration = (row_timestamp - session_start).total_seconds() / 60
-                    if duration > 0:
-                        durations_minutes.append(duration)
-                        start_hours.append(session_start.hour)
-                    session_start = None
+            sessions = _device_sessions(rows)
+            durations_minutes = [(end - start).total_seconds() / 60 for start, end in sessions]
+            start_hours = [start.hour for start, _ in sessions]
 
             if len(durations_minutes) < ENTITY_BASELINE_MIN_SAMPLES:
                 continue
@@ -2704,12 +2758,13 @@ def compute_entity_baselines():
                 """
                 INSERT INTO entity_baselines
                     (entity_type, entity_id, median_on_minutes, typical_active_hour,
-                     typical_daily_min, typical_daily_max, sample_count, min_sample_count,
-                     computed_at)
-                VALUES ('device', %s, %s, %s, %s, %s, %s, %s, %s)
+                     active_hours_mask, typical_daily_min, typical_daily_max, sample_count,
+                     min_sample_count, computed_at)
+                VALUES ('device', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     median_on_minutes = VALUES(median_on_minutes),
                     typical_active_hour = VALUES(typical_active_hour),
+                    active_hours_mask = VALUES(active_hours_mask),
                     typical_daily_min = VALUES(typical_daily_min),
                     typical_daily_max = VALUES(typical_daily_max),
                     sample_count = VALUES(sample_count),
@@ -2720,6 +2775,7 @@ def compute_entity_baselines():
                     device_id,
                     statistics.median(durations_minutes),
                     statistics.mode(start_hours),
+                    _active_hours_mask(sessions),
                     min(durations_minutes),
                     max(durations_minutes),
                     len(durations_minutes),
@@ -2737,15 +2793,13 @@ def compute_entity_baselines():
         departure_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=DEPARTURE_BASELINE_LOOKBACK_DAYS
         )
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT DISTINCT u.id, u.username
             FROM user u
             JOIN user_types ut ON u.type = ut.id
             JOIN device d ON d.user_id = u.id
             WHERE ut.type IN ('owner', 'technoking', 'resident')
-            """
-        )
+            """)
         eligible_users = cursor.fetchall()
 
         for user_id, username in eligible_users:

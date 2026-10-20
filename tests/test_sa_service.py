@@ -1371,10 +1371,14 @@ class TestCheckRhythmBreakAnomaly:
         mock_db = MagicMock()
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, ("Garage light", 3, 15, 12)]
+        mock_cursor.fetchone.side_effect = [None, ("Garage light", 15, 0b111 << 12)]
 
         daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
+        frame = _make_frame(now=datetime(2026, 10, 20, 3, 30, tzinfo=timezone.utc))
+        result = daemon.check_rhythm_break_anomaly(frame)
+
+        unusual_hour_params = mock_cursor.execute.call_args_list[1].args[1]
+        assert unusual_hour_params == (0b111 << 2,)  # hours 02, 03, 04
 
         assert result["mode"] == "rhythm_break_anomaly"
         assert result["deviation_type"] == "unusual_hour"
@@ -1527,6 +1531,54 @@ class TestDepartureHoursByBucket:
         assert all(hour == 7 for hour in buckets["weekday"] + buckets["weekend"])
 
 
+class TestDeviceSessions:
+    """Tests for _device_sessions()/_active_hours_mask(), compute_entity_baselines()'s helpers."""
+
+    def test_a_lost_offline_transition_does_not_become_a_multi_day_session(self):
+        """Regression: an offline row and an online row sharing one timestamp, then nothing for
+        days (scanner idle over a weekend), used to read as one 3,800-minute session."""
+        from services.service_sa.sa.engine import _device_sessions
+
+        friday = datetime(2026, 10, 2, 20, 53)
+        monday = datetime(2026, 10, 5, 12, 32)
+        morning = friday - timedelta(hours=8)
+        rows = [(morning + timedelta(minutes=30 * i), "online") for i in range(16)]
+        rows += [
+            (friday, "offline"),
+            (friday, "online"),
+            (monday, "offline"),
+            (monday + timedelta(minutes=1), "online"),
+        ]
+        assert _device_sessions(rows) == [(morning, friday)]
+
+    def test_a_gap_while_online_closes_the_session_at_the_last_row_seen_online(self):
+        from services.service_sa.sa.engine import _device_sessions
+
+        start = datetime(2026, 10, 6, 9, 0)
+        rows = [(start + timedelta(minutes=m), "online") for m in range(0, 30)]
+        rows.append((start + timedelta(hours=10), "online"))
+        assert _device_sessions(rows) == [(start, start + timedelta(minutes=29))]
+
+    def test_active_hours_cover_the_whole_workday_not_just_the_start_hour(self):
+        from services.service_sa.sa.engine import _active_hours_mask
+
+        sessions = [
+            (datetime(2026, 10, d, 8, 45), datetime(2026, 10, d, 17, 5)) for d in range(5, 10)
+        ]
+        mask = _active_hours_mask(sessions)
+        assert [h for h in range(24) if mask >> h & 1] == list(range(8, 18))
+
+    def test_an_hour_reached_on_a_single_odd_day_is_not_part_of_the_usual_window(self):
+        from services.service_sa.sa.engine import _active_hours_mask
+
+        sessions = [
+            (datetime(2026, 10, d, 9, 0), datetime(2026, 10, d, 12, 0)) for d in range(1, 11)
+        ]
+        sessions.append((datetime(2026, 10, 11, 1, 0), datetime(2026, 10, 11, 2, 0)))
+        mask = _active_hours_mask(sessions)
+        assert not mask >> 1 & 1 and mask >> 10 & 1
+
+
 class TestComputeEntityBaselines:
     """Tests for compute_entity_baselines()."""
 
@@ -1574,7 +1626,8 @@ class TestComputeEntityBaselines:
         assert params[0] == 42  # device_id
         assert params[1] == 60  # median_on_minutes (60, 90, 120, 60, 60 -> median 60)
         assert params[2] == 9  # typical_active_hour (every session starts at 9am)
-        assert params[5] == 5  # sample_count
+        assert params[3] == 1 << 9 | 1 << 10 | 1 << 11  # active_hours_mask (09:00-11:00 sessions)
+        assert params[6] == 5  # sample_count
         mock_db.commit.assert_called_once()
 
     @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
