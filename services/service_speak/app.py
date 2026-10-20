@@ -64,7 +64,7 @@ QUIP_ODDS = int(os.environ.get("SPEAK_QUIP_ODDS", "8"))
 # ALSA device the host's DAC/speaker is exposed as inside the container (see /dev/snd in
 # docker-compose.yml). "plughw" lets ALSA convert rate/channels for whatever the DAC supports.
 # Set empty to disable local playback (browser/Deck playback via the `audio` event is unaffected).
-SPEAK_ALSA_DEVICE = os.environ.get("SPEAK_ALSA_DEVICE", "plughw:CARD=S207,DEV=0")
+SPEAK_ALSA_DEVICE = os.environ.get("SPEAK_ALSA_DEVICE", "plughw:CARD=G12,DEV=0")
 PLAYBACK_TIMEOUT_SECONDS = 120
 # After a failed playback (no speaker attached, device busy, player missing) skip local playback
 # for this long instead of failing - and logging - on every utterance. Retrying afterwards lets a
