@@ -103,3 +103,22 @@ class TestCoarseMapping:
         assert dc(20).coarse_part == "evening"
         assert dc(21, 20).coarse_part == "night"  # wind_down -> night for music
         assert dc(23).coarse_part == "night"
+
+
+class TestMuteWindowConfig:
+    def test_parse_hhmm(self):
+        assert day_context.parse_hhmm("22:00") == time(22, 0)
+        assert day_context.parse_hhmm("07:05") == time(7, 5)
+        assert day_context.parse_hhmm("garbage", time(1, 2)) == time(1, 2)
+        assert day_context.parse_hhmm(None, time(1, 2)) == time(1, 2)
+
+    def test_defaults_are_10pm_to_7am(self):
+        assert day_context._DEFAULT_BED == time(22, 0)
+        assert day_context._DEFAULT_WAKE == time(7, 0)
+
+    def test_default_window_mutes_overnight_only(self):
+        w, b = day_context._DEFAULT_WAKE, day_context._DEFAULT_BED
+        assert dc(6, 59, wake=w, bed=b).is_waking_hours is False
+        assert dc(7, 0, wake=w, bed=b).is_waking_hours is True
+        assert dc(21, 59, wake=w, bed=b).is_waking_hours is True
+        assert dc(22, 0, wake=w, bed=b).is_waking_hours is False

@@ -102,8 +102,7 @@ def get_mute_state(env_name) -> tuple[bool, bool]:
     this to still emit an event -- for the Deck phone-speech relay -- when the
     house is merely empty, while staying fully silent when it's sleeping hours).
 
-    is_sleeping: outside the household's waking hours (the Morning..Bedtime
-    routine window, via day_context).
+    is_sleeping: inside the configured mute window (mute_start..mute_end, via day_context).
     is_empty_house: no owner/technoking/resident currently online to hear it.
     Checked independently of is_sleeping (not short-circuited) so a caller that
     bypasses the sleeping gate still gets an accurate empty-house read.
@@ -112,10 +111,11 @@ def get_mute_state(env_name) -> tuple[bool, bool]:
         logger.error("Environment name not provided")
         return False, False
 
-    # "Are we inside waking hours" is the Morning..Bedtime routine window -- now
-    # owned by day_context so every consumer (this, service_speak, the daemon's
-    # idle-quip wind-down, the LLM prompt) reads one definition. Imported here
-    # rather than at module scope to avoid a common<->day_context import cycle.
+    # "Are we inside waking hours" is the configured mute window (mute_start /
+    # mute_end config rows) -- owned by day_context so every consumer (this,
+    # service_speak, the daemon's idle-quip wind-down, the LLM prompt) reads one
+    # definition. Imported here rather than at module scope to avoid a
+    # common<->day_context import cycle.
     from .day_context import get_day_context
 
     is_sleeping = not get_day_context(env_name).is_waking_hours
