@@ -2,10 +2,10 @@
 awake, and how should it greet."
 
 Built from the ``environment`` row (timezone, sunrise, sunset) plus the
-Sunrise / Morning / Sunset / Bedtime rows in the ``routines`` table -- the same
-rows the user tunes in the Matrix UI. Edit the Bedtime routine and the mute
-window, the idle-quip wind-down, and the "good evening" cutoff all move with
-it, because they all read this.
+household's mute window -- the ``mute_start`` / ``mute_end`` ``config`` rows,
+set in Domain > Environment Settings (default 22:00-07:00). Move the window and
+the mute gate, the idle-quip wind-down, and the "good evening" cutoff all move
+with it, because they all read this.
 
 Before this, six places rolled their own clock math and disagreed:
 ``check_mute`` (waking hours, from the routines), ``check_routines`` (is_night,
@@ -47,8 +47,21 @@ def clear_cache():
     _cache.clear()
 
 
-_DEFAULT_WAKE = dtime(6, 30)
-_DEFAULT_BED = dtime(22, 0)
+# The mute window: Alfr3d is quiet from MUTE_START_KEY until MUTE_END_KEY (it may
+# cross midnight). Stored as "HH:MM" strings in the `config` table.
+MUTE_START_KEY = "mute_start"
+MUTE_END_KEY = "mute_end"
+_DEFAULT_BED = dtime(22, 0)  # mute starts
+_DEFAULT_WAKE = dtime(7, 0)  # mute ends
+
+
+def parse_hhmm(value, default=None):
+    """ "HH:MM" -> datetime.time, or ``default`` for anything unparseable."""
+    try:
+        h, m = str(value).strip().split(":")[:2]
+        return dtime(hour=int(h), minute=int(m))
+    except (ValueError, TypeError, AttributeError):
+        return default
 
 
 @dataclass(frozen=True)
@@ -56,7 +69,7 @@ class DayContext:
     now: datetime  # env-local, naive
     part_of_day: str  # one of timeofday.PARTS
     greeting: str  # "Good morning" etc.; "" overnight
-    is_waking_hours: bool  # Morning routine <= now < Bedtime routine
+    is_waking_hours: bool  # mute_end <= now < mute_start
     is_daylight: bool  # sunrise <= now < sunset
     minutes_to_bedtime: int  # None once past bedtime
     wake_time: dtime
@@ -81,17 +94,6 @@ class DayContext:
         return f"{self.now:%A %H:%M} ({self.part_of_day}, {lit})"
 
 
-def _to_time(td, default):
-    """A ``routines.time`` value is a timedelta since midnight; -> datetime.time."""
-    if td is None:
-        return default
-    try:
-        total = int(td.total_seconds())
-    except AttributeError:
-        return default
-    return dtime(hour=(total // 3600) % 24, minute=(total // 60) % 60)
-
-
 def _project(now, sun):
     """Project a stored sunrise/sunset onto ``now``'s date (the environment row
     carries whatever date the last weather refresh wrote; only the clock time
@@ -112,27 +114,28 @@ def get_day_context(env_name, now=None):
 
     local_now = now or db_utils.get_env_local_time(env_name)
 
-    sunrise = sunset = wake_td = bed_td = None
+    sunrise = sunset = None
+    wake_t, bed_t = _DEFAULT_WAKE, _DEFAULT_BED
     db = None
     try:
         db = get_connection()
         cur = db.cursor()
         cur.execute(
             """
-            SELECT e.sunrise, e.sunset,
-                   MAX(CASE WHEN r.name = 'Morning' THEN r.time END),
-                   MAX(CASE WHEN r.name = 'Bedtime' THEN r.time END)
-            FROM environment e
-            LEFT JOIN routines r
-                   ON r.environment_id = e.id AND r.name IN ('Morning', 'Bedtime')
-            WHERE e.name = %s
-            GROUP BY e.id, e.sunrise, e.sunset
+            SELECT sunrise, sunset FROM environment WHERE name = %s
             """,
             (env_name,),
         )
         row = cur.fetchone()
         if row:
-            sunrise, sunset, wake_td, bed_td = row
+            sunrise, sunset = row
+        cur.execute(
+            "SELECT name, value FROM config WHERE name IN (%s, %s)",
+            (MUTE_START_KEY, MUTE_END_KEY),
+        )
+        mute = dict(cur.fetchall())
+        bed_t = parse_hhmm(mute.get(MUTE_START_KEY), _DEFAULT_BED)
+        wake_t = parse_hhmm(mute.get(MUTE_END_KEY), _DEFAULT_WAKE)
     except Exception as e:  # defensive -- fall back to clock-only defaults
         logger.warning(f"DayContext DB read failed ({e}); using clock-only fallback")
     finally:
@@ -144,8 +147,8 @@ def get_day_context(env_name, now=None):
 
     ctx = _assemble(
         local_now,
-        _to_time(wake_td, _DEFAULT_WAKE),
-        _to_time(bed_td, _DEFAULT_BED),
+        wake_t,
+        bed_t,
         _project(local_now, sunrise),
         _project(local_now, sunset),
     )

@@ -13,7 +13,7 @@ from dependencies import (
     manager,
     ALFR3D_ENV_NAME,
 )
-from models import EnvironmentUpdate
+from models import EnvironmentUpdate, MuteHoursUpdate
 from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
@@ -73,7 +73,14 @@ async def update_environment(
                 "humidity": "humidity",
                 "subjective_feel": "subjective_feel",
             }
-            location_fields = ["latitude", "longitude", "city", "state", "country", "ip"]
+            location_fields = [
+                "latitude",
+                "longitude",
+                "city",
+                "state",
+                "country",
+                "ip",
+            ]
             manual_location_override = (
                 1 if any(getattr(data, f) is not None for f in location_fields) else 0
             )
@@ -97,6 +104,52 @@ async def update_environment(
         }
     except pymysql.Error as e:
         logger.error(f"Error updating environment: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+MUTE_START_KEY = "mute_start"
+MUTE_END_KEY = "mute_end"
+DEFAULT_MUTE_START = "22:00"
+DEFAULT_MUTE_END = "07:00"
+
+
+@router.get("/environment/mute-hours")
+async def get_mute_hours():
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT name, value FROM config WHERE name IN (%s, %s)",
+                (MUTE_START_KEY, MUTE_END_KEY),
+            )
+            stored = dict(cursor.fetchall())
+        return {
+            "start": stored.get(MUTE_START_KEY) or DEFAULT_MUTE_START,
+            "end": stored.get(MUTE_END_KEY) or DEFAULT_MUTE_END,
+        }
+    except pymysql.Error as e:
+        logger.error(f"Error fetching mute hours: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/environment/mute-hours")
+async def update_mute_hours(
+    data: MuteHoursUpdate,
+    _perm=Depends(require_permission("environment", "update_mute_hours")),
+):
+    if data.start == data.end:
+        raise HTTPException(status_code=422, detail="start and end must differ")
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            for key, value in ((MUTE_START_KEY, data.start), (MUTE_END_KEY, data.end)):
+                cursor.execute("UPDATE config SET value = %s WHERE name = %s", (value, key))
+                if cursor.rowcount == 0:
+                    cursor.execute("INSERT INTO config (name, value) VALUES (%s, %s)", (key, value))
+            db.commit()
+        return {"message": "Mute hours updated", "start": data.start, "end": data.end}
+    except pymysql.Error as e:
+        logger.error(f"Error updating mute hours: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
