@@ -20,10 +20,42 @@ const EnvironmentSettings = () => {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [muteHours, setMuteHours] = useState({ start: '22:00', end: '07:00' });
+  const [savingMute, setSavingMute] = useState(false);
 
   useEffect(() => {
     fetchEnvironment();
+    fetchMuteHours();
   }, []);
+
+  const fetchMuteHours = async () => {
+    try {
+      const response = await fetch(API_BASE_URL + '/api/environment/mute-hours');
+      if (response.ok) {
+        setMuteHours(await response.json());
+      }
+    } catch (error) {
+      console.error('Error fetching mute hours:', error);
+    }
+  };
+
+  const handleSaveMute = async () => {
+    setSavingMute(true);
+    try {
+      const response = await apiFetch(API_BASE_URL + '/api/environment/mute-hours', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(muteHours),
+      });
+      if (response.ok) {
+        await fetchMuteHours();
+      }
+    } catch (error) {
+      console.error('Error saving mute hours:', error);
+    } finally {
+      setSavingMute(false);
+    }
+  };
 
   const fetchEnvironment = async () => {
     try {
@@ -212,6 +244,41 @@ const EnvironmentSettings = () => {
            />
          </div>
        </div>
+
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold text-primary mb-1">Quiet Hours</h3>
+        <p className="text-sm text-text-tertiary mb-3">
+          Alfr3d stays silent from the start time until the end time.
+        </p>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">Mute from</label>
+            <input
+              type="time"
+              value={muteHours.start}
+              onChange={(e) => setMuteHours({ ...muteHours, start: e.target.value })}
+              className="p-2 bg-card rounded text-text-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">Until</label>
+            <input
+              type="time"
+              value={muteHours.end}
+              onChange={(e) => setMuteHours({ ...muteHours, end: e.target.value })}
+              className="p-2 bg-card rounded text-text-primary"
+            />
+          </div>
+          <button
+            onClick={handleSaveMute}
+            disabled={savingMute || !isAuthenticated || !muteHours.start || !muteHours.end || muteHours.start === muteHours.end}
+            className="flex items-center space-x-2 px-4 py-2 bg-success/20 border border-success rounded-lg text-success hover:bg-success/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Save className="w-4 h-4" />
+            <span>{savingMute ? 'Saving...' : 'Save Quiet Hours'}</span>
+          </button>
+        </div>
+      </div>
 
        <div className="flex space-x-4">
         <button

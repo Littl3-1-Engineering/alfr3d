@@ -130,6 +130,22 @@ class ContextUpdate(BaseModel):
     last_error_count: Optional[int] = None
 
 
+class MuteHoursUpdate(BaseModel):
+    """Quiet window as "HH:MM" (24h). start > end means it crosses midnight."""
+
+    start: str
+    end: str
+
+    @field_validator("start", "end")
+    @classmethod
+    def _valid_hhmm(cls, v):
+        import re
+
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("must be HH:MM (24h)")
+        return v
+
+
 class LLMConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     usage_limit: Optional[int] = None
