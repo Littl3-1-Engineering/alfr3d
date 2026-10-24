@@ -10,7 +10,7 @@ vi.mock('../hooks/useApi', () => ({ useKanjiToday: () => ({ data: mockData }) })
 const QUOTE = {
   date: '2026-10-06',
   id: 6,
-  kanji: '継続は力なり',
+  kanji: 'ケイゾクワチカラナリ',
   reading: 'keizoku wa chikara nari',
   meaning: 'continuing is power',
 }
@@ -34,12 +34,12 @@ describe('KanjiWisdom', () => {
   it('shows the kanji with its reading and meaning, and describes them for assistive tech', () => {
     renderOverlay()
     decode()
-    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('継続は力なり')
+    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('ケイゾクワチカラナリ')
     expect(screen.getByText('keizoku wa chikara nari')).toBeInTheDocument()
     expect(screen.getByText('continuing is power')).toBeInTheDocument()
     expect(screen.getByRole('img')).toHaveAttribute(
       'aria-label',
-      '継続は力なり, keizoku wa chikara nari: continuing is power'
+      'ケイゾクワチカラナリ, keizoku wa chikara nari: continuing is power'
     )
   })
 
@@ -52,20 +52,20 @@ describe('KanjiWisdom', () => {
     renderOverlay()
     // First frame is noise: same length, none of the real characters revealed yet.
     const first = screen.getByTestId('kanji-wisdom-kanji').textContent
-    expect(Array.from(first)).toHaveLength(6)
-    expect(first).not.toBe('継続は力なり')
+    expect(Array.from(first)).toHaveLength(10)
+    expect(first).not.toBe('ケイゾクワチカラナリ')
     decode()
-    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('継続は力なり')
+    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('ケイゾクワチカラナリ')
   })
 
   it('scrambles again after the replay interval', () => {
     renderOverlay()
     decode()
-    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('継続は力なり')
+    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('ケイゾクワチカラナリ')
     act(() => vi.advanceTimersByTime(KANJI_REPLAY_MS))
-    expect(screen.getByTestId('kanji-wisdom-kanji').textContent).not.toBe('継続は力なり')
+    expect(screen.getByTestId('kanji-wisdom-kanji').textContent).not.toBe('ケイゾクワチカラナリ')
     decode()
-    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('継続は力なり')
+    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('ケイゾクワチカラナリ')
   })
 
   it('renders nothing when switched off', () => {

@@ -4,6 +4,8 @@
 
 **Deck decisions (2026-10-05, revised same day):** curated 30-entry list in `kanji/KanjiWisdom.kt`; vertical (tategaki) 18sp column at 70% alpha with reading + meaning set beside it (replaces tap-to-reveal, impossible under the gesture layer); kanji column on the bottom-left edge (lifted above the Socket if it's bottom-left), reading + meaning in two left-aligned rows along the very bottom edge (layout confirmed on-device 2026-10-05); daily rotation at local midnight; top-to-bottom glitch-decode on appear/rollover; theme primary colour; system CJK fallback font; reduced motion = plain text. **Enable/disable toggle** in Settings (classic Appearance tab "KANJI WISDOM" card + Compact Windows card ring, default on). Compact spare-ring floor lowered 8 → 7 in `CompactSettingTest` to fit the new ring. Toggle itself, midnight rollover, reduced motion, other themes not yet checked on-device. List still needs a Japanese reader's vetting; web frontend to reuse it.
 
+**Katakana switch (2026-10-24, uncommitted, not deployed):** the quote text is now shown in **katakana** instead of kanji, everywhere (Deck built-in list + Halo breakdown tiles + Tactical plate label, backend seed `migration_042` + new alembic `0056` that rewrites the 30 seeded rows in place by id, web overlay scramble pool). Field names (`kanji`) unchanged. Katakana follows the romaji reading (particle は = ワ, long vowels spelled out, no ー). The Candidate-entries table below still lists the original kanji for vetting. Rows edited via `/api/kanji` are untouched by 0056.
+
 Ask: add visuals to **Alfr3d Deck** and the **Alfr3d web frontend** that show wise quotes in
 **kanji script** in some corner of the screen.
 
