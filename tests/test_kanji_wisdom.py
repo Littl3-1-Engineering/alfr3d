@@ -26,19 +26,25 @@ os.environ.setdefault("COMPOSE_PROJECT_NAME", "alfr3d")
 QUOTES = [
     {
         "id": 1,
-        "kanji": "一期一会",
+        "kanji": "イチゴイチエ",
         "reading": "ichigo ichie",
         "meaning": "one meeting",
         "enabled": True,
     },
     {
         "id": 2,
-        "kanji": "七転八起",
+        "kanji": "ナナコロビヤオキ",
         "reading": "nanakorobi yaoki",
         "meaning": "rise",
         "enabled": True,
     },
-    {"id": 3, "kanji": "守破離", "reading": "shu-ha-ri", "meaning": "mastery", "enabled": True},
+    {
+        "id": 3,
+        "kanji": "シュハリ",
+        "reading": "shu-ha-ri",
+        "meaning": "mastery",
+        "enabled": True,
+    },
 ]
 
 
@@ -112,11 +118,11 @@ def test_fetch_enabled_maps_rows():
     with patch("routes.kanji.db_connection") as conn:
         cursor = MagicMock()
         conn.return_value.__enter__.return_value.cursor.return_value = cursor
-        cursor.fetchall.return_value = [(1, "守破離", "shu-ha-ri", "mastery", 1)]
+        cursor.fetchall.return_value = [(1, "シュハリ", "shu-ha-ri", "mastery", 1)]
         assert _fetch_enabled() == [
             {
                 "id": 1,
-                "kanji": "守破離",
+                "kanji": "シュハリ",
                 "reading": "shu-ha-ri",
                 "meaning": "mastery",
                 "enabled": True,
