@@ -405,6 +405,30 @@ services:
       retries: 3
       start_period: 20s
 
+  # Local CA + nginx leaf cert (todo/todo_local_ca_cert_rotation.md). Host network so it sees the
+  # real LAN interface addresses; re-issues the leaf whenever they change and HUPs nginx. The CA
+  # key lives only in the tls_ca volume, mounted nowhere else -- ./certs gets just ca.crt (public)
+  # and the leaf, which nginx and service-api read.
+  service-tls:
+    build:
+      context: ./services
+      dockerfile: ./service_tls/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - tls_ca:/ca
+      - ./certs:/certs
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL}
+      - TLS_EXTRA_SANS=${TLS_EXTRA_SANS:-}
+    healthcheck:
+      test: [ "CMD", "test", "-s", "/certs/server.crt" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   nginx:
     image: nginx:alpine
     ports:
@@ -413,7 +437,10 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
+      - ./nginx-server-common.conf:/etc/nginx/alfr3d-server-common.conf:ro
     depends_on:
+      service-tls:
+        condition: service_healthy
       service-frontend:
         condition: service_started
       service-api:
@@ -451,4 +478,5 @@ volumes:
   kafka_data:
   db_backups:
   update_status_data:
+  tls_ca:  # local CA private key -- only service-tls mounts it
   sa_lake:  # Parquet bronze/silver/gold lake for service_sa (todo/sa/SA_ROADMAP.md)
