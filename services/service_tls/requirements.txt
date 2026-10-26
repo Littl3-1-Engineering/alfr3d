@@ -1,0 +1,3 @@
+cryptography==50.0.2
+ifaddr>=0.2.0
+docker==7.2.0
