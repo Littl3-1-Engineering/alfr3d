@@ -3,6 +3,15 @@
 @config "../tailwind.config.js";
 
 /* Font faces for self-hosted fonts */
+/* Yuji Boku (SIL OFL 1.1), subset to the samurai-wisdom glyphs (kanji + full katakana) */
+@font-face {
+  font-family: 'Yuji Boku';
+  src: url('/assets/fonts/yujiboku/YujiBoku-Subset.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'Exo 2';
   src: url('/assets/fonts/exo2/Exo2-Light.ttf') format('truetype');
