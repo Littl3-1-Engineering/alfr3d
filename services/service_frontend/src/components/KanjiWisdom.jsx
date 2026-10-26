@@ -63,6 +63,7 @@ const KanjiWisdom = () => {
         data-testid="kanji-wisdom-kanji"
         className="absolute left-2 bottom-20 text-lg leading-snug"
         style={{
+          fontFamily: "'Yuji Boku', serif",
           writingMode: 'vertical-rl',
           textOrientation: 'upright',
           color: 'var(--theme-primary)',
