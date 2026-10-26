@@ -11,7 +11,7 @@ vi.mock('framer-motion', async () => {
 })
 vi.mock('../hooks/useApi', () => ({
   useKanjiToday: () => ({
-    data: { date: '2026-10-06', id: 1, kanji: '七転八起', reading: 'nanakorobi yaoki', meaning: 'rise' },
+    data: { date: '2026-10-06', id: 1, kanji: 'ナナコロビヤオキ', reading: 'nanakorobi yaoki', meaning: 'rise' },
   }),
 }))
 
@@ -22,6 +22,6 @@ describe('KanjiWisdom under prefers-reduced-motion', () => {
         <KanjiWisdom />
       </UiPrefsContext.Provider>
     )
-    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('七転八起')
+    expect(screen.getByTestId('kanji-wisdom-kanji')).toHaveTextContent('ナナコロビヤオキ')
   })
 })

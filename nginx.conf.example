@@ -25,9 +25,10 @@ http {
     # Gzip compression
     gzip on;
     gzip_vary on;
-    gzip_min_length 1024;
+    gzip_min_length 256;
     gzip_proxied any;
     gzip_comp_level 6;
+    gzip_static on;
     gzip_types
         text/plain
         text/css
@@ -37,86 +38,35 @@ http {
         application/javascript
         application/xml+rss
         application/atom+xml
-        image/svg+xml;
+        image/svg+xml
+        application/octet-stream;
 
     # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=api:10m rate=50r/s;
     limit_req_zone $binary_remote_addr zone=general:10m rate=100r/s;
 
-    upstream frontend {
-        server service-frontend:8000;
-    }
-
-    upstream api {
-        server service-api:5001;
-    }
+    # Docker's embedded DNS. nginx resolves hostnames in upstream blocks only
+    # at startup, so when containers are recreated with new IPs the cached
+    # upstream goes stale (502s). Runtime-resolved proxy_pass avoids this.
+    resolver 127.0.0.11 valid=10s ipv6=off;
 
     server {
         listen 80;
         server_name localhost;
 
-         # Security headers
-         add_header X-Frame-Options "SAMEORIGIN" always;
-         add_header X-XSS-Protection "1; mode=block" always;
-         add_header X-Content-Type-Options "nosniff" always;
-         add_header Referrer-Policy "no-referrer-when-downgrade" always;
-         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://www.gravatar.com https://*.basemaps.cartocdn.com https://i.scdn.co; media-src 'self' blob:; object-src 'none'; base-uri 'self';" always;
+        include /etc/nginx/alfr3d-server-common.conf;
+    }
 
-        # Frontend - React app
-        location / {
-            limit_req zone=general burst=20 nodelay;
+    # HTTPS. The leaf is issued by the local CA (service-tls) and re-issued whenever the host's
+    # addresses change; the Deck pins the CA, so that is invisible to it.
+    server {
+        listen 443 ssl;
+        server_name localhost;
 
-            proxy_pass http://frontend;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_cache_bypass $http_upgrade;
+        ssl_certificate     /etc/nginx/certs/server.crt;
+        ssl_certificate_key /etc/nginx/certs/server.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
 
-            # Timeouts
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-        }
-
-        # API endpoints
-        location /api/ {
-            limit_req zone=api burst=10 nodelay;
-
-            proxy_pass http://api;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_cache_bypass $http_upgrade;
-
-            # CORS headers for API
-            add_header Access-Control-Allow-Origin *;
-            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
-            add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization";
-
-            # Handle preflight requests
-            if ($request_method = 'OPTIONS') {
-                return 204;
-            }
-
-            # Timeouts
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-        }
-
-        # Health check endpoint
-        location /health {
-            access_log off;
-            return 200 "healthy\n";
-            add_header Content-Type text/plain;
-        }
+        include /etc/nginx/alfr3d-server-common.conf;
     }
 }
