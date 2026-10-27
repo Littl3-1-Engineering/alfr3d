@@ -2,7 +2,7 @@
 
 > **Layer:** cross-cutting (data layer health) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → not an LF phase; do before the lake or MySQL gets anywhere near the limit
 
-## Status: 🟢 Core deployed and sampling (verified 2026-10-27: `disk.root` sample every 4 h in `sa-learner`, `check_disk_health` loaded in `sa-awareness`, 37.2 GB free of 109 GB, no card yet). Still open: seeing Docker usage and `~/db_backups` from inside the stack.
+## Status: 🟢 Done and deployed 2026-10-27. `disk.root` every 4 h, `check_disk_health` live, and host-side Docker + backup-folder usage (`setup/host_usage.sh`, host crontab `17 */4 * * *`, bind mount `./host_usage:/host_usage:ro`, `host.*` rows in `sa_storage_metrics`) verified on the NUC. 37.2 -> 42.3 GB free after pruning 4.7 GB of build cache.
 
 ## Why
 
@@ -54,8 +54,7 @@ Reuse what exists rather than a new channel:
       fresh install doesn't alert from two points.
 - [x] `check_disk_health(frame)` rule with the warn/critical tiers above; `because` lists the
       current free space, the 30-day growth and the three biggest consumers.
-- [ ] Decide how to see Docker usage and `~/db_backups` (socket mount vs. a host cron that writes
-      a small JSON file the learner reads).
+- [x] Docker usage and `~/db_backups`: host cron writes a TSV the learner reads through a read-only bind mount (chosen over a socket mount; 2026-10-27, PR #328).
 - [x] **Automatic backup rotation** (done 2026-10-13, tracked in [../todo_db_backup_cron.md](../todo_db_backup_cron.md): daily dump, keep 7): keep the N newest in
       `~/db_backups`, compress on write (`.sql.gz` is ~16x smaller). Today it is a manual step in
       the migration routine.
