@@ -957,6 +957,23 @@ Run these scripts as needed for database maintenance, backups, and integration c
 docker-compose down
 ```
 
+### Disk hygiene (production host)
+
+The `sa-learner` service samples host disk every 4 hours and `check_disk_health` raises a `disk_health`
+card when free space or days-until-full crosses a threshold (see `todo/sa/todo_disk_and_lake_monitoring.md`).
+It never deletes anything itself. When the card fires, these are the safe things to prune, in order of
+usual payoff:
+
+```bash
+docker system df                          # what is reclaimable
+docker builder prune -f --filter until=24h   # build cache older than a day
+docker image prune -f                     # dangling images only; running services keep theirs
+ls -lh ~/db_backups                       # daily dumps rotate to the newest 7 (setup/db_backup_daily.sh)
+```
+
+Do not run `docker system prune --volumes`: it can remove the `sa_lake`, `secrets_data` and MySQL
+volumes if a service happens to be stopped at the time.
+
 ### Kubernetes Deployment
 
 The project includes Kubernetes manifests for Minikube/production deployment, covering Zookeeper, Kafka, MySQL, the ingress, and all services except `service_device` (which requires host networking for `arp-scan` and is expected to run outside the cluster, directly on a host). Two things Docker Compose automates that the current manifests don't yet cover: there's no Redis manifest (services fall back to their in-memory TTL cache — see Redis in the Architecture section above), and no equivalent of Compose's `migrate` job — run the Alembic migrations against the cluster's MySQL manually (see `setup/migrations/`) before or after `kubectl apply -f k8s/`.
