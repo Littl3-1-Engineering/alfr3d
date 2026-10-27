@@ -349,6 +349,8 @@ services:
       - secrets_data:/secrets
       # Parquet lake (LF-1b): bronze/silver/gold. Mounted only here, never on sa-awareness.
       - sa_lake:/lake
+      # Docker + backup-folder usage written by setup/host_usage.sh (host crontab); read-only.
+      - ./host_usage:/host_usage:ro
     # Below sa-awareness: a long fit must never starve the card loop on the 4-core NUC.
     cpus: 1.0
     cpu_shares: 512

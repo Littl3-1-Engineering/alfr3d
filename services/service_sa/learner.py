@@ -65,6 +65,9 @@ def record_disk_sample():
         conn = inference_store.connect()
         total, free = disk.record_disk_sample(conn)
         logger.info(f"disk sample: {free / 1024**3:.1f} GB free of {total / 1024**3:.1f} GB")
+        host_rows = disk.record_host_usage(conn)
+        if not host_rows:
+            logger.warning("host usage snapshot missing or stale; card will omit Docker/backups")
     except Exception as e:
         logger.error(f"disk sample failed: {e}")
     finally:
