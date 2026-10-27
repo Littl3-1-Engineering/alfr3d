@@ -332,3 +332,4 @@ re-tagging every existing SA item (SA-1..SA-12) by layer with its current status
 
 *(Add a dated entry here each time one of the above gets picked up, so this doc doesn't silently
 go stale the way the README/Notion pages did before this session's cleanup pass.)*
+- **2026-10-27**: ops hardening closed out. Disk/lake monitoring was already deployed (doc was stale); added host-side Docker + backup-folder usage to the `disk_health` card (PR #328, deployed, crontab on the NUC), prune commands in the README, pruned 4.7 GB of build cache. Yuji Boku font merged (PR #329); the NUC frontend image is not rebuilt yet. Quiet hours and the G12 speaker default were already live on the NUC.
