@@ -163,3 +163,61 @@ class TestCheckDiskHealth:
             card = SAEngine().check_disk_health(None)
         assert card["mode"] == "disk_health"
         assert engine.DISK_HEALTH_STATE["result"]["level"] == "warn"
+
+
+class TestHostUsage:
+    def _write(self, tmp_path, ts, body=None):
+        body = body or (
+            "docker\tImages\t8.402GB\t3.078GB (36%)\n"
+            "docker\tBuild Cache\t5.598GB\t4.661GB\n"
+            "docker\tContainers\t277.6MB\t6B (0%)\n"
+            "backups\t12\t900000000\n"
+        )
+        f = tmp_path / "host_usage.tsv"
+        f.write_text(f"ts\t{ts}\n{body}")
+        return str(f)
+
+    def test_parse_size(self):
+        assert disk.parse_size("3.078GB (36%)") == 3_078_000_000
+        assert disk.parse_size("57.7MB") == 57_700_000
+        assert disk.parse_size("0B") == 0
+        assert disk.parse_size("n/a") is None
+
+    def test_read_fresh_file(self, tmp_path):
+        usage = disk.read_host_usage(self._write(tmp_path, 1000), now=1000 + 60)
+        assert usage["docker"]["Build Cache"] == (5_598_000_000, 4_661_000_000)
+        assert usage["backups"] == (12, 900_000_000)
+
+    def test_stale_or_missing_file_is_none(self, tmp_path):
+        path = self._write(tmp_path, 1000)
+        assert disk.read_host_usage(path, now=1000 + disk.HOST_USAGE_MAX_AGE_SECONDS + 1) is None
+        assert disk.read_host_usage(str(tmp_path / "nope.tsv")) is None
+
+    def test_malformed_lines_are_skipped(self, tmp_path):
+        path = self._write(
+            tmp_path, 1000, "docker\tImages\n" "backups\tx\ty\n" "docker\tBuild Cache\t1GB\t1GB\n"
+        )
+        usage = disk.read_host_usage(path, now=1001)
+        assert list(usage["docker"]) == ["Build Cache"]
+        assert usage["backups"] is None
+
+    def test_consumers_name_big_reclaimable_items_only(self):
+        host = {
+            "host.docker.images": (0, 8 * GB, 3 * GB),
+            "host.docker.build_cache": (0, 5 * GB, 4 * GB),
+            "host.docker.containers": (0, 1 * GB, 0),
+            "host.backups": (7, 2 * GB, 0),
+        }
+        lines = disk.host_consumers(host)
+        assert lines[0].startswith("Docker build cache") and "reclaimable" in lines[0]
+        assert any(ln.startswith("Docker images") for ln in lines)
+        assert not any("containers" in ln for ln in lines)
+        assert any("backup folder" in ln for ln in lines)
+        assert disk.host_consumers(None) == []
+
+    def test_consumers_only_added_when_card_is_raised(self):
+        host = {"host.docker.build_cache": (0, 5 * GB, 4 * GB)}
+        ok = disk.assess(_samples([60, 60]), [], host)
+        assert ok["level"] == "ok" and not any("Docker" in b for b in ok["because"])
+        low = disk.assess(_samples([15, 15]), [], host)
+        assert low["level"] == "warn" and any("Docker build cache" in b for b in low["because"])

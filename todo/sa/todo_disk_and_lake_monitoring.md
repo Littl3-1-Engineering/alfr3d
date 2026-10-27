@@ -2,7 +2,7 @@
 
 > **Layer:** cross-cutting (data layer health) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → not an LF phase; do before the lake or MySQL gets anywhere near the limit
 
-## Status: 🟡 Core built 2026-10-13 (`sa/disk.py`, `check_disk_health`, 4-hourly sample in `sa-learner`), uncommitted and not deployed. Docker usage, backup-folder size and backup rotation are still open.
+## Status: 🟢 Core deployed and sampling (verified 2026-10-27: `disk.root` sample every 4 h in `sa-learner`, `check_disk_health` loaded in `sa-awareness`, 37.2 GB free of 109 GB, no card yet). Still open: seeing Docker usage and `~/db_backups` from inside the stack.
 
 ## Why
 
@@ -60,8 +60,7 @@ Reuse what exists rather than a new channel:
       `~/db_backups`, compress on write (`.sql.gz` is ~16x smaller). Today it is a manual step in
       the migration routine.
 - [x] Tests: threshold tiers, debounce, no alert on thin history (`tests/test_sa_disk.py`). Debounce = two consecutive samples must agree.
-- [ ] Document the prune commands that are safe on this host (build cache older than 24 h,
-      unreferenced images) in the README's operations section.
+- [x] Document the prune commands that are safe on this host (README, "Disk hygiene", 2026-10-27).
 
 ## Open questions
 
