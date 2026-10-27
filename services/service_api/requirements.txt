@@ -9,7 +9,7 @@ werkzeug==3.1.9
 PyJWT==2.15.1
 requests==2.34.2
 orjson==3.13.0
-aioesphomeapi==46.12.1
+aioesphomeapi==46.22.0
 zeroconf==0.151.5
 pydantic>=2.14.1
 websockets
