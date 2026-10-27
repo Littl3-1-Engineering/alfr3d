@@ -14,7 +14,7 @@ gtts==2.5.4
 google-api-python-client
 google-auth-oauthlib
 alembic==1.20.1
-SQLAlchemy>=2.1.5
+SQLAlchemy>=2.1.6
 aioesphomeapi==46.22.0
 zeroconf==0.151.5
 werkzeug==3.1.9
