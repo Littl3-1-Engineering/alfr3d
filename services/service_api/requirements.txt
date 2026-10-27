@@ -15,5 +15,5 @@ pydantic>=2.14.1
 websockets
 anyio>=4.15.1 # not directly required, pinned to avoid known vulnerabilities (was 4.4.0)
 starlette==1.9.0
-zipp>=4.1.1 # not directly required, pinned by Snyk to avoid a vulnerability
+zipp>=4.1.2 # not directly required, pinned by Snyk to avoid a vulnerability
 redis[hiredis]>=8.1.0
