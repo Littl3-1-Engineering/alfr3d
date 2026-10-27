@@ -828,7 +828,9 @@ class SAEngine:
                 )
                 utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
                 state["result"] = disk.assess(
-                    disk.load_samples(db, utc_now), disk.load_lake_totals(db, utc_now)
+                    disk.load_samples(db, utc_now),
+                    disk.load_lake_totals(db, utc_now),
+                    disk.load_host_usage(db, utc_now),
                 )
             except Exception as e:
                 # Keep the last result: a DB blip must not clear or raise a disk alert.
