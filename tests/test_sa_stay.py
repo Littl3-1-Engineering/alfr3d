@@ -36,7 +36,8 @@ def _score(profile, stay_hours, arrive_hour=9):
 
 class TestStayLearner:
     def test_a_stay_far_longer_than_this_persons_usual_is_flagged(self):
-        profile = _profile([2, 3, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 3, 2, 2, 3, 2, 3])
+        # Needs enough history to reach 5 bits: the most surprise n comparable stays can give is log2(n).
+        profile = _profile([2, 3, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 3, 2, 2, 3, 2, 3] * 3)
 
         found = _score(profile, 9)
 
@@ -58,7 +59,7 @@ class TestStayLearner:
         assert _profile([2, 3, 2]) is None
 
     def test_a_stay_is_judged_only_against_stays_that_began_at_a_similar_time(self):
-        profile = _profile([2, 3] * 9, arrive_hour=9)
+        profile = _profile([2, 3] * 30, arrive_hour=9)
 
         assert _score(profile, 9, arrive_hour=9) is not None
         # Nothing in the history began at 02:00, so there is nothing comparable to be surprised by.
