@@ -48,7 +48,11 @@ LOOKBACK_DAYS = 4  # how far back the live stay start is searched; a longer stay
 ARRIVAL_SIGMA_HOURS = 2.5
 DAYTYPE_MISMATCH_WEIGHT = 0.25
 MIN_COMPARABLE_WEIGHT = 5.0
-MIN_SURPRISE_BITS = 3.0
+# 5 bits = p <= 3 %. At 3 bits (p <= 12.5 %) about one stay in nine flags by construction, and a flag
+# stays on until the person leaves (survival only falls), so a handful of long stays filled most of
+# the shadow window. Leave-one-out replay of the last 8 weeks, four residents: 22 stays flag at 3
+# bits, 11 at 4, 3 at 5, 1 at 6 -- 5 is about one overstay card every two to three weeks.
+MIN_SURPRISE_BITS = 5.0
 STABILITY_UNKNOWN = 0.5
 LIVE_OFFLINE_LAG_MINUTES = presence.LIVE_OFFLINE_LAG_MINUTES
 # Who can overstay: the legacy rule's audience. A guest staying several days is just a guest.
