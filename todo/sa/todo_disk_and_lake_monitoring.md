@@ -2,7 +2,7 @@
 
 > **Layer:** cross-cutting (data layer health) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → not an LF phase; do before the lake or MySQL gets anywhere near the limit
 
-## Status: 🟢 Done and deployed 2026-10-27. `disk.root` every 4 h, `check_disk_health` live, and host-side Docker + backup-folder usage (`setup/host_usage.sh`, host crontab `17 */4 * * *`, bind mount `./host_usage:/host_usage:ro`, `host.*` rows in `sa_storage_metrics`) verified on the NUC. 37.2 -> 42.3 GB free after pruning 4.7 GB of build cache.
+## Status: 🟢 Done and deployed 2026-10-27. `disk.root` every 4 h, `check_disk_health` live, and host-side Docker + backup-folder usage (`setup/host_usage.sh`, host crontab `17 */4 * * *`, bind mount `./host_usage:/host_usage:ro`, `host.*` rows in `sa_storage_metrics`) verified on the NUC by a manual run only: the crontab entry logged to a directory that did not exist, so cron never ran the script until it was fixed 2026-10-30 (see README, `host_usage.sh`). 37.2 -> 42.3 GB free after pruning 4.7 GB of build cache.
 
 ## Why
 
