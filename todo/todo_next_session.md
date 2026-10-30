@@ -90,7 +90,7 @@ re-tagging every existing SA item (SA-1..SA-12) by layer with its current status
   large batch this week outside this repo's roadmap (Deck/Socket rename, AGP 9 upgrade,
   first-launch onboarding, app long-press menu, app-list disk cache on a branch) — see that
   repo's `todo/` and `agents.md`.
-- **2026-09-08**: verified the household HA instance is healthy (`192.168.2.200:8123`, running
+- **2026-09-08**: verified the household HA instance is healthy (`10.0.0.100:8123`, running
   since Aug 29, `GET /api/iot/ha/status` → `connected`, weather/battery sensors fresh today).
   Found + fixed a real bug this un-masked (commit `93354114`): `sync_ha_devices()` set
   `online = state == "on"`, so any reachable HA device not in state `on` (media_player on
@@ -285,7 +285,7 @@ re-tagging every existing SA item (SA-1..SA-12) by layer with its current status
     announcement heard), temporary instrumentation removed from `SpokenNotificationHandler.kt`.
     Only the Play data-safety form remains for that feature. Remaining open: item (4)
     `todo_multiuser_integrations.md` (needs Athos's design input). NUC SSH note: plain `ssh` in
-    the Claude shell is a kitten alias; use `/usr/bin/ssh alfr3d@192.168.2.200`.
+    the Claude shell is a kitten alias; use `/usr/bin/ssh alfr3d@10.0.0.100`.
   - **2026-10-05 (later): event-timestamp fix deployed.** Deck ambient log, Status Surface and Shell now
     show events in the phone's local timezone (`EventTimeFormat`, deck `2c298a1`/`eb867e0`); backend
     producers stopped emitting `+00:00Z` / naive-local+`Z`, web `formatLocalTime` tolerates legacy shapes
