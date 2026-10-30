@@ -46,7 +46,7 @@ The clip has to show the real `travel` card appearing on a real dashboard/Deck â
 mockup (the plan's acceptance bar). So `check_travel()` has to actually fire once, which it never
 has.
 
-## What was verified on the household NUC (`alfr3d@192.168.2.200`, 2026-09-10)
+## What was verified on the household NUC (`alfr3d@10.0.0.100`, 2026-09-10)
 
 The whole `check_travel()` dependency chain was exercised live, end to end:
 
