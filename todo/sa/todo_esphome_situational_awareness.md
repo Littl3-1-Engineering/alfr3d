@@ -174,7 +174,7 @@ and could never fire."*
 ## Phase 0 — investigate
 
 - **Confirmed, on the real production LAN, not assumed**: SSH'd into the household's actual
-  production box (`alfr3d@192.168.2.200`) and ran a real mDNS scan —
+  production box (`alfr3d@10.0.0.100`) and ran a real mDNS scan —
   `avahi-browse -rt _esphomelib._tcp` — the exact service type
   `services/common/esphome_utils.py`'s `discover_esphome_nodes()` listens for. **Zero devices
   found.** This household does not currently have a live ESPHome node on its network, so there is

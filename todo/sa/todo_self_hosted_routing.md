@@ -57,7 +57,7 @@ supersedes the exploratory `todo/todo_free_routing_alternatives.md`.
 
 ## Phase 0 — evaluate and choose (real numbers, not assumptions)
 
-Investigated live, on the household's actual production hardware (`alfr3d@192.168.2.200`,
+Investigated live, on the household's actual production hardware (`alfr3d@10.0.0.100`,
 hostname `Alfr3d-Gorsion`, Intel Pentium Silver J5040, 7.3GiB RAM, 4 cores — **not** a Raspberry
 Pi 5; that hardware target was retired mid-session, this is the real box), not a synthetic
 benchmark or a spec sheet:

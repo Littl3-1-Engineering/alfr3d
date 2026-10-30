@@ -1407,6 +1407,11 @@ class TestCheckRhythmBreakAnomaly:
         assert result["data"]["typical_active_hour"] == 7
         assert "hasn't come online" in result["content"]
 
+        # A mocked cursor never validates the SQL, so check the placeholder count ourselves
+        # (a 6-tuple against 7 %s made every cycle raise "not enough arguments for format string").
+        sql, params = mock_cursor.execute.call_args_list[2].args
+        assert sql.count("%s") == len(params)
+
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_returns_none_when_all_three_deviation_queries_come_back_empty(self, mock_connect):
         from services.service_sa.sa.engine import SAEngine

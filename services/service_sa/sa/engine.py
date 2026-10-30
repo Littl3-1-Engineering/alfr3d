@@ -1493,6 +1493,7 @@ class SAEngine:
                 """,
                 (
                     now,
+                    now,
                     EXPECTED_ABSENT_MAX_OFFLINE_DAYS,
                     now,
                     now,

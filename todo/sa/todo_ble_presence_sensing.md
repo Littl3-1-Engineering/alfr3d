@@ -22,7 +22,7 @@ gap plus a new device (the ESPHome sensor) having just joined the household the 
 checking whether the BLE landscape changed too, per this doc's own stated re-open condition.
 
 Same methodology as the original Phase 0 pass, against the same real production hardware
-(`alfr3d@192.168.2.200`): adapter re-confirmed LE-capable (`hciconfig hci0 features` still shows
+(`alfr3d@10.0.0.100`): adapter re-confirmed LE-capable (`hciconfig hci0 features` still shows
 `<LE support>`/`<LE and BR/EDR>`; `btmgmt info` still shows `le` in current settings), then two
 independent ~30-second passive scans (`bluetoothctl scan on` + `devices` readback) about 3 minutes
 apart.
@@ -55,7 +55,7 @@ household (per the original re-open condition below) — not on a fixed schedule
 ## Phase 0 — feasibility (real hardware, real scans, not a datasheet)
 
 Investigated directly against the household's actual production hardware
-(`alfr3d@192.168.2.200`), the same box SA-6's Phase 0 used:
+(`alfr3d@10.0.0.100`), the same box SA-6's Phase 0 used:
 
 - **Bluetooth adapter confirmed BLE-capable.** `hciconfig hci0 features` shows `<LE support>`
   and `<LE and BR/EDR>`; `btmgmt info` confirms `current settings: powered ssp br/edr le
