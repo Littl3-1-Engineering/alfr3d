@@ -327,7 +327,23 @@ class ShadowRunner:
             inference = learner.score(profile, {"stay_start": start}, now_utc)
             if inference is not None:
                 findings.append(inference)
+        if findings and self._calendar_busy(now_utc):
+            return []  # a booked stretch at home (e.g. working from home) is not an overstay
         return findings
+
+    def _calendar_busy(self, now_utc):
+        """True if a household calendar event covers this moment. The legacy rule's suppression,
+        checked directly against calendar_events (frame.upcoming_events only looks forward)."""
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT 1 FROM calendar_events WHERE start_time <= %s AND end_time >= %s LIMIT 1",
+                (now_utc, now_utc),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            db.close()
 
     def _stay_start(self, user_id, now_utc):
         """When this person's current stay began, from their phones' sightings in device_history,

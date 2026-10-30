@@ -320,12 +320,12 @@ class TestShadowRunner:
         from sa.learners import stay
 
         ivs = []
-        for i in range(20):
+        for i in range(60):
             start = datetime(2026, 10, 8) - timedelta(days=i) + timedelta(hours=13)
             ivs.append((start, start + timedelta(hours=2 + i % 2), 100))
         return stay.StayLearner().fit_user(1, "athos", sorted(ivs), REF, 0.95, 0.8, 1.0)
 
-    def _departure_runner(self, stay_start, user_type="owner"):
+    def _departure_runner(self, stay_start, user_type="owner", busy_event=None):
         from sa.learners import stay
 
         runner, _ = self._runner()
@@ -333,6 +333,7 @@ class TestShadowRunner:
         runner.profiles = lambda name: [profile] if name == stay.NAME else []
         cursor = MagicMock()
         cursor.fetchall.return_value = [(stay_start,), (stay_start + timedelta(minutes=30),)]
+        cursor.fetchone.return_value = busy_event
         runner._connect = lambda: MagicMock(cursor=lambda: cursor)
         frame = MagicMock()
         frame.person_presence = [
@@ -349,6 +350,11 @@ class TestShadowRunner:
 
         assert findings and findings[0].observed["state"] == "home"
         assert runner._stay_starts["1"] == datetime(2026, 10, 9, 13, 0)
+
+    def test_departure_stays_quiet_while_a_calendar_event_covers_the_moment(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), busy_event=(1,))
+
+        assert runner.departure(frame) == []
 
     def test_departure_does_not_look_at_guests(self):
         runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), user_type="guest")
