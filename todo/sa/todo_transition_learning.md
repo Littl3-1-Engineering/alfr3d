@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner (SA-12) · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-5 transition learner, rebuilt on silver
 
-## Status: 🔴 SA-12 still stopped — re-checked 2026-10-04 (Phase 0c): structurally unblocked, but no organic transitions to mine yet; next re-check ~2026-11-01
+## Status: 🔴 SA-12 still stopped — re-checked 2026-10-31 (Phase 0d): more data, still no genuine cross-entity transitions; no calendar re-check scheduled
 
 - **2026-08-30:** stopped at Phase 0 because SA-11 had only ~10 hours of runtime.
 - **2026-09-07 (Phase 0b re-check, real production DB):** elapsed time is no longer the
@@ -202,6 +202,36 @@ threshold chosen now would be invented. Not a feasibility failure.
 *organic* days across ≥ 3 devices, or (b) a routine gains device actions (then also emit
 `device` events from the `service_device` path so routine→device is observable). Next calendar
 re-check: ~2026-11-01.
+
+## Phase 0d — re-check (2026-10-31, production DB)
+
+`household_events`: 77,334 rows, 2026-08-30 -> 2026-10-31 (62 days); 15,097 structured, 18 event
+types. Every ordered pair (a, b) of the 13 structured types with at least 20 occurrences, `b` within
+10 minutes after `a`, pairs on the same entity excluded, kept when it has >= 10 hits on >= 7 days,
+and ranked by lift over the Poisson chance of a `b` in a random 10-minute window:
+
+| pair | hits / A | lift | verdict |
+|---|---|---|---|
+| `track/play_start` -> `track/play_stop` | 1,321 / 10,767 | 3.5 | one track's own lifecycle, not a transition |
+| `sender/messaged` -> `sender/called` | 75 / 1,803 | 3.5 | the same sender nudging, not a household sequence |
+| `user/went_offline` -> `sender/called` | 22 / 662 | 2.8 | 22 hits, 14 days; small |
+| `sender/called` -> `sender/messaged` | 46 / 106 | 2.4 | same sender again |
+| everything else | | <= 1.7 | near chance; `came_online` -> any `audio` pair is below 1.6 |
+
+Device events (`iot/device/*`: `set` 59, `turned_on` 35, `turned_off` 16) are on 8-9 distinct days
+across at most 4 subjects, still test-like bursts. The only routine with actions is the
+`ClaudeTtsRelayTest` speak routine; the four scheduled routines (`executed` 254 times, one a day)
+have none, so routine -> device is structurally zero.
+
+**Verdict: still stopped.** Volume is no longer the problem (62 days, 15k structured rows), but the
+cross-entity pairs that clear a lift bar are artefacts of one entity's own lifecycle, and the pairs
+the household actually cares about (arrival -> lights or music, a routine -> a device) have no
+signal or no producer. Any window or threshold chosen now would be invented.
+
+**Re-check trigger (replaces the date):** (a) device events on >= 3 weeks of organic days across
+>= 3 devices, or (b) a scheduled routine gains device actions, or (c) the household starts using
+another controllable thing at a regular time. Until one of those happens there is nothing to
+re-run; the lift query above (in this doc's history) is the Phase 0 to repeat.
 
 ### Re-check reminder (superseded by Phase 0c above): **~2026-09-28** (≈3 weeks out)
 
