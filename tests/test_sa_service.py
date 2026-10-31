@@ -1319,130 +1319,94 @@ class TestCheckHouseholdComposition:
 
 
 class TestCheckRhythmBreakAnomaly:
-    """Tests for SAEngine.check_rhythm_break_anomaly() -- not a frame field (SA-4), this
-    device/entity_baselines join isn't duplicated elsewhere, so it stays its own query;
-    only frame.now replaces its own datetime.now(timezone.utc) call."""
+    """Tests for SAEngine.check_rhythm_break_anomaly() -- since the LF-4 cutover a card for the
+    device rhythm learner's most surprising fresh deviation (one per cycle)."""
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_card_when_a_device_is_past_its_typical_max(self, mock_connect):
+    def _inference(self, signal="device.online", state="offline", device="Garage light",
+                   confidence=0.7, surprise=6.0, p_online=0.97, offline_minutes=180.0,
+                   minutes_on=None, p95=60.0):  # fmt: skip
+        from types import SimpleNamespace
+
+        if signal == "device.session_minutes":
+            observed = {"minutes_on": minutes_on if minutes_on is not None else 90.0}
+            expected = {"p95_minutes": p95, "share_at_least": 0.01}
+        else:
+            observed = {"state": state, "offline_minutes": offline_minutes}
+            expected = {"p_online": p_online}
+        return SimpleNamespace(
+            learner="device_rhythm",
+            signal=signal,
+            evidence={"device": device},
+            context={"hour_local": 14},
+            observed=observed,
+            expected=expected,
+            surprise=surprise,
+            confidence=confidence,
+        )
+
+    def _check(self, recent):
         from services.service_sa.sa.engine import SAEngine
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = ("Garage light", 90, 60)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch(
+                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
+            ),
+        ):
+            return SAEngine().check_rhythm_break_anomaly(_make_frame())
 
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
+    def test_a_device_offline_when_usually_on_is_expected_absent(self):
+        card = self._check([self._inference()])
 
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["priority"] == 2.6
-        assert result["entity_name"] == "Garage light"
-        assert result["deviation_type"] == "still_on_past_typical"
-        assert "30 min" in result["content"]
-        assert result["data"]["over_by_minutes"] == 30
-        assert result["data"]["typical_daily_max_minutes"] == 60
+        assert card["mode"] == "rhythm_break_anomaly"
+        assert card["priority"] == 2.6
+        assert card["entity_name"] == "Garage light"
+        assert card["deviation_type"] == "expected_absent"
+        assert card["content"] == "Garage light hasn't come online yet"
+        assert card["data"]["offline_minutes"] == 180
+        assert card["data"]["because"] == ["usually online 97% of the time at 14:00, offline for 180 min"]
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_no_device_exceeds_its_baseline(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_device_on_at_an_unusual_hour(self):
+        card = self._check([self._inference(state="online", offline_minutes=None, p_online=0.03)])
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
+        assert card["deviation_type"] == "unusual_hour"
+        assert card["content"] == "Garage light is on at an unusual hour"
+        assert card["data"]["current_hour"] == 14
 
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
+    def test_a_session_that_outlasts_the_longest_ordinary_one(self):
+        card = self._check([self._inference(signal="device.session_minutes", minutes_on=90.0)])
 
-        assert result is None
+        assert card["deviation_type"] == "still_on_past_typical"
+        assert card["content"] == "Garage light has been on for 30 min longer than usual"
+        assert card["data"]["over_by_minutes"] == 30
+        assert card["data"]["typical_daily_max_minutes"] == 60
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_unusual_hour_card_when_no_still_on_deviation_but_hour_is_off(
-        self, mock_connect
-    ):
-        """SA-10: second query (unusual_hour) is only reached once the first (still_on_past_
-        typical) comes back empty."""
-        from services.service_sa.sa.engine import SAEngine
+    def test_one_card_per_cycle_the_most_surprising_device(self):
+        recent = [
+            self._inference(device="PS4", surprise=4.0),
+            self._inference(device="Lamp", surprise=9.0),
+            self._inference(device="Router", surprise=6.0),
+        ]
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, ("Garage light", 15, 0b111 << 12)]
+        assert self._check(recent)["entity_name"] == "Lamp"
 
-        daemon = SAEngine()
-        frame = _make_frame(now=datetime(2026, 10, 20, 3, 30, tzinfo=timezone.utc))
-        result = daemon.check_rhythm_break_anomaly(frame)
+    def test_low_confidence_devices_stay_quiet(self):
+        assert self._check([self._inference(confidence=0.11)]) is None
 
-        unusual_hour_params = mock_cursor.execute.call_args_list[1].args[1]
-        assert unusual_hour_params == (0b111 << 2,)  # hours 02, 03, 04
+    def test_other_learners_and_signals_are_ignored(self):
+        other = self._inference()
+        other.learner = "presence_profile"
+        assert self._check([other, self._inference(signal="presence.home")]) is None
 
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["deviation_type"] == "unusual_hour"
-        assert result["entity_name"] == "Garage light"
-        assert result["data"]["current_hour"] == 3
-        assert result["data"]["typical_active_hour"] == 15
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_expected_absent_card_when_neither_prior_deviation_fires(self, mock_connect):
-        """SA-10: third query (expected_absent) is only reached once both prior queries come
-        back empty."""
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, None, ("Coffee maker", 8, 7)]
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["deviation_type"] == "expected_absent"
-        assert result["entity_name"] == "Coffee maker"
-        assert result["data"]["typical_active_hour"] == 7
-        assert "hasn't come online" in result["content"]
-
-        # A mocked cursor never validates the SQL, so check the placeholder count ourselves
-        # (a 6-tuple against 7 %s made every cycle raise "not enough arguments for format string").
-        sql, params = mock_cursor.execute.call_args_list[2].args
-        assert sql.count("%s") == len(params)
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_all_three_deviation_queries_come_back_empty(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, None, None]
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_on_db_error(self, mock_connect):
+    def test_returns_none_when_the_database_is_unreachable(self):
         import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result is None
-        mock_db.close.assert_called_once()
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_rhythm_break_anomaly(_make_frame()) is None
 
 
 def _dense(start, end, step_minutes=5):

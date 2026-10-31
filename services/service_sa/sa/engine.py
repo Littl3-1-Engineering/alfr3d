@@ -26,7 +26,7 @@ import orjson
 import pymysql
 from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
 from sa import disk, layer2
-from sa.learners import household_day
+from sa.learners import device_rhythm, household_day
 from sa.learners import presence as presence_learner
 from sa.learners import scalar
 
@@ -1368,166 +1368,95 @@ class SAEngine:
         }
 
     def check_rhythm_break_anomaly(self, frame):
-        """Compare devices against their `entity_baselines` row and surface a card only on a
-        genuine deviation from routine. Three deviation types, checked in this order (the first
-        one that fires wins -- still one card per cycle, same "one card per check" shape as every
-        other DISPLAY_RULES method):
+        """A device behaving out of its own routine. Since the LF-4 cutover this shows the device
+        rhythm learner's inference (sa/learners/device_rhythm.py) instead of comparing against an
+        `entity_baselines` row: the shadow pass scores every device each cycle and stores any
+        deviation in sa_inferences, so the card lags it by at most one cycle. Three deviation
+        types, as before:
 
-        1. `still_on_past_typical` (original): a currently-online device has been on
-           RHYTHM_BREAK_GRACE_MINUTES+ past its typical_daily_max for this session.
-        2. `unusual_hour` (SA-10): a currently-online device's *current* hour (and the hours either
-           side of it) are all outside its active_hours_mask -- the hours it was actually online
-           on a meaningful share of days. (This used to measure distance from typical_active_hour,
-           the modal session *start* hour, which flagged any session running longer than the
-           tolerance -- i.e. every ordinary workday afternoon.)
-        3. `expected_absent` (SA-10): a currently-*offline* device is still absent within
-           EXPECTED_ABSENT_WINDOW_HOURS of its typical_active_hour -- "it should be on by now."
-           Known limitation: doesn't handle a typical_active_hour that wraps past midnight (e.g.
-           23 + a 3-hour window) -- narrow edge case, not worth the extra query complexity this
-           pass; documented here rather than silently wrong.
+        - `expected_absent`: offline at an hour it is almost always on (and long enough, per
+          device: see the learner's offline_flicker_minutes),
+        - `unusual_hour`: on at an hour it almost never is,
+        - `still_on_past_typical`: this session has outlasted nearly every past one.
 
-        All three require `eb.sample_count >= eb.min_sample_count` explicitly (SA-10's
-        min_sample_count column) rather than trusting every row in the table implicitly --
-        today every row already cleared its floor at write time, but this is the same "do I
-        trust this yet" check every consumer should make, not just the ones that happen to need
-        it right now.
-
-        Not a frame field (SA-4) -- this device/entity_baselines join isn't duplicated by any
-        other rule, so it stays its own query; only `frame.now` (SA-4's single
-        shared-per-cycle timestamp) replaces this rule's own datetime.now(timezone.utc) call.
+        One card per cycle, the most surprising deviation whose confidence clears
+        MIN_CARD_CONFIDENCE (the card's identity is the device, so SA-1's cooldown quiets a device
+        that is dismissed). Not a frame field: it reads the stored inferences directly.
         """
+        if frame.now is None:
+            return None
+        now_utc = frame.now.replace(tzinfo=None)
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-            cursor = db.cursor()
-            now = frame.now
-
-            cursor.execute(
-                """
-                SELECT d.name, TIMESTAMPDIFF(MINUTE, d.last_online, %s) AS minutes_on,
-                       eb.typical_daily_max
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'online'
-                  AND d.last_online IS NOT NULL
-                  AND eb.typical_daily_max IS NOT NULL
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND TIMESTAMPDIFF(MINUTE, d.last_online, %s) > eb.typical_daily_max + %s
-                ORDER BY (TIMESTAMPDIFF(MINUTE, d.last_online, %s) - eb.typical_daily_max) DESC
-                LIMIT 1
-                """,
-                (now, now, RHYTHM_BREAK_GRACE_MINUTES, now),
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
             )
-            row = cursor.fetchone()
-            if row:
-                name, minutes_on, typical_max = row
-                over_by = int(minutes_on - typical_max)
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} has been on for {over_by} min longer than usual",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "still_on_past_typical",
-                    "data": {
-                        "over_by_minutes": over_by,
-                        "typical_daily_max_minutes": int(typical_max),
-                        "because": [
-                            f"on {over_by} min past its typical max ({int(typical_max)} min)"
-                        ],
-                    },
-                }
-
-            current_hour = now.hour
-            nearby_hours_mask = sum(1 << ((current_hour + offset) % 24) for offset in (-1, 0, 1))
-            cursor.execute(
-                """
-                SELECT d.name, eb.typical_active_hour, eb.active_hours_mask
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'online'
-                  AND eb.active_hours_mask IS NOT NULL
-                  AND eb.active_hours_mask <> 0
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND (eb.active_hours_mask & %s) = 0
-                ORDER BY d.id
-                LIMIT 1
-                """,
-                (nearby_hours_mask,),
-            )
-            row = cursor.fetchone()
-            if row:
-                name, typical_hour, active_mask = row
-                active_hours = [h for h in range(24) if active_mask >> h & 1]
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} is on at an unusual hour",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "unusual_hour",
-                    "data": {
-                        "current_hour": current_hour,
-                        "typical_active_hour": int(typical_hour),
-                        "because": [
-                            f"on at {current_hour:02d}:00, but usually only on between "
-                            f"{active_hours[0]:02d}:00 and {active_hours[-1]:02d}:59"
-                        ],
-                    },
-                }
-
-            cursor.execute(
-                """
-                SELECT d.name, HOUR(%s) AS current_hour, eb.typical_active_hour
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'offline'
-                  AND d.last_online >= %s - INTERVAL %s DAY
-                  AND eb.typical_active_hour IS NOT NULL
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND HOUR(%s) >= eb.typical_active_hour
-                  AND HOUR(%s) < eb.typical_active_hour + %s
-                ORDER BY (HOUR(%s) - eb.typical_active_hour) DESC
-                LIMIT 1
-                """,
-                (
-                    now,
-                    now,
-                    EXPECTED_ABSENT_MAX_OFFLINE_DAYS,
-                    now,
-                    now,
-                    EXPECTED_ABSENT_WINDOW_HOURS,
-                    now,
-                ),
-            )
-            row = cursor.fetchone()
-            if row:
-                name, current_hour, typical_hour = row
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} hasn't come online yet",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "expected_absent",
-                    "data": {
-                        "typical_active_hour": int(typical_hour),
-                        "because": [
-                            f"usually active by {int(typical_hour):02d}:00, "
-                            f"still offline at {int(current_hour):02d}:00"
-                        ],
-                    },
-                }
-
-            return None
         except pymysql.Error as e:
             logger.error("Rhythm break anomaly check error: " + str(e))
             return None
         finally:
             if db:
                 db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == device_rhythm.NAME
+            and i.signal in (device_rhythm.SIGNAL_AVAILABILITY, device_rhythm.SIGNAL_DURATION)
+            and (i.evidence or {}).get("device")
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.surprise)
+        name = inference.evidence["device"]
+        card = {
+            "mode": "rhythm_break_anomaly",
+            "priority": 2.6,
+            "entity_name": name,
+            "data": {"surprise_bits": inference.surprise, "confidence": inference.confidence},
+        }
+        if inference.signal == device_rhythm.SIGNAL_DURATION:
+            over_by = round(inference.observed["minutes_on"] - inference.expected["p95_minutes"])
+            typical = round(inference.expected["p95_minutes"])
+            card.update(
+                content=f"{name} has been on for {over_by} min longer than usual",
+                deviation_type="still_on_past_typical",
+            )
+            card["data"].update(
+                over_by_minutes=over_by,
+                typical_daily_max_minutes=typical,
+                because=[f"on {over_by} min past the longest ordinary session ({typical} min)"],
+            )
+        elif inference.observed["state"] == "offline":
+            usual = round(inference.expected["p_online"] * 100)
+            minutes = round(inference.observed["offline_minutes"])
+            hour = inference.context["hour_local"]
+            card.update(
+                content=f"{name} hasn't come online yet", deviation_type="expected_absent"
+            )
+            card["data"].update(
+                offline_minutes=minutes,
+                p_online=inference.expected["p_online"],
+                because=[
+                    f"usually online {usual}% of the time at {hour:02d}:00, "
+                    f"offline for {minutes} min"
+                ],
+            )
+        else:
+            usual = round(inference.expected["p_online"] * 100)
+            hour = inference.context["hour_local"]
+            card.update(
+                content=f"{name} is on at an unusual hour", deviation_type="unusual_hour"
+            )
+            card["data"].update(
+                current_hour=hour,
+                p_online=inference.expected["p_online"],
+                because=[f"on at {hour:02d}:00, when it is usually on only {usual}% of the time"],
+            )
+        return card
 
     def check_departure_anomaly(self, frame):
         """SA-3: "usually gone by now, still home" -- the human analogue of

@@ -33,7 +33,11 @@ def _sessions(days, minutes_fn):
 class TestDeviceRhythm:
     def _profile(self):
         rows = _rows(40, lambda d, h: 8 <= h < 22)
-        sessions = _sessions(40, lambda d: 840 + (d.day % 5) * 10)
+        # on 08:00-22:00 local (UTC-4), so each session ends 02:00 UTC the next day
+        sessions = [
+            (d, 840.0 + (d.day % 5) * 10, datetime.combine(d, datetime.min.time()) + timedelta(hours=26))
+            for d in (REF - timedelta(days=i) for i in range(39, -1, -1))
+        ]
         return device_rhythm.DeviceRhythmLearner().fit_device(7, "Lamp", rows, sessions, REF, None)
 
     def test_a_device_with_no_recent_sessions_gets_no_profile(self):
@@ -63,6 +67,34 @@ class TestDeviceRhythm:
             profile, {"online": False, "offline_minutes": 90, "local_dt": local}, now
         )
         assert inf.observed["state"] == "offline"
+
+    def test_the_minimum_offline_time_is_learned_from_the_devices_own_flickers(self):
+        """A PC that naps for ~3 h on most afternoons is only worth a card when it is off longer."""
+        from datetime import timezone
+
+        rows = _rows(60, lambda d, h: 8 <= h < 22)
+        sessions = []
+        for i in range(40):
+            day = REF - timedelta(days=i)
+            # on 09:00-12:00, off 12:00-15:00 (the flicker), on 15:00-21:00, local = UTC-4
+            for start_h, end_h in ((13, 16), (19, 25)):
+                begin = datetime(day.year, day.month, day.day) + timedelta(hours=start_h)
+                sessions.append((day, (end_h - start_h) * 60.0, begin + timedelta(hours=end_h - start_h)))
+        learner = device_rhythm.DeviceRhythmLearner()
+        profile = learner.fit_device(7, "PC", rows, sessions, REF, None)
+
+        flicker = profile.params["offline_flicker_minutes"]
+        assert flicker is not None and 150 <= flicker <= 210
+        local, now = datetime(2026, 10, 10, 14, 0), datetime(2026, 10, 10, 18, 0)
+        short = {"online": False, "offline_minutes": 90, "local_dt": local}
+        long_ = {"online": False, "offline_minutes": flicker + 60, "local_dt": local}
+        assert learner.score(profile, short, now) is None
+        assert learner.score(profile, long_, now) is not None
+
+    def test_too_few_flickers_leave_the_fixed_minimum_in_place(self):
+        profile = self._profile()  # one session a day: nothing starts an unexpected gap
+
+        assert profile.params["offline_flicker_minutes"] is None
 
     def test_a_device_offline_for_days_or_retired_is_not_late(self):
         profile, learner = self._profile(), device_rhythm.DeviceRhythmLearner()
