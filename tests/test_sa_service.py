@@ -2210,6 +2210,7 @@ class TestCheckHouseholdUnusualDay:
                 confidence=0.9,
                 n_eff=30.0,
                 evidence={"family": "household_day:" + feature, "feature": feature},
+                context={"bar_bits": 2.0, "top_k": 5},  # the learned bar travels with the rows
             )
 
         rows = [row("device_share", 0.01, 0.3, 0.75), row("first_minute", 0.01, 700, 230)]

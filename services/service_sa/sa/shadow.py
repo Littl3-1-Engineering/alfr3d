@@ -700,6 +700,18 @@ class ShadowRunner:
                 for user_id, last_online in cursor.fetchall():
                     seen.setdefault(user_id, []).append(last_online)
                 home = household_day.home_minutes(seen, midnight, cutoff)
+            # The learned event-stream features: this day's count per stream up to the cutoff, from
+            # household_events (the lake's events_clean also applies sa_data_exclusions).
+            cursor.execute(
+                "SELECT event_type, COALESCE(subject_type, '-'), COALESCE(verb, '-'), COUNT(*) "
+                "FROM household_events WHERE occurred_at >= %s AND occurred_at < %s "
+                "GROUP BY 1, 2, 3",
+                (midnight, cutoff),
+            )
+            events = {
+                f"{household_day.EVENT_PREFIX}{a}/{b}/{c}": float(n)
+                for a, b, c, n in cursor.fetchall()
+            }
         finally:
             db.close()
         first_minute = (
@@ -715,6 +727,12 @@ class ShadowRunner:
                 "first_minute": first_minute,
                 "home_minutes": home,
                 "local_dt": frame.local_dt,
+                # a learned stream with no event today is a zero, not an unknown
+                **{
+                    name: events.get(name, 0.0)
+                    for name in profiles[0].params["features"]
+                    if name.startswith(household_day.EVENT_PREFIX)
+                },
             },
             frame.now.replace(tzinfo=None),
         )
