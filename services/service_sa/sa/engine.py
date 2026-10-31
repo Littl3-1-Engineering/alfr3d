@@ -35,7 +35,6 @@ from common import calendar_utils, gmail_utils, spotify_utils  # noqa: E402
 from common import get_producer  # noqa: E402
 from common import db_utils  # noqa: E402
 from common import day_context  # noqa: E402
-from common import timeofday  # noqa: E402
 
 logger = logging.getLogger("SALog")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -156,12 +155,6 @@ DEVICE_CONTEXT_CONFIG_KEY = "launcher_device_context"
 # the user is silenced long after they stopped being.
 DEVICE_CONTEXT_STALENESS_MINUTES = 15
 
-# check_attention_focus() fires when the reported window-switch count is at
-# least this high -- a conservative starting point (roughly one switch per
-# minute sustained over a ~15-minute report window) with no real telemetry
-# yet to tune it against.
-ATTENTION_FOCUS_MIN_SWITCHES = 15
-
 # ...and only when media-category dwell is under this fraction of total
 # dwell time -- high switching concentrated in media (e.g. flipping between
 # a few apps while half-watching something) isn't "focus", it's the
@@ -182,7 +175,7 @@ WIND_DOWN_MIN_MEDIA_DWELL_FRACTION = 0.5
 # once at least this many attention_telemetry_history rows exist -- "is this unusual for this
 # household" rather than only "is this a big number in general". ~2 days at the launcher's
 # 15-minute report cadence; a conservative starting point with no real telemetry yet to tune it
-# against, same caveat as ENTITY_BASELINE_MIN_SAMPLES. Below this floor, both checks fall back
+# against, same caveat as any small baseline. Below this floor, both checks fall back
 # to the fixed thresholds above unchanged.
 ATTENTION_TREND_MIN_SAMPLES = 200
 
@@ -190,10 +183,6 @@ ATTENTION_TREND_MIN_SAMPLES = 200
 # switch_count/unlock_count.
 ATTENTION_TREND_LOOKBACK_DAYS = 14
 
-# Grace added on top of the household's own median switch_count/unlock_count before either
-# check fires on the trend path -- same "small grace window so a marginally-above-typical value
-# doesn't trigger every cycle" reasoning as RHYTHM_BREAK_GRACE_MINUTES.
-ATTENTION_FOCUS_TREND_GRACE_SWITCHES = 5
 WIND_DOWN_TREND_GRACE_UNLOCKS = 2
 
 
@@ -251,15 +240,6 @@ CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
 CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES = 20
 CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE = {}
 
-# How far back compute_entity_baselines() looks when reconstructing on/off
-# sessions from device_history to build each device's rhythm baseline.
-ENTITY_BASELINE_LOOKBACK_DAYS = 30
-
-# Minimum complete on/off sessions before a device gets a baseline row at all --
-# below this, a "typical" pattern isn't meaningfully established yet, and
-# publishing one would produce noisy false-positive anomalies.
-ENTITY_BASELINE_MIN_SAMPLES = 5
-
 # device_history is written about once a minute while the scanner runs. A silence longer than this
 # inside an "online" session means the offline transition was never observed (scanner/daemon
 # outage), so the session is closed at the last row seen online instead of being stretched across
@@ -272,50 +252,15 @@ ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES = 180
 # entity_baselines.active_hours_mask and read by check_rhythm_break_anomaly()'s unusual-hour branch.
 ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
 
-# SA-9 Phase 2: how far back compute_entity_baselines() looks in smarthome_sensor_history when
-# building each ESPHome sensor's per-time-of-day-bucket climate baseline.
-CLIMATE_BASELINE_LOOKBACK_DAYS = 30
-
-# Minimum readings in a given time-of-day bucket before check_climate_deviation() trusts that
-# bucket's baseline -- same "degrade to silence below a reliability floor" precedent as
-# ENTITY_BASELINE_MIN_SAMPLES.
-CLIMATE_BASELINE_MIN_SAMPLES = 10
-
-# 2026-09-26 fix: typical_daily_min/typical_daily_max for a 'room' (climate) baseline used to be
-# the *raw* min/max of the lookback window -- checked against real production data and found to
-# be self-defeating: a "typical" band built from the full observed range already covers ~all
-# future readings, so check_climate_deviation() could never fire (confirmed: zero firings in 10
-# days against 314k+ real readings). Now typical_daily_min/max are computed as
-# median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER standard deviations -- a band that reflects
-# genuinely "typical" values instead of self-widening to the noise floor. Verified against the
-# real household's actual sensor history before picking 2.0 (see todo_esphome_situational_
-# awareness.md's 2026-09-26 entry): tight enough that real recorded extremes fall outside it,
-# loose enough not to flap on ordinary variation.
-CLIMATE_BASELINE_STDEV_MULTIPLIER = 2.0
-
-# check_climate_deviation() fires only when the current reading is this far outside the
-# baseline's [typical_daily_min, typical_daily_max] band (now a median +/- stdev band, not a raw
-# min/max range -- see CLIMATE_BASELINE_STDEV_MULTIPLIER) for the current time-of-day bucket --
-# a margin, not a hard edge, so a reading right at the historical boundary doesn't flap in and
-# out of firing. Sized much smaller than before the 2026-09-26 fix: the band itself is now tight,
-# so the margin only needs to add hysteresis, not compensate for an overly wide band.
-CLIMATE_DEVIATION_MARGIN_C = 0.5
-CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT = 3
-
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
 # storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
 # in migration 039 (2026-09-13) -- see that migration's own comment for why. No Python constant
 # for their retention window lives here any more; it's in the EVENT bodies themselves, same as
 # device_location_history's own event already was.
 
-# check_rhythm_break_anomaly() only fires this many minutes past a device's
-# typical_daily_max on-duration -- a small grace window so a session that's
-# only marginally longer than usual doesn't trigger every cycle.
-RHYTHM_BREAK_GRACE_MINUTES = 15
-
 # check_departure_anomaly() (SA-3): how far back device_history is scanned when computing a
-# resident's per-weekday/weekend departure-hour baseline. Longer than ENTITY_BASELINE_LOOKBACK_DAYS
-# (30d) deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
+# resident's per-weekday/weekend departure-hour baseline. Longer than a 30-day window
+# deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
 # device baseline gets from the same window, and the confirmed-home-overnight anchor
 # (_departure_hours_by_bucket()) rejects many days outright. Verified against this household's
 # real history (todo/sa/todo_departure_anomaly.md): 60 days left every resident under the sample
@@ -332,7 +277,7 @@ DEPARTURE_GAP_MINUTES = 31
 
 # A resident's per-day-bucket (weekday/weekend) departure baseline needs at least this many
 # observed first-departure days before check_departure_anomaly() trusts it -- same "degrade to
-# silence below a reliability floor" precedent as ENTITY_BASELINE_MIN_SAMPLES/
+# silence below a reliability floor" precedent as the other small-baseline floors /
 # ATTENTION_TREND_MIN_SAMPLES elsewhere in this file.
 DEPARTURE_BASELINE_MIN_SAMPLES = 8
 
@@ -345,7 +290,7 @@ DEPARTURE_BASELINE_MAX_SPREAD_HOURS = 4
 
 # How many hours past a resident's typical departure hour check_departure_anomaly() waits before
 # firing -- a grace window so running a bit late on an otherwise-normal day doesn't trigger a
-# card, mirroring RHYTHM_BREAK_GRACE_MINUTES's reasoning at the coarser (hour, not minute)
+# card, mirroring the old rhythm-break grace window's reasoning at the coarser (hour, not minute)
 # granularity appropriate for a once-a-day event.
 DEPARTURE_ANOMALY_GRACE_HOURS = 1.5
 
@@ -364,35 +309,6 @@ GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 # waiting -- there's no reason to withhold it. How far in advance to actually *show* the card is
 # alfr3d_deck's call (EventLeaveByLifecycle.LEAD_TIME_MINUTES), not this service's.
 TRAVEL_STALE_AFTER_MINUTES = 30
-
-# SA-10: household-level baselines (entity_type='household'). Household is a singleton -- there's
-# only one row per day_bucket regardless of household size -- so entity_id is a fixed sentinel,
-# not a real foreign key into any table.
-HOUSEHOLD_BASELINE_ENTITY_ID = 0
-
-# How far back the household-level aggregate query scans device_history. Reuses
-# DEPARTURE_BASELINE_LOOKBACK_DAYS's own reasoning (weekday/weekend bucketing roughly halves the
-# sample size a straight daily count would get, and 120 days leaves a cushion under
-# device_history's 180-day retention) rather than re-deriving a separate number for a
-# conceptually-similar "how much history does a day-bucketed household baseline need" question.
-HOUSEHOLD_BASELINE_LOOKBACK_DAYS = DEPARTURE_BASELINE_LOOKBACK_DAYS
-
-# A household-level per-day-bucket baseline needs at least this many observed days before
-# the household baseline's consumers trust it -- same "degrade to silence below a reliability floor"
-# precedent as every other baseline-gated check in this file. Set a bit higher than
-# DEPARTURE_BASELINE_MIN_SAMPLES (8): a household-wide "is today unusual" call is a broader,
-# higher-consequence claim than one resident's departure time, and deserves more evidence first.
-HOUSEHOLD_BASELINE_MIN_SAMPLES = 14
-
-# check_rhythm_break_anomaly()'s "expected absent" branch: an offline device with a reliable
-# baseline is flagged only within this many hours *after* its typical_active_hour -- catches "it
-# should be on by now" without nagging forever about a device that's simply been off for days.
-EXPECTED_ABSENT_WINDOW_HOURS = 3
-
-# ...and only if it was online this recently. A longer-offline device is retired, moved, or a stale
-# duplicate record (e.g. the same machine's second network adapter, which has its own device row
-# keyed by MAC) -- not "late". Four days spans a long weekend for a work machine.
-EXPECTED_ABSENT_MAX_OFFLINE_DAYS = 4
 
 
 class SAEngine:
@@ -589,15 +505,6 @@ class SAEngine:
             frame.esphome_climate = context_frame.fetch_esphome_climate_snapshot()
         except Exception as e:
             logger.error(f"Context frame: esphome_climate build failed: {e}")
-
-        try:
-            if frame.local_dt:
-                bucket = timeofday.coarse_bucket(frame.local_dt.hour)
-                frame.esphome_climate_baselines = context_frame.fetch_esphome_climate_baselines(
-                    bucket
-                )
-        except Exception as e:
-            logger.error(f"Context frame: esphome_climate_baselines build failed: {e}")
 
         try:
             frame.environment = context_frame.fetch_environment_snapshot(ENV_NAME)
@@ -2620,32 +2527,6 @@ def _departure_hours_by_bucket(timestamps):
     return buckets
 
 
-def _device_sessions(rows):
-    """Reconstruct complete online sessions from a device's ordered (timestamp, state) history
-    rows, as a list of (start, end) datetimes. A session ends at the next 'offline' row, or --
-    when the history goes silent for more than ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES while the
-    device is 'online' -- at the last row seen online. Sessions still open at the end of the rows
-    and zero-length sessions are dropped."""
-    max_gap = timedelta(minutes=ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES)
-    sessions = []
-    start = last_online = prev_ts = None
-    for ts, state in rows:
-        if start is not None and prev_ts is not None and ts - prev_ts > max_gap:
-            if last_online > start:
-                sessions.append((start, last_online))
-            start = None
-        if state == "online":
-            if start is None:
-                start = ts
-            last_online = ts
-        elif state == "offline" and start is not None:
-            if ts > start:
-                sessions.append((start, ts))
-            start = None
-        prev_ts = ts
-    return sessions
-
-
 def _active_hours_mask(sessions):
     """24-bit mask (bit h = UTC hour h) of the hours a device is usually online: hours covered by
     a session on at least ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE of the days it had any session.
@@ -2666,98 +2547,22 @@ def _active_hours_mask(sessions):
 
 
 def compute_entity_baselines():
-    """Recompute per-entity rhythm/routine baselines into `entity_baselines`.
+    """Recompute the per-resident departure-hour baselines into `entity_baselines`
+    (`entity_type='user'`, SA-3, see todo/sa/todo_departure_anomaly.md), used by
+    check_departure_anomaly(). Guests excluded.
 
-    Three independent baseline types share this table and this 6-hourly compute cadence, all
-    derived from `device_history`, none needing a new table (SA-10 generalised the mechanism
-    rather than letting each new subject bolt on its own):
-    - `device` rows (original, see todo/sa/todo_rhythm_break_anomaly.md): on/off session
-      baselines used by MyDaemon.check_rhythm_break_anomaly(). `smarthome_devices` has no
-      equivalent state-history table yet -- `device_command_history` logs issued commands, not
-      observed state over time -- so smarthome-device baselines aren't computed;
-      `entity_baselines.entity_type` keeps room for that once such a history exists (as does
-      `'room'`, gated on SA-9 sensor coverage -- stopped at Phase 0 this session, no real
-      ESPHome node to validate against, see todo/sa/todo_esphome_situational_awareness.md).
-    - `user` rows (SA-3, see todo/sa/todo_departure_anomaly.md): per-resident weekday/weekend
-      departure-hour baselines used by MyDaemon.check_departure_anomaly(). Guests excluded.
-    - `household` rows (SA-10, see todo/sa/todo_generalize_entity_baselines.md): weekday/weekend
-      typical first/last-activity hour and device-count range for the household as a whole,
-      used by MyDaemon.check_household_unusual_day(). A singleton -- one row per day_bucket,
-      `entity_id` is a fixed sentinel (HOUSEHOLD_BASELINE_ENTITY_ID), not a real foreign key.
-      Computed as a single SQL aggregate, not a per-entity Python loop -- see the "household
-      baselines" block below for why that distinction mattered in practice, not just in theory.
+    The other row types this job used to write are retired: `device` (check_rhythm_break_anomaly
+    reads the device rhythm learner), `household` (the household-day learner) and `room` climate
+    bands (the scalar learner). This one goes when `departure_anomaly` is cut over to the stay
+    learner, after which the job and the table are dropped.
     """
     logger.info("Computing entity rhythm baselines")
     db = None
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        cursor.execute(
-            "SELECT DISTINCT device_id FROM device_history WHERE timestamp >= %s",
-            (datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),),
-        )
-        device_ids = [row[0] for row in cursor.fetchall()]
-
-        for device_id in device_ids:
-            cursor.execute(
-                """
-                SELECT dh.timestamp, s.state
-                FROM device_history dh
-                JOIN states s ON dh.state = s.id
-                WHERE dh.device_id = %s
-                  AND dh.timestamp >= %s
-                  AND s.state IN ('online', 'offline')
-                ORDER BY dh.timestamp ASC
-                """,
-                (
-                    device_id,
-                    datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),
-                ),
-            )
-            rows = cursor.fetchall()
-
-            sessions = _device_sessions(rows)
-            durations_minutes = [(end - start).total_seconds() / 60 for start, end in sessions]
-            start_hours = [start.hour for start, _ in sessions]
-
-            if len(durations_minutes) < ENTITY_BASELINE_MIN_SAMPLES:
-                continue
-
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, median_on_minutes, typical_active_hour,
-                     active_hours_mask, typical_daily_min, typical_daily_max, sample_count,
-                     min_sample_count, computed_at)
-                VALUES ('device', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    median_on_minutes = VALUES(median_on_minutes),
-                    typical_active_hour = VALUES(typical_active_hour),
-                    active_hours_mask = VALUES(active_hours_mask),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    device_id,
-                    statistics.median(durations_minutes),
-                    statistics.mode(start_hours),
-                    _active_hours_mask(sessions),
-                    min(durations_minutes),
-                    max(durations_minutes),
-                    len(durations_minutes),
-                    ENTITY_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-
-        # SA-3: per-resident departure-hour baselines, entity_type='user'. Same table, same
-        # compute cadence -- see _departure_hours_by_bucket()'s own doc comment for why this
-        # doesn't reuse the online/offline state-column reconstruction above. Guests excluded via
-        # the same ut.type convention services.common.db_utils's "worthy listeners" check already
-        # uses (owner/technoking/resident only).
+        # Guests excluded via the same ut.type convention services.common.db_utils's "worthy
+        # listeners" check already uses (owner/technoking/resident only).
         tz_offset = timedelta(seconds=db_utils.get_env_timezone(ENV_NAME))
         departure_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=DEPARTURE_BASELINE_LOOKBACK_DAYS
@@ -2819,149 +2624,6 @@ def compute_entity_baselines():
                     ),
                 )
             logger.info(f"Departure baseline for {username}: {buckets}")
-
-        # SA-10: household-level baselines, entity_type='household'. Unlike the device/user
-        # loops above, this is a single SQL aggregate (GROUP BY local calendar day), not a
-        # per-entity Python session-reconstruction loop -- deliberately, since Phase 0 measured
-        # the existing device loop alone taking ~175s on the production NUC (see
-        # todo/sa/todo_generalize_entity_baselines.md); adding another loop of that shape for a new
-        # subject type would multiply that cost, an aggregate query doesn't.
-        household_lookback_start = datetime.now(timezone.utc) - timedelta(
-            days=HOUSEHOLD_BASELINE_LOOKBACK_DAYS
-        )
-        # A derived table computing local_date once, grouped by that bare column, rather than
-        # GROUP BY on an inline expression with the raw `timestamp` column also referenced in
-        # the SELECT list -- MySQL's ONLY_FULL_GROUP_BY mode (the production default) rejects
-        # the latter even though DAYOFWEEK(local_date) is functionally dependent on it; caught
-        # live against the real database, not something the mocked unit tests could catch.
-        cursor.execute(
-            """
-            SELECT
-                DAYOFWEEK(local_date) AS local_dow,
-                HOUR(first_ts) AS first_hour,
-                HOUR(last_ts) AS last_hour,
-                device_count
-            FROM (
-                SELECT
-                    DATE(timestamp + INTERVAL %s SECOND) AS local_date,
-                    MIN(timestamp + INTERVAL %s SECOND) AS first_ts,
-                    MAX(timestamp + INTERVAL %s SECOND) AS last_ts,
-                    COUNT(DISTINCT device_id) AS device_count
-                FROM device_history
-                WHERE timestamp >= %s
-                GROUP BY local_date
-            ) AS daily
-            """,
-            (
-                tz_offset.total_seconds(),
-                tz_offset.total_seconds(),
-                tz_offset.total_seconds(),
-                household_lookback_start,
-            ),
-        )
-        household_buckets = {"weekday": [], "weekend": []}
-        for local_dow, first_hour, last_hour, device_count in cursor.fetchall():
-            # MySQL DAYOFWEEK: 1=Sunday ... 7=Saturday.
-            bucket = "weekend" if local_dow in (1, 7) else "weekday"
-            household_buckets[bucket].append((first_hour, last_hour, device_count))
-
-        for day_bucket, samples in household_buckets.items():
-            if len(samples) < HOUSEHOLD_BASELINE_MIN_SAMPLES:
-                continue
-            first_hours = [s[0] for s in samples]
-            last_hours = [s[1] for s in samples]
-            device_counts = [s[2] for s in samples]
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, day_bucket, typical_active_hour,
-                     typical_last_activity_hour, typical_daily_min, typical_daily_max,
-                     sample_count, min_sample_count, computed_at)
-                VALUES ('household', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    typical_active_hour = VALUES(typical_active_hour),
-                    typical_last_activity_hour = VALUES(typical_last_activity_hour),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    HOUSEHOLD_BASELINE_ENTITY_ID,
-                    day_bucket,
-                    statistics.mode(first_hours),
-                    statistics.mode(last_hours),
-                    min(device_counts),
-                    max(device_counts),
-                    len(samples),
-                    HOUSEHOLD_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-        sample_counts = {bucket: len(samples) for bucket, samples in household_buckets.items()}
-        logger.info(f"Household baseline sample counts: {sample_counts}")
-
-        # SA-9 Phase 2: per-ESPHome-sensor-entity, per-time-of-day-bucket climate baselines,
-        # entity_type='room' (reserved since SA-10/migration 033 for exactly this -- see
-        # migration 041's own comment on why entity_id keys on the sensor's own
-        # smarthome_devices.id rather than an actual room, which isn't populated anywhere yet).
-        # Bucketed by time-of-day (common.timeofday.coarse_bucket()), not day_bucket
-        # (weekday/weekend) -- indoor temperature varies by hour far more than by day of week.
-        climate_lookback_start = datetime.now(timezone.utc) - timedelta(
-            days=CLIMATE_BASELINE_LOOKBACK_DAYS
-        )
-        cursor.execute(
-            "SELECT smarthome_device_id, value, recorded_at FROM smarthome_sensor_history "
-            "WHERE recorded_at >= %s",
-            (climate_lookback_start,),
-        )
-        climate_readings = defaultdict(list)
-        for device_id, value, recorded_at in cursor.fetchall():
-            local_hour = (recorded_at + tz_offset).hour
-            climate_readings[(device_id, timeofday.coarse_bucket(local_hour))].append(value)
-
-        for (device_id, bucket), values in climate_readings.items():
-            if len(values) < CLIMATE_BASELINE_MIN_SAMPLES:
-                continue
-            # 2026-09-26 fix: typical_daily_min/max used to be raw min(values)/max(values) --
-            # a "typical" band built from the literal observed range self-widens to cover
-            # nearly every future reading too, so check_climate_deviation() could never fire
-            # (confirmed against real production data: zero firings in 10 days). A
-            # median +/- N-stdev band reflects what's actually typical instead.
-            median_value = statistics.median(values)
-            # len(values) >= CLIMATE_BASELINE_MIN_SAMPLES (10) >= 2, so stdev() is always safe.
-            stdev_value = statistics.stdev(values)
-            typical_min = median_value - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
-            typical_max = median_value + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, day_bucket, time_of_day_bucket,
-                     typical_median_value, typical_daily_min, typical_daily_max,
-                     sample_count, min_sample_count, computed_at)
-                VALUES ('room', %s, 'all', %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    typical_median_value = VALUES(typical_median_value),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    device_id,
-                    bucket,
-                    median_value,
-                    typical_min,
-                    typical_max,
-                    len(values),
-                    CLIMATE_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-        climate_sample_counts = {k: len(v) for k, v in climate_readings.items()}
-        logger.info(f"Climate baseline sample counts: {climate_sample_counts}")
 
         db.commit()
     except pymysql.Error as e:
