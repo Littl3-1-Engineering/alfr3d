@@ -35,3 +35,21 @@
 - [ ] **Card feedback as a learning signal** (SA-1 Phase 3 "earned priority",
       [todo_card_feedback_loop.md](todo_card_feedback_loop.md)): fix the double-counted `shown`
       (web and Deck both report it) before using it.
+      **Checked 2026-10-31 against the production `card_interactions` table: there is nothing to
+      learn from yet, so no learner was built.** 110,319 rows in 8.5 weeks, but 110,300 of them
+      are `shown` reported every cycle by two surfaces (rows with and without a user id), not
+      impressions. Collapsing `shown` rows of one (rule, subject) with gaps under 10 minutes gives
+      about 900 display episodes (median 14-60 min; `rhythm_break_anomaly` 223, `household_composition`
+      112, `time` 77). The explicit signal is **13 events**: 7 taps (all `household_composition`,
+      5 of them within 15 hours on 2026-10-12, which looks like testing the new Deck reporting) and
+      6 dismissals (`rhythm_break_anomaly` for 3 devices, `time`, `music`, `household_composition`
+      once each). That is too little for a per-rule engagement rate, let alone an "earned
+      priority"; SA-1's per-card cooldown already acts on the dismissals. Cards here are ambient
+      and mostly passive, so absence of a tap is not evidence of disinterest.
+      **Before a learner is worth building the capture has to change** (cross-repo, `alfr3d` web +
+      `alfr3d_deck`): one impression event per card display with an id (not a report per cycle),
+      the surface it was on, and visible time; keep taps and dismissals as they are; add what a tap
+      leads to (a tap that opens nothing is not interest). With that the first learner is a
+      Beta-Binomial per (rule, hour/daytype) of "interacted per impression" plus a visible-time
+      scalar, scored the same way as the other layer-1 learners. Re-check once a few hundred
+      impressions with interactions exist.
