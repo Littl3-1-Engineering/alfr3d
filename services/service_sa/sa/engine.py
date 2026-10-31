@@ -17,7 +17,6 @@ import time
 import os
 import sys
 import bisect
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 import orjson
@@ -627,7 +626,8 @@ class SAEngine:
             cursor = db.cursor()
             cursor.execute(
                 "SELECT action, occurred_at FROM card_interactions "
-                "WHERE rule_id = %s AND subject_key = %s ORDER BY occurred_at DESC LIMIT %s",
+                "WHERE rule_id = %s AND subject_key = %s AND action <> 'impression' "
+                "ORDER BY occurred_at DESC LIMIT %s",
                 (rule_id, subject_key, CARD_SUPPRESSION_HISTORY_LIMIT),
             )
             rows = cursor.fetchall()
@@ -971,13 +971,15 @@ class SAEngine:
         hasn't started per service_user.app.update_user_state()) is treated as a fresh
         arrival (0 days) rather than fabricating an overstay from missing data.
         """
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT username, continuous_stay_since
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
-            """)
+            """
+        )
         results = []
         for username, continuous_stay_since in cursor.fetchall():
             if continuous_stay_since:
@@ -1007,7 +1009,8 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -1015,7 +1018,8 @@ class SAEngine:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """)
+                """
+            )
             row = cursor.fetchone()
             # SUM() returns decimal.Decimal via pymysql (unlike COUNT()'s plain int) -- cast
             # so guest_count is safe to embed directly in the "data" dict's JSON payload (SA-5),
@@ -1341,9 +1345,7 @@ class SAEngine:
             usual = round(inference.expected["p_online"] * 100)
             minutes = round(inference.observed["offline_minutes"])
             hour = inference.context["hour_local"]
-            card.update(
-                content=f"{name} hasn't come online yet", deviation_type="expected_absent"
-            )
+            card.update(content=f"{name} hasn't come online yet", deviation_type="expected_absent")
             card["data"].update(
                 offline_minutes=minutes,
                 p_online=inference.expected["p_online"],
@@ -1355,9 +1357,7 @@ class SAEngine:
         else:
             usual = round(inference.expected["p_online"] * 100)
             hour = inference.context["hour_local"]
-            card.update(
-                content=f"{name} is on at an unusual hour", deviation_type="unusual_hour"
-            )
+            card.update(content=f"{name} is on at an unusual hour", deviation_type="unusual_hour")
             card["data"].update(
                 current_hour=hour,
                 p_online=inference.expected["p_online"],
@@ -2390,9 +2390,7 @@ class SAEngine:
             kind = (
                 "temperature"
                 if series.endswith(":Temperature")
-                else "humidity"
-                if series.endswith(":Humidity")
-                else None
+                else "humidity" if series.endswith(":Humidity") else None
             )
             if kind and inference.confidence >= presence_learner.MIN_CARD_CONFIDENCE:
                 found.append((kind, inference))
@@ -2567,13 +2565,15 @@ def compute_entity_baselines():
         departure_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=DEPARTURE_BASELINE_LOOKBACK_DAYS
         )
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT DISTINCT u.id, u.username
             FROM user u
             JOIN user_types ut ON u.type = ut.id
             JOIN device d ON d.user_id = u.id
             WHERE ut.type IN ('owner', 'technoking', 'resident')
-            """)
+            """
+        )
         eligible_users = cursor.fetchall()
 
         for user_id, username in eligible_users:
