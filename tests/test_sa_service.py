@@ -1500,157 +1500,9 @@ class TestDepartureHoursByBucket:
         assert all(hour == 7 for hour in buckets["weekday"] + buckets["weekend"])
 
 
-class TestDeviceSessions:
-    """Tests for _device_sessions()/_active_hours_mask(), compute_entity_baselines()'s helpers."""
-
-    def test_a_lost_offline_transition_does_not_become_a_multi_day_session(self):
-        """Regression: an offline row and an online row sharing one timestamp, then nothing for
-        days (scanner idle over a weekend), used to read as one 3,800-minute session."""
-        from services.service_sa.sa.engine import _device_sessions
-
-        friday = datetime(2026, 10, 2, 20, 53)
-        monday = datetime(2026, 10, 5, 12, 32)
-        morning = friday - timedelta(hours=8)
-        rows = [(morning + timedelta(minutes=30 * i), "online") for i in range(16)]
-        rows += [
-            (friday, "offline"),
-            (friday, "online"),
-            (monday, "offline"),
-            (monday + timedelta(minutes=1), "online"),
-        ]
-        assert _device_sessions(rows) == [(morning, friday)]
-
-    def test_a_gap_while_online_closes_the_session_at_the_last_row_seen_online(self):
-        from services.service_sa.sa.engine import _device_sessions
-
-        start = datetime(2026, 10, 6, 9, 0)
-        rows = [(start + timedelta(minutes=m), "online") for m in range(0, 30)]
-        rows.append((start + timedelta(hours=10), "online"))
-        assert _device_sessions(rows) == [(start, start + timedelta(minutes=29))]
-
-    def test_active_hours_cover_the_whole_workday_not_just_the_start_hour(self):
-        from services.service_sa.sa.engine import _active_hours_mask
-
-        sessions = [
-            (datetime(2026, 10, d, 8, 45), datetime(2026, 10, d, 17, 5)) for d in range(5, 10)
-        ]
-        mask = _active_hours_mask(sessions)
-        assert [h for h in range(24) if mask >> h & 1] == list(range(8, 18))
-
-    def test_an_hour_reached_on_a_single_odd_day_is_not_part_of_the_usual_window(self):
-        from services.service_sa.sa.engine import _active_hours_mask
-
-        sessions = [
-            (datetime(2026, 10, d, 9, 0), datetime(2026, 10, d, 12, 0)) for d in range(1, 11)
-        ]
-        sessions.append((datetime(2026, 10, 11, 1, 0), datetime(2026, 10, 11, 2, 0)))
-        mask = _active_hours_mask(sessions)
-        assert not mask >> 1 & 1 and mask >> 10 & 1
-
-
-class TestComputeEntityBaselines:
-    """Tests for compute_entity_baselines()."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_a_baseline_from_reconstructed_sessions(self, mock_connect, mock_tz):
-        """Three online->offline pairs for one device should produce one
-        upsert with the median/typical-hour/min/max derived from those
-        three sessions, and a commit."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        online_hour = datetime(2026, 8, 1, 9, 0)
-        sessions = [
-            (online_hour, "online"),
-            (online_hour + timedelta(minutes=60), "offline"),
-            (online_hour + timedelta(days=1), "online"),
-            (online_hour + timedelta(days=1, minutes=90), "offline"),
-            (online_hour + timedelta(days=2), "online"),
-            (online_hour + timedelta(days=2, minutes=120), "offline"),
-            (online_hour + timedelta(days=3), "online"),
-            (online_hour + timedelta(days=3, minutes=60), "offline"),
-            (online_hour + timedelta(days=4), "online"),
-            (online_hour + timedelta(days=4, minutes=60), "offline"),
-        ]
-        # 3rd/4th/5th/6th fetchall(): SA-3's eligible-residents query (none eligible), SA-10's
-        # household aggregate query (no rows), then SA-9 Phase 2's smarthome_sensor_history
-        # query (no rows).
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 1
-        params = upsert_calls[0].args[1]
-        assert params[0] == 42  # device_id
-        assert params[1] == 60  # median_on_minutes (60, 90, 120, 60, 60 -> median 60)
-        assert params[2] == 9  # typical_active_hour (every session starts at 9am)
-        assert params[3] == 1 << 9 | 1 << 10 | 1 << 11  # active_hours_mask (09:00-11:00 sessions)
-        assert params[6] == 5  # sample_count
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_devices_below_minimum_sample_count(self, mock_connect, mock_tz):
-        """A device with fewer than ENTITY_BASELINE_MIN_SAMPLES complete
-        sessions must not get a baseline row -- too little history to be a
-        real "typical" pattern yet."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        online_hour = datetime(2026, 8, 1, 9, 0)
-        sessions = [
-            (online_hour, "online"),
-            (online_hour + timedelta(minutes=60), "offline"),
-        ]
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_rolls_back_and_closes_on_db_error(self, mock_connect):
-        import pymysql
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        compute_entity_baselines()
-
-        mock_db.rollback.assert_called_once()
-        mock_db.close.assert_called_once()
-
-
 class TestComputeUserDepartureBaselines:
-    """Tests for compute_entity_baselines()'s SA-3 addition: entity_type='user' rows built
-    from _departure_hours_by_bucket(), sharing the same table/cadence as the device baselines
-    tested above. See todo/sa/todo_departure_anomaly.md for the Phase 0 spike behind this."""
+    """Tests for compute_entity_baselines(), which now writes only the SA-3 entity_type='user'
+    rows built from _departure_hours_by_bucket(). See todo/sa/todo_departure_anomaly.md."""
 
     @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
     @patch("services.service_sa.sa.engine.pymysql.connect")
@@ -1676,12 +1528,9 @@ class TestComputeUserDepartureBaselines:
         timestamp_rows = [(ts,) for ts in timestamps]
 
         mock_cursor.fetchall.side_effect = [
-            [],  # device_history distinct device_id scan (no device baselines this test)
             [(7, "Munja")],  # eligible non-guest residents with a claimed device
             [(89,), (128,)],  # Munja's claimed device ids
             timestamp_rows,  # union device_history timestamps for those device ids
-            [],  # SA-10 household aggregate query
-            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -1715,7 +1564,7 @@ class TestComputeUserDepartureBaselines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], [], []]
+        mock_cursor.fetchall.side_effect = [[]]
 
         compute_entity_baselines()
 
@@ -1740,11 +1589,8 @@ class TestComputeUserDepartureBaselines:
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
         mock_cursor.fetchall.side_effect = [
-            [],
             [(7, "Munja")],
             [],  # no claimed devices for this user
-            [],  # SA-10 household aggregate query
-            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -1756,247 +1602,6 @@ class TestComputeUserDepartureBaselines:
         ]
         assert len(upsert_calls) == 0
         mock_db.commit.assert_called_once()
-
-
-class TestComputeHouseholdBaselines:
-    """Tests for compute_entity_baselines()'s SA-10 addition: entity_type='household' rows,
-    computed as a single SQL aggregate rather than a per-entity Python loop -- see
-    todo/sa/todo_generalize_entity_baselines.md for the real production-hardware timing that
-    motivated keeping it that way."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_household_baselines_for_both_buckets(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        # (local_dow, first_hour, last_hour, device_count); MySQL DAYOFWEEK: 1=Sun...7=Sat.
-        household_rows = [(2, 7, 22, 5)] * 15 + [  # 15 Mondays: weekday bucket
-            (1, 9, 23, 3)
-        ] * 15  # 15 Sundays: weekend bucket
-        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 2
-        by_bucket = {call.args[1][1]: call.args[1] for call in upsert_calls}
-        weekday_params = by_bucket["weekday"]
-        assert weekday_params[0] == 0  # HOUSEHOLD_BASELINE_ENTITY_ID
-        assert weekday_params[2] == 7  # typical_active_hour (first-activity)
-        assert weekday_params[3] == 22  # typical_last_activity_hour
-        assert weekday_params[4] == 5  # typical_daily_min
-        assert weekday_params[5] == 5  # typical_daily_max
-        assert weekday_params[6] == 15  # sample_count
-        weekend_params = by_bucket["weekend"]
-        assert weekend_params[2] == 9
-        assert weekend_params[3] == 23
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_a_bucket_below_the_sample_floor(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import (
-            HOUSEHOLD_BASELINE_MIN_SAMPLES,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        household_rows = [(2, 7, 22, 5)] * (HOUSEHOLD_BASELINE_MIN_SAMPLES - 1)
-        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_household_aggregate_is_a_single_query_not_a_per_entity_loop(
-        self, mock_connect, mock_tz
-    ):
-        """The whole point of computing this as a GROUP BY aggregate instead of a per-device
-        Python loop -- confirm exactly one execute() call touches device_history for the
-        household block, regardless of how many days of history exist."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], [(2, 7, 22, 5)] * 20, []]
-
-        compute_entity_baselines()
-
-        household_query_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "GROUP BY local_date" in call.args[0]
-        ]
-        assert len(household_query_calls) == 1
-
-
-class TestComputeClimateBaselines:
-    """Tests for compute_entity_baselines()'s SA-9 Phase 2 addition: entity_type='room' rows
-    built from smarthome_sensor_history, bucketed by common.timeofday.coarse_bucket() rather
-    than day_bucket (weekday/weekend) -- see migration 041's own comment for why."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_a_climate_baseline_that_clears_the_floor(self, mock_connect, mock_tz):
-        import statistics
-
-        from services.service_sa.sa.engine import (
-            CLIMATE_BASELINE_STDEV_MULTIPLIER,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0  # UTC, so local_hour == recorded_at.hour
-
-        # 10 readings at hour=14 ("day" bucket) for smarthome_device_id 5.
-        base_day = datetime(2026, 8, 1, 14, 0)
-        values = [float(20 + i) for i in range(10)]
-        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        assert len(climate_calls) == 1
-        params = climate_calls[0].args[1]
-        median = statistics.median(values)
-        stdev = statistics.stdev(values)
-        assert params[0] == 5  # entity_id (smarthome_device_id)
-        assert params[1] == "day"  # time_of_day_bucket
-        assert params[2] == median  # typical_median_value (median of 20..29)
-        # 2026-09-26 fix: typical_daily_min/max are a median +/- N-stdev band now, not the raw
-        # observed min/max (20.0/29.0) -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment.
-        assert params[3] == pytest.approx(median - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
-        assert params[4] == pytest.approx(median + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
-        assert params[5] == 10  # sample_count
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_climate_band_is_tighter_than_the_raw_range_not_self_widening(
-        self, mock_connect, mock_tz
-    ):
-        """The 2026-09-26 fix itself: a couple of outlier readings must not drag
-        typical_daily_min/max out to the raw min/max, or the band is back to self-widening to
-        cover everything and check_climate_deviation() can never fire again."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 14, 0)
-        # Tightly clustered around 25.0, plus two extreme outliers (15.0, 35.0).
-        values = [25.0] * 18 + [15.0, 35.0]
-        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        params = climate_calls[0].args[1]
-        typical_min, typical_max = params[3], params[4]
-        # The old (raw min/max) behavior would have set these to 15.0/35.0 -- exactly the
-        # outliers, guaranteeing the band always contains any future reading in that range.
-        assert typical_min > 15.0
-        assert typical_max < 35.0
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_a_bucket_below_the_sample_floor(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import (
-            CLIMATE_BASELINE_MIN_SAMPLES,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 14, 0)
-        readings = [
-            (5, 22.0, base_day + timedelta(days=i)) for i in range(CLIMATE_BASELINE_MIN_SAMPLES - 1)
-        ]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        assert len(climate_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_buckets_readings_by_time_of_day_separately(self, mock_connect, mock_tz):
-        """Morning and evening readings for the same entity must produce two independent
-        baseline rows, not get averaged together into one."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 8, 0)  # hour=8 -> "morning"
-        morning_readings = [(5, 18.0, base_day + timedelta(days=i)) for i in range(10)]
-        evening_base = datetime(2026, 8, 1, 19, 0)  # hour=19 -> "evening"
-        evening_readings = [(5, 23.0, evening_base + timedelta(days=i)) for i in range(10)]
-        mock_cursor.fetchall.side_effect = [[], [], [], morning_readings + evening_readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        buckets = {call.args[1][1] for call in climate_calls}
-        assert buckets == {"morning", "evening"}
 
 
 class TestCheckDepartureAnomaly:
@@ -4014,67 +3619,6 @@ class TestContextFrameFetchers:
 
         assert fetch_esphome_climate_snapshot() is None
 
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_a_dict(self, mock_connect):
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [
-            ("Temperature", 22.5, 20.0, 25.0, 12, 10),
-            ("Humidity", 45.0, 40.0, 50.0, 12, 10),
-        ]
-
-        result = fetch_esphome_climate_baselines("day")
-
-        assert result == {
-            "temperature": {
-                "typical_median_value": 22.5,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 25.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-            "humidity": {
-                "typical_median_value": 45.0,
-                "typical_daily_min": 40.0,
-                "typical_daily_max": 50.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-        }
-
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_none_values_when_no_baseline_yet(
-        self, mock_connect
-    ):
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = []
-
-        result = fetch_esphome_climate_baselines("night")
-
-        assert result == {"temperature": None, "humidity": None}
-
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_none_on_db_error(self, mock_connect):
-        import pymysql
-
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        assert fetch_esphome_climate_baselines("day") is None
 
 
 class TestRoutingUtils:
