@@ -7,6 +7,8 @@
 // most alfr3d services don't -- so "running" is the strongest claim we can honestly make.
 
 export const STATUS = {
+  // Run-once containers (service-tls) that finished cleanly: stopped on purpose, not an outage.
+  IDLE: 'IDLE',
   NOMINAL: 'NOMINAL',
   STARTING: 'STARTING',
   DEGRADED: 'DEGRADED',
@@ -16,6 +18,7 @@ export const STATUS = {
 
 // Severity tiers, worst last -- Core sizes its orbit dots by this ordering.
 const TIER = {
+  [STATUS.IDLE]: 'ok',
   [STATUS.NOMINAL]: 'ok',
   [STATUS.STARTING]: 'warn',
   [STATUS.DEGRADED]: 'warn',
@@ -27,6 +30,8 @@ export const containerStatus = (container = {}) => {
   const state = container.state;
   const health = container.health;
 
+  // The API decides `idle` (on-demand label + exited 0); anything else that exited is DOWN.
+  if (container.idle === true) return STATUS.IDLE;
   if (state === 'exited' || state === 'dead') return STATUS.DOWN;
   if (state === 'restarting') return STATUS.CRITICAL;
   if (health === 'unhealthy') return STATUS.CRITICAL;

@@ -67,3 +67,26 @@ def test_expiring_leaf_is_reissued(tmp_path, ca, monkeypatch):
 def test_host_sans_has_loopback_and_static_names():
     sans = local_tls.host_sans(["my.ts.net"])
     assert {"127.0.0.1", "localhost", "alfr3d.local", "my.ts.net"} <= sans
+
+
+def test_leaf_usable_tolerates_drift_but_not_foreign_or_missing(tmp_path, ca):
+    ca_cert, ca_key = ca
+    out = tmp_path / "out"
+    crt, key = str(out / "server.crt"), str(out / "server.key")
+    assert not local_tls.leaf_usable(crt, key, ca_cert)  # nothing on disk
+    local_tls.issue_leaf(ca_cert, ca_key, ["10.0.0.1"], str(out))
+    assert local_tls.leaf_usable(crt, key, ca_cert)
+    # SAN drift is a re-issue reason but the leaf still serves, so it counts as usable.
+    assert local_tls.leaf_needs_reissue(crt, ca_cert, {"10.0.0.2"})
+    assert local_tls.leaf_usable(crt, key, ca_cert)
+    other_cert, _ = local_tls.ensure_ca(str(tmp_path / "other"))
+    assert not local_tls.leaf_usable(crt, key, other_cert)
+
+
+def test_expired_leaf_is_not_usable(tmp_path, ca, monkeypatch):
+    ca_cert, ca_key = ca
+    out = tmp_path / "out"
+    local_tls.issue_leaf(ca_cert, ca_key, ["10.0.0.1"], str(out))
+    future = local_tls._now() + datetime.timedelta(days=local_tls.LEAF_VALID_DAYS + 1)
+    monkeypatch.setattr(local_tls, "_now", lambda: future)
+    assert not local_tls.leaf_usable(str(out / "server.crt"), str(out / "server.key"), ca_cert)

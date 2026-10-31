@@ -185,6 +185,21 @@ def leaf_needs_reissue(leaf_path, ca_cert, wanted_sans):
         return True
 
 
+def leaf_usable(leaf_path, key_path, ca_cert):
+    """True if nginx can serve the leaf as-is: both files present, issued by this CA, unexpired.
+
+    Deliberately weaker than `not leaf_needs_reissue`: SAN drift or being inside the renewal window
+    leaves a leaf that still works, so a failed re-issue must not take the stack down over it."""
+    try:
+        if os.path.getsize(key_path) == 0:
+            return False
+        leaf = load_cert(leaf_path)
+        leaf.verify_directly_issued_by(ca_cert)
+        return leaf.not_valid_after_utc > _now()
+    except (OSError, ValueError, TypeError, InvalidSignature):
+        return False
+
+
 def host_sans(extra=()):
     """Every address and name a client might use to reach this host right now."""
     import ifaddr

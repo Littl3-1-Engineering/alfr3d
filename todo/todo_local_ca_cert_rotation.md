@@ -12,7 +12,10 @@ lost) needs a human: the Deck blocks and asks the user to re-verify the fingerpr
 - [x] `services/service_tls/` sidecar (`local_tls.py` + `app.py`): `ensure_ca` (never regenerates),
       `issue_leaf`, `leaf_needs_reissue` (missing / bad signature / <30d left / SAN drift),
       `host_sans` (LAN IPv4s, hostname(.local), `alfr3d.local`, localhost, `TLS_EXTRA_SANS`).
-      Loops every 60s, HUPs nginx after a re-issue. CA key lives only in the `tls_ca` volume.
+      HUPs nginx after a re-issue. CA key lives only in the `tls_ca` volume. Was a 60s loop;
+      since 2026-10-28 a run-once container (`TLS_ONESHOT=1`), see
+      [todo_on_demand_containers.md](todo_on_demand_containers.md): runs at every `compose up`
+      (nginx waits with `service_completed_successfully`) and daily via `setup/tls_reissue.sh`.
 - [x] `GET /api/tls/ca` (pem + sha256 + subject + not_after) and `GET /api/tls/ca.crt` in
       `service_api/routes/tls.py`; unauthenticated by design (public cert).
 - [x] `docker-compose.yml`: `service-tls` (host network), nginx waits on it; `nginx.conf` /
@@ -24,7 +27,7 @@ lost) needs a human: the Deck blocks and asks the user to re-verify the fingerpr
       `docker compose build service-tls && docker compose up -d service-tls nginx` (v2 only, see
       the v1/v2 trap). Compare `/api/tls/ca` sha256 against `service-tls` logs.
 - [ ] Show the CA fingerprint in the web Nexus (Settings) so the user can compare it with the Deck.
-- [ ] README/AGENTS mention of `service_tls` + `/api/tls/*` (not yet added).
+- [x] README/AGENTS mention of `service_tls` + `/api/tls/*` (README added 2026-10-28; AGENTS already had it).
 
 ## Deck (alfr3d_deck) -- written 2026-10-26, verified on device (ASUS_AI2202, debug build)
 - [x] `PinnedCaTrust` (`alfr3d/Alfr3dTls.kt`): chain validated against the pinned CA only,
