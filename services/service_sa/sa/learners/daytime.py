@@ -22,8 +22,7 @@ recency with a DAYTIME_HALF_LIFE_DAYS half-life. Only unusual MORE time at home 
 which is the `day_off` question; the calendar corroborates in layer 2.
 
 Confidence is sa/confidence.py's product: sufficiency of the comparable weight, the collector's
-coverage, the phone's source quality and a stability term (not measured yet, passed in; default
-STABILITY_UNKNOWN), so read it as an upper bound.
+coverage, the phone's source quality and a stability term (see stability_of; it can be passed in, e.g. by tests).
 """
 
 import math
@@ -46,6 +45,10 @@ MIN_DAYS = 14
 MIN_COMPARABLE_WEIGHT = 8.0
 MIN_SURPRISE_BITS = 3.0
 STABILITY_UNKNOWN = 0.5
+STABILITY_WINDOW_DAYS = 14
+STABILITY_SCALE_BITS = 1.0  # a bit more typical surprise in the recent window than before: 0
+MIN_STABILITY_DAYS = 5  # days needed in each window to measure it
+MAX_STABILITY_BITS = 6.0  # one freak day must not set the window's error
 CHECKPOINTS = tuple(range(MIN_EVAL_HOUR, WINDOW_END_HOUR + 1))
 
 
@@ -91,6 +94,37 @@ def survival(days, offday, checkpoint, hours_home):
     return (lasted + 0.5) / (total + 1.0), total
 
 
+def stability_of(rows, ref):
+    """How well the daytime totals of the last STABILITY_WINDOW_DAYS were predicted by a model
+    fitted only on days before them, against the window before that: each day's surprise at the
+    last checkpoint (-log2 of the smoothed share of comparable earlier days at least as long at
+    home), the window's error the median, stability falling from 1 as the recent error exceeds
+    the earlier one by STABILITY_SCALE_BITS. STABILITY_UNKNOWN with too few days in a window."""
+    observed = list(_observed_days(rows))
+
+    def window_error(lo, hi):
+        model = days_from_rows([r for r in rows if r[0] <= lo], lo)
+        errors = []
+        for day in observed:
+            if lo < day["date"] <= hi:
+                p, weight = survival(
+                    model, presence.is_offday(day["date"]), CHECKPOINTS[-1], day["cumulative"][-1]
+                )
+                if weight >= MIN_COMPARABLE_WEIGHT:
+                    errors.append(min(-math.log2(p), MAX_STABILITY_BITS))
+        if len(errors) < MIN_STABILITY_DAYS:
+            return None
+        errors.sort()
+        mid = len(errors) // 2
+        return errors[mid] if len(errors) % 2 else (errors[mid - 1] + errors[mid]) / 2.0
+
+    w = timedelta(days=STABILITY_WINDOW_DAYS)
+    recent, prior = window_error(ref - w, ref), window_error(ref - 2 * w, ref - w)
+    if recent is None or prior is None:
+        return STABILITY_UNKNOWN
+    return max(0.0, 1.0 - max(0.0, recent - prior) / STABILITY_SCALE_BITS)
+
+
 class DaytimeLearner(Learner):
     name = NAME
     version = VERSION
@@ -115,7 +149,7 @@ class DaytimeLearner(Learner):
             n_eff=round(sum(d[1] for d in days), 3),
             coverage=coverage,
             source_quality=source_quality,
-            stability=STABILITY_UNKNOWN if stability is None else stability,
+            stability=round(stability_of(rows, ref) if stability is None else stability, 4),
             fitted_from=None,
             fitted_to=ref,
         )
