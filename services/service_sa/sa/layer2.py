@@ -126,6 +126,11 @@ class Rule:
         """A rule-specific gate on the voting parents (one per family), before the bar on bits."""
         return True
 
+    def bar_bits(self, group):
+        """The surprise (bits) a result must reach. A rule whose bar is learned from its own history
+        reads it off the group; the default is the fixed `min_bits`."""
+        return self.min_bits
+
     def groups(self, parents, ctx):
         """[Group] from the fresh layer-1 rows `parents`. `ctx` is whatever the runner loaded for
         the rule (owner maps and the like); rules must not read the database themselves."""
@@ -179,7 +184,7 @@ def fuse(rule, group, now):
     if group.explained_by:
         surprise *= 1.0 - rule.explained_discount
         p_comb = 2.0**-surprise
-    if surprise < rule.min_bits:
+    if surprise < rule.bar_bits(group):
         return None
     confidence = sum(cs) / len(cs)
     if group.share is not None:

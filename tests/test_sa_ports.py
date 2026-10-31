@@ -140,24 +140,73 @@ class TestHouseholdDay:
         inf = self._score(profile, 0.3, 700)
         assert inf.layer == 2 and inf.signal == "household.day"
         assert {p["feature"] for p in inf.evidence["parents"]} == {"device_share", "first_minute"}
-        assert inf.probability <= household_day.P_FLAG and 0 < inf.confidence <= 1
+        assert inf.surprise >= profile.params["calibration"]["bar_bits"] and 0 < inf.confidence <= 1
 
-    def test_one_odd_feature_alone_is_not_enough(self):
-        profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
-        assert self._score(profile, 0.75, 700) is None  # normal device count, odd first activity
-        assert self._score(profile, 0.25, 230) is None  # odd device count, normal first activity
+    def test_the_bar_is_learned_from_the_households_own_days(self):
+        learner = household_day.HouseholdDayLearner()
+        days = self._days()
+        profile = learner.fit_days(days, REF)
+        calibration = profile.params["calibration"]
 
-    def test_home_minutes_is_a_third_feature_and_two_of_three_must_be_off(self):
+        assert calibration["days"] >= household_day.MIN_CALIBRATION_DAYS
+        assert calibration["target_rate"] == round(household_day.TARGET_FLAG_RATE, 4)
+        weights = {d["date"]: 1.0 for d in days}
+        bits = household_day.loo_bits(days, list(profile.params["features"]), weights)
+        share = sum(b >= calibration["bar_bits"] for b in bits) / len(bits)
+        # about one day in fourteen reaches the bar (ties in a discrete history widen it a little)
+        assert 0.02 <= share <= household_day.TARGET_FLAG_RATE + 0.07
+
+    def test_a_different_household_gets_a_different_bar(self):
+        steady = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
+        erratic = household_day.HouseholdDayLearner().fit_days(
+            self._days(share=lambda d: 0.4 + 0.1 * (d.toordinal() % 5)), REF
+        )
+
+        assert steady.params["calibration"]["bar_bits"] != erratic.params["calibration"]["bar_bits"]
+
+    def test_with_too_little_history_there_is_no_bar_and_nothing_is_flagged(self):
+        profile = household_day.HouseholdDayLearner().fit_days(self._days(25), REF)
+
+        assert profile.params["calibration"]["bar_bits"] is None
+        assert self._score(profile, 0.05, 900) is None
+
+    def test_event_streams_are_learned_as_features_when_they_vary_and_have_history(self):
+        days = self._days()
+        for i, day in enumerate(days):
+            day["event:audio/track/play_start"] = float(40 + (i % 7))  # varies
+            day["event:info/constant"] = 5.0  # never changes
+            if i > len(days) - 10:
+                day["event:new/stream/seen"] = float(i % 4)  # only ten days of history
+        profile = household_day.HouseholdDayLearner().fit_days(days, REF)
+
+        assert "event:audio/track/play_start" in profile.params["features"]
+        assert "event:info/constant" not in profile.params["features"]
+        assert "event:new/stream/seen" not in profile.params["features"]
+
+    def test_an_odd_event_count_can_be_what_makes_the_day_unusual(self):
+        days = self._days()
+        for i, day in enumerate(days):
+            day["event:audio/track/play_start"] = float(40 + (i % 7))
+        learner = household_day.HouseholdDayLearner()
+        profile = learner.fit_days(days, REF)
+        state = {
+            "device_share": 0.75,
+            "first_minute": 230,
+            "event:audio/track/play_start": 400.0,
+            "local_dt": datetime(2026, 10, 13, 18, 0),
+        }
+        inf = learner.score(profile, state, datetime(2026, 10, 13, 22, 0))
+
+        assert inf is not None
+        assert inf.observed["event:audio/track/play_start"] == 400.0
+        assert any("audio track play_start events" in line for line in household_day.explain(inf))
+
+    def test_home_minutes_is_a_third_feature(self):
         learner = household_day.HouseholdDayLearner()
         profile = learner.fit_days(self._days(home=lambda d: 2600.0), REF)
 
         assert set(profile.params["features"]) == set(household_day.FEATURES)
-        # Nobody home and the house still awake: devices and first activity look normal, so a
-        # single odd feature is not a day.
-        assert self._score(profile, 0.75, 230, home=900) is None
-        # Fisher runs over every feature, the normal ones included, so two odd features out of
-        # three are diluted below the bar; all three off is a day.
-        assert self._score(profile, 0.3, 230, home=900) is None
+        assert self._score(profile, 0.75, 230, home=2600) is None  # an ordinary day
         inf = self._score(profile, 0.3, 700, home=900)
         assert {p["feature"] for p in inf.evidence["parents"]} == set(household_day.FEATURES)
         assert inf.observed["home_minutes"] == 900
@@ -416,15 +465,20 @@ class TestHouseholdDayAsRule:
         out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
 
         assert len(out) == 1 and out[0].layer == 2 and out[0].signal == "household.day"
-        assert out[0].probability <= household_day.P_FLAG
+        assert out[0].surprise >= rows[0].context["bar_bits"]
         assert out[0].observed == {"device_share": 0.3, "first_minute": 700}
 
-    def test_one_odd_feature_or_a_normal_day_is_quiet(self):
+    def test_a_normal_day_is_quiet_and_so_is_any_day_without_a_learned_bar(self):
+        import copy
+
         from services.service_sa.sa import layer2
 
         now = datetime(2026, 10, 12, 22, 0)
-        assert layer2.run_rules([household_day.RULE], self._rows(0.75, 700), {}, now) == []
         assert layer2.run_rules([household_day.RULE], self._rows(0.75, 230), {}, now) == []
+        odd = copy.deepcopy(self._rows(0.3, 700))
+        for row in odd:
+            row.context["bar_bits"] = None
+        assert layer2.run_rules([household_day.RULE], odd, {}, now) == []
 
     def test_every_row_fits_the_sa_inferences_columns(self):
         """Regression: subject_type 'household_feature' (17 chars) overflowed VARCHAR(16), so
