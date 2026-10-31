@@ -327,7 +327,23 @@ class ShadowRunner:
             inference = learner.score(profile, {"stay_start": start}, now_utc)
             if inference is not None:
                 findings.append(inference)
+        if findings and self._calendar_busy(now_utc):
+            return []  # a booked stretch at home (e.g. working from home) is not an overstay
         return findings
+
+    def _calendar_busy(self, now_utc):
+        """True if a household calendar event covers this moment. The legacy rule's suppression,
+        checked directly against calendar_events (frame.upcoming_events only looks forward)."""
+        db = self._connect()
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT 1 FROM calendar_events WHERE start_time <= %s AND end_time >= %s LIMIT 1",
+                (now_utc, now_utc),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            db.close()
 
     def _stay_start(self, user_id, now_utc):
         """When this person's current stay began, from their phones' sightings in device_history,
@@ -684,6 +700,18 @@ class ShadowRunner:
                 for user_id, last_online in cursor.fetchall():
                     seen.setdefault(user_id, []).append(last_online)
                 home = household_day.home_minutes(seen, midnight, cutoff)
+            # The learned event-stream features: this day's count per stream up to the cutoff, from
+            # household_events (the lake's events_clean also applies sa_data_exclusions).
+            cursor.execute(
+                "SELECT event_type, COALESCE(subject_type, '-'), COALESCE(verb, '-'), COUNT(*) "
+                "FROM household_events WHERE occurred_at >= %s AND occurred_at < %s "
+                "GROUP BY 1, 2, 3",
+                (midnight, cutoff),
+            )
+            events = {
+                f"{household_day.EVENT_PREFIX}{a}/{b}/{c}": float(n)
+                for a, b, c, n in cursor.fetchall()
+            }
         finally:
             db.close()
         first_minute = (
@@ -699,6 +727,12 @@ class ShadowRunner:
                 "first_minute": first_minute,
                 "home_minutes": home,
                 "local_dt": frame.local_dt,
+                # a learned stream with no event today is a zero, not an unknown
+                **{
+                    name: events.get(name, 0.0)
+                    for name in profiles[0].params["features"]
+                    if name.startswith(household_day.EVENT_PREFIX)
+                },
             },
             frame.now.replace(tzinfo=None),
         )

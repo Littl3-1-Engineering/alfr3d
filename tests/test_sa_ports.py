@@ -33,7 +33,11 @@ def _sessions(days, minutes_fn):
 class TestDeviceRhythm:
     def _profile(self):
         rows = _rows(40, lambda d, h: 8 <= h < 22)
-        sessions = _sessions(40, lambda d: 840 + (d.day % 5) * 10)
+        # on 08:00-22:00 local (UTC-4), so each session ends 02:00 UTC the next day
+        sessions = [
+            (d, 840.0 + (d.day % 5) * 10, datetime.combine(d, datetime.min.time()) + timedelta(hours=26))
+            for d in (REF - timedelta(days=i) for i in range(39, -1, -1))
+        ]
         return device_rhythm.DeviceRhythmLearner().fit_device(7, "Lamp", rows, sessions, REF, None)
 
     def test_a_device_with_no_recent_sessions_gets_no_profile(self):
@@ -63,6 +67,34 @@ class TestDeviceRhythm:
             profile, {"online": False, "offline_minutes": 90, "local_dt": local}, now
         )
         assert inf.observed["state"] == "offline"
+
+    def test_the_minimum_offline_time_is_learned_from_the_devices_own_flickers(self):
+        """A PC that naps for ~3 h on most afternoons is only worth a card when it is off longer."""
+        from datetime import timezone
+
+        rows = _rows(60, lambda d, h: 8 <= h < 22)
+        sessions = []
+        for i in range(40):
+            day = REF - timedelta(days=i)
+            # on 09:00-12:00, off 12:00-15:00 (the flicker), on 15:00-21:00, local = UTC-4
+            for start_h, end_h in ((13, 16), (19, 25)):
+                begin = datetime(day.year, day.month, day.day) + timedelta(hours=start_h)
+                sessions.append((day, (end_h - start_h) * 60.0, begin + timedelta(hours=end_h - start_h)))
+        learner = device_rhythm.DeviceRhythmLearner()
+        profile = learner.fit_device(7, "PC", rows, sessions, REF, None)
+
+        flicker = profile.params["offline_flicker_minutes"]
+        assert flicker is not None and 150 <= flicker <= 210
+        local, now = datetime(2026, 10, 10, 14, 0), datetime(2026, 10, 10, 18, 0)
+        short = {"online": False, "offline_minutes": 90, "local_dt": local}
+        long_ = {"online": False, "offline_minutes": flicker + 60, "local_dt": local}
+        assert learner.score(profile, short, now) is None
+        assert learner.score(profile, long_, now) is not None
+
+    def test_too_few_flickers_leave_the_fixed_minimum_in_place(self):
+        profile = self._profile()  # one session a day: nothing starts an unexpected gap
+
+        assert profile.params["offline_flicker_minutes"] is None
 
     def test_a_device_offline_for_days_or_retired_is_not_late(self):
         profile, learner = self._profile(), device_rhythm.DeviceRhythmLearner()
@@ -140,24 +172,73 @@ class TestHouseholdDay:
         inf = self._score(profile, 0.3, 700)
         assert inf.layer == 2 and inf.signal == "household.day"
         assert {p["feature"] for p in inf.evidence["parents"]} == {"device_share", "first_minute"}
-        assert inf.probability <= household_day.P_FLAG and 0 < inf.confidence <= 1
+        assert inf.surprise >= profile.params["calibration"]["bar_bits"] and 0 < inf.confidence <= 1
 
-    def test_one_odd_feature_alone_is_not_enough(self):
-        profile = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
-        assert self._score(profile, 0.75, 700) is None  # normal device count, odd first activity
-        assert self._score(profile, 0.25, 230) is None  # odd device count, normal first activity
+    def test_the_bar_is_learned_from_the_households_own_days(self):
+        learner = household_day.HouseholdDayLearner()
+        days = self._days()
+        profile = learner.fit_days(days, REF)
+        calibration = profile.params["calibration"]
 
-    def test_home_minutes_is_a_third_feature_and_two_of_three_must_be_off(self):
+        assert calibration["days"] >= household_day.MIN_CALIBRATION_DAYS
+        assert calibration["target_rate"] == round(household_day.TARGET_FLAG_RATE, 4)
+        weights = {d["date"]: 1.0 for d in days}
+        bits = household_day.loo_bits(days, list(profile.params["features"]), weights)
+        share = sum(b >= calibration["bar_bits"] for b in bits) / len(bits)
+        # about one day in fourteen reaches the bar (ties in a discrete history widen it a little)
+        assert 0.02 <= share <= household_day.TARGET_FLAG_RATE + 0.07
+
+    def test_a_different_household_gets_a_different_bar(self):
+        steady = household_day.HouseholdDayLearner().fit_days(self._days(), REF)
+        erratic = household_day.HouseholdDayLearner().fit_days(
+            self._days(share=lambda d: 0.4 + 0.1 * (d.toordinal() % 5)), REF
+        )
+
+        assert steady.params["calibration"]["bar_bits"] != erratic.params["calibration"]["bar_bits"]
+
+    def test_with_too_little_history_there_is_no_bar_and_nothing_is_flagged(self):
+        profile = household_day.HouseholdDayLearner().fit_days(self._days(25), REF)
+
+        assert profile.params["calibration"]["bar_bits"] is None
+        assert self._score(profile, 0.05, 900) is None
+
+    def test_event_streams_are_learned_as_features_when_they_vary_and_have_history(self):
+        days = self._days()
+        for i, day in enumerate(days):
+            day["event:audio/track/play_start"] = float(40 + (i % 7))  # varies
+            day["event:info/constant"] = 5.0  # never changes
+            if i > len(days) - 10:
+                day["event:new/stream/seen"] = float(i % 4)  # only ten days of history
+        profile = household_day.HouseholdDayLearner().fit_days(days, REF)
+
+        assert "event:audio/track/play_start" in profile.params["features"]
+        assert "event:info/constant" not in profile.params["features"]
+        assert "event:new/stream/seen" not in profile.params["features"]
+
+    def test_an_odd_event_count_can_be_what_makes_the_day_unusual(self):
+        days = self._days()
+        for i, day in enumerate(days):
+            day["event:audio/track/play_start"] = float(40 + (i % 7))
+        learner = household_day.HouseholdDayLearner()
+        profile = learner.fit_days(days, REF)
+        state = {
+            "device_share": 0.75,
+            "first_minute": 230,
+            "event:audio/track/play_start": 400.0,
+            "local_dt": datetime(2026, 10, 13, 18, 0),
+        }
+        inf = learner.score(profile, state, datetime(2026, 10, 13, 22, 0))
+
+        assert inf is not None
+        assert inf.observed["event:audio/track/play_start"] == 400.0
+        assert any("audio track play_start events" in line for line in household_day.explain(inf))
+
+    def test_home_minutes_is_a_third_feature(self):
         learner = household_day.HouseholdDayLearner()
         profile = learner.fit_days(self._days(home=lambda d: 2600.0), REF)
 
         assert set(profile.params["features"]) == set(household_day.FEATURES)
-        # Nobody home and the house still awake: devices and first activity look normal, so a
-        # single odd feature is not a day.
-        assert self._score(profile, 0.75, 230, home=900) is None
-        # Fisher runs over every feature, the normal ones included, so two odd features out of
-        # three are diluted below the bar; all three off is a day.
-        assert self._score(profile, 0.3, 230, home=900) is None
+        assert self._score(profile, 0.75, 230, home=2600) is None  # an ordinary day
         inf = self._score(profile, 0.3, 700, home=900)
         assert {p["feature"] for p in inf.evidence["parents"]} == set(household_day.FEATURES)
         assert inf.observed["home_minutes"] == 900
@@ -320,12 +401,12 @@ class TestShadowRunner:
         from sa.learners import stay
 
         ivs = []
-        for i in range(20):
+        for i in range(60):
             start = datetime(2026, 10, 8) - timedelta(days=i) + timedelta(hours=13)
             ivs.append((start, start + timedelta(hours=2 + i % 2), 100))
         return stay.StayLearner().fit_user(1, "athos", sorted(ivs), REF, 0.95, 0.8, 1.0)
 
-    def _departure_runner(self, stay_start, user_type="owner"):
+    def _departure_runner(self, stay_start, user_type="owner", busy_event=None):
         from sa.learners import stay
 
         runner, _ = self._runner()
@@ -333,6 +414,7 @@ class TestShadowRunner:
         runner.profiles = lambda name: [profile] if name == stay.NAME else []
         cursor = MagicMock()
         cursor.fetchall.return_value = [(stay_start,), (stay_start + timedelta(minutes=30),)]
+        cursor.fetchone.return_value = busy_event
         runner._connect = lambda: MagicMock(cursor=lambda: cursor)
         frame = MagicMock()
         frame.person_presence = [
@@ -349,6 +431,11 @@ class TestShadowRunner:
 
         assert findings and findings[0].observed["state"] == "home"
         assert runner._stay_starts["1"] == datetime(2026, 10, 9, 13, 0)
+
+    def test_departure_stays_quiet_while_a_calendar_event_covers_the_moment(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), busy_event=(1,))
+
+        assert runner.departure(frame) == []
 
     def test_departure_does_not_look_at_guests(self):
         runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), user_type="guest")
@@ -410,15 +497,20 @@ class TestHouseholdDayAsRule:
         out = layer2.run_rules([household_day.RULE], rows, {}, datetime(2026, 10, 12, 22, 0))
 
         assert len(out) == 1 and out[0].layer == 2 and out[0].signal == "household.day"
-        assert out[0].probability <= household_day.P_FLAG
+        assert out[0].surprise >= rows[0].context["bar_bits"]
         assert out[0].observed == {"device_share": 0.3, "first_minute": 700}
 
-    def test_one_odd_feature_or_a_normal_day_is_quiet(self):
+    def test_a_normal_day_is_quiet_and_so_is_any_day_without_a_learned_bar(self):
+        import copy
+
         from services.service_sa.sa import layer2
 
         now = datetime(2026, 10, 12, 22, 0)
-        assert layer2.run_rules([household_day.RULE], self._rows(0.75, 700), {}, now) == []
         assert layer2.run_rules([household_day.RULE], self._rows(0.75, 230), {}, now) == []
+        odd = copy.deepcopy(self._rows(0.3, 700))
+        for row in odd:
+            row.context["bar_bits"] = None
+        assert layer2.run_rules([household_day.RULE], odd, {}, now) == []
 
     def test_every_row_fits_the_sa_inferences_columns(self):
         """Regression: subject_type 'household_feature' (17 chars) overflowed VARCHAR(16), so

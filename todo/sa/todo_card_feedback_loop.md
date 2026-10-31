@@ -167,6 +167,30 @@ which is a product change. Needs a decision (threshold in distinct minutes, whic
 before anything is enabled; counting distinct minutes of `shown` rather than rows would also remove
 the web + Deck double count.
 
+## Impression capture (2026-10-31)
+
+Phase 3 ("earned priority") was blocked on the data, not on a model: `shown` is reported every
+refresh by every surface, so 110,000 rows in 8.5 weeks are about 900 real displays, with 13
+explicit interactions among them (see [todo_lf5_more_learners.md](todo_lf5_more_learners.md)).
+`POST /api/context/card-interaction` therefore takes, all optional so older clients keep working:
+
+| field | meaning |
+|---|---|
+| `surface` | `web` or `deck` |
+| `impression_id` | one id (1-36 letters, digits, dashes) per card display, shared by that display's `shown` / `tapped` / `dismissed` / `impression` rows |
+| `visible_ms` | how long the card was on screen, 0 to 24 h |
+| `detail` | what a tap opened, up to 64 chars |
+| `action: "impression"` | new; sent once when a display ends, and must carry `impression_id` and `visible_ms` |
+
+A display starts when a card first appears and ends when it leaves the payload, is dismissed, or
+the page / app goes away. Time with the tab hidden or the app in the background does not count, and
+a display under one second was never really seen, so it is not reported. Migration 0058 / 052 adds
+the columns and the enum value. The suppression pass in `service_sa` ignores `impression` rows
+(it reads `shown`/`tapped`/`dismissed` only). Web reports it from `SituationalAwareness.jsx`; the
+Deck from `CardInteractionTracker`. A learner (Beta-Binomial of interaction per impression by
+rule and hour, plus a visible-time scalar) is worth building once a few hundred impressions with
+interactions exist.
+
 ## Not yet done
 
 - ~~**Android launcher (`alfr3d_deck`) reporting.**~~ Built, see above. Original note: The task requires both surfaces to report;

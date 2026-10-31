@@ -1319,125 +1319,94 @@ class TestCheckHouseholdComposition:
 
 
 class TestCheckRhythmBreakAnomaly:
-    """Tests for SAEngine.check_rhythm_break_anomaly() -- not a frame field (SA-4), this
-    device/entity_baselines join isn't duplicated elsewhere, so it stays its own query;
-    only frame.now replaces its own datetime.now(timezone.utc) call."""
+    """Tests for SAEngine.check_rhythm_break_anomaly() -- since the LF-4 cutover a card for the
+    device rhythm learner's most surprising fresh deviation (one per cycle)."""
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_card_when_a_device_is_past_its_typical_max(self, mock_connect):
+    def _inference(self, signal="device.online", state="offline", device="Garage light",
+                   confidence=0.7, surprise=6.0, p_online=0.97, offline_minutes=180.0,
+                   minutes_on=None, p95=60.0):  # fmt: skip
+        from types import SimpleNamespace
+
+        if signal == "device.session_minutes":
+            observed = {"minutes_on": minutes_on if minutes_on is not None else 90.0}
+            expected = {"p95_minutes": p95, "share_at_least": 0.01}
+        else:
+            observed = {"state": state, "offline_minutes": offline_minutes}
+            expected = {"p_online": p_online}
+        return SimpleNamespace(
+            learner="device_rhythm",
+            signal=signal,
+            evidence={"device": device},
+            context={"hour_local": 14},
+            observed=observed,
+            expected=expected,
+            surprise=surprise,
+            confidence=confidence,
+        )
+
+    def _check(self, recent):
         from services.service_sa.sa.engine import SAEngine
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = ("Garage light", 90, 60)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+        ):
+            return SAEngine().check_rhythm_break_anomaly(_make_frame())
 
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
+    def test_a_device_offline_when_usually_on_is_expected_absent(self):
+        card = self._check([self._inference()])
 
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["priority"] == 2.6
-        assert result["entity_name"] == "Garage light"
-        assert result["deviation_type"] == "still_on_past_typical"
-        assert "30 min" in result["content"]
-        assert result["data"]["over_by_minutes"] == 30
-        assert result["data"]["typical_daily_max_minutes"] == 60
+        assert card["mode"] == "rhythm_break_anomaly"
+        assert card["priority"] == 2.6
+        assert card["entity_name"] == "Garage light"
+        assert card["deviation_type"] == "expected_absent"
+        assert card["content"] == "Garage light hasn't come online yet"
+        assert card["data"]["offline_minutes"] == 180
+        assert card["data"]["because"] == [
+            "usually online 97% of the time at 14:00, offline for 180 min"
+        ]
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_no_device_exceeds_its_baseline(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_device_on_at_an_unusual_hour(self):
+        card = self._check([self._inference(state="online", offline_minutes=None, p_online=0.03)])
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None
+        assert card["deviation_type"] == "unusual_hour"
+        assert card["content"] == "Garage light is on at an unusual hour"
+        assert card["data"]["current_hour"] == 14
 
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
+    def test_a_session_that_outlasts_the_longest_ordinary_one(self):
+        card = self._check([self._inference(signal="device.session_minutes", minutes_on=90.0)])
 
-        assert result is None
+        assert card["deviation_type"] == "still_on_past_typical"
+        assert card["content"] == "Garage light has been on for 30 min longer than usual"
+        assert card["data"]["over_by_minutes"] == 30
+        assert card["data"]["typical_daily_max_minutes"] == 60
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_unusual_hour_card_when_no_still_on_deviation_but_hour_is_off(
-        self, mock_connect
-    ):
-        """SA-10: second query (unusual_hour) is only reached once the first (still_on_past_
-        typical) comes back empty."""
-        from services.service_sa.sa.engine import SAEngine
+    def test_one_card_per_cycle_the_most_surprising_device(self):
+        recent = [
+            self._inference(device="PS4", surprise=4.0),
+            self._inference(device="Lamp", surprise=9.0),
+            self._inference(device="Router", surprise=6.0),
+        ]
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, ("Garage light", 15, 0b111 << 12)]
+        assert self._check(recent)["entity_name"] == "Lamp"
 
-        daemon = SAEngine()
-        frame = _make_frame(now=datetime(2026, 10, 20, 3, 30, tzinfo=timezone.utc))
-        result = daemon.check_rhythm_break_anomaly(frame)
+    def test_low_confidence_devices_stay_quiet(self):
+        assert self._check([self._inference(confidence=0.11)]) is None
 
-        unusual_hour_params = mock_cursor.execute.call_args_list[1].args[1]
-        assert unusual_hour_params == (0b111 << 2,)  # hours 02, 03, 04
+    def test_other_learners_and_signals_are_ignored(self):
+        other = self._inference()
+        other.learner = "presence_profile"
+        assert self._check([other, self._inference(signal="presence.home")]) is None
 
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["deviation_type"] == "unusual_hour"
-        assert result["entity_name"] == "Garage light"
-        assert result["data"]["current_hour"] == 3
-        assert result["data"]["typical_active_hour"] == 15
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_expected_absent_card_when_neither_prior_deviation_fires(self, mock_connect):
-        """SA-10: third query (expected_absent) is only reached once both prior queries come
-        back empty."""
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, None, ("Coffee maker", 8, 7)]
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result["mode"] == "rhythm_break_anomaly"
-        assert result["deviation_type"] == "expected_absent"
-        assert result["entity_name"] == "Coffee maker"
-        assert result["data"]["typical_active_hour"] == 7
-        assert "hasn't come online" in result["content"]
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_all_three_deviation_queries_come_back_empty(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchone.side_effect = [None, None, None]
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_on_db_error(self, mock_connect):
+    def test_returns_none_when_the_database_is_unreachable(self):
         import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        daemon = SAEngine()
-        result = daemon.check_rhythm_break_anomaly(_make_frame())
-
-        assert result is None
-        mock_db.close.assert_called_once()
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_rhythm_break_anomaly(_make_frame()) is None
 
 
 def _dense(start, end, step_minutes=5):
@@ -1531,157 +1500,9 @@ class TestDepartureHoursByBucket:
         assert all(hour == 7 for hour in buckets["weekday"] + buckets["weekend"])
 
 
-class TestDeviceSessions:
-    """Tests for _device_sessions()/_active_hours_mask(), compute_entity_baselines()'s helpers."""
-
-    def test_a_lost_offline_transition_does_not_become_a_multi_day_session(self):
-        """Regression: an offline row and an online row sharing one timestamp, then nothing for
-        days (scanner idle over a weekend), used to read as one 3,800-minute session."""
-        from services.service_sa.sa.engine import _device_sessions
-
-        friday = datetime(2026, 10, 2, 20, 53)
-        monday = datetime(2026, 10, 5, 12, 32)
-        morning = friday - timedelta(hours=8)
-        rows = [(morning + timedelta(minutes=30 * i), "online") for i in range(16)]
-        rows += [
-            (friday, "offline"),
-            (friday, "online"),
-            (monday, "offline"),
-            (monday + timedelta(minutes=1), "online"),
-        ]
-        assert _device_sessions(rows) == [(morning, friday)]
-
-    def test_a_gap_while_online_closes_the_session_at_the_last_row_seen_online(self):
-        from services.service_sa.sa.engine import _device_sessions
-
-        start = datetime(2026, 10, 6, 9, 0)
-        rows = [(start + timedelta(minutes=m), "online") for m in range(0, 30)]
-        rows.append((start + timedelta(hours=10), "online"))
-        assert _device_sessions(rows) == [(start, start + timedelta(minutes=29))]
-
-    def test_active_hours_cover_the_whole_workday_not_just_the_start_hour(self):
-        from services.service_sa.sa.engine import _active_hours_mask
-
-        sessions = [
-            (datetime(2026, 10, d, 8, 45), datetime(2026, 10, d, 17, 5)) for d in range(5, 10)
-        ]
-        mask = _active_hours_mask(sessions)
-        assert [h for h in range(24) if mask >> h & 1] == list(range(8, 18))
-
-    def test_an_hour_reached_on_a_single_odd_day_is_not_part_of_the_usual_window(self):
-        from services.service_sa.sa.engine import _active_hours_mask
-
-        sessions = [
-            (datetime(2026, 10, d, 9, 0), datetime(2026, 10, d, 12, 0)) for d in range(1, 11)
-        ]
-        sessions.append((datetime(2026, 10, 11, 1, 0), datetime(2026, 10, 11, 2, 0)))
-        mask = _active_hours_mask(sessions)
-        assert not mask >> 1 & 1 and mask >> 10 & 1
-
-
-class TestComputeEntityBaselines:
-    """Tests for compute_entity_baselines()."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_a_baseline_from_reconstructed_sessions(self, mock_connect, mock_tz):
-        """Three online->offline pairs for one device should produce one
-        upsert with the median/typical-hour/min/max derived from those
-        three sessions, and a commit."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        online_hour = datetime(2026, 8, 1, 9, 0)
-        sessions = [
-            (online_hour, "online"),
-            (online_hour + timedelta(minutes=60), "offline"),
-            (online_hour + timedelta(days=1), "online"),
-            (online_hour + timedelta(days=1, minutes=90), "offline"),
-            (online_hour + timedelta(days=2), "online"),
-            (online_hour + timedelta(days=2, minutes=120), "offline"),
-            (online_hour + timedelta(days=3), "online"),
-            (online_hour + timedelta(days=3, minutes=60), "offline"),
-            (online_hour + timedelta(days=4), "online"),
-            (online_hour + timedelta(days=4, minutes=60), "offline"),
-        ]
-        # 3rd/4th/5th/6th fetchall(): SA-3's eligible-residents query (none eligible), SA-10's
-        # household aggregate query (no rows), then SA-9 Phase 2's smarthome_sensor_history
-        # query (no rows).
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 1
-        params = upsert_calls[0].args[1]
-        assert params[0] == 42  # device_id
-        assert params[1] == 60  # median_on_minutes (60, 90, 120, 60, 60 -> median 60)
-        assert params[2] == 9  # typical_active_hour (every session starts at 9am)
-        assert params[3] == 1 << 9 | 1 << 10 | 1 << 11  # active_hours_mask (09:00-11:00 sessions)
-        assert params[6] == 5  # sample_count
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_devices_below_minimum_sample_count(self, mock_connect, mock_tz):
-        """A device with fewer than ENTITY_BASELINE_MIN_SAMPLES complete
-        sessions must not get a baseline row -- too little history to be a
-        real "typical" pattern yet."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        online_hour = datetime(2026, 8, 1, 9, 0)
-        sessions = [
-            (online_hour, "online"),
-            (online_hour + timedelta(minutes=60), "offline"),
-        ]
-        mock_cursor.fetchall.side_effect = [[(42,)], sessions, [], [], []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_rolls_back_and_closes_on_db_error(self, mock_connect):
-        import pymysql
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        compute_entity_baselines()
-
-        mock_db.rollback.assert_called_once()
-        mock_db.close.assert_called_once()
-
-
 class TestComputeUserDepartureBaselines:
-    """Tests for compute_entity_baselines()'s SA-3 addition: entity_type='user' rows built
-    from _departure_hours_by_bucket(), sharing the same table/cadence as the device baselines
-    tested above. See todo/sa/todo_departure_anomaly.md for the Phase 0 spike behind this."""
+    """Tests for compute_entity_baselines(), which now writes only the SA-3 entity_type='user'
+    rows built from _departure_hours_by_bucket(). See todo/sa/todo_departure_anomaly.md."""
 
     @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
     @patch("services.service_sa.sa.engine.pymysql.connect")
@@ -1707,12 +1528,9 @@ class TestComputeUserDepartureBaselines:
         timestamp_rows = [(ts,) for ts in timestamps]
 
         mock_cursor.fetchall.side_effect = [
-            [],  # device_history distinct device_id scan (no device baselines this test)
             [(7, "Munja")],  # eligible non-guest residents with a claimed device
             [(89,), (128,)],  # Munja's claimed device ids
             timestamp_rows,  # union device_history timestamps for those device ids
-            [],  # SA-10 household aggregate query
-            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -1746,7 +1564,7 @@ class TestComputeUserDepartureBaselines:
         mock_connect.return_value = mock_db
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], [], []]
+        mock_cursor.fetchall.side_effect = [[]]
 
         compute_entity_baselines()
 
@@ -1771,11 +1589,8 @@ class TestComputeUserDepartureBaselines:
         mock_db.cursor.return_value = mock_cursor
         mock_tz.return_value = 0
         mock_cursor.fetchall.side_effect = [
-            [],
             [(7, "Munja")],
             [],  # no claimed devices for this user
-            [],  # SA-10 household aggregate query
-            [],  # SA-9 Phase 2 smarthome_sensor_history query
         ]
 
         compute_entity_baselines()
@@ -1787,247 +1602,6 @@ class TestComputeUserDepartureBaselines:
         ]
         assert len(upsert_calls) == 0
         mock_db.commit.assert_called_once()
-
-
-class TestComputeHouseholdBaselines:
-    """Tests for compute_entity_baselines()'s SA-10 addition: entity_type='household' rows,
-    computed as a single SQL aggregate rather than a per-entity Python loop -- see
-    todo/sa/todo_generalize_entity_baselines.md for the real production-hardware timing that
-    motivated keeping it that way."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_household_baselines_for_both_buckets(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        # (local_dow, first_hour, last_hour, device_count); MySQL DAYOFWEEK: 1=Sun...7=Sat.
-        household_rows = [(2, 7, 22, 5)] * 15 + [  # 15 Mondays: weekday bucket
-            (1, 9, 23, 3)
-        ] * 15  # 15 Sundays: weekend bucket
-        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 2
-        by_bucket = {call.args[1][1]: call.args[1] for call in upsert_calls}
-        weekday_params = by_bucket["weekday"]
-        assert weekday_params[0] == 0  # HOUSEHOLD_BASELINE_ENTITY_ID
-        assert weekday_params[2] == 7  # typical_active_hour (first-activity)
-        assert weekday_params[3] == 22  # typical_last_activity_hour
-        assert weekday_params[4] == 5  # typical_daily_min
-        assert weekday_params[5] == 5  # typical_daily_max
-        assert weekday_params[6] == 15  # sample_count
-        weekend_params = by_bucket["weekend"]
-        assert weekend_params[2] == 9
-        assert weekend_params[3] == 23
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_a_bucket_below_the_sample_floor(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import (
-            HOUSEHOLD_BASELINE_MIN_SAMPLES,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        household_rows = [(2, 7, 22, 5)] * (HOUSEHOLD_BASELINE_MIN_SAMPLES - 1)
-        mock_cursor.fetchall.side_effect = [[], [], household_rows, []]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_household_aggregate_is_a_single_query_not_a_per_entity_loop(
-        self, mock_connect, mock_tz
-    ):
-        """The whole point of computing this as a GROUP BY aggregate instead of a per-device
-        Python loop -- confirm exactly one execute() call touches device_history for the
-        household block, regardless of how many days of history exist."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[], [], [(2, 7, 22, 5)] * 20, []]
-
-        compute_entity_baselines()
-
-        household_query_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "GROUP BY local_date" in call.args[0]
-        ]
-        assert len(household_query_calls) == 1
-
-
-class TestComputeClimateBaselines:
-    """Tests for compute_entity_baselines()'s SA-9 Phase 2 addition: entity_type='room' rows
-    built from smarthome_sensor_history, bucketed by common.timeofday.coarse_bucket() rather
-    than day_bucket (weekday/weekend) -- see migration 041's own comment for why."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_a_climate_baseline_that_clears_the_floor(self, mock_connect, mock_tz):
-        import statistics
-
-        from services.service_sa.sa.engine import (
-            CLIMATE_BASELINE_STDEV_MULTIPLIER,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0  # UTC, so local_hour == recorded_at.hour
-
-        # 10 readings at hour=14 ("day" bucket) for smarthome_device_id 5.
-        base_day = datetime(2026, 8, 1, 14, 0)
-        values = [float(20 + i) for i in range(10)]
-        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        assert len(climate_calls) == 1
-        params = climate_calls[0].args[1]
-        median = statistics.median(values)
-        stdev = statistics.stdev(values)
-        assert params[0] == 5  # entity_id (smarthome_device_id)
-        assert params[1] == "day"  # time_of_day_bucket
-        assert params[2] == median  # typical_median_value (median of 20..29)
-        # 2026-09-26 fix: typical_daily_min/max are a median +/- N-stdev band now, not the raw
-        # observed min/max (20.0/29.0) -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment.
-        assert params[3] == pytest.approx(median - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
-        assert params[4] == pytest.approx(median + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev)
-        assert params[5] == 10  # sample_count
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_climate_band_is_tighter_than_the_raw_range_not_self_widening(
-        self, mock_connect, mock_tz
-    ):
-        """The 2026-09-26 fix itself: a couple of outlier readings must not drag
-        typical_daily_min/max out to the raw min/max, or the band is back to self-widening to
-        cover everything and check_climate_deviation() can never fire again."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 14, 0)
-        # Tightly clustered around 25.0, plus two extreme outliers (15.0, 35.0).
-        values = [25.0] * 18 + [15.0, 35.0]
-        readings = [(5, v, base_day + timedelta(days=i)) for i, v in enumerate(values)]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        params = climate_calls[0].args[1]
-        typical_min, typical_max = params[3], params[4]
-        # The old (raw min/max) behavior would have set these to 15.0/35.0 -- exactly the
-        # outliers, guaranteeing the band always contains any future reading in that range.
-        assert typical_min > 15.0
-        assert typical_max < 35.0
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_a_bucket_below_the_sample_floor(self, mock_connect, mock_tz):
-        from services.service_sa.sa.engine import (
-            CLIMATE_BASELINE_MIN_SAMPLES,
-            compute_entity_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 14, 0)
-        readings = [
-            (5, 22.0, base_day + timedelta(days=i)) for i in range(CLIMATE_BASELINE_MIN_SAMPLES - 1)
-        ]
-        mock_cursor.fetchall.side_effect = [[], [], [], readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        assert len(climate_calls) == 0
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_buckets_readings_by_time_of_day_separately(self, mock_connect, mock_tz):
-        """Morning and evening readings for the same entity must produce two independent
-        baseline rows, not get averaged together into one."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        base_day = datetime(2026, 8, 1, 8, 0)  # hour=8 -> "morning"
-        morning_readings = [(5, 18.0, base_day + timedelta(days=i)) for i in range(10)]
-        evening_base = datetime(2026, 8, 1, 19, 0)  # hour=19 -> "evening"
-        evening_readings = [(5, 23.0, evening_base + timedelta(days=i)) for i in range(10)]
-        mock_cursor.fetchall.side_effect = [[], [], [], morning_readings + evening_readings]
-
-        compute_entity_baselines()
-
-        climate_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0] and "'room'" in call.args[0]
-        ]
-        buckets = {call.args[1][1] for call in climate_calls}
-        assert buckets == {"morning", "evening"}
 
 
 class TestCheckDepartureAnomaly:
@@ -2205,6 +1779,7 @@ class TestCheckHouseholdUnusualDay:
                 confidence=0.9,
                 n_eff=30.0,
                 evidence={"family": "household_day:" + feature, "feature": feature},
+                context={"bar_bits": 2.0, "top_k": 5},  # the learned bar travels with the rows
             )
 
         rows = [row("device_share", 0.01, 0.3, 0.75), row("first_minute", 0.01, 700, 230)]
@@ -2617,124 +2192,91 @@ class TestReadFreshAttentionTelemetry:
 
 
 class TestCheckAttentionFocus:
-    """Tests for SAEngine.check_attention_focus(). frame.launcher_context.attention_snapshot/
-    .attention_trend (SA-4) replace what used to be mocked DB reads -- both are plain dicts
-    the test constructs directly, since _read_fresh_attention_telemetry()'s own staleness
-    logic is covered separately (TestReadFreshAttentionTelemetry)."""
+    """Tests for SAEngine.check_attention_focus() -- since the LF-4 cutover a card for the scalar
+    learner's fresh HIGH `attention:switch_count` deviation. The snapshot supplies the displayed
+    count and the media-dwell guard (both plain dicts built directly)."""
 
-    def test_fires_when_switching_is_high_and_not_media_heavy(self):
-        from services.service_sa.sa.engine import SAEngine
+    def _inference(self, count=14, usual=2, direction="high", confidence=0.7, surprise=8.0,
+                   series="attention:switch_count", learner="scalar_baseline"):  # fmt: skip
+        import math
+        from types import SimpleNamespace
 
-        frame = _make_frame(
+        return SimpleNamespace(
+            learner=learner,
+            evidence={"series": series},
+            observed={"value": math.log1p(count), "direction": direction},
+            expected={"mu": math.log1p(usual), "sigma": 0.4, "z": 5.0},
+            surprise=surprise,
+            confidence=confidence,
+        )
+
+    def _frame(self, snapshot="default"):
+        if snapshot == "default":
+            snapshot = {"switch_count": 14, "dwell_by_category_ms": {"terminal": 600000}}
+        return _make_frame(
             launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 20,
-                    "unlock_count": 1,
-                    "dwell_by_category_ms": {"terminal": 600000, "media": 100000},
-                },
-                attention_trend=None,
+                attention_snapshot=snapshot, attention_trend=None
             )
         )
-        result = SAEngine().check_attention_focus(frame)
+
+    def _check(self, recent, frame=None):
+        from services.service_sa.sa.engine import SAEngine
+
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+        ):
+            return SAEngine().check_attention_focus(frame or self._frame())
+
+    def test_fires_on_a_high_deviation_that_is_not_media_heavy(self):
+        result = self._check([self._inference()])
 
         assert result["mode"] == "attention_focus"
         assert result["priority"] == 3.6
-        assert result["switch_count"] == 20
-        assert result["data"]["because"]
+        assert result["switch_count"] == 14
+        assert result["content"] == "Deep in it — 14 window switches recently"
+        assert result["data"]["typical_switch_count"] == 2
+        assert result["data"]["because"][0] == "14 switches against about 2 usual at this hour"
 
-    def test_returns_none_when_switch_count_is_low(self):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_quiet_hour_is_not_deep_focus(self):
+        assert self._check([self._inference(direction="low")]) is None
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 3,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend=None,
-            )
-        )
-        assert SAEngine().check_attention_focus(frame) is None
+    def test_low_confidence_stays_quiet(self):
+        assert self._check([self._inference(confidence=0.1)]) is None
+
+    def test_other_learners_and_series_are_ignored(self):
+        recent = [
+            self._inference(series="attention:unlock_count"),
+            self._inference(learner="presence_profile"),
+        ]
+        assert self._check(recent) is None
+
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
 
     def test_returns_none_when_switching_is_media_heavy(self):
-        """High switch count while mostly dwelling in media is the wind-down
-        pattern, not focus -- must not double-fire both cards."""
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 20,
-                    "dwell_by_category_ms": {"media": 800000, "terminal": 100000},
-                },
-                attention_trend=None,
-            )
+        """High switching while mostly dwelling in media is the wind-down pattern, not focus."""
+        frame = self._frame(
+            {"switch_count": 20, "dwell_by_category_ms": {"media": 800000, "terminal": 100000}}
         )
-        assert SAEngine().check_attention_focus(frame) is None
+
+        assert self._check([self._inference()], frame) is None
 
     def test_returns_none_when_no_snapshot(self):
-        """frame.launcher_context.attention_snapshot is None whenever
-        _read_fresh_attention_telemetry() found nothing fresh -- stale or never reported,
-        same either way from this rule's perspective."""
+        """attention_snapshot is None whenever nothing fresh was reported."""
+        assert self._check([self._inference()], self._frame(snapshot=None)) is None
+
+    def test_the_most_surprising_deviation_is_used(self):
+        recent = [self._inference(usual=2, surprise=5.0), self._inference(usual=6, surprise=9.0)]
+
+        assert self._check(recent)["data"]["typical_switch_count"] == 6
+
+    def test_returns_none_when_the_database_is_unreachable(self):
+        import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(attention_snapshot=None, attention_trend=None)
-        )
-        assert SAEngine().check_attention_focus(frame) is None
-
-    def test_uses_household_trend_once_enough_history_exists(self):
-        """Above ATTENTION_TREND_MIN_SAMPLES, the fire threshold becomes this
-        household's own median switch_count + grace -- not the fixed
-        ATTENTION_FOCUS_MIN_SWITCHES floor. A switch_count that would fire
-        under the fixed threshold (15) must not fire once trend says this
-        household's median is much higher (20 -> threshold 25)."""
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 18,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend={"median_switch_count": 20, "median_unlock_count": 3},
-            )
-        )
-        assert SAEngine().check_attention_focus(frame) is None  # 18 < 20 + 5 grace = 25
-
-    def test_fires_above_household_trend_threshold(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 30,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend={"median_switch_count": 20, "median_unlock_count": 3},
-            )
-        )
-        result = SAEngine().check_attention_focus(frame)
-
-        assert result["switch_count"] == 30
-
-    def test_falls_back_to_fixed_threshold_when_no_trend(self):
-        """No trend yet (below ATTENTION_TREND_MIN_SAMPLES, or a DB error) -- the fixed
-        ATTENTION_FOCUS_MIN_SWITCHES threshold governs instead."""
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 18,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend=None,
-            )
-        )
-        result = SAEngine().check_attention_focus(frame)
-
-        assert result["switch_count"] == 18  # 18 >= fixed ATTENTION_FOCUS_MIN_SWITCHES (15)
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_attention_focus(self._frame()) is None
 
 
 class TestCheckWindDownSignal:
@@ -3514,6 +3056,21 @@ class TestCheckClimateAdvisory:
         frame = _make_frame(esphome_climate=self._climate())
         assert daemon.check_climate_advisory(frame) is None
 
+    def test_readings_are_shown_to_the_nearest_degree_and_percent(self):
+        from services.service_sa.sa.engine import SAEngine
+
+        cold = SAEngine().check_climate_advisory(
+            _make_frame(esphome_climate=self._climate(temperature_c=15.4))
+        )
+        humid = SAEngine().check_climate_advisory(
+            _make_frame(esphome_climate=self._climate(humidity_pct=81.6))
+        )
+
+        assert cold["content"] == "It's cooler than usual indoors (15°C)"
+        assert cold["data"]["temperature_c"] == 15
+        assert humid["content"] == "Humidity is higher than usual indoors (82%)"
+        assert humid["data"]["humidity_pct"] == 82
+
     def test_fires_when_too_cold(self):
         from services.service_sa.sa.engine import (
             CLIMATE_ADVISORY_COLD_THRESHOLD_C,
@@ -3620,171 +3177,96 @@ class TestCheckClimateAdvisory:
 
 
 class TestCheckClimateDeviation:
-    """Tests for SAEngine.check_climate_deviation() (SA-9 Phase 2) -- the baseline-learned
-    sibling to check_climate_advisory(); separate rule_id/mode so dismissing one doesn't
-    suppress the other."""
+    """Tests for SAEngine.check_climate_deviation() -- since the LF-4 cutover a card for the scalar
+    learner's fresh ESPHome temperature / humidity deviation; separate rule_id/mode from
+    climate_advisory so dismissing one doesn't suppress the other."""
 
-    def _climate(self, **overrides):
-        climate = {
-            "temperature_c": 22.0,
-            "temperature_online": True,
-            "humidity_pct": 45,
-            "humidity_online": True,
-        }
-        climate.update(overrides)
-        return climate
+    TEMP = "esphome:athom-tem-hum-sensor-4a4734.local:Temperature"
+    HUM = "esphome:athom-tem-hum-sensor-4a4734.local:Humidity"
 
-    def _baselines(self, **overrides):
-        baselines = {
-            "temperature": {
-                "typical_median_value": 22.0,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 24.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-            "humidity": {
-                "typical_median_value": 45.0,
-                "typical_daily_min": 40.0,
-                "typical_daily_max": 50.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-        }
-        baselines.update(overrides)
-        return baselines
+    def _inference(self, series, value, direction, mu, surprise=14.0, confidence=0.8, learner=None):
+        from types import SimpleNamespace
 
-    def test_returns_none_when_no_climate_on_frame(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(esphome_climate=None, esphome_climate_baselines=self._baselines())
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_returns_none_when_no_baselines_on_frame(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(esphome_climate=self._climate(), esphome_climate_baselines=None)
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_returns_none_within_baseline_range(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(),
-            esphome_climate_baselines=self._baselines(),
+        return SimpleNamespace(
+            learner=learner or "scalar_baseline",
+            evidence={"series": series},
+            observed={"value": value, "direction": direction},
+            expected={"mu": mu, "sigma": 0.8, "z": 4.5},
+            surprise=surprise,
+            confidence=confidence,
         )
-        assert daemon.check_climate_deviation(frame) is None
 
-    def test_fires_when_cooler_than_baseline_range(self):
-        from services.service_sa.sa.engine import CLIMATE_DEVIATION_MARGIN_C, SAEngine
+    def _check(self, recent):
+        from services.service_sa.sa.engine import SAEngine
 
-        daemon = SAEngine()
-        temp = 20.0 - CLIMATE_DEVIATION_MARGIN_C - 1
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=temp),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+        ):
+            return SAEngine().check_climate_deviation(_make_frame())
+
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
+
+    def test_cooler_temperature_card(self):
+        card = self._check([self._inference(self.TEMP, 21.9, "low", 26.5)])
 
         assert card["mode"] == "climate_deviation"
         assert card["priority"] == 5.4
-        assert "Cooler" in card["content"]
-        assert card["data"]["temperature_c"] == temp
+        # shown to the nearest degree, never as a decimal
+        assert card["content"] == "Cooler than typical for this time of day (22°C)"
+        assert card["data"]["temperature_c"] == 22
+        assert card["data"]["typical_median_value"] == 26  # 26.5 rounds half to even
+        assert card["data"]["because"] == ["22°C against about 26°C expected at this hour"]
 
-    def test_fires_when_warmer_than_baseline_range(self):
-        from services.service_sa.sa.engine import CLIMATE_DEVIATION_MARGIN_C, SAEngine
+    def test_humidity_is_shown_to_the_nearest_percent(self):
+        card = self._check([self._inference(self.HUM, 20.4, "low", 45.6)])
 
-        daemon = SAEngine()
-        temp = 24.0 + CLIMATE_DEVIATION_MARGIN_C + 1
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=temp),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        assert card["content"] == "Lower humidity than typical for this time of day (20%)"
+        assert card["data"]["humidity_pct"] == 20
+        assert card["data"]["because"] == ["20% against about 46% expected at this hour"]
+
+    def test_warmer_temperature_card(self):
+        card = self._check([self._inference(self.TEMP, 31.0, "high", 26.5)])
 
         assert "Warmer" in card["content"]
-        assert card["data"]["temperature_c"] == temp
 
-    def test_fires_when_humidity_lower_than_baseline_range(self):
-        from services.service_sa.sa.engine import (
-            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
-            SAEngine,
-        )
+    def test_humidity_cards(self):
+        low = self._check([self._inference(self.HUM, 20.0, "low", 45.0)])
+        high = self._check([self._inference(self.HUM, 70.0, "high", 45.0)])
 
-        daemon = SAEngine()
-        humidity = 40.0 - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT - 1
-        frame = _make_frame(
-            esphome_climate=self._climate(humidity_pct=humidity),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        assert "Lower humidity" in low["content"] and low["data"]["humidity_pct"] == 20.0
+        assert "Higher humidity" in high["content"]
 
-        assert "Lower" in card["content"]
-        assert card["data"]["humidity_pct"] == humidity
+    def test_low_confidence_stays_quiet(self):
+        """A series whose stability was just cut by a regime change must not show a card."""
+        assert self._check([self._inference(self.TEMP, 21.9, "low", 26.5, confidence=0.04)]) is None
 
-    def test_fires_when_humidity_higher_than_baseline_range(self):
-        from services.service_sa.sa.engine import (
-            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
-            SAEngine,
-        )
+    def test_other_learners_and_series_are_ignored(self):
+        recent = [
+            self._inference(self.TEMP, 21.9, "low", 26.5, learner="presence_profile"),
+            self._inference("attention:switch_count", 30, "high", 2),
+            self._inference("speedtest:download", 3.0, "low", 90.0),
+        ]
 
-        daemon = SAEngine()
-        humidity = 50.0 + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT + 1
-        frame = _make_frame(
-            esphome_climate=self._climate(humidity_pct=humidity),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        assert self._check(recent) is None
 
-        assert "Higher" in card["content"]
-        assert card["data"]["humidity_pct"] == humidity
+    def test_the_most_surprising_deviation_wins_with_temperature_on_a_tie(self):
+        recent = [
+            self._inference(self.HUM, 70.0, "high", 45.0, surprise=9.0),
+            self._inference(self.TEMP, 21.9, "low", 26.5, surprise=9.0),
+        ]
+        assert "temperature_c" in self._check(recent)["data"]
 
-    def test_returns_none_below_min_sample_count(self):
-        """A baseline that hasn't cleared its own reliability floor yet must not fire, even if
-        the current reading is numerically outside its (unreliable) observed range."""
+        recent[0] = self._inference(self.HUM, 70.0, "high", 45.0, surprise=20.0)
+        assert "humidity_pct" in self._check(recent)["data"]
+
+    def test_returns_none_when_the_database_is_unreachable(self):
+        import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        daemon = SAEngine()
-        baselines = self._baselines(
-            temperature={
-                "typical_median_value": 22.0,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 24.0,
-                "sample_count": 3,
-                "min_sample_count": 10,
-            }
-        )
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=10.0),
-            esphome_climate_baselines=baselines,
-        )
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_ignores_a_stale_offline_reading(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=1.0, temperature_online=False),
-            esphome_climate_baselines=self._baselines(),
-        )
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_temperature_deviation_wins_over_simultaneous_humidity_deviation(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=1.0, humidity_pct=99.0),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
-
-        assert "temperature_c" in card["data"]
-        assert "humidity_pct" not in card["data"]
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_climate_deviation(_make_frame()) is None
 
 
 class TestCheckTime:
@@ -4136,68 +3618,6 @@ class TestContextFrameFetchers:
         mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
 
         assert fetch_esphome_climate_snapshot() is None
-
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_a_dict(self, mock_connect):
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [
-            ("Temperature", 22.5, 20.0, 25.0, 12, 10),
-            ("Humidity", 45.0, 40.0, 50.0, 12, 10),
-        ]
-
-        result = fetch_esphome_climate_baselines("day")
-
-        assert result == {
-            "temperature": {
-                "typical_median_value": 22.5,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 25.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-            "humidity": {
-                "typical_median_value": 45.0,
-                "typical_daily_min": 40.0,
-                "typical_daily_max": 50.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-        }
-
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_none_values_when_no_baseline_yet(
-        self, mock_connect
-    ):
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = []
-
-        result = fetch_esphome_climate_baselines("night")
-
-        assert result == {"temperature": None, "humidity": None}
-
-    @patch("services.service_sa.sa.context_frame.pymysql.connect")
-    def test_fetch_esphome_climate_baselines_returns_none_on_db_error(self, mock_connect):
-        import pymysql
-
-        from services.service_sa.sa.context_frame import (
-            fetch_esphome_climate_baselines,
-        )
-
-        mock_cursor = MagicMock()
-        mock_connect.return_value.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        assert fetch_esphome_climate_baselines("day") is None
 
 
 class TestRoutingUtils:
@@ -4763,3 +4183,21 @@ class TestLearnerEntrypoint:
         assert not hasattr(alfr3ddaemon, "compute_entity_baselines")
         assert not hasattr(alfr3ddaemon.MyDaemon, "check_situational_awareness")
         assert "compute_entity_baselines)" not in inspect.getsource(alfr3ddaemon.init_daemon)
+
+
+class TestCardSuppressionIgnoresImpressionRows:
+    """`impression` rows (end-of-display records with a visible time) must not be the 'latest
+    action' that hides a dismissal, nor break a run of `shown` rows."""
+
+    @patch("services.service_sa.sa.engine.pymysql.connect")
+    def test_the_history_query_excludes_them(self, mock_connect):
+        from services.service_sa.sa.engine import SAEngine
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = []
+
+        SAEngine()._card_suppression_reason("weather", "")
+
+        sql = mock_cursor.execute.call_args.args[0]
+        assert "action <> 'impression'" in sql
