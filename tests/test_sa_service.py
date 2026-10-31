@@ -2623,124 +2623,89 @@ class TestReadFreshAttentionTelemetry:
 
 
 class TestCheckAttentionFocus:
-    """Tests for SAEngine.check_attention_focus(). frame.launcher_context.attention_snapshot/
-    .attention_trend (SA-4) replace what used to be mocked DB reads -- both are plain dicts
-    the test constructs directly, since _read_fresh_attention_telemetry()'s own staleness
-    logic is covered separately (TestReadFreshAttentionTelemetry)."""
+    """Tests for SAEngine.check_attention_focus() -- since the LF-4 cutover a card for the scalar
+    learner's fresh HIGH `attention:switch_count` deviation. The snapshot supplies the displayed
+    count and the media-dwell guard (both plain dicts built directly)."""
 
-    def test_fires_when_switching_is_high_and_not_media_heavy(self):
+    def _inference(self, count=14, usual=2, direction="high", confidence=0.7, surprise=8.0,
+                   series="attention:switch_count", learner="scalar_baseline"):  # fmt: skip
+        import math
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            learner=learner,
+            evidence={"series": series},
+            observed={"value": math.log1p(count), "direction": direction},
+            expected={"mu": math.log1p(usual), "sigma": 0.4, "z": 5.0},
+            surprise=surprise,
+            confidence=confidence,
+        )
+
+    def _frame(self, snapshot="default"):
+        if snapshot == "default":
+            snapshot = {"switch_count": 14, "dwell_by_category_ms": {"terminal": 600000}}
+        return _make_frame(
+            launcher_context=_make_launcher_context(attention_snapshot=snapshot, attention_trend=None)
+        )
+
+    def _check(self, recent, frame=None):
         from services.service_sa.sa.engine import SAEngine
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 20,
-                    "unlock_count": 1,
-                    "dwell_by_category_ms": {"terminal": 600000, "media": 100000},
-                },
-                attention_trend=None,
-            )
-        )
-        result = SAEngine().check_attention_focus(frame)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch(
+                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
+            ),
+        ):
+            return SAEngine().check_attention_focus(frame or self._frame())
+
+    def test_fires_on_a_high_deviation_that_is_not_media_heavy(self):
+        result = self._check([self._inference()])
 
         assert result["mode"] == "attention_focus"
         assert result["priority"] == 3.6
-        assert result["switch_count"] == 20
-        assert result["data"]["because"]
+        assert result["switch_count"] == 14
+        assert result["content"] == "Deep in it — 14 window switches recently"
+        assert result["data"]["typical_switch_count"] == 2
+        assert result["data"]["because"][0] == "14 switches against about 2 usual at this hour"
 
-    def test_returns_none_when_switch_count_is_low(self):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_quiet_hour_is_not_deep_focus(self):
+        assert self._check([self._inference(direction="low")]) is None
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 3,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend=None,
-            )
-        )
-        assert SAEngine().check_attention_focus(frame) is None
+    def test_low_confidence_stays_quiet(self):
+        assert self._check([self._inference(confidence=0.1)]) is None
+
+    def test_other_learners_and_series_are_ignored(self):
+        recent = [
+            self._inference(series="attention:unlock_count"),
+            self._inference(learner="presence_profile"),
+        ]
+        assert self._check(recent) is None
+
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
 
     def test_returns_none_when_switching_is_media_heavy(self):
-        """High switch count while mostly dwelling in media is the wind-down
-        pattern, not focus -- must not double-fire both cards."""
-        from services.service_sa.sa.engine import SAEngine
+        """High switching while mostly dwelling in media is the wind-down pattern, not focus."""
+        frame = self._frame({"switch_count": 20, "dwell_by_category_ms": {"media": 800000, "terminal": 100000}})  # fmt: skip
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 20,
-                    "dwell_by_category_ms": {"media": 800000, "terminal": 100000},
-                },
-                attention_trend=None,
-            )
-        )
-        assert SAEngine().check_attention_focus(frame) is None
+        assert self._check([self._inference()], frame) is None
 
     def test_returns_none_when_no_snapshot(self):
-        """frame.launcher_context.attention_snapshot is None whenever
-        _read_fresh_attention_telemetry() found nothing fresh -- stale or never reported,
-        same either way from this rule's perspective."""
+        """attention_snapshot is None whenever nothing fresh was reported."""
+        assert self._check([self._inference()], self._frame(snapshot=None)) is None
+
+    def test_the_most_surprising_deviation_is_used(self):
+        recent = [self._inference(usual=2, surprise=5.0), self._inference(usual=6, surprise=9.0)]
+
+        assert self._check(recent)["data"]["typical_switch_count"] == 6
+
+    def test_returns_none_when_the_database_is_unreachable(self):
+        import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(attention_snapshot=None, attention_trend=None)
-        )
-        assert SAEngine().check_attention_focus(frame) is None
-
-    def test_uses_household_trend_once_enough_history_exists(self):
-        """Above ATTENTION_TREND_MIN_SAMPLES, the fire threshold becomes this
-        household's own median switch_count + grace -- not the fixed
-        ATTENTION_FOCUS_MIN_SWITCHES floor. A switch_count that would fire
-        under the fixed threshold (15) must not fire once trend says this
-        household's median is much higher (20 -> threshold 25)."""
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 18,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend={"median_switch_count": 20, "median_unlock_count": 3},
-            )
-        )
-        assert SAEngine().check_attention_focus(frame) is None  # 18 < 20 + 5 grace = 25
-
-    def test_fires_above_household_trend_threshold(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 30,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend={"median_switch_count": 20, "median_unlock_count": 3},
-            )
-        )
-        result = SAEngine().check_attention_focus(frame)
-
-        assert result["switch_count"] == 30
-
-    def test_falls_back_to_fixed_threshold_when_no_trend(self):
-        """No trend yet (below ATTENTION_TREND_MIN_SAMPLES, or a DB error) -- the fixed
-        ATTENTION_FOCUS_MIN_SWITCHES threshold governs instead."""
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "switch_count": 18,
-                    "dwell_by_category_ms": {"terminal": 600000},
-                },
-                attention_trend=None,
-            )
-        )
-        result = SAEngine().check_attention_focus(frame)
-
-        assert result["switch_count"] == 18  # 18 >= fixed ATTENTION_FOCUS_MIN_SWITCHES (15)
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_attention_focus(self._frame()) is None
 
 
 class TestCheckWindDownSignal:

@@ -11,6 +11,7 @@ compute_entity_baselines() every 6h.
 
 # Standard library imports
 import logging
+import math
 import statistics
 import time
 import os
@@ -2184,51 +2185,70 @@ class SAEngine:
                 db.close()
 
     def check_attention_focus(self, frame):
-        """A measured, evidence-based focus signal from the launcher's own
-        window-switching behavior -- additive alongside (not a replacement
-        for) check_focus_needed()'s calendar heuristic; see
-        todo/sa/todo_attention_telemetry.md for why the two coexist rather than
-        one replacing the other.
+        """A measured, evidence-based focus signal from the launcher's own window-switching
+        behavior -- additive alongside (not a replacement for) check_focus_needed()'s calendar
+        heuristic; see todo/sa/todo_attention_telemetry.md for why the two coexist.
 
-        Fires when the reported window-switch count is genuinely high --
-        above this household's own rolling median switch_count plus a grace
-        margin once enough history exists (`frame.launcher_context.
-        attention_trend`), falling back to the fixed ATTENTION_FOCUS_MIN_SWITCHES threshold
-        below that sample floor -- and that switching isn't concentrated in
-        media (which would be the wind-down pattern instead, see
-        check_wind_down_signal()).
+        Since the LF-4 cutover this shows the scalar learner's inference (sa/learners/scalar.py)
+        instead of a fixed 15-switch threshold or a rolling median plus grace: the shadow pass
+        scores the reported switch count against this household's own count for the hour
+        (modelled as log(1 + n)) and stores a deviation in sa_inferences, so the card lags it by at
+        most one cycle. Only a HIGH deviation counts (a quiet hour is not "deep in it") and it
+        needs confidence >= MIN_CARD_CONFIDENCE. As before, switching concentrated in media is the
+        wind-down pattern instead (see check_wind_down_signal()), so it does not fire.
 
-        `frame.launcher_context.attention_snapshot`/`.attention_trend` (SA-4) replace this
-        rule's own _read_fresh_attention_telemetry()/_attention_telemetry_trend() calls --
-        check_wind_down_signal() reads the exact same two.
+        `frame.launcher_context.attention_snapshot` (SA-4) supplies the displayed count and the
+        media-dwell guard; check_wind_down_signal() reads the same snapshot.
         """
         launcher = frame.launcher_context
         snapshot = launcher and launcher.attention_snapshot
-        if not snapshot:
+        if not snapshot or frame.now is None:
             return None
-        switch_count = snapshot.get("switch_count", 0)
-        trend = launcher and launcher.attention_trend
-        threshold = ATTENTION_FOCUS_MIN_SWITCHES
-        if trend:
-            threshold = max(
-                threshold, trend["median_switch_count"] + ATTENTION_FOCUS_TREND_GRACE_SWITCHES
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-        if switch_count < threshold:
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Attention focus check error: " + str(e))
             return None
+        finally:
+            if db:
+                db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == scalar.NAME
+            and (i.evidence or {}).get("series") == "attention:switch_count"
+            and i.observed.get("direction") == "high"
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.surprise)
         media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
         if media_fraction >= ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:
             return None
+        switch_count = snapshot.get("switch_count", 0)
+        usual = round(math.expm1(inference.expected["mu"]))  # modelled as log(1 + n)
         return {
             "mode": "attention_focus",
             "content": f"Deep in it — {switch_count} window switches recently",
             "priority": 3.6,
             "switch_count": switch_count,
             "data": {
+                "typical_switch_count": usual,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
                 "because": [
-                    f"{switch_count} switches >= threshold {threshold}",
+                    f"{switch_count} switches against about {usual} usual at this hour",
                     f"media dwell {media_fraction:.0%} < "
                     f"{ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:.0%}",
-                ]
+                ],
             },
         }
 
