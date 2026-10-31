@@ -35,7 +35,7 @@ Widens `entity_baselines` (the mechanism SA-3 already extended to `'user'`) to a
   columns, a sample-count floor gate.
 - **Measured real runtime headroom on the actual production hardware, not estimated it.**
   Timed the *existing, pre-SA-10* device-only `compute_entity_baselines()` directly on
-  `alfr3d@192.168.2.200` (the real NUC, same box SA-6/SA-8 used): **175.4 seconds** for the
+  `alfr3d@10.0.0.100` (the real NUC, same box SA-6/SA-8 used): **175.4 seconds** for the
   per-device Python session-reconstruction loop alone, on real ~1.48M-row `device_history` data.
   A genuinely significant pre-existing cost (not something this task introduced), confirming the
   task's own concern that "adding subject types multiplies the work" is worth taking seriously —

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import SituationalAwareness from './SituationalAwareness'
+import socket from '../utils/socket'
 
 vi.mock('../utils/socket', () => ({
   default: {
@@ -158,7 +159,8 @@ describe('SituationalAwareness', () => {
     await waitFor(() => expect(interactionCalls().length).toBe(1))
     const [, options] = interactionCalls()[0]
     const body = JSON.parse(options.body)
-    expect(body).toEqual({ rule_id: 'weather', subject_key: '', action: 'shown' })
+    expect(body).toMatchObject({ rule_id: 'weather', subject_key: '', action: 'shown', surface: 'web' })
+    expect(body.impression_id).toMatch(/^[A-Za-z0-9-]{1,36}$/) // links this row to its display
   })
 
   it('falls back to `mode` as rule_id when a card predates SA-1 stamping', async () => {
@@ -205,5 +207,119 @@ describe('SituationalAwareness', () => {
     await screen.findByText('unrecognized device')
 
     expect(screen.queryByLabelText('Dismiss card')).toBeFalsy()
+  })
+  describe('impressions (how long a card was actually on screen)', () => {
+    const card = { mode: 'weather', rule_id: 'weather', subject_key: '', content: 'sunny', priority: 5 }
+
+    const bodies = (action) =>
+      interactionCalls()
+        .map(([, options]) => JSON.parse(options.body))
+        .filter((body) => body.action === action)
+
+    const pushToSocket = (data) => {
+      const handler = socket.on.mock.calls.find(([event]) => event === 'situational_awareness')[1]
+      act(() => handler(data))
+    }
+
+    let now
+    beforeEach(() => {
+      now = 1_000_000
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+    })
+
+    const renderCard = async (data = [card]) => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => data })
+      const view = render(<SituationalAwareness />)
+      await screen.findByText(data[0].content)
+      await waitFor(() => expect(bodies('shown').length).toBe(1))
+      return view
+    }
+
+    it('dismissing ends the display: one impression with the visible time and the same id as shown', async () => {
+      await renderCard()
+      now += 5000
+
+      fireEvent.click(screen.getByLabelText('Dismiss card'))
+
+      await waitFor(() => expect(bodies('impression').length).toBe(1))
+      const [impression] = bodies('impression')
+      expect(impression).toMatchObject({ rule_id: 'weather', surface: 'web', visible_ms: 5000 })
+      expect(impression.impression_id).toBe(bodies('shown')[0].impression_id)
+      expect(bodies('dismissed')[0].impression_id).toBe(impression.impression_id)
+    })
+
+    it('a card leaving the payload ends its display', async () => {
+      await renderCard()
+      now += 12_000
+
+      pushToSocket([])
+
+      await waitFor(() => expect(bodies('impression').length).toBe(1))
+      expect(bodies('impression')[0].visible_ms).toBe(12_000)
+    })
+
+    it('a card that stays in a refreshed payload keeps one display', async () => {
+      await renderCard()
+      now += 3000
+      pushToSocket([{ ...card, content: 'still sunny' }])
+      now += 3000
+
+      expect(bodies('impression').length).toBe(0)
+      pushToSocket([])
+      await waitFor(() => expect(bodies('impression').length).toBe(1))
+      expect(bodies('impression')[0].visible_ms).toBe(6000)
+    })
+
+    it('unmounting ends the display', async () => {
+      const view = await renderCard()
+      now += 4000
+
+      view.unmount()
+
+      expect(bodies('impression').length).toBe(1)
+      expect(bodies('impression')[0].visible_ms).toBe(4000)
+    })
+
+    it('does not count time the tab was hidden', async () => {
+      await renderCard()
+      const setVisibility = (state) => {
+        Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+      }
+      now += 2000
+      setVisibility('hidden')
+      now += 60_000
+      setVisibility('visible')
+      now += 1000
+
+      fireEvent.click(screen.getByLabelText('Dismiss card'))
+
+      await waitFor(() => expect(bodies('impression').length).toBe(1))
+      expect(bodies('impression')[0].visible_ms).toBe(3000)
+    })
+
+    it('does not report a display shorter than a second -- it was never really seen', async () => {
+      await renderCard()
+      now += 400
+
+      fireEvent.click(screen.getByLabelText('Dismiss card'))
+
+      await waitFor(() => expect(bodies('dismissed').length).toBe(1))
+      expect(bodies('impression').length).toBe(0)
+    })
+
+    it('opening a music playlist is reported as a tap saying what it opened', async () => {
+      const music = {
+        mode: 'music', rule_id: 'music', subject_key: '', content: 'Play Indie Chill', priority: 3,
+        playlist_name: 'Indie Chill', playlist_url: 'https://open.spotify.com/playlist/abc123',
+      }
+      await renderCard([music])
+
+      fireEvent.click(screen.getByRole('link', { name: /Indie Chill/ }))
+
+      await waitFor(() => expect(bodies('tapped').length).toBe(1))
+      expect(bodies('tapped')[0]).toMatchObject({ rule_id: 'music', surface: 'web', detail: 'open playlist' })
+      expect(bodies('tapped')[0].impression_id).toBe(bodies('shown')[0].impression_id)
+    })
   })
 })

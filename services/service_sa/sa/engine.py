@@ -11,12 +11,12 @@ compute_entity_baselines() every 6h.
 
 # Standard library imports
 import logging
+import math
 import statistics
 import time
 import os
 import sys
 import bisect
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 import orjson
@@ -25,15 +25,15 @@ import orjson
 import pymysql
 from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
 from sa import disk, layer2
-from sa.learners import household_day
+from sa.learners import device_rhythm, household_day
 from sa.learners import presence as presence_learner
+from sa.learners import scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import calendar_utils, gmail_utils, spotify_utils  # noqa: E402
 from common import get_producer  # noqa: E402
 from common import db_utils  # noqa: E402
 from common import day_context  # noqa: E402
-from common import timeofday  # noqa: E402
 
 logger = logging.getLogger("SALog")
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -154,12 +154,6 @@ DEVICE_CONTEXT_CONFIG_KEY = "launcher_device_context"
 # the user is silenced long after they stopped being.
 DEVICE_CONTEXT_STALENESS_MINUTES = 15
 
-# check_attention_focus() fires when the reported window-switch count is at
-# least this high -- a conservative starting point (roughly one switch per
-# minute sustained over a ~15-minute report window) with no real telemetry
-# yet to tune it against.
-ATTENTION_FOCUS_MIN_SWITCHES = 15
-
 # ...and only when media-category dwell is under this fraction of total
 # dwell time -- high switching concentrated in media (e.g. flipping between
 # a few apps while half-watching something) isn't "focus", it's the
@@ -180,7 +174,7 @@ WIND_DOWN_MIN_MEDIA_DWELL_FRACTION = 0.5
 # once at least this many attention_telemetry_history rows exist -- "is this unusual for this
 # household" rather than only "is this a big number in general". ~2 days at the launcher's
 # 15-minute report cadence; a conservative starting point with no real telemetry yet to tune it
-# against, same caveat as ENTITY_BASELINE_MIN_SAMPLES. Below this floor, both checks fall back
+# against, same caveat as any small baseline. Below this floor, both checks fall back
 # to the fixed thresholds above unchanged.
 ATTENTION_TREND_MIN_SAMPLES = 200
 
@@ -188,10 +182,6 @@ ATTENTION_TREND_MIN_SAMPLES = 200
 # switch_count/unlock_count.
 ATTENTION_TREND_LOOKBACK_DAYS = 14
 
-# Grace added on top of the household's own median switch_count/unlock_count before either
-# check fires on the trend path -- same "small grace window so a marginally-above-typical value
-# doesn't trigger every cycle" reasoning as RHYTHM_BREAK_GRACE_MINUTES.
-ATTENTION_FOCUS_TREND_GRACE_SWITCHES = 5
 WIND_DOWN_TREND_GRACE_UNLOCKS = 2
 
 
@@ -249,15 +239,6 @@ CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
 CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES = 20
 CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE = {}
 
-# How far back compute_entity_baselines() looks when reconstructing on/off
-# sessions from device_history to build each device's rhythm baseline.
-ENTITY_BASELINE_LOOKBACK_DAYS = 30
-
-# Minimum complete on/off sessions before a device gets a baseline row at all --
-# below this, a "typical" pattern isn't meaningfully established yet, and
-# publishing one would produce noisy false-positive anomalies.
-ENTITY_BASELINE_MIN_SAMPLES = 5
-
 # device_history is written about once a minute while the scanner runs. A silence longer than this
 # inside an "online" session means the offline transition was never observed (scanner/daemon
 # outage), so the session is closed at the last row seen online instead of being stretched across
@@ -270,50 +251,15 @@ ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES = 180
 # entity_baselines.active_hours_mask and read by check_rhythm_break_anomaly()'s unusual-hour branch.
 ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
 
-# SA-9 Phase 2: how far back compute_entity_baselines() looks in smarthome_sensor_history when
-# building each ESPHome sensor's per-time-of-day-bucket climate baseline.
-CLIMATE_BASELINE_LOOKBACK_DAYS = 30
-
-# Minimum readings in a given time-of-day bucket before check_climate_deviation() trusts that
-# bucket's baseline -- same "degrade to silence below a reliability floor" precedent as
-# ENTITY_BASELINE_MIN_SAMPLES.
-CLIMATE_BASELINE_MIN_SAMPLES = 10
-
-# 2026-09-26 fix: typical_daily_min/typical_daily_max for a 'room' (climate) baseline used to be
-# the *raw* min/max of the lookback window -- checked against real production data and found to
-# be self-defeating: a "typical" band built from the full observed range already covers ~all
-# future readings, so check_climate_deviation() could never fire (confirmed: zero firings in 10
-# days against 314k+ real readings). Now typical_daily_min/max are computed as
-# median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER standard deviations -- a band that reflects
-# genuinely "typical" values instead of self-widening to the noise floor. Verified against the
-# real household's actual sensor history before picking 2.0 (see todo_esphome_situational_
-# awareness.md's 2026-09-26 entry): tight enough that real recorded extremes fall outside it,
-# loose enough not to flap on ordinary variation.
-CLIMATE_BASELINE_STDEV_MULTIPLIER = 2.0
-
-# check_climate_deviation() fires only when the current reading is this far outside the
-# baseline's [typical_daily_min, typical_daily_max] band (now a median +/- stdev band, not a raw
-# min/max range -- see CLIMATE_BASELINE_STDEV_MULTIPLIER) for the current time-of-day bucket --
-# a margin, not a hard edge, so a reading right at the historical boundary doesn't flap in and
-# out of firing. Sized much smaller than before the 2026-09-26 fix: the band itself is now tight,
-# so the margin only needs to add hysteresis, not compensate for an overly wide band.
-CLIMATE_DEVIATION_MARGIN_C = 0.5
-CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT = 3
-
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
 # storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
 # in migration 039 (2026-09-13) -- see that migration's own comment for why. No Python constant
 # for their retention window lives here any more; it's in the EVENT bodies themselves, same as
 # device_location_history's own event already was.
 
-# check_rhythm_break_anomaly() only fires this many minutes past a device's
-# typical_daily_max on-duration -- a small grace window so a session that's
-# only marginally longer than usual doesn't trigger every cycle.
-RHYTHM_BREAK_GRACE_MINUTES = 15
-
 # check_departure_anomaly() (SA-3): how far back device_history is scanned when computing a
-# resident's per-weekday/weekend departure-hour baseline. Longer than ENTITY_BASELINE_LOOKBACK_DAYS
-# (30d) deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
+# resident's per-weekday/weekend departure-hour baseline. Longer than a 30-day window
+# deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
 # device baseline gets from the same window, and the confirmed-home-overnight anchor
 # (_departure_hours_by_bucket()) rejects many days outright. Verified against this household's
 # real history (todo/sa/todo_departure_anomaly.md): 60 days left every resident under the sample
@@ -330,7 +276,7 @@ DEPARTURE_GAP_MINUTES = 31
 
 # A resident's per-day-bucket (weekday/weekend) departure baseline needs at least this many
 # observed first-departure days before check_departure_anomaly() trusts it -- same "degrade to
-# silence below a reliability floor" precedent as ENTITY_BASELINE_MIN_SAMPLES/
+# silence below a reliability floor" precedent as the other small-baseline floors /
 # ATTENTION_TREND_MIN_SAMPLES elsewhere in this file.
 DEPARTURE_BASELINE_MIN_SAMPLES = 8
 
@@ -343,7 +289,7 @@ DEPARTURE_BASELINE_MAX_SPREAD_HOURS = 4
 
 # How many hours past a resident's typical departure hour check_departure_anomaly() waits before
 # firing -- a grace window so running a bit late on an otherwise-normal day doesn't trigger a
-# card, mirroring RHYTHM_BREAK_GRACE_MINUTES's reasoning at the coarser (hour, not minute)
+# card, mirroring the old rhythm-break grace window's reasoning at the coarser (hour, not minute)
 # granularity appropriate for a once-a-day event.
 DEPARTURE_ANOMALY_GRACE_HOURS = 1.5
 
@@ -362,35 +308,6 @@ GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 # waiting -- there's no reason to withhold it. How far in advance to actually *show* the card is
 # alfr3d_deck's call (EventLeaveByLifecycle.LEAD_TIME_MINUTES), not this service's.
 TRAVEL_STALE_AFTER_MINUTES = 30
-
-# SA-10: household-level baselines (entity_type='household'). Household is a singleton -- there's
-# only one row per day_bucket regardless of household size -- so entity_id is a fixed sentinel,
-# not a real foreign key into any table.
-HOUSEHOLD_BASELINE_ENTITY_ID = 0
-
-# How far back the household-level aggregate query scans device_history. Reuses
-# DEPARTURE_BASELINE_LOOKBACK_DAYS's own reasoning (weekday/weekend bucketing roughly halves the
-# sample size a straight daily count would get, and 120 days leaves a cushion under
-# device_history's 180-day retention) rather than re-deriving a separate number for a
-# conceptually-similar "how much history does a day-bucketed household baseline need" question.
-HOUSEHOLD_BASELINE_LOOKBACK_DAYS = DEPARTURE_BASELINE_LOOKBACK_DAYS
-
-# A household-level per-day-bucket baseline needs at least this many observed days before
-# the household baseline's consumers trust it -- same "degrade to silence below a reliability floor"
-# precedent as every other baseline-gated check in this file. Set a bit higher than
-# DEPARTURE_BASELINE_MIN_SAMPLES (8): a household-wide "is today unusual" call is a broader,
-# higher-consequence claim than one resident's departure time, and deserves more evidence first.
-HOUSEHOLD_BASELINE_MIN_SAMPLES = 14
-
-# check_rhythm_break_anomaly()'s "expected absent" branch: an offline device with a reliable
-# baseline is flagged only within this many hours *after* its typical_active_hour -- catches "it
-# should be on by now" without nagging forever about a device that's simply been off for days.
-EXPECTED_ABSENT_WINDOW_HOURS = 3
-
-# ...and only if it was online this recently. A longer-offline device is retired, moved, or a stale
-# duplicate record (e.g. the same machine's second network adapter, which has its own device row
-# keyed by MAC) -- not "late". Four days spans a long weekend for a work machine.
-EXPECTED_ABSENT_MAX_OFFLINE_DAYS = 4
 
 
 class SAEngine:
@@ -589,15 +506,6 @@ class SAEngine:
             logger.error(f"Context frame: esphome_climate build failed: {e}")
 
         try:
-            if frame.local_dt:
-                bucket = timeofday.coarse_bucket(frame.local_dt.hour)
-                frame.esphome_climate_baselines = context_frame.fetch_esphome_climate_baselines(
-                    bucket
-                )
-        except Exception as e:
-            logger.error(f"Context frame: esphome_climate_baselines build failed: {e}")
-
-        try:
             frame.environment = context_frame.fetch_environment_snapshot(ENV_NAME)
         except Exception as e:
             logger.error(f"Context frame: environment build failed: {e}")
@@ -718,7 +626,8 @@ class SAEngine:
             cursor = db.cursor()
             cursor.execute(
                 "SELECT action, occurred_at FROM card_interactions "
-                "WHERE rule_id = %s AND subject_key = %s ORDER BY occurred_at DESC LIMIT %s",
+                "WHERE rule_id = %s AND subject_key = %s AND action <> 'impression' "
+                "ORDER BY occurred_at DESC LIMIT %s",
                 (rule_id, subject_key, CARD_SUPPRESSION_HISTORY_LIMIT),
             )
             rows = cursor.fetchall()
@@ -1062,13 +971,15 @@ class SAEngine:
         hasn't started per service_user.app.update_user_state()) is treated as a fresh
         arrival (0 days) rather than fabricating an overstay from missing data.
         """
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT username, continuous_stay_since
             FROM user u
             JOIN states s ON u.state = s.id
             JOIN user_types ut ON u.type = ut.id
             WHERE s.state = 'online' AND ut.type = 'guest' AND u.username != 'unknown'
-            """)
+            """
+        )
         results = []
         for username, continuous_stay_since in cursor.fetchall():
             if continuous_stay_since:
@@ -1098,7 +1009,8 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     SUM(CASE WHEN ut.type IN ('guest') THEN 1 ELSE 0 END) as guest_count,
                     COUNT(*) as total_count
@@ -1106,7 +1018,8 @@ class SAEngine:
                 JOIN states s ON u.state = s.id
                 JOIN user_types ut ON u.type = ut.id
                 WHERE s.state = 'online' AND u.username != 'unknown'
-                """)
+                """
+            )
             row = cursor.fetchone()
             # SUM() returns decimal.Decimal via pymysql (unlike COUNT()'s plain int) -- cast
             # so guest_count is safe to embed directly in the "data" dict's JSON payload (SA-5),
@@ -1366,165 +1279,91 @@ class SAEngine:
         }
 
     def check_rhythm_break_anomaly(self, frame):
-        """Compare devices against their `entity_baselines` row and surface a card only on a
-        genuine deviation from routine. Three deviation types, checked in this order (the first
-        one that fires wins -- still one card per cycle, same "one card per check" shape as every
-        other DISPLAY_RULES method):
+        """A device behaving out of its own routine. Since the LF-4 cutover this shows the device
+        rhythm learner's inference (sa/learners/device_rhythm.py) instead of comparing against an
+        `entity_baselines` row: the shadow pass scores every device each cycle and stores any
+        deviation in sa_inferences, so the card lags it by at most one cycle. Three deviation
+        types, as before:
 
-        1. `still_on_past_typical` (original): a currently-online device has been on
-           RHYTHM_BREAK_GRACE_MINUTES+ past its typical_daily_max for this session.
-        2. `unusual_hour` (SA-10): a currently-online device's *current* hour (and the hours either
-           side of it) are all outside its active_hours_mask -- the hours it was actually online
-           on a meaningful share of days. (This used to measure distance from typical_active_hour,
-           the modal session *start* hour, which flagged any session running longer than the
-           tolerance -- i.e. every ordinary workday afternoon.)
-        3. `expected_absent` (SA-10): a currently-*offline* device is still absent within
-           EXPECTED_ABSENT_WINDOW_HOURS of its typical_active_hour -- "it should be on by now."
-           Known limitation: doesn't handle a typical_active_hour that wraps past midnight (e.g.
-           23 + a 3-hour window) -- narrow edge case, not worth the extra query complexity this
-           pass; documented here rather than silently wrong.
+        - `expected_absent`: offline at an hour it is almost always on (and long enough, per
+          device: see the learner's offline_flicker_minutes),
+        - `unusual_hour`: on at an hour it almost never is,
+        - `still_on_past_typical`: this session has outlasted nearly every past one.
 
-        All three require `eb.sample_count >= eb.min_sample_count` explicitly (SA-10's
-        min_sample_count column) rather than trusting every row in the table implicitly --
-        today every row already cleared its floor at write time, but this is the same "do I
-        trust this yet" check every consumer should make, not just the ones that happen to need
-        it right now.
-
-        Not a frame field (SA-4) -- this device/entity_baselines join isn't duplicated by any
-        other rule, so it stays its own query; only `frame.now` (SA-4's single
-        shared-per-cycle timestamp) replaces this rule's own datetime.now(timezone.utc) call.
+        One card per cycle, the most surprising deviation whose confidence clears
+        MIN_CARD_CONFIDENCE (the card's identity is the device, so SA-1's cooldown quiets a device
+        that is dismissed). Not a frame field: it reads the stored inferences directly.
         """
+        if frame.now is None:
+            return None
+        now_utc = frame.now.replace(tzinfo=None)
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-            cursor = db.cursor()
-            now = frame.now
-
-            cursor.execute(
-                """
-                SELECT d.name, TIMESTAMPDIFF(MINUTE, d.last_online, %s) AS minutes_on,
-                       eb.typical_daily_max
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'online'
-                  AND d.last_online IS NOT NULL
-                  AND eb.typical_daily_max IS NOT NULL
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND TIMESTAMPDIFF(MINUTE, d.last_online, %s) > eb.typical_daily_max + %s
-                ORDER BY (TIMESTAMPDIFF(MINUTE, d.last_online, %s) - eb.typical_daily_max) DESC
-                LIMIT 1
-                """,
-                (now, now, RHYTHM_BREAK_GRACE_MINUTES, now),
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
             )
-            row = cursor.fetchone()
-            if row:
-                name, minutes_on, typical_max = row
-                over_by = int(minutes_on - typical_max)
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} has been on for {over_by} min longer than usual",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "still_on_past_typical",
-                    "data": {
-                        "over_by_minutes": over_by,
-                        "typical_daily_max_minutes": int(typical_max),
-                        "because": [
-                            f"on {over_by} min past its typical max ({int(typical_max)} min)"
-                        ],
-                    },
-                }
-
-            current_hour = now.hour
-            nearby_hours_mask = sum(1 << ((current_hour + offset) % 24) for offset in (-1, 0, 1))
-            cursor.execute(
-                """
-                SELECT d.name, eb.typical_active_hour, eb.active_hours_mask
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'online'
-                  AND eb.active_hours_mask IS NOT NULL
-                  AND eb.active_hours_mask <> 0
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND (eb.active_hours_mask & %s) = 0
-                ORDER BY d.id
-                LIMIT 1
-                """,
-                (nearby_hours_mask,),
-            )
-            row = cursor.fetchone()
-            if row:
-                name, typical_hour, active_mask = row
-                active_hours = [h for h in range(24) if active_mask >> h & 1]
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} is on at an unusual hour",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "unusual_hour",
-                    "data": {
-                        "current_hour": current_hour,
-                        "typical_active_hour": int(typical_hour),
-                        "because": [
-                            f"on at {current_hour:02d}:00, but usually only on between "
-                            f"{active_hours[0]:02d}:00 and {active_hours[-1]:02d}:59"
-                        ],
-                    },
-                }
-
-            cursor.execute(
-                """
-                SELECT d.name, HOUR(%s) AS current_hour, eb.typical_active_hour
-                FROM device d
-                JOIN states s ON d.state = s.id
-                JOIN entity_baselines eb ON eb.entity_type = 'device' AND eb.entity_id = d.id
-                WHERE s.state = 'offline'
-                  AND d.last_online >= %s - INTERVAL %s DAY
-                  AND eb.typical_active_hour IS NOT NULL
-                  AND eb.sample_count >= eb.min_sample_count
-                  AND HOUR(%s) >= eb.typical_active_hour
-                  AND HOUR(%s) < eb.typical_active_hour + %s
-                ORDER BY (HOUR(%s) - eb.typical_active_hour) DESC
-                LIMIT 1
-                """,
-                (
-                    now,
-                    EXPECTED_ABSENT_MAX_OFFLINE_DAYS,
-                    now,
-                    now,
-                    EXPECTED_ABSENT_WINDOW_HOURS,
-                    now,
-                ),
-            )
-            row = cursor.fetchone()
-            if row:
-                name, current_hour, typical_hour = row
-                return {
-                    "mode": "rhythm_break_anomaly",
-                    "content": f"{name} hasn't come online yet",
-                    "priority": 2.6,
-                    "entity_name": name,
-                    "deviation_type": "expected_absent",
-                    "data": {
-                        "typical_active_hour": int(typical_hour),
-                        "because": [
-                            f"usually active by {int(typical_hour):02d}:00, "
-                            f"still offline at {int(current_hour):02d}:00"
-                        ],
-                    },
-                }
-
-            return None
         except pymysql.Error as e:
             logger.error("Rhythm break anomaly check error: " + str(e))
             return None
         finally:
             if db:
                 db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == device_rhythm.NAME
+            and i.signal in (device_rhythm.SIGNAL_AVAILABILITY, device_rhythm.SIGNAL_DURATION)
+            and (i.evidence or {}).get("device")
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.surprise)
+        name = inference.evidence["device"]
+        card = {
+            "mode": "rhythm_break_anomaly",
+            "priority": 2.6,
+            "entity_name": name,
+            "data": {"surprise_bits": inference.surprise, "confidence": inference.confidence},
+        }
+        if inference.signal == device_rhythm.SIGNAL_DURATION:
+            over_by = round(inference.observed["minutes_on"] - inference.expected["p95_minutes"])
+            typical = round(inference.expected["p95_minutes"])
+            card.update(
+                content=f"{name} has been on for {over_by} min longer than usual",
+                deviation_type="still_on_past_typical",
+            )
+            card["data"].update(
+                over_by_minutes=over_by,
+                typical_daily_max_minutes=typical,
+                because=[f"on {over_by} min past the longest ordinary session ({typical} min)"],
+            )
+        elif inference.observed["state"] == "offline":
+            usual = round(inference.expected["p_online"] * 100)
+            minutes = round(inference.observed["offline_minutes"])
+            hour = inference.context["hour_local"]
+            card.update(content=f"{name} hasn't come online yet", deviation_type="expected_absent")
+            card["data"].update(
+                offline_minutes=minutes,
+                p_online=inference.expected["p_online"],
+                because=[
+                    f"usually online {usual}% of the time at {hour:02d}:00, "
+                    f"offline for {minutes} min"
+                ],
+            )
+        else:
+            usual = round(inference.expected["p_online"] * 100)
+            hour = inference.context["hour_local"]
+            card.update(content=f"{name} is on at an unusual hour", deviation_type="unusual_hour")
+            card["data"].update(
+                current_hour=hour,
+                p_online=inference.expected["p_online"],
+                because=[f"on at {hour:02d}:00, when it is usually on only {usual}% of the time"],
+            )
+        return card
 
     def check_departure_anomaly(self, frame):
         """SA-3: "usually gone by now, still home" -- the human analogue of
@@ -2182,51 +2021,70 @@ class SAEngine:
                 db.close()
 
     def check_attention_focus(self, frame):
-        """A measured, evidence-based focus signal from the launcher's own
-        window-switching behavior -- additive alongside (not a replacement
-        for) check_focus_needed()'s calendar heuristic; see
-        todo/sa/todo_attention_telemetry.md for why the two coexist rather than
-        one replacing the other.
+        """A measured, evidence-based focus signal from the launcher's own window-switching
+        behavior -- additive alongside (not a replacement for) check_focus_needed()'s calendar
+        heuristic; see todo/sa/todo_attention_telemetry.md for why the two coexist.
 
-        Fires when the reported window-switch count is genuinely high --
-        above this household's own rolling median switch_count plus a grace
-        margin once enough history exists (`frame.launcher_context.
-        attention_trend`), falling back to the fixed ATTENTION_FOCUS_MIN_SWITCHES threshold
-        below that sample floor -- and that switching isn't concentrated in
-        media (which would be the wind-down pattern instead, see
-        check_wind_down_signal()).
+        Since the LF-4 cutover this shows the scalar learner's inference (sa/learners/scalar.py)
+        instead of a fixed 15-switch threshold or a rolling median plus grace: the shadow pass
+        scores the reported switch count against this household's own count for the hour
+        (modelled as log(1 + n)) and stores a deviation in sa_inferences, so the card lags it by at
+        most one cycle. Only a HIGH deviation counts (a quiet hour is not "deep in it") and it
+        needs confidence >= MIN_CARD_CONFIDENCE. As before, switching concentrated in media is the
+        wind-down pattern instead (see check_wind_down_signal()), so it does not fire.
 
-        `frame.launcher_context.attention_snapshot`/`.attention_trend` (SA-4) replace this
-        rule's own _read_fresh_attention_telemetry()/_attention_telemetry_trend() calls --
-        check_wind_down_signal() reads the exact same two.
+        `frame.launcher_context.attention_snapshot` (SA-4) supplies the displayed count and the
+        media-dwell guard; check_wind_down_signal() reads the same snapshot.
         """
         launcher = frame.launcher_context
         snapshot = launcher and launcher.attention_snapshot
-        if not snapshot:
+        if not snapshot or frame.now is None:
             return None
-        switch_count = snapshot.get("switch_count", 0)
-        trend = launcher and launcher.attention_trend
-        threshold = ATTENTION_FOCUS_MIN_SWITCHES
-        if trend:
-            threshold = max(
-                threshold, trend["median_switch_count"] + ATTENTION_FOCUS_TREND_GRACE_SWITCHES
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-        if switch_count < threshold:
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Attention focus check error: " + str(e))
             return None
+        finally:
+            if db:
+                db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == scalar.NAME
+            and (i.evidence or {}).get("series") == "attention:switch_count"
+            and i.observed.get("direction") == "high"
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.surprise)
         media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
         if media_fraction >= ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:
             return None
+        switch_count = snapshot.get("switch_count", 0)
+        usual = round(math.expm1(inference.expected["mu"]))  # modelled as log(1 + n)
         return {
             "mode": "attention_focus",
             "content": f"Deep in it — {switch_count} window switches recently",
             "priority": 3.6,
             "switch_count": switch_count,
             "data": {
+                "typical_switch_count": usual,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
                 "because": [
-                    f"{switch_count} switches >= threshold {threshold}",
+                    f"{switch_count} switches against about {usual} usual at this hour",
                     f"media dwell {media_fraction:.0%} < "
                     f"{ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:.0%}",
-                ]
+                ],
             },
         }
 
@@ -2439,49 +2297,52 @@ class SAEngine:
         if not climate:
             return None
 
+        # Readings are shown to the nearest degree / percent; the thresholds compare the raw value.
         if climate["temperature_online"] and climate["temperature_c"] is not None:
             temp = climate["temperature_c"]
+            shown = round(temp)
             if temp < CLIMATE_ADVISORY_COLD_THRESHOLD_C:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"It's cooler than usual indoors ({temp}°C)",
+                    "content": f"It's cooler than usual indoors ({shown}°C)",
                     "priority": 5.3,
                     "data": {
-                        "temperature_c": temp,
-                        "because": [f"{temp}°C < {CLIMATE_ADVISORY_COLD_THRESHOLD_C}°C"],
+                        "temperature_c": shown,
+                        "because": [f"{shown}°C < {CLIMATE_ADVISORY_COLD_THRESHOLD_C}°C"],
                     },
                 }
             if temp > CLIMATE_ADVISORY_HOT_THRESHOLD_C:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"It's warmer than usual indoors ({temp}°C)",
+                    "content": f"It's warmer than usual indoors ({shown}°C)",
                     "priority": 5.3,
                     "data": {
-                        "temperature_c": temp,
-                        "because": [f"{temp}°C > {CLIMATE_ADVISORY_HOT_THRESHOLD_C}°C"],
+                        "temperature_c": shown,
+                        "because": [f"{shown}°C > {CLIMATE_ADVISORY_HOT_THRESHOLD_C}°C"],
                     },
                 }
 
         if climate["humidity_online"] and climate["humidity_pct"] is not None:
             humidity = climate["humidity_pct"]
+            shown = round(humidity)
             if humidity > CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"Humidity is higher than usual indoors ({humidity}%)",
+                    "content": f"Humidity is higher than usual indoors ({shown}%)",
                     "priority": 5.3,
                     "data": {
-                        "humidity_pct": humidity,
-                        "because": [f"{humidity}% > {CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT}%"],
+                        "humidity_pct": shown,
+                        "because": [f"{shown}% > {CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT}%"],
                     },
                 }
             if humidity < CLIMATE_ADVISORY_HUMIDITY_LOW_PCT:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"Humidity is lower than usual indoors ({humidity}%)",
+                    "content": f"Humidity is lower than usual indoors ({shown}%)",
                     "priority": 5.3,
                     "data": {
-                        "humidity_pct": humidity,
-                        "because": [f"{humidity}% < {CLIMATE_ADVISORY_HUMIDITY_LOW_PCT}%"],
+                        "humidity_pct": shown,
+                        "because": [f"{shown}% < {CLIMATE_ADVISORY_HUMIDITY_LOW_PCT}%"],
                     },
                 }
 
@@ -2489,70 +2350,81 @@ class SAEngine:
 
     def check_climate_deviation(self, frame):
         """Baseline-learned sibling to check_climate_advisory() (SA-9 Phase 2): fires when the
-        current reading is unusual for this time of day, not just absolutely uncomfortable.
-        Separate rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split
-        as weather/weather_advisory -- so dismissing one doesn't suppress the other, and nothing
-        about the already-shipped climate_advisory needed to change.
+        indoor reading is unusual for this hour, not just absolutely uncomfortable. Separate
+        rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split as
+        weather/weather_advisory -- so dismissing one doesn't suppress the other.
 
-        The [typical_daily_min, typical_daily_max] band compared against here is a
-        median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER-stdev band, not the raw observed range
-        (2026-09-26 fix -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment for why a literal
-        min/max band made this rule structurally unable to ever fire).
+        Since the LF-4 cutover this shows the scalar learner's inference (sa/learners/scalar.py)
+        instead of comparing against an `entity_baselines` band: the shadow pass scores the
+        ESPHome temperature and humidity series every cycle and stores any deviation in
+        sa_inferences, so this card lags it by at most one cycle. The learner knows the hour of
+        day and adapts to a slow drift, so ordinary daytime warmth no longer fires (the old band
+        pooled a whole time-of-day bucket: 15 of 19 flagged hours in a 13-day backtest were
+        ordinary at the learner's z of 1-2). An uncomfortable level that persists is
+        check_climate_advisory()'s job. Needs confidence >= MIN_CARD_CONFIDENCE, so a series
+        whose stability was just cut by a regime change stays quiet.
         """
-        climate = frame.esphome_climate
-        baselines = frame.esphome_climate_baselines
-        if not climate or not baselines:
+        if frame.now is None:
             return None
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Climate deviation check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
 
-        temp_baseline = baselines.get("temperature")
-        if (
-            climate["temperature_online"]
-            and climate["temperature_c"] is not None
-            and temp_baseline
-            and temp_baseline["sample_count"] >= temp_baseline["min_sample_count"]
-        ):
-            temp = climate["temperature_c"]
-            floor = temp_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_C
-            ceiling = temp_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_C
-            if temp < floor or temp > ceiling:
-                direction = "Cooler" if temp < floor else "Warmer"
-                return {
-                    "mode": "climate_deviation",
-                    "content": f"{direction} than typical for this time of day ({temp}°C)",
-                    "priority": 5.4,
-                    "data": {
-                        "temperature_c": temp,
-                        "typical_median_value": temp_baseline["typical_median_value"],
-                        "because": [f"{temp}°C outside typical {floor}-{ceiling}°C for now"],
-                    },
-                }
-
-        humidity_baseline = baselines.get("humidity")
-        if (
-            climate["humidity_online"]
-            and climate["humidity_pct"] is not None
-            and humidity_baseline
-            and humidity_baseline["sample_count"] >= humidity_baseline["min_sample_count"]
-        ):
-            humidity = climate["humidity_pct"]
-            floor = humidity_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
-            ceiling = humidity_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
-            if humidity < floor or humidity > ceiling:
-                direction = "Lower" if humidity < floor else "Higher"
-                return {
-                    "mode": "climate_deviation",
-                    "content": (
-                        f"{direction} humidity than typical for this time of day ({humidity}%)"
-                    ),
-                    "priority": 5.4,
-                    "data": {
-                        "humidity_pct": humidity,
-                        "typical_median_value": humidity_baseline["typical_median_value"],
-                        "because": [f"{humidity}% outside typical {floor}-{ceiling}% for now"],
-                    },
-                }
-
-        return None
+        found = []
+        for inference in recent:
+            series = (inference.evidence or {}).get("series") or ""
+            if inference.learner != scalar.NAME or not series.startswith("esphome:"):
+                continue
+            kind = (
+                "temperature"
+                if series.endswith(":Temperature")
+                else "humidity" if series.endswith(":Humidity") else None
+            )
+            if kind and inference.confidence >= presence_learner.MIN_CARD_CONFIDENCE:
+                found.append((kind, inference))
+        if not found:
+            return None
+        # Most surprising first; temperature wins a tie, as it did when this compared bands.
+        kind, inference = max(found, key=lambda f: (f[1].surprise, f[0] == "temperature"))
+        value = round(inference.observed["value"])  # shown to the nearest degree / percent
+        high = inference.observed["direction"] == "high"
+        mu = round(inference.expected["mu"])
+        if kind == "temperature":
+            direction = "Warmer" if high else "Cooler"
+            content = f"{direction} than typical for this time of day ({value}°C)"
+            data = {"temperature_c": value}
+            because = f"{value}°C against about {mu}°C expected at this hour"
+        else:
+            content = (
+                f"{'Higher' if high else 'Lower'} humidity than typical for this time of day "
+                f"({value}%)"
+            )
+            data = {"humidity_pct": value}
+            because = f"{value}% against about {mu}% expected at this hour"
+        return {
+            "mode": "climate_deviation",
+            "content": content,
+            "priority": 5.4,
+            "data": {
+                **data,
+                "typical_median_value": mu,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
+                "because": [because],
+            },
+        }
 
     def check_time(self, frame):
         """Get current time card.
@@ -2653,32 +2525,6 @@ def _departure_hours_by_bucket(timestamps):
     return buckets
 
 
-def _device_sessions(rows):
-    """Reconstruct complete online sessions from a device's ordered (timestamp, state) history
-    rows, as a list of (start, end) datetimes. A session ends at the next 'offline' row, or --
-    when the history goes silent for more than ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES while the
-    device is 'online' -- at the last row seen online. Sessions still open at the end of the rows
-    and zero-length sessions are dropped."""
-    max_gap = timedelta(minutes=ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES)
-    sessions = []
-    start = last_online = prev_ts = None
-    for ts, state in rows:
-        if start is not None and prev_ts is not None and ts - prev_ts > max_gap:
-            if last_online > start:
-                sessions.append((start, last_online))
-            start = None
-        if state == "online":
-            if start is None:
-                start = ts
-            last_online = ts
-        elif state == "offline" and start is not None:
-            if ts > start:
-                sessions.append((start, ts))
-            start = None
-        prev_ts = ts
-    return sessions
-
-
 def _active_hours_mask(sessions):
     """24-bit mask (bit h = UTC hour h) of the hours a device is usually online: hours covered by
     a session on at least ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE of the days it had any session.
@@ -2699,109 +2545,35 @@ def _active_hours_mask(sessions):
 
 
 def compute_entity_baselines():
-    """Recompute per-entity rhythm/routine baselines into `entity_baselines`.
+    """Recompute the per-resident departure-hour baselines into `entity_baselines`
+    (`entity_type='user'`, SA-3, see todo/sa/todo_departure_anomaly.md), used by
+    check_departure_anomaly(). Guests excluded.
 
-    Three independent baseline types share this table and this 6-hourly compute cadence, all
-    derived from `device_history`, none needing a new table (SA-10 generalised the mechanism
-    rather than letting each new subject bolt on its own):
-    - `device` rows (original, see todo/sa/todo_rhythm_break_anomaly.md): on/off session
-      baselines used by MyDaemon.check_rhythm_break_anomaly(). `smarthome_devices` has no
-      equivalent state-history table yet -- `device_command_history` logs issued commands, not
-      observed state over time -- so smarthome-device baselines aren't computed;
-      `entity_baselines.entity_type` keeps room for that once such a history exists (as does
-      `'room'`, gated on SA-9 sensor coverage -- stopped at Phase 0 this session, no real
-      ESPHome node to validate against, see todo/sa/todo_esphome_situational_awareness.md).
-    - `user` rows (SA-3, see todo/sa/todo_departure_anomaly.md): per-resident weekday/weekend
-      departure-hour baselines used by MyDaemon.check_departure_anomaly(). Guests excluded.
-    - `household` rows (SA-10, see todo/sa/todo_generalize_entity_baselines.md): weekday/weekend
-      typical first/last-activity hour and device-count range for the household as a whole,
-      used by MyDaemon.check_household_unusual_day(). A singleton -- one row per day_bucket,
-      `entity_id` is a fixed sentinel (HOUSEHOLD_BASELINE_ENTITY_ID), not a real foreign key.
-      Computed as a single SQL aggregate, not a per-entity Python loop -- see the "household
-      baselines" block below for why that distinction mattered in practice, not just in theory.
+    The other row types this job used to write are retired: `device` (check_rhythm_break_anomaly
+    reads the device rhythm learner), `household` (the household-day learner) and `room` climate
+    bands (the scalar learner). This one goes when `departure_anomaly` is cut over to the stay
+    learner, after which the job and the table are dropped.
     """
     logger.info("Computing entity rhythm baselines")
     db = None
     try:
         db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
         cursor = db.cursor()
-        cursor.execute(
-            "SELECT DISTINCT device_id FROM device_history WHERE timestamp >= %s",
-            (datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),),
-        )
-        device_ids = [row[0] for row in cursor.fetchall()]
-
-        for device_id in device_ids:
-            cursor.execute(
-                """
-                SELECT dh.timestamp, s.state
-                FROM device_history dh
-                JOIN states s ON dh.state = s.id
-                WHERE dh.device_id = %s
-                  AND dh.timestamp >= %s
-                  AND s.state IN ('online', 'offline')
-                ORDER BY dh.timestamp ASC
-                """,
-                (
-                    device_id,
-                    datetime.now(timezone.utc) - timedelta(days=ENTITY_BASELINE_LOOKBACK_DAYS),
-                ),
-            )
-            rows = cursor.fetchall()
-
-            sessions = _device_sessions(rows)
-            durations_minutes = [(end - start).total_seconds() / 60 for start, end in sessions]
-            start_hours = [start.hour for start, _ in sessions]
-
-            if len(durations_minutes) < ENTITY_BASELINE_MIN_SAMPLES:
-                continue
-
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, median_on_minutes, typical_active_hour,
-                     active_hours_mask, typical_daily_min, typical_daily_max, sample_count,
-                     min_sample_count, computed_at)
-                VALUES ('device', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    median_on_minutes = VALUES(median_on_minutes),
-                    typical_active_hour = VALUES(typical_active_hour),
-                    active_hours_mask = VALUES(active_hours_mask),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    device_id,
-                    statistics.median(durations_minutes),
-                    statistics.mode(start_hours),
-                    _active_hours_mask(sessions),
-                    min(durations_minutes),
-                    max(durations_minutes),
-                    len(durations_minutes),
-                    ENTITY_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-
-        # SA-3: per-resident departure-hour baselines, entity_type='user'. Same table, same
-        # compute cadence -- see _departure_hours_by_bucket()'s own doc comment for why this
-        # doesn't reuse the online/offline state-column reconstruction above. Guests excluded via
-        # the same ut.type convention services.common.db_utils's "worthy listeners" check already
-        # uses (owner/technoking/resident only).
+        # Guests excluded via the same ut.type convention services.common.db_utils's "worthy
+        # listeners" check already uses (owner/technoking/resident only).
         tz_offset = timedelta(seconds=db_utils.get_env_timezone(ENV_NAME))
         departure_lookback_start = datetime.now(timezone.utc) - timedelta(
             days=DEPARTURE_BASELINE_LOOKBACK_DAYS
         )
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT DISTINCT u.id, u.username
             FROM user u
             JOIN user_types ut ON u.type = ut.id
             JOIN device d ON d.user_id = u.id
             WHERE ut.type IN ('owner', 'technoking', 'resident')
-            """)
+            """
+        )
         eligible_users = cursor.fetchall()
 
         for user_id, username in eligible_users:
@@ -2852,149 +2624,6 @@ def compute_entity_baselines():
                     ),
                 )
             logger.info(f"Departure baseline for {username}: {buckets}")
-
-        # SA-10: household-level baselines, entity_type='household'. Unlike the device/user
-        # loops above, this is a single SQL aggregate (GROUP BY local calendar day), not a
-        # per-entity Python session-reconstruction loop -- deliberately, since Phase 0 measured
-        # the existing device loop alone taking ~175s on the production NUC (see
-        # todo/sa/todo_generalize_entity_baselines.md); adding another loop of that shape for a new
-        # subject type would multiply that cost, an aggregate query doesn't.
-        household_lookback_start = datetime.now(timezone.utc) - timedelta(
-            days=HOUSEHOLD_BASELINE_LOOKBACK_DAYS
-        )
-        # A derived table computing local_date once, grouped by that bare column, rather than
-        # GROUP BY on an inline expression with the raw `timestamp` column also referenced in
-        # the SELECT list -- MySQL's ONLY_FULL_GROUP_BY mode (the production default) rejects
-        # the latter even though DAYOFWEEK(local_date) is functionally dependent on it; caught
-        # live against the real database, not something the mocked unit tests could catch.
-        cursor.execute(
-            """
-            SELECT
-                DAYOFWEEK(local_date) AS local_dow,
-                HOUR(first_ts) AS first_hour,
-                HOUR(last_ts) AS last_hour,
-                device_count
-            FROM (
-                SELECT
-                    DATE(timestamp + INTERVAL %s SECOND) AS local_date,
-                    MIN(timestamp + INTERVAL %s SECOND) AS first_ts,
-                    MAX(timestamp + INTERVAL %s SECOND) AS last_ts,
-                    COUNT(DISTINCT device_id) AS device_count
-                FROM device_history
-                WHERE timestamp >= %s
-                GROUP BY local_date
-            ) AS daily
-            """,
-            (
-                tz_offset.total_seconds(),
-                tz_offset.total_seconds(),
-                tz_offset.total_seconds(),
-                household_lookback_start,
-            ),
-        )
-        household_buckets = {"weekday": [], "weekend": []}
-        for local_dow, first_hour, last_hour, device_count in cursor.fetchall():
-            # MySQL DAYOFWEEK: 1=Sunday ... 7=Saturday.
-            bucket = "weekend" if local_dow in (1, 7) else "weekday"
-            household_buckets[bucket].append((first_hour, last_hour, device_count))
-
-        for day_bucket, samples in household_buckets.items():
-            if len(samples) < HOUSEHOLD_BASELINE_MIN_SAMPLES:
-                continue
-            first_hours = [s[0] for s in samples]
-            last_hours = [s[1] for s in samples]
-            device_counts = [s[2] for s in samples]
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, day_bucket, typical_active_hour,
-                     typical_last_activity_hour, typical_daily_min, typical_daily_max,
-                     sample_count, min_sample_count, computed_at)
-                VALUES ('household', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    typical_active_hour = VALUES(typical_active_hour),
-                    typical_last_activity_hour = VALUES(typical_last_activity_hour),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    HOUSEHOLD_BASELINE_ENTITY_ID,
-                    day_bucket,
-                    statistics.mode(first_hours),
-                    statistics.mode(last_hours),
-                    min(device_counts),
-                    max(device_counts),
-                    len(samples),
-                    HOUSEHOLD_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-        sample_counts = {bucket: len(samples) for bucket, samples in household_buckets.items()}
-        logger.info(f"Household baseline sample counts: {sample_counts}")
-
-        # SA-9 Phase 2: per-ESPHome-sensor-entity, per-time-of-day-bucket climate baselines,
-        # entity_type='room' (reserved since SA-10/migration 033 for exactly this -- see
-        # migration 041's own comment on why entity_id keys on the sensor's own
-        # smarthome_devices.id rather than an actual room, which isn't populated anywhere yet).
-        # Bucketed by time-of-day (common.timeofday.coarse_bucket()), not day_bucket
-        # (weekday/weekend) -- indoor temperature varies by hour far more than by day of week.
-        climate_lookback_start = datetime.now(timezone.utc) - timedelta(
-            days=CLIMATE_BASELINE_LOOKBACK_DAYS
-        )
-        cursor.execute(
-            "SELECT smarthome_device_id, value, recorded_at FROM smarthome_sensor_history "
-            "WHERE recorded_at >= %s",
-            (climate_lookback_start,),
-        )
-        climate_readings = defaultdict(list)
-        for device_id, value, recorded_at in cursor.fetchall():
-            local_hour = (recorded_at + tz_offset).hour
-            climate_readings[(device_id, timeofday.coarse_bucket(local_hour))].append(value)
-
-        for (device_id, bucket), values in climate_readings.items():
-            if len(values) < CLIMATE_BASELINE_MIN_SAMPLES:
-                continue
-            # 2026-09-26 fix: typical_daily_min/max used to be raw min(values)/max(values) --
-            # a "typical" band built from the literal observed range self-widens to cover
-            # nearly every future reading too, so check_climate_deviation() could never fire
-            # (confirmed against real production data: zero firings in 10 days). A
-            # median +/- N-stdev band reflects what's actually typical instead.
-            median_value = statistics.median(values)
-            # len(values) >= CLIMATE_BASELINE_MIN_SAMPLES (10) >= 2, so stdev() is always safe.
-            stdev_value = statistics.stdev(values)
-            typical_min = median_value - CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
-            typical_max = median_value + CLIMATE_BASELINE_STDEV_MULTIPLIER * stdev_value
-            cursor.execute(
-                """
-                INSERT INTO entity_baselines
-                    (entity_type, entity_id, day_bucket, time_of_day_bucket,
-                     typical_median_value, typical_daily_min, typical_daily_max,
-                     sample_count, min_sample_count, computed_at)
-                VALUES ('room', %s, 'all', %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    typical_median_value = VALUES(typical_median_value),
-                    typical_daily_min = VALUES(typical_daily_min),
-                    typical_daily_max = VALUES(typical_daily_max),
-                    sample_count = VALUES(sample_count),
-                    min_sample_count = VALUES(min_sample_count),
-                    computed_at = VALUES(computed_at)
-                """,
-                (
-                    device_id,
-                    bucket,
-                    median_value,
-                    typical_min,
-                    typical_max,
-                    len(values),
-                    CLIMATE_BASELINE_MIN_SAMPLES,
-                    datetime.now(timezone.utc),
-                ),
-            )
-        climate_sample_counts = {k: len(v) for k, v in climate_readings.items()}
-        logger.info(f"Climate baseline sample counts: {climate_sample_counts}")
 
         db.commit()
     except pymysql.Error as e:

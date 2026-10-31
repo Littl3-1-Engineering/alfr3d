@@ -25,8 +25,7 @@ has a fat tail and nothing is ever surprising; a person who is always gone withi
 surprised by the second.
 
 Confidence is sa/confidence.py's product: sufficiency of the comparable weight, the collector's
-coverage, the phone's source quality and a stability term. Stability is not measured here yet and
-is passed in (default STABILITY_UNKNOWN), so read confidence as an upper bound.
+coverage, the phone's source quality and a stability term (see stability_of; it can be passed in, e.g. by tests).
 """
 
 import math
@@ -48,10 +47,18 @@ LOOKBACK_DAYS = 4  # how far back the live stay start is searched; a longer stay
 ARRIVAL_SIGMA_HOURS = 2.5
 DAYTYPE_MISMATCH_WEIGHT = 0.25
 MIN_COMPARABLE_WEIGHT = 5.0
-MIN_SURPRISE_BITS = 3.0
+# 5 bits = p <= 3 %. At 3 bits (p <= 12.5 %) about one stay in nine flags by construction, and a flag
+# stays on until the person leaves (survival only falls), so a handful of long stays filled most of
+# the shadow window. Leave-one-out replay of the last 8 weeks, four residents: 22 stays flag at 3
+# bits, 11 at 4, 3 at 5, 1 at 6 -- 5 is about one overstay card every two to three weeks.
+MIN_SURPRISE_BITS = 5.0
 STABILITY_UNKNOWN = 0.5
 LIVE_OFFLINE_LAG_MINUTES = presence.LIVE_OFFLINE_LAG_MINUTES
 # Who can overstay: the legacy rule's audience. A guest staying several days is just a guest.
+STABILITY_WINDOW_DAYS = 14
+STABILITY_SCALE_BITS = 1.0  # a bit more typical surprise in the recent window than before: 0
+MIN_STABILITY_STAYS = 5  # stays needed in each window to measure it
+MAX_STABILITY_BITS = 6.0  # one freak stay must not set the window's error
 OVERSTAY_USER_TYPES = ("owner", "technoking", "resident")
 
 
@@ -81,6 +88,56 @@ def stays_from_intervals(intervals, ref, zone):
             )
         )
     return stays
+
+
+def _median(values):
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def stability_of(intervals, ref, zone):
+    """How well the stays of the last STABILITY_WINDOW_DAYS were predicted by a model fitted only
+    on stays before them, against the window before that. Each stay is scored by its surprise
+    (-log2 of the smoothed share of comparable earlier stays at least as long), the window's error
+    is the median (a single freak stay should not decide it), and stability falls from 1 as the
+    recent error exceeds the earlier one by STABILITY_SCALE_BITS. A person whose stays changed
+    recently is exactly who it catches: the old stays are no longer a safe yardstick for
+    "unusually long". STABILITY_UNKNOWN when either window has too few stays to measure."""
+    dated = []
+    for start, end, _n in intervals:
+        minutes = (end - start).total_seconds() / 60.0 + 1.0
+        if minutes < MIN_STAY_MINUTES:
+            continue
+        local_start, local_end = _local(start, zone), _local(end, zone)
+        dated.append(
+            (
+                local_end.date(),
+                local_start.hour + local_start.minute / 60.0,
+                presence.is_offday(local_end.date()),
+                minutes,
+            )
+        )
+
+    def window_error(lo, hi):
+        model = [
+            (a, o, m, 0.5 ** (max(0, (lo - d).days) / STAY_HALF_LIFE_DAYS))
+            for d, a, o, m in dated
+            if d <= lo and (lo - d).days <= HISTORY_DAYS
+        ]
+        errors = []
+        for d, a, o, m in dated:
+            if lo < d <= hi:
+                p, weight = survival(model, a, o, m)
+                if weight >= MIN_COMPARABLE_WEIGHT:
+                    errors.append(min(-math.log2(p), MAX_STABILITY_BITS))
+        return _median(errors) if len(errors) >= MIN_STABILITY_STAYS else None
+
+    w = timedelta(days=STABILITY_WINDOW_DAYS)
+    recent, prior = window_error(ref - w, ref), window_error(ref - 2 * w, ref - w)
+    if recent is None or prior is None:
+        return STABILITY_UNKNOWN
+    return max(0.0, 1.0 - max(0.0, recent - prior) / STABILITY_SCALE_BITS)
 
 
 def _arrival_gap(a, b):
@@ -131,7 +188,9 @@ class StayLearner(Learner):
             n_eff=round(weight, 3),
             coverage=coverage,
             source_quality=source_quality,
-            stability=STABILITY_UNKNOWN if stability is None else stability,
+            stability=round(
+                stability_of(intervals, ref, zone) if stability is None else stability, 4
+            ),
             fitted_from=None,
             fitted_to=ref,
         )

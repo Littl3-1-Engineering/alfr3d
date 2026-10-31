@@ -3,7 +3,7 @@
 > **Layer:** input · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-2 silver presence_intervals (geofence source)
 
 ## Status: 🟢 SHIPPED, DEPLOYED, and LIVE-VERIFIED on real production data. 2026-09-10/11.
-- **Phase 1 (backend):** `alfr3d` PR #197 merged → **deployed to NUC** (`alfr3d@192.168.2.200`):
+- **Phase 1 (backend):** `alfr3d` PR #197 merged → **deployed to NUC** (`alfr3d@10.0.0.100`):
   `mysqldump` backup taken (`backup/alfr3d_predeploy_0039_2026-09-10_15-44-48.sql`, 299 MB),
   migration `0038→0039` applied, `service-api` rebuilt, live authed smoke test lands a row.
 - **Phase 2 (deck pipeline):** `alfr3d_deck` PR #29 merged to `main`.

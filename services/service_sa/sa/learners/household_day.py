@@ -13,23 +13,26 @@ completed days it is judged against:
   Athos is out when he is normally home 9-17 is a drop of several hundred person-minutes here.
 
 Each feature has a layer-1 model per day type (weekday vs weekend / Ontario holiday): a recency-
-weighted median and MAD sigma (robust: a day the router rebooted must not widen the band), falling
-back to all days when a day type has too little history. A feature's deviation is a two-sided normal
-tail p_i with a confidence c_i (shared definition). Layer 2 then combines them with Fisher's
-method, evidence weighted by confidence:
+weighted median and MAD sigma, and the weighted past values themselves, from which its deviation is
+scored as an empirical two-sided tail p_i (robust: a day the router rebooted must not widen the
+band). Falls back to all days when a day type has too little history.
 
-    X = -2 * sum(c_i * ln p_i)        p = P(chi-square with 2k dof >= X)
+v4: the household chooses its own yardsticks and its own bar. Nothing here is hand-set per rule.
 
-so a low-confidence feature counts for less, and several mild deviations that agree add up where
-neither would alone. Like the legacy rule, it still takes more than one metric: at least two
-features must be mildly off (p <= MIN_EACH_P), so a single noisy number can't make a day unusual.
-Fisher runs over every feature, the unremarkable ones included, so choosing which features to
-combine after looking at them cannot flatter the p-value.
-Weighting by c_i makes X only approximately chi-square; P_FLAG was therefore
-chosen from the walk-forward backtest's actual firing rate, not read off a table.
-
-The legacy rule fired only if BOTH features were out of range after the household's typical last
-activity hour, using a median-free min/max range and fixed tolerance.
+- Features are learned. Besides the three above, every event stream in the lake (a household_events
+  type/subject/verb: music plays, notifications, routines, device commands) contributes its count
+  up to the cutoff. A feature is kept only if it has enough days and varies (at least
+  MIN_DISTINCT_VALUES distinct values), so streams that are constant or too new drop out on their
+  own at each nightly fit.
+- The day's statistic is Fisher's method over its TOP_K most surprising features (fewer if fewer
+  exist), whichever they are: -2 * sum(ln p). Picking the most surprising looks flattering, so the
+  bar is not read off a chi-square table; it is calibrated on the same statistic.
+- The bar is learned. Each fit scores every past day against all the OTHER days (leave one out),
+  which is exactly how a new day would be scored, and sets the bar at the surprise only
+  TARGET_FLAG_RATE of those days reach. So the household sees about one unusual-day card in
+  1 / TARGET_FLAG_RATE days whatever its own variability and however many features it has, and the
+  bar moves as the household does. With fewer than MIN_CALIBRATION_DAYS days there is no bar and
+  the rule stays quiet.
 """
 
 import logging
@@ -49,7 +52,7 @@ from sa.learners.scalar import weighted_mad_sigma
 logger = logging.getLogger("SAHouseholdDay")
 
 NAME = "household_day"
-VERSION = "3"
+VERSION = "4"
 SIGNAL = "household.day"
 SIGNAL_FEATURE = "household.day_feature"
 
@@ -64,18 +67,18 @@ SIGMA_FLOOR = {"device_share": 0.05, "first_minute": 30.0, "home_minutes": 60.0}
 # ~03:51 on most days, an earlier phone nap on the rest), so no feature is scored with a Gaussian z:
 # each is its own empirical two-sided tail (see empirical_p).
 FEATURES = ("device_share", "first_minute", "home_minutes")
+EVENT_PREFIX = "event:"  # learned features: one per event stream, the day's count up to the cutoff
+MIN_DISTINCT_VALUES = 3  # a feature that barely varies says nothing about an unusual day
 INVENTORY_DAYS = 14
 MIN_INVENTORY = 5
 SAMPLE_DAYS = 180
 HOME_USER_TYPES = ("owner", "technoking", "resident")  # whose phones count as "the household"
 PRESENCE_GAP_MINUTES = 45  # silver's rule: sightings further apart than this are separate stays
-MIN_EACH_P = 0.25  # a feature this unlikely counts as "off"
-MIN_FEATURES_OFF = 2  # one noisy metric is just a day
-# Chosen from the walk-forward backtest (todo_lf4b_baseline_ports.md): over 58 scored days of real
-# history the lowest unweighted Fisher p was 0.063 and none were extreme, so 0.02 is a day in about
-# fifty by chance at most. An empirical tail cannot be smaller than ~1 / (days + 1), which also
-# caps how extreme a holiday (few comparable days) can look.
-P_FLAG = 0.02
+TARGET_FLAG_RATE = 1.0 / 14.0  # the share of days the bar is calibrated to flag
+TOP_K = 5  # features combined into the day's statistic
+MIN_STATISTIC_FEATURES = 2  # a statistic needs at least this many features measured
+MIN_CALIBRATION_DAYS = 28  # below this the bar is unknown and nothing is flagged
+EXPLAIN_P = 0.15  # the card lists the combined features at least this unlikely
 STABILITY_UNKNOWN = 0.5
 QUALITY = 1.0
 FAMILY_PREFIX = "household_day:"
@@ -95,12 +98,81 @@ def empirical_p(samples, value):
     return min(1.0, 2.0 * min(lower, upper))
 
 
+def feature_names(days):
+    """The fixed features, then every event stream any day carries, in a stable order."""
+    events = sorted({k for d in days for k in d if k.startswith(EVENT_PREFIX)})
+    return [*FEATURES, *events]
+
+
+def _spread(feature, values, weights):
+    """(centre, sigma) of a feature: weighted median and MAD sigma, falling back to the weighted
+    standard deviation when most days share one value (a count that is usually the same)."""
+    centre, sigma = weighted_mad_sigma(values, weights)
+    if sigma <= 0.0:
+        total = sum(weights)
+        mean = sum(v * w for v, w in zip(values, weights)) / total
+        sigma = math.sqrt(sum(w * (v - mean) ** 2 for v, w in zip(values, weights)) / total)
+    return centre, max(sigma, SIGMA_FLOOR.get(feature, 1e-3))
+
+
+def top_bits(ps, k=TOP_K):
+    """The day's statistic: surprise in bits of Fisher's method over its k most surprising
+    features (all of them if fewer). None with too few features measured."""
+    if len(ps) < MIN_STATISTIC_FEATURES:
+        return None
+    top = sorted(ps)[:k]
+    return -math.log2(max(fisher_p(top, [1.0] * len(top)), 1e-12))
+
+
+def loo_bits(days, features, weights):
+    """The statistic (top_bits) of every day scored against all the OTHER days, the way a new day
+    would be scored."""
+    series = {}
+    for feature in features:
+        series[feature] = [
+            (d["date"], presence._daytype(d["date"]), d[feature], weights[d["date"]])
+            for d in days
+            if d.get(feature) is not None
+        ]
+    bits = []
+    for d in days:
+        kind = presence._daytype(d["date"])
+        ps = []
+        for feature in features:
+            value = d.get(feature)
+            if value is None:
+                continue
+            others = [(v, w, k) for dt, k, v, w in series[feature] if dt != d["date"]]
+            same = [(v, w) for v, w, k in others if k == kind]
+            enough = sum(w for _, w in same) >= MIN_CELL_WEIGHT
+            pool = same if enough else [(v, w) for v, w, _ in others]
+            ps.append(max(empirical_p(pool, value), 1e-12))
+        b = top_bits(ps)
+        if b is not None:
+            bits.append(b)
+    return bits
+
+
+def calibrate(days, features, weights, rate=TARGET_FLAG_RATE):
+    """(bar_bits, number of days scored): the surprise only `rate` of the household's own days
+    reach (see loo_bits). None for the bar when fewer than MIN_CALIBRATION_DAYS days could be
+    scored."""
+    bits = loo_bits(days, features, weights)
+    if len(bits) < MIN_CALIBRATION_DAYS:
+        return None, len(bits)
+    bits.sort()
+    index = min(len(bits) - 1, max(0, math.ceil(len(bits) * (1.0 - rate)) - 1))
+    return round(bits[index], 3), len(bits)
+
+
 class HouseholdDayLearner(Learner):
     name = NAME
     version = VERSION
 
-    def fit_days(self, days, ref, coverage=1.0):
-        """Profile from [{"date","devices","first_minute"}] completed days up to `ref`, or None."""
+    def fit_days(self, days, ref, coverage=1.0, calibrated=True):
+        """Profile from [{"date","devices","first_minute", ...}] completed days up to `ref`, or
+        None. Keeps the features that have MIN_DAYS days and vary, scores every day against the
+        others to learn the bar, and records both. `calibrated=False` skips the (slower) bar."""
         days = [
             d
             for d in days
@@ -115,10 +187,10 @@ class HouseholdDayLearner(Learner):
         }
         params = {"cutoff_hour": CUTOFF_HOUR, "features": {}}
         stabilities = []
-        for feature in FEATURES:
+        for feature in feature_names(days):
             pooled = [(d[feature], weights[d["date"]]) for d in days if d.get(feature) is not None]
-            if len(pooled) < MIN_DAYS:
-                continue  # e.g. home_minutes before presence existed: leave the feature out
+            if len(pooled) < MIN_DAYS or len({v for v, _ in pooled}) < MIN_DISTINCT_VALUES:
+                continue  # too little history (e.g. a new stream), or it hardly varies
             cells = {}
             for kind in ("weekday", "offday"):
                 vals = [
@@ -128,10 +200,10 @@ class HouseholdDayLearner(Learner):
                 ]
                 use = vals if sum(w for _, w in vals) >= MIN_CELL_WEIGHT else pooled
                 v, w = [x for x, _ in use], [y for _, y in use]
-                centre, sigma = weighted_mad_sigma(v, w)
+                centre, sigma = _spread(feature, v, w)
                 cells[kind] = {
                     "median": round(centre, 3),
-                    "sigma": round(max(sigma, SIGMA_FLOOR[feature]), 3),
+                    "sigma": round(sigma, 3),
                     "weight": round(sum(w), 3),
                     "pooled": use is pooled,
                     "samples": [[round(x, 4), round(y, 4)] for x, y in use],
@@ -149,9 +221,19 @@ class HouseholdDayLearner(Learner):
                 and d.get(feature) is not None
             ]
             if len(recent) >= 7 and len(prior) >= 14:
-                _, sigma_all = weighted_mad_sigma(prior, [1.0] * len(prior))
-                shift = abs(_median(recent) - _median(prior)) / max(sigma_all, SIGMA_FLOOR[feature])
+                _, sigma_all = _spread(feature, prior, [1.0] * len(prior))
+                shift = abs(_median(recent) - _median(prior)) / sigma_all
                 stabilities.append(1.0 / (1.0 + shift))
+        if len(params["features"]) < MIN_STATISTIC_FEATURES:
+            return None
+        if calibrated:
+            bar, scored = calibrate(days, list(params["features"]), weights)
+            params["calibration"] = {
+                "bar_bits": bar,
+                "days": scored,
+                "target_rate": round(TARGET_FLAG_RATE, 4),
+                "top_k": TOP_K,
+            }
         stability = sum(stabilities) / len(stabilities) if stabilities else STABILITY_UNKNOWN
         return Profile(
             learner=self.name,
@@ -187,9 +269,10 @@ class HouseholdDayLearner(Learner):
         midnight = datetime.combine(day, datetime.min.time())
         window_start = (now - (state["local_dt"] - midnight)).replace(microsecond=0)
         rows = []
-        for feature in FEATURES:
+        calibration = profile.params.get("calibration") or {}
+        for feature in profile.params["features"]:
             value = state.get(feature)
-            if value is None or feature not in profile.params["features"]:
+            if value is None:
                 continue
             cell = profile.params["features"][feature][kind]
             z = (value - cell["median"]) / cell["sigma"]
@@ -210,7 +293,13 @@ class HouseholdDayLearner(Learner):
                     learner_version=self.version,
                     window_start=window_start,
                     window_end=now.replace(microsecond=0),
-                    context={"daytype": kind, "cutoff_hour": CUTOFF_HOUR},
+                    context={
+                        "daytype": kind,
+                        "cutoff_hour": CUTOFF_HOUR,
+                        # The learned bar travels with the rows: layer 2 sees only rows.
+                        "bar_bits": calibration.get("bar_bits"),
+                        "top_k": calibration.get("top_k", TOP_K),
+                    },
                     observed={"value": round(value, 2), "z": round(z, 3)},
                     expected={"median": cell["median"], "sigma": cell["sigma"]},
                     # Unrounded: the layer-2 rule fuses these, and rounding a tiny p to 12 places
@@ -230,35 +319,39 @@ class HouseholdDayLearner(Learner):
     def score(self, profile, state, now):
         """The layer-2 deviation if the day is unusual, else None: the features scored above,
         fused by RULE. Kept for backtests and callers holding a profile rather than rows."""
-        rows = self.score_features(profile, state, now)
-        if len(rows) < MIN_FEATURES_OFF:
-            return None
-        return layer2.fuse(RULE, layer2.Group("household", rows[0], rows), now)
+        groups = RULE.groups(self.score_features(profile, state, now), {})
+        return layer2.fuse(RULE, groups[0], now) if groups else None
 
 
 class HouseholdUnusualDayRule(layer2.Rule):
-    """SA-10 as a layer-2 rule: at least MIN_FEATURES_OFF of the day's features mildly off, and the
-    Fisher p of all of them at most P_FLAG. Unweighted: the inputs are empirical tail
-    probabilities, which smoothing keeps above ~0.5 / (days + 1), and weighting their logs by a
-    confidence near 0.25 would make a small combined p unreachable."""
+    """SA-10 as a layer-2 rule: the Fisher p of the day's TOP_K most surprising features, against a
+    bar the learner calibrated on this household's own days (see calibrate). Unweighted: the inputs
+    are empirical tail probabilities, which smoothing keeps above ~0.5 / (days + 1), and weighting
+    their logs by a confidence near 0.25 would make a small combined p unreachable."""
 
     name = NAME
     version = VERSION
     signal = SIGNAL
     subject_type = "household"
-    min_bits = -math.log2(P_FLAG)
+    min_bits = math.inf  # no bar learned yet: stay quiet (bar_bits reads the learned one)
     cap_at_best = False
     weight_by_confidence = False
     ttl_hours = 12
 
     def groups(self, parents, ctx):
-        features = [p for p in parents if p.signal == SIGNAL_FEATURE]
-        if len(features) < MIN_FEATURES_OFF:
+        features = sorted(
+            (p for p in parents if p.signal == SIGNAL_FEATURE and p.probability is not None),
+            key=lambda p: p.probability,
+        )
+        if len(features) < MIN_STATISTIC_FEATURES:
             return []
-        return [layer2.Group("household", features[0], features)]
+        k = (features[0].context or {}).get("top_k") or TOP_K
+        top = features[:k]
+        return [layer2.Group("household", top[0], top)]
 
-    def accept(self, voters):
-        return sum(1 for v in voters if v.probability <= MIN_EACH_P) >= MIN_FEATURES_OFF
+    def bar_bits(self, group):
+        bar = (group.anchor.context or {}).get("bar_bits")
+        return math.inf if bar is None else bar
 
     def observed(self, group):
         return {p.evidence["feature"]: p.observed["value"] for p in group.parents}
@@ -274,14 +367,20 @@ def _clock(minute):
     return f"{int(minute) // 60:02d}:{int(minute) % 60:02d}"
 
 
+def _label(feature):
+    """'event:audio/track/play_start' -> 'audio track play_start'."""
+    parts = [p for p in feature[len(EVENT_PREFIX):].split("/") if p and p != "-"]
+    return " ".join(parts)
+
+
 def explain(inference):
-    """The card's 'because' lines for a household_unusual_day inference: one per feature that was
-    off (p <= MIN_EACH_P), plain units, value against the household's usual."""
+    """The card's 'because' lines for a household_unusual_day inference: one per combined feature
+    that was off (p <= EXPLAIN_P), plain units, value against the household's usual."""
     observed, expected = inference.observed or {}, inference.expected or {}
     off = {
         ref["feature"]
         for ref in (inference.evidence or {}).get("parents", [])
-        if ref.get("feature") and ref["p"] is not None and ref["p"] <= MIN_EACH_P
+        if ref.get("feature") and ref["p"] is not None and ref["p"] <= EXPLAIN_P
     }
     lines = []
     if "device_share" in off:
@@ -298,6 +397,11 @@ def explain(inference):
         lines.append(
             f"{observed['home_minutes'] / 60:.1f} h of resident time at home, "
             f"typically about {expected['home_minutes'] / 60:.1f} h"
+        )
+    for feature in sorted(f for f in off if f.startswith(EVENT_PREFIX)):
+        lines.append(
+            f"{observed[feature]:g} {_label(feature)} events by {CUTOFF_HOUR}:00, "
+            f"typically about {expected[feature]:g}"
         )
     return lines
 
@@ -377,6 +481,29 @@ homes AS (
   WHERE g.hour_local < {cutoff} GROUP BY 1)"""
 
 
+def _add_event_counts(con, rates_file, days):
+    """Add `event:<type>/<subject>/<verb>` -> the day's count up to the cutoff to each day. A stream
+    is measured from the day it first appears (before that the count is unknown, not zero); after
+    that a day with no events counts 0. The lake's counts have sa_data_exclusions applied."""
+    if not os.path.exists(rates_file):
+        return
+    first = dict(
+        con.execute(f"SELECT signal, MIN(date_local) FROM read_parquet('{rates_file}') GROUP BY 1")
+        .fetchall()
+    )
+    counts = {
+        (d, signal): n
+        for d, signal, n in con.execute(
+            f"SELECT date_local, signal, SUM(n) FROM read_parquet('{rates_file}') "
+            f"WHERE hour_local < {CUTOFF_HOUR} GROUP BY 1, 2"
+        ).fetchall()
+    }
+    for day in days:
+        for signal, started in first.items():
+            if day["date"] >= started:
+                day[EVENT_PREFIX + signal] = float(counts.get((day["date"], signal), 0))
+
+
 def load_days(lake_dir):
     """{"days": [{"date","devices","first_minute"}], "coverage"}: completed, fully observed local
     days (up to CUTOFF_HOUR), from silver device_sessions and the presence grid's observed flag."""
@@ -420,6 +547,8 @@ def load_days(lake_dir):
             }
             for d, n, fm, hm, inv in rows
         ]
+        rates_file = os.path.join(lake_dir, "gold", "hourly_rates", "part-0.parquet")
+        _add_event_counts(con, rates_file, days)
         total = con.execute(
             f"SELECT COUNT(DISTINCT date_local) FROM grid WHERE hour_local < {CUTOFF_HOUR}"
         ).fetchone()[0]
@@ -439,8 +568,9 @@ def run_fit(lake_dir, conn, now_utc=None):
 
 
 def backtest(lake_dir, start, end, learner=None):
-    """Walk-forward: the day's features plus {"p","flagged"} for each day in [start, end], each
-    scored on a profile fitted on the days before it."""
+    """Walk-forward: for each day in [start, end], the day's features and statistic ("bits") scored
+    on a profile fitted (and its bar calibrated) on the days before it, plus whether it clears
+    that bar ("flagged"). Returns [{"date", "bits", "bar_bits", "flagged", "top": [(feature, p)]}]."""
     learner = learner or HouseholdDayLearner()
     data = load_days(lake_dir)
     out = []
@@ -450,15 +580,22 @@ def backtest(lake_dir, start, end, learner=None):
         profile = learner.fit_days(data["days"], day["date"] - timedelta(days=1), data["coverage"])
         if profile is None or day["first_minute"] is None:
             continue
-        # p without the threshold: score() returns None when unremarkable, so recompute directly.
         local_dt = datetime.combine(day["date"], datetime.min.time()).replace(hour=CUTOFF_HOUR)
         rows = learner.score_features(profile, {**day, "local_dt": local_dt}, local_dt)
-        ps = [r.probability for r in rows]
-        if len(ps) < MIN_FEATURES_OFF:
+        bits = top_bits([r.probability for r in rows])
+        if bits is None:
             continue
-        p = fisher_p(ps, [1.0] * len(ps))
-        off = sum(1 for q in ps if q <= MIN_EACH_P)
-        out.append({**day, "p": p, "flagged": p <= P_FLAG and off >= MIN_FEATURES_OFF})
+        bar = profile.params["calibration"]["bar_bits"]
+        top = sorted(rows, key=lambda r: r.probability)[:TOP_K]
+        out.append(
+            {
+                **day,
+                "bits": bits,
+                "bar_bits": bar,
+                "flagged": bar is not None and bits >= bar,
+                "top": [(r.evidence["feature"], r.probability) for r in top],
+            }
+        )
     return out
 
 

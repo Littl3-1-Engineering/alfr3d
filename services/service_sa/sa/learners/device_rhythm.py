@@ -18,7 +18,8 @@ import logging
 import math
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import duckdb
 
@@ -44,8 +45,46 @@ MIN_SURPRISE_BITS = presence.MIN_SURPRISE_BITS  # P of the observed state <= 12.
 MIN_OFFLINE_MINUTES = presence.MIN_AWAY_MINUTES  # devices flicker off for a few minutes
 MAX_OFFLINE_MINUTES = 3 * 24 * 60  # offline for days is gone, not late
 RETIRED_AFTER_DAYS = 14  # no session this recently: the device is no longer part of the house
+MIN_GAPS = 10  # unexpected offline gaps needed before a device's own flicker length is trusted
+GAP_QUANTILE = 0.9  # an offline stretch must outlast this share of the device's own flickers
+MAX_FLICKER_MINUTES = 24 * 60  # a longer gap is an absence, not a flicker, and stays out
+USUALLY_ON = 0.5  # an hour counts as "usually on" when the device is online in at least this share
 P_DURATION_FLAG = 0.02  # at most 2 % of past sessions ran this long
 DURATION_GRACE_MINUTES = 30  # and it has to be genuinely longer than the longest ordinary one
+
+
+def offline_flicker_minutes(sessions, cells, ref, cutoff, tz):
+    """How long this device's own unexpected offline stretches last: the GAP_QUANTILE of the gaps
+    between its sessions whose midpoint falls in an
+    hour it is usually on, recency-weighted. A PC that sleeps
+    for two hours most afternoons is only worth a card when it is off longer than that. None with
+    fewer than MIN_GAPS such gaps. sessions: [(start_date, minutes, end_utc)]."""
+    zone = ZoneInfo(tz)
+    ordered = sorted(sessions, key=lambda s: s[2])
+    gaps = []
+    for prev, nxt in zip(ordered, ordered[1:]):
+        minutes = (nxt[2] - timedelta(minutes=nxt[1]) - prev[2]).total_seconds() / 60.0
+        if not 0 < minutes <= MAX_FLICKER_MINUTES:
+            continue
+        # Judged by its midpoint, so a nightly shutdown that begins while the device is still
+        # usually on (and ends hours into the next morning) is not counted as a flicker.
+        middle = (prev[2] + timedelta(minutes=minutes / 2)).replace(tzinfo=timezone.utc)
+        middle = middle.astimezone(zone)
+        if middle.date() < cutoff:
+            continue
+        p_on, _w = presence.cell(cells, middle.date(), middle.hour)
+        if p_on >= USUALLY_ON:
+            age = max(0, (ref - middle.date()).days)
+            gaps.append((minutes, 0.5 ** (age / SESSION_HALF_LIFE_DAYS)))
+    if len(gaps) < MIN_GAPS:
+        return None
+    gaps.sort()
+    target, running = GAP_QUANTILE * sum(w for _, w in gaps), 0.0
+    for minutes, weight in gaps:
+        running += weight
+        if running >= target:
+            return minutes
+    return gaps[-1][0]
 
 
 def survival(durations, x):
@@ -81,6 +120,9 @@ class DeviceRhythmLearner(Learner):
         newest_end = max((end for _d, _dur, end in sessions), default=None)
         if newest_end is None or newest_end.date() < ref - timedelta(days=RETIRED_AFTER_DAYS):
             return None
+        from sa import silver
+
+        flicker = offline_flicker_minutes(sessions, cells, ref, cutoff, silver.TIMEZONE)
         recent_cut = ref - timedelta(days=presence.COVERAGE_WINDOW_DAYS - 1)
         window = [ok for d, _h, _dw, _m, ok in rows if recent_cut <= d <= ref]
         coverage = sum(1 for ok in window if ok) / len(window) if window else 0.0
@@ -92,6 +134,7 @@ class DeviceRhythmLearner(Learner):
             "p_daytype": {k: [round(p, 4) for p in v] for k, v in cells["p_dt"].items()},
             "w_daytype": {k: [round(w, 3) for w in v] for k, v in cells["w_dt"].items()},
             "sessions": [[round(d, 1), round(w, 4)] for d, w in kept],
+            "offline_flicker_minutes": None if flicker is None else round(flicker, 1),
             "stability_detail": {
                 k: (round(v, 4) if isinstance(v, float) else v) for k, v in detail.items()
             },
@@ -152,8 +195,10 @@ class DeviceRhythmLearner(Learner):
         if surprise < MIN_SURPRISE_BITS:
             return None
         off_minutes = state.get("offline_minutes")
+        # Not an absence until it outlasts both the fixed floor and this device's own flickers.
+        minimum = max(MIN_OFFLINE_MINUTES, profile.params.get("offline_flicker_minutes") or 0)
         if not online and (
-            off_minutes is None or not MIN_OFFLINE_MINUTES <= off_minutes <= MAX_OFFLINE_MINUTES
+            off_minutes is None or not minimum <= off_minutes <= MAX_OFFLINE_MINUTES
         ):
             return None
         terms = self._terms(profile, weight)

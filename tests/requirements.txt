@@ -1,6 +1,6 @@
 pytest==9.1.1
 pytest-cov==7.1.0
-pytest-mock==3.16.0
+pytest-mock==3.17.0
 kafka-python-ng==2.2.3
 pymysql==1.2.3
 DBUtils==3.2.0
@@ -13,9 +13,9 @@ schedule==1.2.2
 gtts==2.5.4
 google-api-python-client
 google-auth-oauthlib
-alembic==1.20.0
-SQLAlchemy>=2.1.5
-aioesphomeapi==46.12.1
+alembic==1.20.1
+SQLAlchemy>=2.1.6
+aioesphomeapi==46.22.0
 zeroconf==0.151.5
 werkzeug==3.1.9
 PyJWT==2.15.1

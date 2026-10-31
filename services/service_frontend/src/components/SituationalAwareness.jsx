@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import {
   Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X,
@@ -27,7 +27,23 @@ import { apiFetch } from '../utils/apiClient';
 // reporting still has *something* to key on rather than throwing.
 const cardKey = (card) => `${card.rule_id || card.mode}:${card.subject_key || ''}`;
 
-const reportCardInteraction = (card, action) => {
+// A card display is one "impression" (SA-1 capture): it starts when the card first appears in the
+// payload and ends when it leaves it, is dismissed, or the page goes away. `shown` is reported
+// every refresh and says nothing about how long a card was actually on screen, so the end of a
+// display also reports one `impression` row carrying the visible time. Time while the tab is
+// hidden does not count, and a display under MIN_IMPRESSION_MS was never really seen, so it is
+// not reported.
+const SURFACE = 'web';
+const MIN_IMPRESSION_MS = 1000;
+
+const newImpressionId = () =>
+  (globalThis.crypto && globalThis.crypto.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+
+const pageVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+
+const reportCardInteraction = (card, action, extra = {}) => {
   apiFetch(`${API_BASE_URL}/api/context/card-interaction`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -35,6 +51,8 @@ const reportCardInteraction = (card, action) => {
       rule_id: card.rule_id || card.mode,
       subject_key: card.subject_key || '',
       action,
+      surface: SURFACE,
+      ...extra,
     }),
   }).catch(() => {});
 };
@@ -42,6 +60,53 @@ const reportCardInteraction = (card, action) => {
 const SituationalAwareness = ({ timezone = null }) => {
   const [saData, setSaData] = useState([]);
   const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
+  // key -> { id, card, visibleMs, since }: the displays in progress (see the impression note above).
+  const impressions = useRef(new Map());
+
+  const pauseImpression = (imp) => {
+    if (imp.since !== null) {
+      imp.visibleMs += Date.now() - imp.since;
+      imp.since = null;
+    }
+  };
+
+  const endImpression = (key) => {
+    const imp = impressions.current.get(key);
+    if (!imp) return;
+    impressions.current.delete(key);
+    pauseImpression(imp);
+    if (imp.visibleMs >= MIN_IMPRESSION_MS) {
+      reportCardInteraction(imp.card, 'impression', {
+        impression_id: imp.id,
+        visible_ms: Math.round(imp.visibleMs),
+      });
+    }
+  };
+
+  const endAllImpressions = () => {
+    [...impressions.current.keys()].forEach(endImpression);
+  };
+
+  // The page going away or the tab being hidden ends/pauses every display in progress.
+  useEffect(() => {
+    const onVisibility = () => {
+      impressions.current.forEach((imp) => {
+        if (pageVisible()) {
+          if (imp.since === null) imp.since = Date.now();
+        } else {
+          pauseImpression(imp);
+        }
+      });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', endAllImpressions);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', endAllImpressions);
+      endAllImpressions();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const fetchSA = async () => {
@@ -67,6 +132,34 @@ const SituationalAwareness = ({ timezone = null }) => {
     };
   }, []);
 
+  // Start a display for each card that is now on screen and end the ones that are not (left the
+  // payload, or dismissed). Declared before the "shown" effect so that one can link its row to the
+  // display it belongs to.
+  useEffect(() => {
+    const onScreen = new Map(
+      saData.filter((card) => !dismissedKeys.has(cardKey(card))).map((card) => [cardKey(card), card])
+    );
+    onScreen.forEach((card, key) => {
+      if (!impressions.current.has(key)) {
+        impressions.current.set(key, {
+          id: newImpressionId(),
+          card,
+          visibleMs: 0,
+          since: pageVisible() ? Date.now() : null,
+        });
+      } else {
+        impressions.current.get(key).card = card; // keep the freshest copy of the card
+      }
+    });
+    [...impressions.current.keys()].filter((key) => !onScreen.has(key)).forEach(endImpression);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saData, dismissedKeys]);
+
+  const impressionIdFor = (card) => {
+    const imp = impressions.current.get(cardKey(card));
+    return imp ? { impression_id: imp.id } : {};
+  };
+
   // "shown" is reported by the consumer, never assumed by the daemon (SA-1). Fires
   // once per card per broadcast, not once per identity ever -- decide_displays()'s
   // repetition damping needs one "shown" row per cycle a card is genuinely
@@ -82,13 +175,13 @@ const SituationalAwareness = ({ timezone = null }) => {
       const key = cardKey(card);
       if (reportedThisCycle.has(key)) return;
       reportedThisCycle.add(key);
-      reportCardInteraction(card, 'shown');
+      reportCardInteraction(card, 'shown', impressionIdFor(card));
     });
   }, [saData]);
 
   const handleDismiss = (card) => {
+    reportCardInteraction(card, 'dismissed', impressionIdFor(card));
     setDismissedKeys((prev) => new Set(prev).add(cardKey(card)));
-    reportCardInteraction(card, 'dismissed');
   };
 
   const visibleCards = saData.filter((card) => !dismissedKeys.has(cardKey(card)));
@@ -155,6 +248,7 @@ const SituationalAwareness = ({ timezone = null }) => {
                   href={card.playlist_url || undefined}
                   target="_blank"
                   rel="noreferrer"
+                  onClick={() => reportCardInteraction(card, 'tapped', { ...impressionIdFor(card), detail: 'open playlist' })}
                   className="flex items-center space-x-2 mt-1 text-xs font-mono text-fui-accent hover:underline min-w-0"
                 >
                   {card.playlist_image && (
