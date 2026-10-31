@@ -2,7 +2,7 @@
 
 > **Layer:** L2 · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-6
 
-## Status: 🟡 Design settled 2026-10-11 (below); `away_unusual` built and live in shadow (2026-10-11). One L2 inference already exists: `household_unusual_day` (`learners/household_day.py`).
+## Status: 🟡 Design settled 2026-10-11 (below). The engine is live with a calendar family and three rules: `away_unusual`, `day_off` and `household_unusual_day`. 2026-10-31: `household_unusual_day` learns its own features and its own bar (PR #352); `bar_bits(group)` on `layer2.Rule` lets a rule read a learned bar. Open: a second independent family beyond the calendar.
 
 Layer 2 consumes L1 inferences, never raw data. Its inputs are rows in `sa_inferences` with
 `layer = 1`. Its outputs are rows with `layer = 2` whose `evidence` lists the parent inference ids.

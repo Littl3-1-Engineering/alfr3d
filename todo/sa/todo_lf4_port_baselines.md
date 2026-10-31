@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4
 
-## Status: 🟡 Learners for every row below are built and running in shadow (see [todo_lf4a_scalar_learner.md](todo_lf4a_scalar_learner.md) and [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md), which hold the cutover checklist). Remaining here: the cutovers, merging device rows by identity in silver (needed before `rhythm_break_anomaly`), and retiring `entity_baselines`. Not before ~2026-10-17.
+## Status: 🟡 Four of the five ports are cut over and deployed (2026-10-30/31): `climate_deviation`, `attention_focus`, `rhythm_break_anomaly`, `household_unusual_day`. `departure_anomaly` is the remaining one, in shadow. The device, household and room rows of `entity_baselines` and the code behind them were retired (PR #357, migration 0057). Left: cut over `departure_anomaly`, then drop `compute_entity_baselines` and the table. The cutover checklist lives in [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md).
 
 ## Scope
 
