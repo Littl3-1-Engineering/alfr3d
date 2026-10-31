@@ -3520,6 +3520,21 @@ class TestCheckClimateAdvisory:
         frame = _make_frame(esphome_climate=self._climate())
         assert daemon.check_climate_advisory(frame) is None
 
+    def test_readings_are_shown_to_the_nearest_degree_and_percent(self):
+        from services.service_sa.sa.engine import SAEngine
+
+        cold = SAEngine().check_climate_advisory(
+            _make_frame(esphome_climate=self._climate(temperature_c=15.4))
+        )
+        humid = SAEngine().check_climate_advisory(
+            _make_frame(esphome_climate=self._climate(humidity_pct=81.6))
+        )
+
+        assert cold["content"] == "It's cooler than usual indoors (15°C)"
+        assert cold["data"]["temperature_c"] == 15
+        assert humid["content"] == "Humidity is higher than usual indoors (82%)"
+        assert humid["data"]["humidity_pct"] == 82
+
     def test_fires_when_too_cold(self):
         from services.service_sa.sa.engine import (
             CLIMATE_ADVISORY_COLD_THRESHOLD_C,
@@ -3664,9 +3679,18 @@ class TestCheckClimateDeviation:
 
         assert card["mode"] == "climate_deviation"
         assert card["priority"] == 5.4
-        assert card["content"] == "Cooler than typical for this time of day (21.9°C)"
-        assert card["data"]["temperature_c"] == 21.9
-        assert card["data"]["typical_median_value"] == 26.5
+        # shown to the nearest degree, never as a decimal
+        assert card["content"] == "Cooler than typical for this time of day (22°C)"
+        assert card["data"]["temperature_c"] == 22
+        assert card["data"]["typical_median_value"] == 26  # 26.5 rounds half to even
+        assert card["data"]["because"] == ["22°C against about 26°C expected at this hour"]
+
+    def test_humidity_is_shown_to_the_nearest_percent(self):
+        card = self._check([self._inference(self.HUM, 20.4, "low", 45.6)])
+
+        assert card["content"] == "Lower humidity than typical for this time of day (20%)"
+        assert card["data"]["humidity_pct"] == 20
+        assert card["data"]["because"] == ["20% against about 46% expected at this hour"]
 
     def test_warmer_temperature_card(self):
         card = self._check([self._inference(self.TEMP, 31.0, "high", 26.5)])

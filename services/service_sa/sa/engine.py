@@ -2441,49 +2441,52 @@ class SAEngine:
         if not climate:
             return None
 
+        # Readings are shown to the nearest degree / percent; the thresholds compare the raw value.
         if climate["temperature_online"] and climate["temperature_c"] is not None:
             temp = climate["temperature_c"]
+            shown = round(temp)
             if temp < CLIMATE_ADVISORY_COLD_THRESHOLD_C:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"It's cooler than usual indoors ({temp}°C)",
+                    "content": f"It's cooler than usual indoors ({shown}°C)",
                     "priority": 5.3,
                     "data": {
-                        "temperature_c": temp,
-                        "because": [f"{temp}°C < {CLIMATE_ADVISORY_COLD_THRESHOLD_C}°C"],
+                        "temperature_c": shown,
+                        "because": [f"{shown}°C < {CLIMATE_ADVISORY_COLD_THRESHOLD_C}°C"],
                     },
                 }
             if temp > CLIMATE_ADVISORY_HOT_THRESHOLD_C:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"It's warmer than usual indoors ({temp}°C)",
+                    "content": f"It's warmer than usual indoors ({shown}°C)",
                     "priority": 5.3,
                     "data": {
-                        "temperature_c": temp,
-                        "because": [f"{temp}°C > {CLIMATE_ADVISORY_HOT_THRESHOLD_C}°C"],
+                        "temperature_c": shown,
+                        "because": [f"{shown}°C > {CLIMATE_ADVISORY_HOT_THRESHOLD_C}°C"],
                     },
                 }
 
         if climate["humidity_online"] and climate["humidity_pct"] is not None:
             humidity = climate["humidity_pct"]
+            shown = round(humidity)
             if humidity > CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"Humidity is higher than usual indoors ({humidity}%)",
+                    "content": f"Humidity is higher than usual indoors ({shown}%)",
                     "priority": 5.3,
                     "data": {
-                        "humidity_pct": humidity,
-                        "because": [f"{humidity}% > {CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT}%"],
+                        "humidity_pct": shown,
+                        "because": [f"{shown}% > {CLIMATE_ADVISORY_HUMIDITY_HIGH_PCT}%"],
                     },
                 }
             if humidity < CLIMATE_ADVISORY_HUMIDITY_LOW_PCT:
                 return {
                     "mode": "climate_advisory",
-                    "content": f"Humidity is lower than usual indoors ({humidity}%)",
+                    "content": f"Humidity is lower than usual indoors ({shown}%)",
                     "priority": 5.3,
                     "data": {
-                        "humidity_pct": humidity,
-                        "because": [f"{humidity}% < {CLIMATE_ADVISORY_HUMIDITY_LOW_PCT}%"],
+                        "humidity_pct": shown,
+                        "because": [f"{shown}% < {CLIMATE_ADVISORY_HUMIDITY_LOW_PCT}%"],
                     },
                 }
 
@@ -2541,21 +2544,21 @@ class SAEngine:
             return None
         # Most surprising first; temperature wins a tie, as it did when this compared bands.
         kind, inference = max(found, key=lambda f: (f[1].surprise, f[0] == "temperature"))
-        value = inference.observed["value"]
+        value = round(inference.observed["value"])  # shown to the nearest degree / percent
         high = inference.observed["direction"] == "high"
-        mu = inference.expected["mu"]
+        mu = round(inference.expected["mu"])
         if kind == "temperature":
             direction = "Warmer" if high else "Cooler"
             content = f"{direction} than typical for this time of day ({value}°C)"
             data = {"temperature_c": value}
-            because = f"{value}°C against about {mu:.1f}°C expected at this hour"
+            because = f"{value}°C against about {mu}°C expected at this hour"
         else:
             content = (
                 f"{'Higher' if high else 'Lower'} humidity than typical for this time of day "
                 f"({value}%)"
             )
             data = {"humidity_pct": value}
-            because = f"{value}% against about {mu:.0f}% expected at this hour"
+            because = f"{value}% against about {mu}% expected at this hour"
         return {
             "mode": "climate_deviation",
             "content": content,
