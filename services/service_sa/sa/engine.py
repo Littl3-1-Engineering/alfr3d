@@ -27,6 +27,7 @@ from sa import context_frame, focus_utils, inference_store, mood_utils, routing_
 from sa import disk, layer2
 from sa.learners import household_day
 from sa.learners import presence as presence_learner
+from sa.learners import scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import calendar_utils, gmail_utils, spotify_utils  # noqa: E402
@@ -2490,70 +2491,83 @@ class SAEngine:
 
     def check_climate_deviation(self, frame):
         """Baseline-learned sibling to check_climate_advisory() (SA-9 Phase 2): fires when the
-        current reading is unusual for this time of day, not just absolutely uncomfortable.
-        Separate rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split
-        as weather/weather_advisory -- so dismissing one doesn't suppress the other, and nothing
-        about the already-shipped climate_advisory needed to change.
+        indoor reading is unusual for this hour, not just absolutely uncomfortable. Separate
+        rule_id from climate_advisory -- same absolute-reading-vs-deviation-alert split as
+        weather/weather_advisory -- so dismissing one doesn't suppress the other.
 
-        The [typical_daily_min, typical_daily_max] band compared against here is a
-        median +/- CLIMATE_BASELINE_STDEV_MULTIPLIER-stdev band, not the raw observed range
-        (2026-09-26 fix -- see CLIMATE_BASELINE_STDEV_MULTIPLIER's own comment for why a literal
-        min/max band made this rule structurally unable to ever fire).
+        Since the LF-4 cutover this shows the scalar learner's inference (sa/learners/scalar.py)
+        instead of comparing against an `entity_baselines` band: the shadow pass scores the
+        ESPHome temperature and humidity series every cycle and stores any deviation in
+        sa_inferences, so this card lags it by at most one cycle. The learner knows the hour of
+        day and adapts to a slow drift, so ordinary daytime warmth no longer fires (the old band
+        pooled a whole time-of-day bucket: 15 of 19 flagged hours in a 13-day backtest were
+        ordinary at the learner's z of 1-2). An uncomfortable level that persists is
+        check_climate_advisory()'s job. Needs confidence >= MIN_CARD_CONFIDENCE, so a series
+        whose stability was just cut by a regime change stays quiet.
         """
-        climate = frame.esphome_climate
-        baselines = frame.esphome_climate_baselines
-        if not climate or not baselines:
+        if frame.now is None:
             return None
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Climate deviation check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
 
-        temp_baseline = baselines.get("temperature")
-        if (
-            climate["temperature_online"]
-            and climate["temperature_c"] is not None
-            and temp_baseline
-            and temp_baseline["sample_count"] >= temp_baseline["min_sample_count"]
-        ):
-            temp = climate["temperature_c"]
-            floor = temp_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_C
-            ceiling = temp_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_C
-            if temp < floor or temp > ceiling:
-                direction = "Cooler" if temp < floor else "Warmer"
-                return {
-                    "mode": "climate_deviation",
-                    "content": f"{direction} than typical for this time of day ({temp}°C)",
-                    "priority": 5.4,
-                    "data": {
-                        "temperature_c": temp,
-                        "typical_median_value": temp_baseline["typical_median_value"],
-                        "because": [f"{temp}°C outside typical {floor}-{ceiling}°C for now"],
-                    },
-                }
-
-        humidity_baseline = baselines.get("humidity")
-        if (
-            climate["humidity_online"]
-            and climate["humidity_pct"] is not None
-            and humidity_baseline
-            and humidity_baseline["sample_count"] >= humidity_baseline["min_sample_count"]
-        ):
-            humidity = climate["humidity_pct"]
-            floor = humidity_baseline["typical_daily_min"] - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
-            ceiling = humidity_baseline["typical_daily_max"] + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT
-            if humidity < floor or humidity > ceiling:
-                direction = "Lower" if humidity < floor else "Higher"
-                return {
-                    "mode": "climate_deviation",
-                    "content": (
-                        f"{direction} humidity than typical for this time of day ({humidity}%)"
-                    ),
-                    "priority": 5.4,
-                    "data": {
-                        "humidity_pct": humidity,
-                        "typical_median_value": humidity_baseline["typical_median_value"],
-                        "because": [f"{humidity}% outside typical {floor}-{ceiling}% for now"],
-                    },
-                }
-
-        return None
+        found = []
+        for inference in recent:
+            series = (inference.evidence or {}).get("series") or ""
+            if inference.learner != scalar.NAME or not series.startswith("esphome:"):
+                continue
+            kind = (
+                "temperature"
+                if series.endswith(":Temperature")
+                else "humidity"
+                if series.endswith(":Humidity")
+                else None
+            )
+            if kind and inference.confidence >= presence_learner.MIN_CARD_CONFIDENCE:
+                found.append((kind, inference))
+        if not found:
+            return None
+        # Most surprising first; temperature wins a tie, as it did when this compared bands.
+        kind, inference = max(found, key=lambda f: (f[1].surprise, f[0] == "temperature"))
+        value = inference.observed["value"]
+        high = inference.observed["direction"] == "high"
+        mu = inference.expected["mu"]
+        if kind == "temperature":
+            direction = "Warmer" if high else "Cooler"
+            content = f"{direction} than typical for this time of day ({value}°C)"
+            data = {"temperature_c": value}
+            because = f"{value}°C against about {mu:.1f}°C expected at this hour"
+        else:
+            content = (
+                f"{'Higher' if high else 'Lower'} humidity than typical for this time of day "
+                f"({value}%)"
+            )
+            data = {"humidity_pct": value}
+            because = f"{value}% against about {mu:.0f}% expected at this hour"
+        return {
+            "mode": "climate_deviation",
+            "content": content,
+            "priority": 5.4,
+            "data": {
+                **data,
+                "typical_median_value": mu,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
+                "because": [because],
+            },
+        }
 
     def check_time(self, frame):
         """Get current time card.
