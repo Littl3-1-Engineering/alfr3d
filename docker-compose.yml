@@ -407,16 +407,23 @@ services:
       retries: 3
       start_period: 20s
 
-  # Local CA + nginx leaf cert (todo/todo_local_ca_cert_rotation.md). Host network so it sees the
-  # real LAN interface addresses; re-issues the leaf whenever they change and HUPs nginx. The CA
-  # key lives only in the tls_ca volume, mounted nowhere else -- ./certs gets just ca.crt (public)
-  # and the leaf, which nginx and service-api read.
+  # Local CA + nginx leaf cert (todo/todo_local_ca_cert_rotation.md, todo/todo_on_demand_containers.md).
+  # A one-shot, not a daemon: the leaf is valid 365 days and only changes when the host's addresses
+  # do, so it runs once as nginx's dependency (every `docker compose up -d`, including the boot-time
+  # alfr3d.service) and once a day from the host crontab (setup/tls_reissue.sh), then exits.
+  # TLS_ONESHOT unset keeps the old 60s loop, which is the rollback. Host network so it sees the
+  # real LAN interface addresses; HUPs nginx after a re-issue. The CA key lives only in the tls_ca
+  # volume, mounted nowhere else -- ./certs gets just ca.crt (public) and the leaf, which nginx and
+  # service-api read.
   service-tls:
     build:
       context: ./services
       dockerfile: ./service_tls/Dockerfile
-    restart: unless-stopped
+    restart: "no"
     network_mode: host
+    labels:
+      # An exited container here is the design, not an outage (/api/containers reports it as idle).
+      alfr3d.ondemand: "true"
     volumes:
       - tls_ca:/ca
       - ./certs:/certs
@@ -424,12 +431,7 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - TLS_EXTRA_SANS=${TLS_EXTRA_SANS:-}
-    healthcheck:
-      test: [ "CMD", "test", "-s", "/certs/server.crt" ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
+      - TLS_ONESHOT=1
 
   nginx:
     image: nginx:alpine
@@ -442,7 +444,7 @@ services:
       - ./nginx-server-common.conf:/etc/nginx/alfr3d-server-common.conf:ro
     depends_on:
       service-tls:
-        condition: service_healthy
+        condition: service_completed_successfully
       service-frontend:
         condition: service_started
       service-api:

@@ -269,7 +269,14 @@ async def get_services():
         env = os.environ.copy()
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
         output = run_docker_command(
-            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}"], env
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--format",
+                '{{.Names}}\t{{.Status}}\t{{.Label "alfr3d.ondemand"}}',
+            ],
+            env,
         )
         services = []
         for line in output.strip().split("\n"):
@@ -279,6 +286,11 @@ async def get_services():
             if len(parts) < 2 or not parts[0].startswith("alfr3d"):
                 continue
             status = "running" if "Up" in parts[1] else "stopped"
+            # Run-once services (alfr3d.ondemand, e.g. service-tls) that finished cleanly are
+            # stopped on purpose, not down.
+            ondemand = len(parts) > 2 and parts[2].strip().lower() == "true"
+            if ondemand and parts[1].startswith("Exited (0)"):
+                status = "idle"
             services.append({"name": parts[0], "status": status})
         return services
     except Exception as e:

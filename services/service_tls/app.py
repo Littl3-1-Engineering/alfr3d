@@ -8,6 +8,7 @@ the CA, re-issuing the leaf on an IP/network change is invisible to them.
 import logging
 import os
 import shutil
+import sys
 import time
 
 import docker
@@ -22,6 +23,7 @@ OUT_DIR = os.getenv("TLS_OUT_DIR", "/certs")
 CHECK_INTERVAL = int(os.getenv("TLS_CHECK_INTERVAL", "60"))
 EXTRA_SANS = [s for s in os.getenv("TLS_EXTRA_SANS", "").split(",") if s.strip()]
 NGINX_SERVICE = os.getenv("TLS_NGINX_SERVICE", "nginx")
+ONESHOT = os.getenv("TLS_ONESHOT", "").strip().lower() in ("1", "true", "yes")
 
 
 def publish_ca(ca_cert):
@@ -56,10 +58,32 @@ def reconcile(ca_cert, ca_key):
     reload_nginx()
 
 
+def run_once(ca_cert, ca_key):
+    """One reconcile; returns the process exit code.
+
+    nginx waits for this to exit 0 (service_completed_successfully), so a failed re-issue only
+    fails the stack when there is no leaf nginx could serve at all. With a usable one on disk it is
+    logged and left for the next run, rather than refusing to boot the whole stack over it."""
+    try:
+        reconcile(ca_cert, ca_key)
+        return 0
+    except Exception as e:
+        logger.error(f"Reconcile failed: {e}")
+    if local_tls.leaf_usable(
+        os.path.join(OUT_DIR, "server.crt"), os.path.join(OUT_DIR, "server.key"), ca_cert
+    ):
+        logger.warning("Keeping the existing leaf cert; it is still valid")
+        return 0
+    logger.error("No usable leaf cert on disk")
+    return 1
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     ca_cert, ca_key = local_tls.ensure_ca(CA_DIR)
     publish_ca(ca_cert)
+    if ONESHOT:
+        sys.exit(run_once(ca_cert, ca_key))
     while True:
         try:
             reconcile(ca_cert, ca_key)

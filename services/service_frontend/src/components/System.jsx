@@ -390,7 +390,7 @@ const System = () => {
             {services.map(service => (
               <div key={service.name} className="flex items-center justify-between px-3 py-2 bg-fui-dim/40 border border-border/20 rounded">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${service.status === 'running' ? 'bg-success' : 'bg-error'}`} />
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${service.status === 'running' ? 'bg-success' : service.status === 'idle' ? 'bg-fui-text/30' : 'bg-error'}`} />
                   <span className="font-mono text-xs text-fui-text truncate">{service.name}</span>
                 </div>
                 <button

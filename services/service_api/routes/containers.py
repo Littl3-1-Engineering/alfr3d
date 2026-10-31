@@ -39,6 +39,8 @@ def _mock_container_metrics() -> list:
             "state": "running",
             "health": "healthy",
             "restarts": 0,
+            "ondemand": False,
+            "idle": False,
         }
 
     return [
@@ -82,13 +84,21 @@ def _fetch_stats(env) -> dict:
     return stats
 
 
+# Compose label for services that are meant to be stopped most of the time (run-once containers
+# like service-tls). Set in docker-compose.yml; absent everywhere else.
+ONDEMAND_LABEL = "alfr3d.ondemand"
+
+
 def _fetch_states(names: list, env) -> dict:
-    """Lifecycle state, healthcheck verdict and restart count, in a single docker call."""
+    """Lifecycle state, healthcheck verdict, restart count, on-demand flag and exit code, in a
+    single docker call."""
     states = {}
     fmt = (
         "{{.Name}},{{.State.Status}},"
         "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}},"
-        "{{.RestartCount}}"
+        "{{.RestartCount}},"
+        f'{{{{index .Config.Labels "{ONDEMAND_LABEL}"}}}},'
+        "{{.State.ExitCode}}"
     )
     try:
         output = run_docker_command(["docker", "inspect", "--format", fmt] + names, env)
@@ -98,18 +108,26 @@ def _fetch_states(names: list, env) -> dict:
 
     for line in output.strip().split("\n"):
         parts = line.strip().split(",")
-        if len(parts) < 4:
+        if len(parts) < 6:
             continue
         try:
             restarts = int(parts[3])
         except ValueError:
             restarts = 0
-        states[parts[0].lstrip("/")] = (parts[1], parts[2], restarts)
+        try:
+            exit_code = int(parts[5])
+        except ValueError:
+            exit_code = 0
+        ondemand = parts[4].strip().lower() == "true"
+        states[parts[0].lstrip("/")] = (parts[1], parts[2], restarts, ondemand, exit_code)
     return states
 
 
 def fetch_container_metrics() -> list:
     """Per-container utilization plus Docker's own health verdict.
+
+    A container labelled `alfr3d.ondemand` that exited 0 is reported `idle: true` (run-once
+    services such as service-tls), so consumers don't mistake it for an outage.
 
     CPU/memory are reported as utilization only. Health is whatever Docker says it is --
     deriving it from resource usage would call a busy container a dying one, which is how
@@ -138,7 +156,9 @@ def fetch_container_metrics() -> list:
     containers = []
     for name in names:
         cpu_percent, mem_percent = stats.get(name, (0.0, 0.0))
-        state, health, restarts = states.get(name, ("unknown", "none", 0))
+        state, health, restarts, ondemand, exit_code = states.get(
+            name, ("unknown", "none", 0, False, 0)
+        )
         containers.append(
             {
                 "name": name,
@@ -147,6 +167,10 @@ def fetch_container_metrics() -> list:
                 "state": state,
                 "health": health,
                 "restarts": restarts,
+                "ondemand": ondemand,
+                # Stopped on purpose and finished cleanly. A non-zero exit on an on-demand
+                # container is a real failure and stays "down".
+                "idle": ondemand and state == "exited" and exit_code == 0,
             }
         )
 

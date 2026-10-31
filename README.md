@@ -466,6 +466,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
 - **Service API**: FastAPI REST API gateway with native WebSocket support, providing endpoints for users, devices, containers, routines, personality, IoT metrics, music/Spotify, health, system, and camera streaming, interfacing with database and Docker.
 - **Service Frontend**: Modern React web application with real-time dashboard (Nexus), device/domain management (Domain), and automation/control hub (Matrix).
 - **Service Speak**: Text-to-speech service generating audio from Kafka messages with real-time notifications.
+- **Local HTTPS identity** (`service_tls`): a run-once container, not a daemon. It creates a private CA once (`tls_ca` volume — never regenerated, because a new CA forces every paired Deck to re-pair) and issues the nginx leaf in `./certs/` for the host's current LAN/Tailscale addresses and names (extra names via `TLS_EXTRA_SANS`). It runs at every `docker compose up -d` as nginx's dependency (so at boot too, via `alfr3d.service`) and daily from cron (`setup/tls_reissue.sh`), re-issuing only if the addresses changed or the leaf is within 30 days of expiry, then HUPs nginx. After moving the box to a new network, run `setup/tls_reissue.sh` by hand. Setting `TLS_ONESHOT` empty restores the old 60-second loop. The Deck pairs by fetching the public CA from `GET /api/tls/ca`.
 - **Routing** (opt-in, `docker compose --profile routing up -d routing`): self-hosted OSRM routing engine backing `check_travel()`'s leave-by guidance — no paid Maps API, zero external network calls per route. Not started by default; needs a regional dataset provisioned first via `setup/build_routing_extract.sh` (see the script's own header for usage).
 - **IoT Integration**: Unified IoT layer supporting Home Assistant, SmartThings, and ESPHome with automatic device syncing and blueprint visualization.
 
@@ -838,6 +839,7 @@ The codebase uses `orjson` instead of the standard `json` module. Ensure any JSO
 ### Maintenance Scripts
 - **`backup_db.sh`**: Older one-off database backup script (uncompressed, keeps 3, root password hardcoded for the dev stack)
 - **`db_backup_daily.sh`**: Daily production backup. Gzipped `mysqldump` (routines, events, triggers) of the running `mysql` service into `~/db_backups/alfr3d_daily_*.sql.gz`, verified before it counts, newest 7 kept; hand-made `*_pre_*` dumps are never rotated. Credentials are read from the mysql container, nothing is hardcoded. Installed on the NUC as a user crontab entry (`0 4 * * *`, log in `~/db_backups/backup.log`). Restore with `gzip -dc <file> | docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"'` (try it on `test-mysql` first). Still take a manual `*_pre_*` dump before every migration.
+- **`tls_reissue.sh`**: Re-checks the nginx leaf cert on demand (`docker compose run --rm --no-deps service-tls`, `flock`ed). Installed on the NUC as a daily user crontab entry (`30 4 * * *`, log in `~/db_backups/tls.log`); also the manual command after a network change. Never touches the CA volume.
 - **`host_usage.sh`**: Read-only snapshot of Docker disk usage (`docker system df`) and the `~/db_backups` size, written to `<repo>/host_usage/host_usage.tsv` (gitignored) for `sa-learner` to read through a read-only bind mount; it feeds the Docker/backup lines of the `disk_health` card. Nothing is pruned or deleted. Install it as a user crontab entry on the host: `17 */4 * * * /home/alfr3d/alfr3d/setup/host_usage.sh >> /home/alfr3d/alfr3d/host_usage/host_usage.log 2>&1`. Keep the log inside the repo's `host_usage/` directory: if the redirect target's directory does not exist the shell never starts the script, and with no MTA cron discards the error, so the snapshot just goes stale (the learner logs `host usage snapshot missing or stale` after 12 h).
 - **`cleanup_device_history.py`** / **`cleanup_device_history.sh`**: Scripts to clean up old device history data
 - **`authorize_google.py`**: Google API authorization setup for Gmail and Calendar integrations
@@ -876,7 +878,10 @@ Run these scripts as needed for database maintenance, backups, and integration c
     lifecycle state, healthcheck verdict and restart count
     (`{name, cpu, mem, state, health, restarts}`). Health is Docker's verdict, not a
     function of resource usage — a busy container is working, not failing. `cpu` is
-    normalized by host core count, so it stays within 0-100.
+    normalized by host core count, so it stays within 0-100. Containers labelled
+    `alfr3d.ondemand` (run-once services such as `service-tls`) also report `ondemand` and
+    `idle` (exited with code 0), so a finished one-shot reads as idle, not down.
+  - `GET /api/tls/ca`: The household's public local CA (`pem`, `sha256`, `subject`, `not_after`) and `GET /api/tls/ca.crt` for the raw file. Unauthenticated by design: it is a public certificate, and the Deck shows the fingerprint for the user to confirm before pinning it.
   - `GET /api/health`: Overall health, uptimes, and version
   - `GET /api/project-tree`: Retrieve project directory tree structure for visualization
   - `GET /api/integrations/status`: Check integration sync status
