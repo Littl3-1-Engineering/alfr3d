@@ -1993,3 +1993,91 @@ def test_update_status_returns_the_status_file_contents(mock_read_status, api_cl
 
     assert response.status_code == 200
     assert response.json()["phase"] == "build"
+
+
+def _card_interaction_insert_params(mock_cursor):
+    inserts = [
+        c
+        for c in mock_cursor.execute.call_args_list
+        if "INSERT INTO card_interactions" in c.args[0]
+    ]
+    assert len(inserts) == 1
+    return inserts[0].args[1]
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_stores_the_impression_capture_fields(mock_db_connection, api_client):
+    mock_db, mock_cursor = MagicMock(), MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={
+            "rule_id": "weather",
+            "action": "impression",
+            "surface": "deck",
+            "impression_id": "3f2a9c1e-7b64-4d0a-9a55-0c7e1d2b8f10",
+            "visible_ms": 42_000,
+            "detail": "  opened weather  ",
+        },
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    params = _card_interaction_insert_params(mock_cursor)
+    assert params[2] == "impression"
+    assert params[5:] == ("deck", "3f2a9c1e-7b64-4d0a-9a55-0c7e1d2b8f10", 42_000, "opened weather")
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_without_capture_fields_stores_nulls(mock_db_connection, api_client):
+    """An older client sends none of them; the row is stored exactly as before."""
+    mock_db, mock_cursor = MagicMock(), MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+
+    response = api_client.post(
+        "/api/context/card-interaction",
+        json={"rule_id": "weather", "action": "shown"},
+        headers=_bearer(2, "resident"),
+    )
+
+    assert response.status_code == 200
+    assert _card_interaction_insert_params(mock_cursor)[5:] == (None, None, None, None)
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_rejects_malformed_capture_fields(mock_db_connection, api_client):
+    base = {"rule_id": "weather", "action": "shown"}
+    bad = [
+        {"surface": "tv"},
+        {"impression_id": "not a valid id!"},
+        {"impression_id": "x" * 37},
+        {"visible_ms": -1},
+        {"visible_ms": 24 * 60 * 60 * 1000 + 1},
+        {"visible_ms": "12"},
+        {"visible_ms": True},
+        {"detail": "d" * 65},
+        {"detail": 7},
+    ]
+    for extra in bad:
+        response = api_client.post(
+            "/api/context/card-interaction",
+            json={**base, **extra},
+            headers=_bearer(2, "resident"),
+        )
+        assert response.status_code == 400, extra
+    mock_db_connection.assert_not_called()
+
+
+@patch("routes.context.db_connection")
+def test_an_impression_needs_its_id_and_duration(mock_db_connection, api_client):
+    for extra in ({}, {"impression_id": "abc"}, {"visible_ms": 100}):
+        response = api_client.post(
+            "/api/context/card-interaction",
+            json={"rule_id": "weather", "action": "impression", **extra},
+            headers=_bearer(2, "resident"),
+        )
+        assert response.status_code == 400, extra
+    mock_db_connection.assert_not_called()

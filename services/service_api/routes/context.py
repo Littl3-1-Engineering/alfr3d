@@ -20,6 +20,7 @@ Deck subscribes to it here instead of re-deriving it from a fixed clock bucket.
 """
 
 import logging
+import re
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -505,7 +506,44 @@ async def report_device_location(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-_CARD_INTERACTION_ACTIONS = {"shown", "tapped", "dismissed", "expired"}
+_CARD_INTERACTION_ACTIONS = {"shown", "tapped", "dismissed", "expired", "impression"}
+_CARD_SURFACES = {"web", "deck"}
+_IMPRESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,36}$")
+_MAX_VISIBLE_MS = 24 * 60 * 60 * 1000
+_MAX_DETAIL_CHARS = 64
+
+
+def _bad_request(message):
+    return HTTPException(status_code=400, detail=message)
+
+
+def _card_interaction_extras(data, action):
+    """(surface, impression_id, visible_ms, detail) from the optional capture fields, each None
+    when absent. Raises 400 for a present-but-malformed one (a client bug worth hearing about),
+    and for an `impression` that lacks its id or duration."""
+    surface = data.get("surface")
+    if surface is not None and surface not in _CARD_SURFACES:
+        raise _bad_request(f"surface must be one of {sorted(_CARD_SURFACES)}")
+    impression_id = data.get("impression_id")
+    if impression_id is not None and not (
+        isinstance(impression_id, str) and _IMPRESSION_ID.match(impression_id)
+    ):
+        raise _bad_request("impression_id must be 1-36 letters, digits or dashes")
+    visible_ms = data.get("visible_ms")
+    if visible_ms is not None and (
+        isinstance(visible_ms, bool)
+        or not isinstance(visible_ms, int)
+        or not 0 <= visible_ms <= _MAX_VISIBLE_MS
+    ):
+        raise _bad_request(f"visible_ms must be an integer 0-{_MAX_VISIBLE_MS}")
+    detail = data.get("detail")
+    if detail is not None:
+        if not isinstance(detail, str) or len(detail) > _MAX_DETAIL_CHARS:
+            raise _bad_request(f"detail must be text up to {_MAX_DETAIL_CHARS} chars")
+        detail = detail.strip() or None
+    if action == "impression" and (impression_id is None or visible_ms is None):
+        raise _bad_request("an impression needs impression_id and visible_ms")
+    return surface, impression_id, visible_ms, detail
 
 
 @router.post("/context/card-interaction")
@@ -529,6 +567,13 @@ async def report_card_interaction(
     `user_id` always comes from the authenticated token, never the request body --
     the body field used to be trusted, but no client ever sent it, so every row landed
     with `user_id = NULL`.
+
+    Impression capture (all optional, so older clients keep working): `surface` ("web"/"deck"),
+    `impression_id` (one per card display, shared by that display's shown/tapped/dismissed rows),
+    `visible_ms` and `detail` (what a tap opened). The `impression` action is sent once when a
+    display ends and must carry `impression_id` and `visible_ms`: `shown` repeats every refresh and
+    says nothing about how long a card was actually on screen. The suppression pass in
+    service_sa ignores `impression` rows.
     """
     try:
         data = data or {}
@@ -541,13 +586,25 @@ async def report_card_interaction(
             )
         subject_key = data.get("subject_key") or ""
         user_id = user.id
+        surface, impression_id, visible_ms, detail = _card_interaction_extras(data, action)
         with db_connection() as db:
             cursor = db.cursor()
             cursor.execute(
                 "INSERT INTO card_interactions "
-                "(rule_id, subject_key, action, user_id, occurred_at) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (rule_id, subject_key, action, user_id, datetime.now(timezone.utc)),
+                "(rule_id, subject_key, action, user_id, occurred_at, surface, impression_id, "
+                "visible_ms, detail) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    rule_id,
+                    subject_key,
+                    action,
+                    user_id,
+                    datetime.now(timezone.utc),
+                    surface,
+                    impression_id,
+                    visible_ms,
+                    detail,
+                ),
             )
             db.commit()
         return {"message": "Card interaction recorded"}

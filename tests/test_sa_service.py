@@ -1349,9 +1349,7 @@ class TestCheckRhythmBreakAnomaly:
 
         with (
             patch("services.service_sa.sa.engine.pymysql.connect"),
-            patch(
-                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
-            ),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
         ):
             return SAEngine().check_rhythm_break_anomaly(_make_frame())
 
@@ -1364,7 +1362,9 @@ class TestCheckRhythmBreakAnomaly:
         assert card["deviation_type"] == "expected_absent"
         assert card["content"] == "Garage light hasn't come online yet"
         assert card["data"]["offline_minutes"] == 180
-        assert card["data"]["because"] == ["usually online 97% of the time at 14:00, offline for 180 min"]
+        assert card["data"]["because"] == [
+            "usually online 97% of the time at 14:00, offline for 180 min"
+        ]
 
     def test_a_device_on_at_an_unusual_hour(self):
         card = self._check([self._inference(state="online", offline_minutes=None, p_online=0.03)])
@@ -2214,7 +2214,9 @@ class TestCheckAttentionFocus:
         if snapshot == "default":
             snapshot = {"switch_count": 14, "dwell_by_category_ms": {"terminal": 600000}}
         return _make_frame(
-            launcher_context=_make_launcher_context(attention_snapshot=snapshot, attention_trend=None)
+            launcher_context=_make_launcher_context(
+                attention_snapshot=snapshot, attention_trend=None
+            )
         )
 
     def _check(self, recent, frame=None):
@@ -2222,9 +2224,7 @@ class TestCheckAttentionFocus:
 
         with (
             patch("services.service_sa.sa.engine.pymysql.connect"),
-            patch(
-                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
-            ),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
         ):
             return SAEngine().check_attention_focus(frame or self._frame())
 
@@ -2256,7 +2256,9 @@ class TestCheckAttentionFocus:
 
     def test_returns_none_when_switching_is_media_heavy(self):
         """High switching while mostly dwelling in media is the wind-down pattern, not focus."""
-        frame = self._frame({"switch_count": 20, "dwell_by_category_ms": {"media": 800000, "terminal": 100000}})  # fmt: skip
+        frame = self._frame(
+            {"switch_count": 20, "dwell_by_category_ms": {"media": 800000, "terminal": 100000}}
+        )
 
         assert self._check([self._inference()], frame) is None
 
@@ -3199,9 +3201,7 @@ class TestCheckClimateDeviation:
 
         with (
             patch("services.service_sa.sa.engine.pymysql.connect"),
-            patch(
-                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
-            ),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
         ):
             return SAEngine().check_climate_deviation(_make_frame())
 
@@ -3618,7 +3618,6 @@ class TestContextFrameFetchers:
         mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
 
         assert fetch_esphome_climate_snapshot() is None
-
 
 
 class TestRoutingUtils:
@@ -4184,3 +4183,21 @@ class TestLearnerEntrypoint:
         assert not hasattr(alfr3ddaemon, "compute_entity_baselines")
         assert not hasattr(alfr3ddaemon.MyDaemon, "check_situational_awareness")
         assert "compute_entity_baselines)" not in inspect.getsource(alfr3ddaemon.init_daemon)
+
+
+class TestCardSuppressionIgnoresImpressionRows:
+    """`impression` rows (end-of-display records with a visible time) must not be the 'latest
+    action' that hides a dismissal, nor break a run of `shown` rows."""
+
+    @patch("services.service_sa.sa.engine.pymysql.connect")
+    def test_the_history_query_excludes_them(self, mock_connect):
+        from services.service_sa.sa.engine import SAEngine
+
+        mock_cursor = MagicMock()
+        mock_connect.return_value.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = []
+
+        SAEngine()._card_suppression_reason("weather", "")
+
+        sql = mock_cursor.execute.call_args.args[0]
+        assert "action <> 'impression'" in sql
