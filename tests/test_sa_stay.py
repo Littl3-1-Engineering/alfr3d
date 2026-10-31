@@ -88,3 +88,28 @@ class TestStayStartFromSightings:
 
     def test_no_sightings_means_no_stay(self):
         assert stay.stay_start_from_sightings([]) is None
+
+
+class TestStability:
+    """Stability is measured, not defaulted: how well stays before a window predicted the window."""
+
+    def _fit(self, durations):
+        return stay.StayLearner().fit_user(1, "x", _intervals(durations), REF, 0.95, 0.8)
+
+    def test_steady_stays_are_stable(self):
+        assert self._fit([2, 3] * 30).stability >= 0.9
+
+    def test_a_recent_change_in_how_long_stays_last_lowers_it(self):
+        # the last 14 stays are 12 h against two months of 2-3 h ones
+        shifted = self._fit([12] * 14 + [2, 3] * 20)
+
+        assert shifted.stability < 0.2
+        assert shifted.stability < self._fit([2, 3] * 30).stability
+
+    def test_too_few_stays_to_measure_leave_it_unknown(self):
+        assert self._fit([2, 3] * 8).stability == stay.STABILITY_UNKNOWN
+
+    def test_a_passed_in_stability_is_kept(self):
+        profile = stay.StayLearner().fit_user(1, "x", _intervals([2, 3] * 30), REF, 0.95, 0.8, 0.42)
+
+        assert profile.stability == 0.42

@@ -151,3 +151,30 @@ class TestShadowDaytimeRows:
         assert runner.daytime_rows(guest) == []
         assert runner.daytime_rows(self._frame(datetime(2026, 10, 12, 10, 0))) == []
         cursor.execute.assert_not_called()
+
+
+class TestStability:
+    """Stability is measured, not defaulted: how well days before a window predicted the window."""
+
+    def _fit(self, pattern, days=80):
+        rows = _rows(pattern)[: 24 * days]
+        return daytime.DaytimeLearner().fit_user(1, "x", rows, REF, 0.95, 0.8)
+
+    def test_steady_days_are_stable(self):
+        assert self._fit(lambda day: 0).stability >= 0.9
+
+    def test_a_recent_change_lowers_it(self):
+        # home 6 h of the 09-17 window every day for the last two weeks, after months of none
+        shifted = self._fit(lambda day: 6 if day > REF - timedelta(days=14) else 0)
+
+        assert shifted.stability < 0.2
+
+    def test_too_little_history_to_measure_leaves_it_unknown(self):
+        assert self._fit(lambda day: 0, days=20).stability == daytime.STABILITY_UNKNOWN
+
+    def test_a_passed_in_stability_is_kept(self):
+        profile = daytime.DaytimeLearner().fit_user(
+            1, "x", _rows(lambda day: 0), REF, 0.95, 0.8, 0.42
+        )
+
+        assert profile.stability == 0.42
