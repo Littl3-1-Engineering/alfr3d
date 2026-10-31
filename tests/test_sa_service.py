@@ -3625,171 +3625,89 @@ class TestCheckClimateAdvisory:
 
 
 class TestCheckClimateDeviation:
-    """Tests for SAEngine.check_climate_deviation() (SA-9 Phase 2) -- the baseline-learned
-    sibling to check_climate_advisory(); separate rule_id/mode so dismissing one doesn't
-    suppress the other."""
+    """Tests for SAEngine.check_climate_deviation() -- since the LF-4 cutover a card for the scalar
+    learner's fresh ESPHome temperature / humidity deviation; separate rule_id/mode from
+    climate_advisory so dismissing one doesn't suppress the other."""
 
-    def _climate(self, **overrides):
-        climate = {
-            "temperature_c": 22.0,
-            "temperature_online": True,
-            "humidity_pct": 45,
-            "humidity_online": True,
-        }
-        climate.update(overrides)
-        return climate
+    TEMP = "esphome:athom-tem-hum-sensor-4a4734.local:Temperature"
+    HUM = "esphome:athom-tem-hum-sensor-4a4734.local:Humidity"
 
-    def _baselines(self, **overrides):
-        baselines = {
-            "temperature": {
-                "typical_median_value": 22.0,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 24.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-            "humidity": {
-                "typical_median_value": 45.0,
-                "typical_daily_min": 40.0,
-                "typical_daily_max": 50.0,
-                "sample_count": 12,
-                "min_sample_count": 10,
-            },
-        }
-        baselines.update(overrides)
-        return baselines
+    def _inference(self, series, value, direction, mu, surprise=14.0, confidence=0.8, learner=None):
+        from types import SimpleNamespace
 
-    def test_returns_none_when_no_climate_on_frame(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(esphome_climate=None, esphome_climate_baselines=self._baselines())
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_returns_none_when_no_baselines_on_frame(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(esphome_climate=self._climate(), esphome_climate_baselines=None)
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_returns_none_within_baseline_range(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(),
-            esphome_climate_baselines=self._baselines(),
+        return SimpleNamespace(
+            learner=learner or "scalar_baseline",
+            evidence={"series": series},
+            observed={"value": value, "direction": direction},
+            expected={"mu": mu, "sigma": 0.8, "z": 4.5},
+            surprise=surprise,
+            confidence=confidence,
         )
-        assert daemon.check_climate_deviation(frame) is None
 
-    def test_fires_when_cooler_than_baseline_range(self):
-        from services.service_sa.sa.engine import CLIMATE_DEVIATION_MARGIN_C, SAEngine
+    def _check(self, recent):
+        from services.service_sa.sa.engine import SAEngine
 
-        daemon = SAEngine()
-        temp = 20.0 - CLIMATE_DEVIATION_MARGIN_C - 1
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=temp),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch(
+                "services.service_sa.sa.engine.inference_store.load_recent", return_value=recent
+            ),
+        ):
+            return SAEngine().check_climate_deviation(_make_frame())
+
+    def test_returns_none_without_a_fresh_deviation(self):
+        assert self._check([]) is None
+
+    def test_cooler_temperature_card(self):
+        card = self._check([self._inference(self.TEMP, 21.9, "low", 26.5)])
 
         assert card["mode"] == "climate_deviation"
         assert card["priority"] == 5.4
-        assert "Cooler" in card["content"]
-        assert card["data"]["temperature_c"] == temp
+        assert card["content"] == "Cooler than typical for this time of day (21.9°C)"
+        assert card["data"]["temperature_c"] == 21.9
+        assert card["data"]["typical_median_value"] == 26.5
 
-    def test_fires_when_warmer_than_baseline_range(self):
-        from services.service_sa.sa.engine import CLIMATE_DEVIATION_MARGIN_C, SAEngine
-
-        daemon = SAEngine()
-        temp = 24.0 + CLIMATE_DEVIATION_MARGIN_C + 1
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=temp),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+    def test_warmer_temperature_card(self):
+        card = self._check([self._inference(self.TEMP, 31.0, "high", 26.5)])
 
         assert "Warmer" in card["content"]
-        assert card["data"]["temperature_c"] == temp
 
-    def test_fires_when_humidity_lower_than_baseline_range(self):
-        from services.service_sa.sa.engine import (
-            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
-            SAEngine,
-        )
+    def test_humidity_cards(self):
+        low = self._check([self._inference(self.HUM, 20.0, "low", 45.0)])
+        high = self._check([self._inference(self.HUM, 70.0, "high", 45.0)])
 
-        daemon = SAEngine()
-        humidity = 40.0 - CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT - 1
-        frame = _make_frame(
-            esphome_climate=self._climate(humidity_pct=humidity),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        assert "Lower humidity" in low["content"] and low["data"]["humidity_pct"] == 20.0
+        assert "Higher humidity" in high["content"]
 
-        assert "Lower" in card["content"]
-        assert card["data"]["humidity_pct"] == humidity
+    def test_low_confidence_stays_quiet(self):
+        """A series whose stability was just cut by a regime change must not show a card."""
+        assert self._check([self._inference(self.TEMP, 21.9, "low", 26.5, confidence=0.04)]) is None
 
-    def test_fires_when_humidity_higher_than_baseline_range(self):
-        from services.service_sa.sa.engine import (
-            CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT,
-            SAEngine,
-        )
+    def test_other_learners_and_series_are_ignored(self):
+        recent = [
+            self._inference(self.TEMP, 21.9, "low", 26.5, learner="presence_profile"),
+            self._inference("attention:switch_count", 30, "high", 2),
+            self._inference("speedtest:download", 3.0, "low", 90.0),
+        ]
 
-        daemon = SAEngine()
-        humidity = 50.0 + CLIMATE_DEVIATION_MARGIN_HUMIDITY_PCT + 1
-        frame = _make_frame(
-            esphome_climate=self._climate(humidity_pct=humidity),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
+        assert self._check(recent) is None
 
-        assert "Higher" in card["content"]
-        assert card["data"]["humidity_pct"] == humidity
+    def test_the_most_surprising_deviation_wins_with_temperature_on_a_tie(self):
+        recent = [
+            self._inference(self.HUM, 70.0, "high", 45.0, surprise=9.0),
+            self._inference(self.TEMP, 21.9, "low", 26.5, surprise=9.0),
+        ]
+        assert "temperature_c" in self._check(recent)["data"]
 
-    def test_returns_none_below_min_sample_count(self):
-        """A baseline that hasn't cleared its own reliability floor yet must not fire, even if
-        the current reading is numerically outside its (unreliable) observed range."""
+        recent[0] = self._inference(self.HUM, 70.0, "high", 45.0, surprise=20.0)
+        assert "humidity_pct" in self._check(recent)["data"]
+
+    def test_returns_none_when_the_database_is_unreachable(self):
+        import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        daemon = SAEngine()
-        baselines = self._baselines(
-            temperature={
-                "typical_median_value": 22.0,
-                "typical_daily_min": 20.0,
-                "typical_daily_max": 24.0,
-                "sample_count": 3,
-                "min_sample_count": 10,
-            }
-        )
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=10.0),
-            esphome_climate_baselines=baselines,
-        )
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_ignores_a_stale_offline_reading(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=1.0, temperature_online=False),
-            esphome_climate_baselines=self._baselines(),
-        )
-        assert daemon.check_climate_deviation(frame) is None
-
-    def test_temperature_deviation_wins_over_simultaneous_humidity_deviation(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        daemon = SAEngine()
-        frame = _make_frame(
-            esphome_climate=self._climate(temperature_c=1.0, humidity_pct=99.0),
-            esphome_climate_baselines=self._baselines(),
-        )
-        card = daemon.check_climate_deviation(frame)
-
-        assert "temperature_c" in card["data"]
-        assert "humidity_pct" not in card["data"]
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_climate_deviation(_make_frame()) is None
 
 
 class TestCheckTime:
