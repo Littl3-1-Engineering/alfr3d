@@ -18,14 +18,14 @@ import logging
 import math
 import os
 import sys
-from datetime import date, timedelta, timezone
+from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import duckdb
 
 from sa import confidence, inference_store
 from sa.learners import presence
-from sa.learners.base import Inference, Learner, Profile, utcnow
+from sa.learners.base import Inference, Learner, Profile
 
 logger = logging.getLogger("SADeviceRhythm")
 
@@ -275,8 +275,12 @@ _HOURLY_SQL = """
             SELECT d.device_id, d.name,
                    CAST(to_local(b.bucket_utc) AS DATE), hour(to_local(b.bucket_utc)),
                    isodow(to_local(b.bucket_utc)) - 1,
-                   COALESCE(SUM(epoch(LEAST(s.end_utc, b.bucket_utc + INTERVAL 1 HOUR)
-                                      - GREATEST(s.start_utc, b.bucket_utc)) / 60.0), 0),
+                   -- LEAST/GREATEST skip NULLs, so an hour with no session (the LEFT JOIN's NULL
+                   -- side) would come out as the whole hour, i.e. every idle hour "online".
+                   COALESCE(SUM(CASE WHEN s.device_id IS NULL THEN 0
+                                     ELSE epoch(LEAST(s.end_utc, b.bucket_utc + INTERVAL 1 HOUR)
+                                                - GREATEST(s.start_utc, b.bucket_utc)) / 60.0
+                                END), 0),
                    b.observed
             FROM dev d
             JOIN hrs b ON b.bucket_utc >= date_trunc('hour', d.first_seen)
@@ -306,9 +310,11 @@ def load_gold(lake_dir, tz=None):
     try:
         con.execute(f"CREATE MACRO to_local(ts) AS timezone('{tz}', timezone('UTC', ts))")
         con.execute(f"CREATE VIEW sess AS SELECT * FROM read_parquet('{sessions_file}')")
-        con.execute(f"""CREATE VIEW hrs AS
+        con.execute(
+            f"""CREATE VIEW hrs AS
                 SELECT bucket_utc, bool_or(observed) AS observed
-                FROM read_parquet('{grid_file}') GROUP BY 1""")
+                FROM read_parquet('{grid_file}') GROUP BY 1"""
+        )
         out["horizon"] = con.execute("SELECT MAX(end_utc) FROM sess").fetchone()[0]
         for device_id, name, d, h, dow, minutes, ok in con.execute(_HOURLY_SQL).fetchall():
             out["rows"].setdefault(device_id, []).append((d, h, dow, min(60.0, minutes), ok))
