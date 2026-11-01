@@ -1851,52 +1851,6 @@ class TestCheckHouseholdUnusualDay:
         mock_db.close.assert_called_once()
 
 
-class TestAttentionTelemetryTrend:
-    """Tests for SAEngine._attention_telemetry_trend() (SA-2)."""
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_below_sample_floor(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [(10, 2)] * 3
-
-        assert SAEngine()._attention_telemetry_trend() is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_medians_at_or_above_sample_floor(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine, ATTENTION_TREND_MIN_SAMPLES
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        rows = [(10, 2)] * (ATTENTION_TREND_MIN_SAMPLES - 1) + [(30, 8)]
-        mock_cursor.fetchall.return_value = rows
-
-        trend = SAEngine()._attention_telemetry_trend()
-
-        assert trend["sample_count"] == ATTENTION_TREND_MIN_SAMPLES
-        assert trend["median_switch_count"] == 10
-        assert trend["median_unlock_count"] == 2
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_on_db_error(self, mock_connect):
-        import pymysql
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        assert SAEngine()._attention_telemetry_trend() is None
-
-
 class TestCheckNowPlaying:
     """Tests for SAEngine.check_now_playing(). frame.playback/frame.persisted_now_playing
     (SA-4) replace what used to be a mocked live Spotify fetch and a mocked DB read --
@@ -2213,11 +2167,7 @@ class TestCheckAttentionFocus:
     def _frame(self, snapshot="default"):
         if snapshot == "default":
             snapshot = {"switch_count": 14, "dwell_by_category_ms": {"terminal": 600000}}
-        return _make_frame(
-            launcher_context=_make_launcher_context(
-                attention_snapshot=snapshot, attention_trend=None
-            )
-        )
+        return _make_frame(launcher_context=_make_launcher_context(attention_snapshot=snapshot))
 
     def _check(self, recent, frame=None):
         from services.service_sa.sa.engine import SAEngine
@@ -2280,119 +2230,83 @@ class TestCheckAttentionFocus:
 
 
 class TestCheckWindDownSignal:
-    """Tests for SAEngine.check_wind_down_signal(). frame.day_mood/frame.launcher_context.
-    attention_snapshot/.attention_trend (SA-4) replace what used to be mocked DB reads."""
+    """Tests for SAEngine.check_wind_down_signal() -- since the LF-4 cutover a card for the scalar
+    learner's fresh HIGH `attention:unlock_count` deviation, kept to night and media-heavy dwell.
+    frame.day_mood/frame.launcher_context.attention_snapshot supply those two gates."""
 
-    def test_fires_when_night_and_high_unlocks_and_media_heavy(self):
+    MEDIA = {"media": 900000, "terminal": 50000}
+
+    def _inference(self, count=8, usual=2, direction="high", confidence=0.7, surprise=8.0,
+                   series="attention:unlock_count", learner="scalar_baseline"):  # fmt: skip
+        import math
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            learner=learner,
+            evidence={"series": series},
+            observed={"value": math.log1p(count), "direction": direction},
+            expected={"mu": math.log1p(usual), "sigma": 0.4, "z": 5.0},
+            surprise=surprise,
+            confidence=confidence,
+        )
+
+    def _frame(self, snapshot="default", time_of_day="night"):
+        if snapshot == "default":
+            snapshot = {"unlock_count": 8, "dwell_by_category_ms": self.MEDIA}
+        return _make_frame(
+            day_mood={"time_of_day": time_of_day},
+            launcher_context=_make_launcher_context(attention_snapshot=snapshot),
+        )
+
+    def _check(self, recent, frame=None):
         from services.service_sa.sa.engine import SAEngine
 
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "unlock_count": 8,
-                    "switch_count": 2,
-                    "dwell_by_category_ms": {"media": 900000, "terminal": 50000},
-                },
-                attention_trend=None,
-            ),
-        )
-        result = SAEngine().check_wind_down_signal(frame)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+        ):
+            return SAEngine().check_wind_down_signal(frame or self._frame())
+
+    def test_fires_on_a_high_deviation_at_night_with_media_heavy_dwell(self):
+        result = self._check([self._inference()])
 
         assert result["mode"] == "wind_down_signal"
         assert result["priority"] == 5.8
         assert result["unlock_count"] == 8
-        assert result["data"]["because"]
+        assert result["data"]["typical_unlock_count"] == 2
+        assert result["data"]["because"][0] == "8 unlocks against about 2 usual at this hour"
 
     def test_returns_none_when_not_night(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "day"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={"unlock_count": 8, "dwell_by_category_ms": {"media": 900000}},
-                attention_trend=None,
-            ),
-        )
-        assert SAEngine().check_wind_down_signal(frame) is None
-
-    def test_returns_none_when_unlock_count_is_low(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={"unlock_count": 1, "dwell_by_category_ms": {"media": 900000}},
-                attention_trend=None,
-            ),
-        )
-        assert SAEngine().check_wind_down_signal(frame) is None
+        assert self._check([self._inference()], self._frame(time_of_day="day")) is None
 
     def test_returns_none_when_dwell_is_not_media_heavy(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={
-                    "unlock_count": 8,
-                    "dwell_by_category_ms": {"terminal": 900000, "media": 50000},
-                },
-                attention_trend=None,
-            ),
-        )
-        assert SAEngine().check_wind_down_signal(frame) is None
+        snapshot = {"unlock_count": 8, "dwell_by_category_ms": {"terminal": 900000, "media": 5}}
+        assert self._check([self._inference()], self._frame(snapshot)) is None
 
     def test_returns_none_when_no_snapshot(self):
+        assert self._check([self._inference()], self._frame(snapshot=None)) is None
+
+    def test_returns_none_without_a_fresh_inference(self):
+        assert self._check([]) is None
+
+    def test_returns_none_for_a_quiet_deviation(self):
+        assert self._check([self._inference(direction="low")]) is None
+
+    def test_returns_none_below_the_card_confidence_floor(self):
+        assert self._check([self._inference(confidence=0.1)]) is None
+
+    def test_ignores_the_switch_count_series(self):
+        assert self._check([self._inference(series="attention:switch_count")]) is None
+
+    def test_returns_none_on_a_db_error(self):
+        import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(attention_snapshot=None, attention_trend=None),
-        )
-        assert SAEngine().check_wind_down_signal(frame) is None
-
-    def test_uses_household_trend_once_enough_history_exists(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={"unlock_count": 6, "dwell_by_category_ms": {"media": 900000}},
-                attention_trend={"median_switch_count": 2, "median_unlock_count": 8},
-            ),
-        )
-        result = SAEngine().check_wind_down_signal(frame)
-
-        assert result is None  # 6 < trend threshold (8 + 2 grace = 10)
-
-    def test_fires_above_household_trend_threshold(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={"unlock_count": 12, "dwell_by_category_ms": {"media": 900000}},
-                attention_trend={"median_switch_count": 2, "median_unlock_count": 8},
-            ),
-        )
-        result = SAEngine().check_wind_down_signal(frame)
-
-        assert result["unlock_count"] == 12
-
-    def test_falls_back_to_fixed_threshold_when_no_trend(self):
-        from services.service_sa.sa.engine import SAEngine
-
-        frame = _make_frame(
-            day_mood={"time_of_day": "night"},
-            launcher_context=_make_launcher_context(
-                attention_snapshot={"unlock_count": 6, "dwell_by_category_ms": {"media": 900000}},
-                attention_trend=None,
-            ),
-        )
-        result = SAEngine().check_wind_down_signal(frame)
-
-        assert result["unlock_count"] == 6  # 6 >= fixed WIND_DOWN_MIN_UNLOCKS (5)
+        with patch(
+            "services.service_sa.sa.engine.pymysql.connect",
+            side_effect=pymysql.err.OperationalError("db down"),
+        ):
+            assert SAEngine().check_wind_down_signal(self._frame()) is None
 
 
 class TestCheckPartyAdvisory:
