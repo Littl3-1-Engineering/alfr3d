@@ -35,7 +35,11 @@ class TestDeviceRhythm:
         rows = _rows(40, lambda d, h: 8 <= h < 22)
         # on 08:00-22:00 local (UTC-4), so each session ends 02:00 UTC the next day
         sessions = [
-            (d, 840.0 + (d.day % 5) * 10, datetime.combine(d, datetime.min.time()) + timedelta(hours=26))
+            (
+                d,
+                840.0 + (d.day % 5) * 10,
+                datetime.combine(d, datetime.min.time()) + timedelta(hours=26),
+            )
             for d in (REF - timedelta(days=i) for i in range(39, -1, -1))
         ]
         return device_rhythm.DeviceRhythmLearner().fit_device(7, "Lamp", rows, sessions, REF, None)
@@ -70,7 +74,6 @@ class TestDeviceRhythm:
 
     def test_the_minimum_offline_time_is_learned_from_the_devices_own_flickers(self):
         """A PC that naps for ~3 h on most afternoons is only worth a card when it is off longer."""
-        from datetime import timezone
 
         rows = _rows(60, lambda d, h: 8 <= h < 22)
         sessions = []
@@ -79,7 +82,9 @@ class TestDeviceRhythm:
             # on 09:00-12:00, off 12:00-15:00 (the flicker), on 15:00-21:00, local = UTC-4
             for start_h, end_h in ((13, 16), (19, 25)):
                 begin = datetime(day.year, day.month, day.day) + timedelta(hours=start_h)
-                sessions.append((day, (end_h - start_h) * 60.0, begin + timedelta(hours=end_h - start_h)))
+                sessions.append(
+                    (day, (end_h - start_h) * 60.0, begin + timedelta(hours=end_h - start_h))
+                )
         learner = device_rhythm.DeviceRhythmLearner()
         profile = learner.fit_device(7, "PC", rows, sessions, REF, None)
 
@@ -121,6 +126,41 @@ class TestDeviceRhythm:
         assert learner.score_duration(profile, {"minutes_on": 850, "local_dt": local}, now) is None
         inf = learner.score_duration(profile, {"minutes_on": 3000, "local_dt": local}, now)
         assert inf is not None and inf.observed["minutes_on"] == 3000 and inf.probability < 0.02
+
+    def test_hours_with_no_session_load_as_zero_minutes_online(self, tmp_path):
+        """2026-10-31: the hourly SQL's LEAST/GREATEST skipped the LEFT JOIN's NULLs, so every hour
+        without a session loaded as a full hour online and every device's profile came out ~96%
+        available at every hour of every day. Runs the real query against real parquet files."""
+        import duckdb
+
+        silver_dir, gold_dir = tmp_path / "silver/device_sessions", tmp_path / "gold/presence_grid"
+        silver_dir.mkdir(parents=True)
+        gold_dir.mkdir(parents=True)
+        con = duckdb.connect()
+        con.execute(
+            f"""COPY (SELECT 7 AS device_id, 'Laptop' AS name,
+                        TIMESTAMP '2026-10-23 12:30:00' AS start_utc,
+                        TIMESTAMP '2026-10-23 20:00:00' AS end_utc,
+                        TIMESTAMP '2026-10-23 08:30:00' AS start_local)
+                TO '{silver_dir}/part-0.parquet' (FORMAT PARQUET)"""
+        )
+        con.execute(
+            f"""COPY (SELECT unnest(generate_series(TIMESTAMP '2026-10-23 00:00:00',
+                                                    TIMESTAMP '2026-10-25 23:00:00',
+                                                    INTERVAL 1 HOUR)) AS bucket_utc,
+                        true AS observed)
+                TO '{gold_dir}/part-0.parquet' (FORMAT PARQUET)"""
+        )
+        con.close()
+
+        rows = device_rhythm.load_gold(str(tmp_path), tz="UTC")["rows"][7]
+        minutes = {(d.day, h): m for d, h, _dow, m, _ok in rows}
+
+        assert minutes[(23, 12)] == 30  # the session starts at :30
+        assert minutes[(23, 15)] == 60  # inside it
+        assert minutes[(23, 20)] == 0  # ends on the hour: nothing after
+        assert minutes[(24, 3)] == 0 and minutes[(25, 18)] == 0  # the weekend: no session, offline
+        assert sum(m for m in minutes.values()) == 450  # exactly 7.5 h online, nowhere else
 
     def test_survival_is_smoothed_away_from_zero_and_one(self):
         d = [(100.0, 1.0)] * 10
