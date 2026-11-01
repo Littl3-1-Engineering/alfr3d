@@ -17,16 +17,15 @@ todo/sa/todo_context_frame.md) found these exact duplicates, all fixed by this f
 - spotify_utils.get_playback_state() called 2x/cycle: check_now_playing, check_party_advisory.
 - The `config` table's NOW_PLAYING_CONFIG_KEY row read 2x/cycle: check_now_playing (to detect a
   change), check_cross_surface_continuity (to check for a recent pause).
-- MyDaemon._read_fresh_attention_telemetry() and ._attention_telemetry_trend() each called
-  2x/cycle: check_attention_focus, check_wind_down_signal -- the trend query is the single most
-  expensive duplicate (a 14-day history scan).
+- MyDaemon._read_fresh_attention_telemetry() called 2x/cycle: check_attention_focus,
+  check_wind_down_signal.
 
 This module holds the frame's data container (`ContextFrame`) and the two brand-new standalone
 fetchers this refactor needed (`fetch_online_devices`, `fetch_environment_snapshot`) -- neither
 existed as a reusable function before, they were inline in check_household_composition()/
 check_weather(). `MyDaemon.build_context_frame()` (alfr3ddaemon.py) is what actually assembles a
 frame each cycle -- kept there, not here, since it also needs to call MyDaemon's existing private
-helpers (_read_config_json, _read_fresh_attention_telemetry, _attention_telemetry_trend) rather
+helpers (_read_config_json, _read_fresh_attention_telemetry) rather
 than reimplement them.
 
 Every field is independently nullable: one integration failing (Spotify unreachable, a
@@ -93,15 +92,13 @@ class ContextFrame:
 
 class LauncherContext:
     """Sub-namespace for launcher-reported signals -- surface_state (SA cross-surface
-    continuity), attention_snapshot (the fresh reported snapshot), attention_trend (the
-    household's rolling median, SA-2). Grouped together since they're all read from
-    launcher-reported `config`/`attention_telemetry_history` state, not because callers need to
-    treat them as one thing."""
+    continuity), attention_snapshot (the fresh reported snapshot). Grouped together since they're
+    all read from launcher-reported `config`/`attention_telemetry_history` state, not because
+    callers need to treat them as one thing."""
 
     def __init__(self):
         self.surface_state = None
         self.attention_snapshot = None
-        self.attention_trend = None
         # {device_id: facets} for every Deck whose reported device context is still fresh
         # (todo/sa/todo_context_exchange_protocol.md Phase 2). {} when none are -- see
         # MyDaemon._read_fresh_device_contexts(), which owns the staleness gate.
