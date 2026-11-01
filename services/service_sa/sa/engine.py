@@ -160,29 +160,11 @@ DEVICE_CONTEXT_STALENESS_MINUTES = 15
 # wind-down check's pattern instead.
 ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION = 0.3
 
-# check_wind_down_signal() fires when the reported unlock count is at least
-# this high within the report window -- another conservative starting point.
-WIND_DOWN_MIN_UNLOCKS = 5
-
-# ...and only when media-category dwell is over this fraction of total dwell
-# time -- the milestone's own "late-hour high unlock rate + social-app
-# dwell" pattern.
+# check_wind_down_signal() only fires when media-category dwell is over this fraction of total
+# dwell time -- the milestone's own "late-hour high unlock rate + social-app dwell" pattern. How
+# many unlocks count as "high" is the scalar learner's call (this household's own count for the
+# hour), not a constant here.
 WIND_DOWN_MIN_MEDIA_DWELL_FRACTION = 0.5
-
-# check_attention_focus()/check_wind_down_signal() compare the current snapshot against this
-# household's own rolling switch_count/unlock_count median (see _attention_telemetry_trend())
-# once at least this many attention_telemetry_history rows exist -- "is this unusual for this
-# household" rather than only "is this a big number in general". ~2 days at the launcher's
-# 15-minute report cadence; a conservative starting point with no real telemetry yet to tune it
-# against, same caveat as any small baseline. Below this floor, both checks fall back
-# to the fixed thresholds above unchanged.
-ATTENTION_TREND_MIN_SAMPLES = 200
-
-# How far back _attention_telemetry_trend() looks when computing the household's median
-# switch_count/unlock_count.
-ATTENTION_TREND_LOOKBACK_DAYS = 14
-
-WIND_DOWN_TREND_GRACE_UNLOCKS = 2
 
 
 # decide_displays()'s suppression pass (SA-1) identifies a card as (rule_id, subject_key) --
@@ -276,8 +258,7 @@ DEPARTURE_GAP_MINUTES = 31
 
 # A resident's per-day-bucket (weekday/weekend) departure baseline needs at least this many
 # observed first-departure days before check_departure_anomaly() trusts it -- same "degrade to
-# silence below a reliability floor" precedent as the other small-baseline floors /
-# ATTENTION_TREND_MIN_SAMPLES elsewhere in this file.
+# silence below a reliability floor" precedent as the other small-baseline floors.
 DEPARTURE_BASELINE_MIN_SAMPLES = 8
 
 # check_departure_anomaly() also requires the baseline's observed hour range
@@ -526,7 +507,6 @@ class SAEngine:
             launcher = context_frame.LauncherContext()
             launcher.surface_state = self._read_config_json(SURFACE_STATE_CONFIG_KEY)
             launcher.attention_snapshot = self._read_fresh_attention_telemetry()
-            launcher.attention_trend = self._attention_telemetry_trend()
             launcher.device_contexts = self._read_fresh_device_contexts()
             frame.launcher_context = launcher
         except Exception as e:
@@ -1986,39 +1966,35 @@ class SAEngine:
             return 0.0
         return dwell_by_category_ms.get("media", 0) / total
 
-    def _attention_telemetry_trend(self):
-        """Household's own rolling switch_count/unlock_count median from
-        attention_telemetry_history (SA-2), over the last
-        ATTENTION_TREND_LOOKBACK_DAYS. Returns None below
-        ATTENTION_TREND_MIN_SAMPLES (not enough history for a meaningful
-        "typical" yet) or on a DB error -- callers fall back to the fixed
-        thresholds in that case, same "degrade to silence" precedent as
-        compute_entity_baselines()/check_rhythm_break_anomaly()."""
+    def _fresh_attention_deviation(self, frame, series):
+        """The scalar learner's freshest HIGH deviation for an attention series (e.g.
+        "attention:switch_count"), or None: nothing fresh, not high, below MIN_CARD_CONFIDENCE, or
+        the read failed. Shared by check_attention_focus() and check_wind_down_signal().
+        """
+        now_utc = frame.now.replace(tzinfo=None)
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-            cursor = db.cursor()
-            cursor.execute(
-                "SELECT switch_count, unlock_count FROM attention_telemetry_history "
-                "WHERE reported_at >= %s",
-                (datetime.now(timezone.utc) - timedelta(days=ATTENTION_TREND_LOOKBACK_DAYS),),
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
             )
-            rows = cursor.fetchall()
-            if len(rows) < ATTENTION_TREND_MIN_SAMPLES:
-                return None
-            return {
-                "sample_count": len(rows),
-                "median_switch_count": statistics.median(row[0] for row in rows),
-                "median_unlock_count": statistics.median(row[1] for row in rows),
-            }
         except pymysql.Error as e:
-            logger.error(f"Attention telemetry trend query error: {e}")
+            logger.error("Attention deviation read error: " + str(e))
             return None
         finally:
             if db:
                 db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == scalar.NAME
+            and (i.evidence or {}).get("series") == series
+            and i.observed.get("direction") == "high"
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        return max(found, key=lambda i: i.surprise) if found else None
 
     def check_attention_focus(self, frame):
         """A measured, evidence-based focus signal from the launcher's own window-switching
@@ -2040,32 +2016,9 @@ class SAEngine:
         snapshot = launcher and launcher.attention_snapshot
         if not snapshot or frame.now is None:
             return None
-        now_utc = frame.now.replace(tzinfo=None)
-        db = None
-        try:
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            recent = inference_store.load_recent(
-                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
-            )
-        except pymysql.Error as e:
-            logger.error("Attention focus check error: " + str(e))
+        inference = self._fresh_attention_deviation(frame, "attention:switch_count")
+        if inference is None:
             return None
-        finally:
-            if db:
-                db.close()
-        found = [
-            i
-            for i in recent
-            if i.learner == scalar.NAME
-            and (i.evidence or {}).get("series") == "attention:switch_count"
-            and i.observed.get("direction") == "high"
-            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
-        ]
-        if not found:
-            return None
-        inference = max(found, key=lambda i: i.surprise)
         media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
         if media_fraction >= ATTENTION_FOCUS_MAX_MEDIA_DWELL_FRACTION:
             return None
@@ -2094,43 +2047,46 @@ class SAEngine:
         does not auto-actuate lights/Spotify itself, matching every other
         card in this file (informational, never autonomous device control).
 
-        Fires above this household's own rolling median unlock_count plus a
-        grace margin once enough history exists
-        (`frame.launcher_context.attention_trend`), falling back to the fixed
-        WIND_DOWN_MIN_UNLOCKS threshold below that sample floor -- same
-        trend-vs-fallback shape as check_attention_focus().
+        Since the LF-4 cutover this shows the scalar learner's inference
+        (sa/learners/scalar.py) instead of a fixed 5-unlock threshold or a rolling median plus
+        grace: the shadow pass scores the reported unlock count against this household's own
+        count for the hour (modelled as log(1 + n)) and stores a deviation in sa_inferences, so
+        the card lags it by at most one cycle. Only a HIGH deviation counts and it needs
+        confidence >= MIN_CARD_CONFIDENCE. What the learner cannot know stays here: it must be
+        night, and the dwell must be media-heavy (the pattern that separates winding down from
+        check_attention_focus()'s focused work).
 
-        `frame.day_mood`/`frame.launcher_context.attention_snapshot`/`.attention_trend`
-        (SA-4) replace this rule's own get_env_local_time()/get_day_mood()/
-        _read_fresh_attention_telemetry()/_attention_telemetry_trend() calls.
+        `frame.day_mood`/`frame.launcher_context.attention_snapshot` (SA-4) supply the night
+        gate, the displayed count and the media-dwell guard.
         """
         launcher = frame.launcher_context
         snapshot = launcher and launcher.attention_snapshot
-        if not snapshot:
+        if not snapshot or frame.now is None:
             return None
         if frame.day_mood is None or frame.day_mood["time_of_day"] != "night":
-            return None
-        unlock_count = snapshot.get("unlock_count", 0)
-        trend = launcher and launcher.attention_trend
-        threshold = WIND_DOWN_MIN_UNLOCKS
-        if trend:
-            threshold = max(threshold, trend["median_unlock_count"] + WIND_DOWN_TREND_GRACE_UNLOCKS)
-        if unlock_count < threshold:
             return None
         media_fraction = self._media_dwell_fraction(snapshot.get("dwell_by_category_ms") or {})
         if media_fraction < WIND_DOWN_MIN_MEDIA_DWELL_FRACTION:
             return None
+        inference = self._fresh_attention_deviation(frame, "attention:unlock_count")
+        if inference is None:
+            return None
+        unlock_count = snapshot.get("unlock_count", 0)
+        usual = round(math.expm1(inference.expected["mu"]))  # modelled as log(1 + n)
         return {
             "mode": "wind_down_signal",
             "content": f"Lots of screen time tonight ({unlock_count} unlocks) — wind down?",
             "priority": 5.8,
             "unlock_count": unlock_count,
             "data": {
+                "typical_unlock_count": usual,
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
                 "because": [
-                    f"{unlock_count} unlocks >= threshold {threshold}",
+                    f"{unlock_count} unlocks against about {usual} usual at this hour",
                     f"media dwell {media_fraction:.0%} >= {WIND_DOWN_MIN_MEDIA_DWELL_FRACTION:.0%}",
                     "night",
-                ]
+                ],
             },
         }
 
