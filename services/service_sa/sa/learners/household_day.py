@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 
 import duckdb
 
-from sa import confidence, inference_store, layer2
+from sa import confidence, inference_store, layer2, presence_bridge
 from sa.layer2 import fisher_p  # noqa: F401  (re-exported: tests and backtests import it here)
 from sa.learners import presence
 from sa.learners.base import Inference, Learner, Profile
@@ -73,7 +73,7 @@ INVENTORY_DAYS = 14
 MIN_INVENTORY = 5
 SAMPLE_DAYS = 180
 HOME_USER_TYPES = ("owner", "technoking", "resident")  # whose phones count as "the household"
-PRESENCE_GAP_MINUTES = 45  # silver's rule: sightings further apart than this are separate stays
+PRESENCE_GAP_MINUTES = presence_bridge.DEFAULT_BRIDGE_MINUTES  # default; see sa/presence_bridge.py
 TARGET_FLAG_RATE = 1.0 / 14.0  # the share of days the bar is calibrated to flag
 TOP_K = 5  # features combined into the day's statistic
 MIN_STATISTIC_FEATURES = 2  # a statistic needs at least this many features measured
@@ -369,7 +369,7 @@ def _clock(minute):
 
 def _label(feature):
     """'event:audio/track/play_start' -> 'audio track play_start'."""
-    parts = [p for p in feature[len(EVENT_PREFIX):].split("/") if p and p != "-"]
+    parts = [p for p in feature[len(EVENT_PREFIX) :].split("/") if p and p != "-"]
     return " ".join(parts)
 
 
@@ -410,10 +410,14 @@ def home_minutes(sightings, window_start, window_end, gap_minutes=PRESENCE_GAP_M
     """Person-minutes at home inside [window_start, window_end): {user_id: [sighting datetimes]}
     -> minutes. Sightings of one person closer than `gap_minutes` form one stay, and a stay
     covers first..last sighting -- silver presence_intervals' rule, so a live day and the fitted
-    days are measured the same way. Stays may begin before the window (clipped to it)."""
-    gap = timedelta(minutes=gap_minutes)
+    days are measured the same way. `gap_minutes` is one number or {user_id: minutes} (each
+    person's learned bridge, sa/presence_bridge.py). Stays may begin before the window (clipped)."""
     total = 0.0
-    for times in sightings.values():
+    for user_id, times in sightings.items():
+        if isinstance(gap_minutes, dict):
+            gap = timedelta(minutes=presence_bridge.bridge_for(gap_minutes, user_id))
+        else:
+            gap = timedelta(minutes=gap_minutes)
         times = sorted(set(times))
         start = prev = None
         for t in times:
@@ -488,8 +492,9 @@ def _add_event_counts(con, rates_file, days):
     if not os.path.exists(rates_file):
         return
     first = dict(
-        con.execute(f"SELECT signal, MIN(date_local) FROM read_parquet('{rates_file}') GROUP BY 1")
-        .fetchall()
+        con.execute(
+            f"SELECT signal, MIN(date_local) FROM read_parquet('{rates_file}') GROUP BY 1"
+        ).fetchall()
     )
     counts = {
         (d, signal): n
@@ -570,7 +575,8 @@ def run_fit(lake_dir, conn, now_utc=None):
 def backtest(lake_dir, start, end, learner=None):
     """Walk-forward: for each day in [start, end], the day's features and statistic ("bits") scored
     on a profile fitted (and its bar calibrated) on the days before it, plus whether it clears
-    that bar ("flagged"). Returns [{"date", "bits", "bar_bits", "flagged", "top": [(feature, p)]}]."""
+    that bar ("flagged"). Returns [{"date", "bits", "bar_bits", "flagged", "top": [(feature, p)]}].
+    """
     learner = learner or HouseholdDayLearner()
     data = load_days(lake_dir)
     out = []

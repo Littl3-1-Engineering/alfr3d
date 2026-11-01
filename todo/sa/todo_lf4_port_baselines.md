@@ -2,7 +2,7 @@
 
 > **Layer:** L1 learner · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-4
 
-## Status: 🟡 Four of the five ports are cut over and deployed (2026-10-30/31): `climate_deviation`, `attention_focus`, `rhythm_break_anomaly`, `household_unusual_day`. `departure_anomaly` is the remaining one, in shadow. The device, household and room rows of `entity_baselines` and the code behind them were retired (PR #357, migration 0057). Left: cut over `departure_anomaly`, then drop `compute_entity_baselines` and the table. The cutover checklist lives in [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md).
+## Status: 🟡 2026-11-01: the fifth, `departure_anomaly`, is coded (reads the stay learner; legacy baseline code removed; per-person presence bridge, see SA_ROADMAP.md Step 1) but uncommitted and not deployed; the `entity_baselines` table drop is still to do. Earlier: four of the five ports are cut over and deployed (2026-10-30/31): `climate_deviation`, `attention_focus`, `rhythm_break_anomaly`, `household_unusual_day`. `departure_anomaly` is the remaining one, in shadow. The device, household and room rows of `entity_baselines` and the code behind them were retired (PR #357, migration 0057). Left: cut over `departure_anomaly`, then drop `compute_entity_baselines` and the table. The cutover checklist lives in [todo_lf4b_baseline_ports.md](todo_lf4b_baseline_ports.md).
 
 ## Scope
 

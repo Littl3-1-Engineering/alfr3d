@@ -175,10 +175,10 @@ class TestDecideDisplays:
     }
     DEPARTURE_ANOMALY_CARD = {
         "mode": "departure_anomaly",
-        "content": "Munja still home — unusual for a Tuesday",
+        "content": "Munja hasn't been out in 29 h — unusual for a Tuesday",
         "priority": 2.7,
         "entity_name": "Munja",
-        "data": {"typical_departure_hour": 8, "sample_count": 12, "because": ["..."]},
+        "data": {"stay_minutes": 1740, "surprise_bits": 5.6, "confidence": 0.6, "because": ["..."]},
     }
     PRESENCE_DEVIATION_CARD = {
         "mode": "presence_deviation",
@@ -1409,347 +1409,90 @@ class TestCheckRhythmBreakAnomaly:
             assert SAEngine().check_rhythm_break_anomaly(_make_frame()) is None
 
 
-def _dense(start, end, step_minutes=5):
-    """A device_history-style timestamp list at a fixed interval -- simulates a claimed
-    device being seen every cycle for a stretch, the "still home, no gap" baseline every
-    _departure_hours_by_bucket() test builds around."""
-    timestamps = []
-    current = start
-    while current <= end:
-        timestamps.append(current)
-        current += timedelta(minutes=step_minutes)
-    return timestamps
+class TestCheckDepartureAnomaly:
+    """SAEngine.check_departure_anomaly() since the LF-4 cutover: a card for the stay learner's
+    most surprising fresh inference (one per cycle). The stay itself is tested in
+    test_sa_stay.py and the shadow pass that produces it in test_sa_ports.py."""
 
+    NOW = datetime(2026, 11, 3, 15, 0)
 
-class TestDepartureHoursByBucket:
-    """Tests for _departure_hours_by_bucket() (SA-3) -- the union-of-claimed-devices gap
-    reduction check_departure_anomaly()'s baseline depends on. See its own doc comment for
-    why this reads timestamp gaps rather than device_history's state column."""
+    def _inference(self, username="Munja", minutes=29 * 60, p=0.02, surprise=5.6,
+                   confidence=0.6):  # fmt: skip
+        from types import SimpleNamespace
 
-    def test_records_departure_hour_from_the_last_row_before_a_real_gap(self):
-        from services.service_sa.sa.engine import _departure_hours_by_bucket
-
-        day = datetime(2026, 8, 3)  # any calendar day; bucket assertion uses .weekday()
-        timestamps = _dense(day.replace(hour=2), day.replace(hour=6, minute=30)) + [
-            day.replace(hour=20)
-        ]
-
-        buckets = _departure_hours_by_bucket(timestamps)
-
-        expected_bucket = "weekend" if day.weekday() >= 5 else "weekday"
-        other_bucket = "weekday" if expected_bucket == "weekend" else "weekend"
-        assert buckets[expected_bucket] == [6]
-        assert buckets[other_bucket] == []
-
-    def test_skips_a_day_with_no_overnight_confirmation(self):
-        """If the first row seen on a calendar day is already past 05:00, that day's
-        "departure" could just be a late-morning reappearance of an absence that started the
-        night before -- must not be misattributed to this day."""
-        from services.service_sa.sa.engine import _departure_hours_by_bucket
-
-        day = datetime(2026, 8, 3)
-        timestamps = _dense(day.replace(hour=8), day.replace(hour=8, minute=30)) + [
-            day.replace(hour=20)
-        ]
-
-        buckets = _departure_hours_by_bucket(timestamps)
-
-        assert buckets["weekday"] == []
-        assert buckets["weekend"] == []
-
-    def test_a_short_gap_under_the_threshold_is_not_a_departure(self):
-        """A blip under DEPARTURE_GAP_MINUTES (scan jitter/wifi power-saving, not a real
-        absence) must not register as a departure -- scanning continues past it."""
-        from services.service_sa.sa.engine import _departure_hours_by_bucket
-
-        day = datetime(2026, 8, 3)
-        timestamps = (
-            _dense(day.replace(hour=2), day.replace(hour=6))
-            + [day.replace(hour=6, minute=20)]  # 20 min gap -- under the 31 min threshold
-            + _dense(day.replace(hour=6, minute=25), day.replace(hour=9))
-            + [day.replace(hour=20)]  # the real, later departure
+        return SimpleNamespace(
+            learner="stay_profile",
+            signal="presence.stay",
+            evidence={"username": username},
+            context={"daytype": "weekday", "arrival_hour": 9.0},
+            observed={"state": "home", "stay_minutes": minutes},
+            expected={"p_stay_at_least": p},
+            surprise=surprise,
+            confidence=confidence,
         )
 
-        buckets = _departure_hours_by_bucket(timestamps)
-
-        expected_bucket = "weekend" if day.weekday() >= 5 else "weekday"
-        assert buckets[expected_bucket] == [9]
-
-    def test_fewer_than_two_timestamps_returns_empty_buckets(self):
-        from services.service_sa.sa.engine import _departure_hours_by_bucket
-
-        assert _departure_hours_by_bucket([]) == {"weekday": [], "weekend": []}
-        assert _departure_hours_by_bucket([datetime(2026, 8, 3, 6, 0)]) == {
-            "weekday": [],
-            "weekend": [],
-        }
-
-    def test_aggregates_multiple_days_into_the_right_bucket(self):
-        from services.service_sa.sa.engine import _departure_hours_by_bucket
-
-        timestamps = []
-        for day_offset in range(7):  # a full week, so both buckets get real samples
-            day = datetime(2026, 8, 3) + timedelta(days=day_offset)
-            timestamps += _dense(day.replace(hour=2), day.replace(hour=7))
-            timestamps.append(day.replace(hour=22))  # a same-day, unambiguous return
-
-        buckets = _departure_hours_by_bucket(timestamps)
-
-        assert len(buckets["weekday"]) == 5
-        assert len(buckets["weekend"]) == 2
-        assert all(hour == 7 for hour in buckets["weekday"] + buckets["weekend"])
-
-
-class TestComputeUserDepartureBaselines:
-    """Tests for compute_entity_baselines(), which now writes only the SA-3 entity_type='user'
-    rows built from _departure_hours_by_bucket(). See todo/sa/todo_departure_anomaly.md."""
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_upserts_a_bucket_that_clears_the_floor_and_skips_one_that_doesnt(
-        self, mock_connect, mock_tz
-    ):
-        """14 consecutive days -> 10 weekday departures (clears the 8-sample floor) and 4
-        weekend departures (doesn't) -- weekday should get a row, weekend should not."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-
-        timestamps = []
-        start = datetime(2026, 8, 3)  # any date; the test only cares about weekday vs weekend
-        for day_offset in range(14):
-            day = start + timedelta(days=day_offset)
-            timestamps += _dense(day.replace(hour=2), day.replace(hour=7))
-            timestamps.append(day.replace(hour=22))
-        timestamp_rows = [(ts,) for ts in timestamps]
-
-        mock_cursor.fetchall.side_effect = [
-            [(7, "Munja")],  # eligible non-guest residents with a claimed device
-            [(89,), (128,)],  # Munja's claimed device ids
-            timestamp_rows,  # union device_history timestamps for those device ids
-        ]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 1
-        params = upsert_calls[0].args[1]
-        assert params[0] == 7  # user_id
-        assert params[1] == "weekday"
-        assert params[2] == 7  # typical_active_hour (every departure at hour 7)
-        assert params[3] == 7  # typical_daily_min
-        assert params[4] == 7  # typical_daily_max
-        assert params[5] == 10  # sample_count
-        mock_db.commit.assert_called_once()
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_excludes_guests_from_the_eligible_residents_query(self, mock_connect, mock_tz):
-        """The eligible-residents query itself (not a post-filter) must scope to
-        owner/technoking/resident -- guests never even reach the departure computation. This
-        test only asserts the query text, since the mocked cursor can't enforce real SQL
-        filtering."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [[]]
-
-        compute_entity_baselines()
-
-        eligible_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "FROM user u" in call.args[0] and "JOIN user_types ut" in call.args[0]
-        ]
-        assert len(eligible_calls) == 1
-        assert "'owner', 'technoking', 'resident'" in eligible_calls[0].args[0]
-
-    @patch("services.service_sa.sa.engine.db_utils.get_env_timezone")
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_skips_a_user_with_no_claimed_devices(self, mock_connect, mock_tz):
-        """An eligible (non-guest) user with zero rows in `device` must be skipped cleanly,
-        not crash on an empty device_ids list."""
-        from services.service_sa.sa.engine import compute_entity_baselines
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_tz.return_value = 0
-        mock_cursor.fetchall.side_effect = [
-            [(7, "Munja")],
-            [],  # no claimed devices for this user
-        ]
-
-        compute_entity_baselines()
-
-        upsert_calls = [
-            call
-            for call in mock_cursor.execute.call_args_list
-            if "INSERT INTO entity_baselines" in call.args[0]
-        ]
-        assert len(upsert_calls) == 0
-        mock_db.commit.assert_called_once()
-
-
-class TestCheckDepartureAnomaly:
-    """Tests for SAEngine.check_departure_anomaly() (SA-3). Not a frame field -- this
-    entity_baselines/device/calendar_events join isn't duplicated elsewhere, so it stays its
-    own query; only frame.local_dt/frame.day_mood/frame.now are shared."""
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_fires_when_overdue_home_and_no_calendar_event_explains_it(self, mock_connect):
+    def _check(self, recent, **frame_kw):
         from services.service_sa.sa.engine import SAEngine
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [(7, "Munja", 8, 12)]  # id, name, typical_hour, n
-        mock_cursor.fetchone.side_effect = [(1,), None]  # online_count=1, no calendar event
+        frame = _frame_with_day_mood(datetime(2026, 11, 3, 10, 0))
+        frame.now = frame_kw.get("now", self.NOW)
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+        ):
+            return SAEngine().check_departure_anomaly(frame)
 
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))  # Tuesday 3pm
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
+    def test_an_unusually_long_stay_becomes_a_card_that_never_claims_continuous_presence(self):
+        card = self._check([self._inference()])
 
         assert card["mode"] == "departure_anomaly"
         assert card["priority"] == 2.7
         assert card["entity_name"] == "Munja"
-        assert "Munja" in card["content"]
-        assert "Tuesday" in card["content"]
-        assert card["data"]["typical_departure_hour"] == 8
-        assert card["data"]["sample_count"] == 12
-        assert card["data"]["because"]
+        assert card["content"] == "Munja hasn't been out in 29 h — unusual for a Tuesday"
+        assert card["data"]["stay_minutes"] == 29 * 60
+        assert card["data"]["surprise_bits"] == 5.6
+        assert card["data"]["confidence"] == 0.6
+        assert "only 2% of comparable past stays" in card["data"]["because"][0]
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_no_baseline_candidates(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
+    def test_a_stay_of_days_is_worded_in_days(self):
+        card = self._check([self._inference(minutes=3 * 24 * 60 + 300)])
 
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = []
+        assert "hasn't been out in 3 days" in card["content"]
 
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
-
-        assert card is None
-        mock_cursor.fetchone.assert_not_called()
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_before_the_grace_window_has_elapsed(self, mock_connect):
-        """A resident whose current local hour hasn't yet cleared
-        typical_hour + DEPARTURE_ANOMALY_GRACE_HOURS isn't overdue -- must not even reach the
-        online-status check for that candidate."""
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [(7, "Munja", 8, 12)]
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 9, 0))  # only 1hr past typical_hour
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
-
-        assert card is None
-        mock_cursor.fetchone.assert_not_called()
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_resident_is_not_currently_home(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [(7, "Munja", 8, 12)]
-        mock_cursor.fetchone.return_value = (0,)  # no claimed device online
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
-
-        assert card is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_when_a_calendar_event_covers_right_now(self, mock_connect):
-        """A booked morning at home (e.g. WFH) is not a deviation -- must not fire even
-        though the resident is overdue and home."""
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [(7, "Munja", 8, 12)]
-        mock_cursor.fetchone.side_effect = [(1,), ("Working from home",)]
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
-
-        assert card is None
-
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_picks_the_most_overdue_resident_when_several_qualify(self, mock_connect):
-        from services.service_sa.sa.engine import SAEngine
-
-        mock_cursor = MagicMock()
-        mock_db = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        # Munja: 15:00 - 8:00 = 7h overdue. Vanja: 15:00 - 6:00 = 9h overdue -- more overdue.
-        mock_cursor.fetchall.return_value = [(7, "Munja", 8, 12), (9, "Vanja", 6, 10)]
-        mock_cursor.fetchone.side_effect = [(1,), (1,), None]  # both home, no calendar event
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
+    def test_the_most_surprising_resident_wins_when_several_qualify(self):
+        card = self._check(
+            [self._inference("Munja", surprise=5.2), self._inference("Vanja", surprise=6.4)]
+        )
 
         assert card["entity_name"] == "Vanja"
 
-    def test_returns_none_when_frame_is_missing_local_dt_or_day_mood(self):
-        """No DB connection should even be attempted without frame.local_dt/day_mood."""
+    def test_a_low_confidence_inference_is_not_a_card(self):
+        assert self._check([self._inference(confidence=0.2)]) is None
+
+    def test_another_learners_inference_is_ignored(self):
+        other = self._inference()
+        other.learner, other.signal = "presence_profile", "presence.home"
+
+        assert self._check([other]) is None
+
+    def test_nothing_fresh_means_no_card(self):
+        assert self._check([]) is None
+
+    def test_a_frame_without_a_clock_is_skipped_without_touching_the_db(self):
         from services.service_sa.sa.engine import SAEngine
 
-        daemon = SAEngine()
-        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
-            assert daemon.check_departure_anomaly(_make_frame(local_dt=None, day_mood=None)) is None
-            mock_connect.assert_not_called()
+        with patch("services.service_sa.sa.engine.pymysql.connect") as connect:
+            assert SAEngine().check_departure_anomaly(_make_frame(now=None)) is None
+            connect.assert_not_called()
 
-    @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_returns_none_on_db_error(self, mock_connect):
+    def test_a_db_error_is_a_quiet_none(self):
         import pymysql
         from services.service_sa.sa.engine import SAEngine
 
-        mock_db = MagicMock()
-        mock_cursor = MagicMock()
-        mock_connect.return_value = mock_db
-        mock_db.cursor.return_value = mock_cursor
-        mock_cursor.execute.side_effect = pymysql.err.OperationalError("db down")
-
-        frame = _frame_with_day_mood(datetime(2026, 8, 11, 15, 0))
-        daemon = SAEngine()
-        card = daemon.check_departure_anomaly(frame)
-
-        assert card is None
-        mock_db.close.assert_called_once()
+        frame = _frame_with_day_mood(datetime(2026, 11, 3, 10, 0))
+        frame.now = self.NOW
+        with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
+            assert SAEngine().check_departure_anomaly(frame) is None
 
 
 class TestCheckHouseholdUnusualDay:
@@ -4071,22 +3814,15 @@ class TestAwarenessEntrypoint:
 
 
 class TestLearnerEntrypoint:
-    """service_sa/learner.py: compute_entity_baselines() on the daemon's old 6h cadence."""
+    """service_sa/learner.py: the baselines job is gone (retired with the departure_anomaly
+    cutover); the daemon never schedules baselines or SA either."""
 
-    def test_baselines_scheduled_every_six_hours(self):
-        import schedule
-
+    def test_the_baselines_job_no_longer_exists(self):
         from services.service_sa import learner
+        from services.service_sa.sa import engine
 
-        schedule.clear()
-        try:
-            schedule.every(learner.BASELINE_INTERVAL_HOURS).hours.do(
-                learner.engine.compute_entity_baselines
-            )
-            (job,) = schedule.get_jobs()
-            assert job.interval == 6 and job.unit == "hours"
-        finally:
-            schedule.clear()
+        assert not hasattr(engine, "compute_entity_baselines")
+        assert not hasattr(learner, "BASELINE_INTERVAL_HOURS")
 
     def test_daemon_no_longer_schedules_baselines_or_sa(self):
         import inspect

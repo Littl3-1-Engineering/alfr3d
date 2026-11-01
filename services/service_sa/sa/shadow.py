@@ -19,9 +19,10 @@ import logging
 from datetime import datetime, timedelta
 
 from sa import inference_store, layer2
-from sa import silver
+from sa import presence_bridge, silver
 from sa.learners.base import Inference, utcnow
 from sa.learners import (
+    bridge,
     away_unusual,
     day_off,
     deck_network,
@@ -52,6 +53,7 @@ class ShadowRunner:
         self._last = {}  # rule -> signature last logged
         self._daytime = (None, {})  # ((local day, checkpoint), {user id: Inference or None})
         self._stay_starts = {}  # user id -> start of the stay in progress (see departure)
+        self._stay_seen = {}  # user id -> newest sighting folded into that stay
         self._household = {}  # local date -> learner finding (or None)
         self._deck_installs = (
             None,
@@ -326,6 +328,7 @@ class ShadowRunner:
             uid = str(person["user_id"])
             if not person["home"]:
                 self._stay_starts.pop(uid, None)  # the next arrival starts a new stay
+                self._stay_seen.pop(uid, None)
                 continue
             profile = profiles.get(uid)
             if profile is None or person["user_type"] not in stay.OVERSTAY_USER_TYPES:
@@ -354,30 +357,39 @@ class ShadowRunner:
         finally:
             db.close()
 
+    def _bridges(self):
+        """{user id: minutes}: each person's learned presence bridge (sa/presence_bridge.py)."""
+        return bridge.bridges_from_profiles(self.profiles(bridge.NAME))
+
     def _stay_start(self, user_id, now_utc):
-        """When this person's current stay began, from their phones' sightings in device_history,
-        cached for as long as they stay home (the query takes ~1.5 s for a busy phone)."""
+        """When this person's current stay began, from their phones' sightings in device_history.
+        The start is cached while they stay home, and each cycle only the sightings since the last
+        one seen are read, so a walk longer than their bridge starts a new stay even though the
+        person never went offline long enough for user.state to notice (the full 4-day scan takes
+        ~1.5 s for a busy phone)."""
         key = str(user_id)
-        cached = self._stay_starts.get(key)
-        if cached is not None:
-            return cached
+        start, seen = self._stay_starts.get(key), self._stay_seen.get(key)
+        since = (
+            seen - timedelta(minutes=10)
+            if seen is not None
+            else now_utc - timedelta(days=stay.LOOKBACK_DAYS)
+        )
         db = self._connect()
         try:
             cursor = db.cursor()
             cursor.execute(
                 "SELECT DISTINCT last_online FROM device_history WHERE timestamp >= %s "
                 "AND user_id = %s AND device_type IN %s AND last_online IS NOT NULL",
-                (
-                    now_utc - timedelta(days=stay.LOOKBACK_DAYS),
-                    user_id,
-                    silver.PERSONAL_DEVICE_TYPES,
-                ),
+                (since, user_id, silver.PERSONAL_DEVICE_TYPES),
             )
-            start = stay.stay_start_from_sightings([row[0] for row in cursor.fetchall()])
+            sightings = [row[0] for row in cursor.fetchall()]
         finally:
             db.close()
+        start, seen = stay.stay_state(
+            sightings, presence_bridge.bridge_for(self._bridges(), user_id), start, seen
+        )
         if start is not None:
-            self._stay_starts[key] = start
+            self._stay_starts[key], self._stay_seen[key] = start, seen
         return start
 
     def rhythm(self, frame):
@@ -631,7 +643,7 @@ class ShadowRunner:
             cursor = db.cursor()
             # Same filter as household(): the indexed `timestamp`, phones only, one gap of lookback
             # for a stay already in progress at the window's start.
-            lookback = window_start - timedelta(minutes=household_day.PRESENCE_GAP_MINUTES)
+            lookback = window_start - timedelta(minutes=presence_bridge.MAX_BRIDGE_MINUTES)
             cursor.execute(
                 "SELECT DISTINCT user_id, last_online FROM device_history WHERE user_id IN "
                 f"({','.join(['%s'] * len(residents))}) AND device_type IN %s "
@@ -655,7 +667,7 @@ class ShadowRunner:
         scored = {}
         for user_id in residents:
             minutes = household_day.home_minutes(
-                {user_id: seen.get(user_id, [])}, window_start, window_end
+                {user_id: seen.get(user_id, [])}, window_start, window_end, self._bridges()
             )
             scored[user_id] = learner.score(
                 profiles[str(user_id)],
@@ -741,7 +753,7 @@ class ShadowRunner:
                 if p["user_type"] in household_day.HOME_USER_TYPES
             ]
             home = None
-            lookback = midnight - timedelta(minutes=household_day.PRESENCE_GAP_MINUTES)
+            lookback = midnight - timedelta(minutes=presence_bridge.MAX_BRIDGE_MINUTES)
             if resident_ids:
                 cursor.execute(
                     "SELECT DISTINCT user_id, last_online FROM device_history WHERE user_id IN "
@@ -759,7 +771,7 @@ class ShadowRunner:
                 seen = {}
                 for user_id, last_online in cursor.fetchall():
                     seen.setdefault(user_id, []).append(last_online)
-                home = household_day.home_minutes(seen, midnight, cutoff)
+                home = household_day.home_minutes(seen, midnight, cutoff, self._bridges())
             # The learned event-stream features: this day's count per stream up to the cutoff, from
             # household_events (the lake's events_clean also applies sa_data_exclusions).
             cursor.execute(

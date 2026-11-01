@@ -519,3 +519,78 @@ class TestBuild:
         _build(lake)
 
         assert not list(lake.glob("*/.tmp-*"))
+
+
+class TestPersonBridge:
+    """The bridge is learned per person from the gaps that begin at night (sa/presence_bridge.py):
+    a phone that naps at night keeps a long bridge, a phone that never does gets the floor, so a
+    25 minute walk splits the second person's stay and not the first's."""
+
+    def _two_people(self, tmp_path, days=20):
+        _snapshot(tmp_path, "user_types", [{"id": 2, "type": "owner"}])
+        _snapshot(
+            tmp_path,
+            "user",
+            [
+                {"id": 1, "username": "napper", "type": 2},
+                {"id": 5, "username": "walker", "type": 2},
+            ],
+        )
+        rows = []
+        start = datetime(2026, 9, 14, 4, 0)  # 00:00 EDT
+        for d in range(days):
+            midnight = start + timedelta(days=d)
+            for step in range(24 * 12):  # a sighting every 5 minutes
+                t = midnight + timedelta(minutes=5 * step)
+                local_minute = 5 * step
+                noon_walk = (
+                    12 * 60 <= local_minute < 12 * 60 + 30
+                )  # 35 min between sightings at noon
+                night_nap = (
+                    2 * 60 <= local_minute < 2 * 60 + 40
+                )  # 45 min between sightings at 02:00
+                if not noon_walk:
+                    if not night_nap:
+                        rows.append(_history_row(t, 10, 1, 5, "p1"))
+                    rows.append(_history_row(t, 50, 5, 5, "p5"))
+        _bronze(tmp_path, "device_history", rows, "timestamp")
+        return tmp_path
+
+    def test_each_person_gets_the_bridge_their_own_phone_needs(self, tmp_path):
+        lake = self._two_people(tmp_path)
+
+        silver.build(str(lake), tz="America/Toronto", today=date(2026, 10, 5))
+
+        bridge = {r["user_id"]: r for r in _rows(lake, "silver", "person_bridge")}
+        assert bridge[1]["basis"] == "naps" and bridge[1]["bridge_minutes"] == 45
+        assert bridge[5]["basis"] == "quiet_phone" and bridge[5]["bridge_minutes"] == 15
+
+    def test_a_walk_splits_a_quiet_phones_stay_but_not_a_napping_phones(self, tmp_path):
+        lake = self._two_people(tmp_path)
+
+        silver.build(str(lake), tz="America/Toronto", today=date(2026, 10, 5))
+
+        ivs = _rows(lake, "silver", "presence_intervals")
+        napper = [r for r in ivs if r["user_id"] == 1]
+        walker = [r for r in ivs if r["user_id"] == 5]
+        # the 35 min noon gap is under the napper's 45 min bridge and over the walker's 15
+        assert len(napper) == 1
+        assert len(walker) > 1
+
+    def test_a_pinned_gap_overrides_the_learned_bridge_for_everybody(self, tmp_path):
+        lake = self._two_people(tmp_path)
+
+        silver.build(str(lake), tz="America/Toronto", today=date(2026, 10, 5), gap_minutes=20)
+
+        bridge = {r["user_id"]: r for r in _rows(lake, "silver", "person_bridge")}
+        assert {b["bridge_minutes"] for b in bridge.values()} == {20}
+        assert {b["basis"] for b in bridge.values()} == {"fixed"}
+
+    def test_too_few_observed_nights_keep_the_old_default(self, tmp_path):
+        lake = self._two_people(tmp_path, days=5)
+
+        silver.build(str(lake), tz="America/Toronto", today=date(2026, 10, 5))
+
+        bridge = {r["user_id"]: r for r in _rows(lake, "silver", "person_bridge")}
+        assert {b["basis"] for b in bridge.values()} == {"default"}
+        assert {b["bridge_minutes"] for b in bridge.values()} == {45}
