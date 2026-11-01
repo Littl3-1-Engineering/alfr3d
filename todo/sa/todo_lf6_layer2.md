@@ -2,7 +2,7 @@
 
 > **Layer:** L2 · **Roadmap:** [SA_ROADMAP.md](SA_ROADMAP.md) → LF-6
 
-## Status: 🟡 Design settled 2026-10-11 (below). The engine is live with a calendar family and three rules: `away_unusual`, `day_off` and `household_unusual_day`. 2026-10-31: `household_unusual_day` learns its own features and its own bar (PR #352); `bar_bits(group)` on `layer2.Rule` lets a rule read a learned bar. Open: a second independent family beyond the calendar.
+## Status: 🟡 Design settled 2026-10-11 (below). The engine is live with a calendar family and three rules: `away_unusual`, `day_off` and `household_unusual_day`. 2026-10-31: `household_unusual_day` learns its own features and its own bar (PR #352); `bar_bits(group)` on `layer2.Rule` lets a rule read a learned bar. 2026-11-01: second independent family built (uncommitted), the Deck's network type (`deck.network`, see the Phase 0 section). Open: calibrate its discount and floor against a real firing, and a third family for people without a Deck.
 
 Layer 2 consumes L1 inferences, never raw data. Its inputs are rows in `sa_inferences` with
 `layer = 1`. Its outputs are rows with `layer = 2` whose `evidence` lists the parent inference ids.
@@ -123,6 +123,32 @@ stay fresh for layer 2. `HouseholdDayLearner.score()` remains as a wrapper for b
 Open: no second independent family for people beyond the calendar (HA trackers are next); "away trip" is not
 built; layer-1 live scoring only persists the signals shadow scores (see the review of
 2026-10-12: most scalar and rate profiles are scored nightly only).
+
+## Phase 0: Deck network as a second family (2026-11-01)
+
+Question: is the Deck's `network_type` (`deck_context_history`, silver `deck_intervals`) an
+independent presence signal worth a `deck` family? Replayed on the production lake for Athos
+(install `f05e8522`, linked to user 1 through `device_location_history.client_install_id`),
+2026-10-11 to 11-01, against silver `presence_intervals` (arp). Reports are only about 14 minutes
+apart (p90 62 min), so a report is held for at most 20 minutes.
+
+- **wifi -> home:** 836 of 866 reports (96.6 %) fall inside an arp-home interval. The 30 that do
+  not are mostly arp being wrong (the nightly reconnect gap, 10-20 02:07-04:02 UTC: 7 wifi reports
+  inside an "away" stretch of 1.9 h).
+- **A single cellular report is noise:** 61 runs of length 1, 90 % of them inside arp-home (cellular
+  blips while the phone is at home).
+- **Sustained cellular is a real signal:** runs of 3+ reports have 0-33 % arp-home; runs of 5+ have
+  0 %. The 22 cellular runs spanning 30+ minutes average 9 % arp-home.
+- **Against arp-away stretches of 60+ minutes (25):** 21 have cellular reports inside (84 %), 2 are
+  wifi-only (10-11 and 10-20, the sleeping-phone case: arp is wrong), 2 have no report.
+
+Verdict: build it, as a state row, not a probability. `deck.network_out` while at least 3
+consecutive cellular reports span 30+ minutes (family `deck`, per user): **corroborates** an
+`away_unusual` result (confidence up). Sustained wifi (2+ reports) during an arp-away stretch
+**explains it away** (the stay model's sleeping-phone gap), via `explained_by` like `calendar.busy`.
+**Built 2026-11-01** (`learners/deck_network.py`, `ShadowRunner.deck_network_state`, `AwayUnusualRule`). Arp stays the primary presence signal: with no Deck row (no Deck, or no location fix to link it to a person) `away_unusual` behaves exactly as before, and one reporting Deck in the household is enough. The sustained bar follows each install's own report cadence (twice the median gap for staleness); the 30-minute run length is the Phase 0 finding. Limits: one person, one phone, three weeks; the discount and floor are guesses until a firing
+calibrates them. Install-to-user comes from `device_location_history`; a Deck with no location fix
+has no owner and does not vote.
 
 ## day_off reads a day-level model (2026-10-12)
 

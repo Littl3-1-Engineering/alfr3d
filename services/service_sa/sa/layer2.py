@@ -37,6 +37,7 @@ FAMILY_BY_SIGNAL = {
     "device.session_minutes": "network",
     "presence.daytime": "network",
     SIGNAL_CALENDAR_BUSY: "calendar",
+    "deck.network": "deck",
 }
 # Series and streams share one signal each; their key says where they came from.
 FAMILY_BY_KEY_PREFIX = (

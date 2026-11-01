@@ -24,6 +24,7 @@ from sa.learners.base import Inference, utcnow
 from sa.learners import (
     away_unusual,
     day_off,
+    deck_network,
     daytime,
     device_rhythm,
     household_day,
@@ -52,6 +53,10 @@ class ShadowRunner:
         self._daytime = (None, {})  # ((local day, checkpoint), {user id: Inference or None})
         self._stay_starts = {}  # user id -> start of the stay in progress (see departure)
         self._household = {}  # local date -> learner finding (or None)
+        self._deck_installs = (
+            None,
+            {},
+        )  # (loaded at, {install id: (user id, median gap min)})
         self._rates_window = None  # UTC start of the hour whose event rates were last scored
 
     # --- plumbing -------------------------------------------------------------------------
@@ -135,6 +140,10 @@ class ShadowRunner:
             self.calendar_state(frame)
         except Exception as e:
             logger.error(f"Calendar state failed: {e}")
+        try:
+            self.deck_network_state(frame)
+        except Exception as e:
+            logger.error(f"Deck network state failed: {e}")
         try:
             self.household_features(frame)
         except Exception as e:
@@ -454,6 +463,57 @@ class ShadowRunner:
         if found:
             self._persist(found)
         return found
+
+    DECK_INSTALLS_TTL = timedelta(hours=1)
+    DECK_CADENCE_DAYS = 14
+    DECK_RECENT_HOURS = 12
+
+    def deck_network_state(self, frame):
+        """Layer-1 observation for layer 2: which people's Decks have been on cellular or on wifi
+        for a sustained stretch (sa/learners/deck_network.py). A state row per person, refreshed
+        each cycle while it holds. Works with one reporting Deck: each install is judged on its own
+        cadence, and a person with no Deck gets no row. The install-to-user link and the cadence
+        are reloaded hourly; the recent reports are read each cycle."""
+        if frame.now is None:
+            return []
+        now = frame.now.replace(tzinfo=None)
+        db = self._connect()
+        try:
+            loaded, installs = self._deck_installs
+            cursor = db.cursor()
+            if loaded is None or now - loaded >= self.DECK_INSTALLS_TTL:
+                installs = {}
+                cursor.execute(
+                    "SELECT client_install_id, MAX(user_id) FROM device_location_history "
+                    "GROUP BY client_install_id"
+                )
+                owners = dict(cursor.fetchall())
+                for install, user in owners.items():
+                    cursor.execute(
+                        "SELECT observed_at FROM deck_context_history WHERE device_install_id = %s "
+                        "AND network_type IS NOT NULL AND observed_at >= %s",
+                        (install, now - timedelta(days=self.DECK_CADENCE_DAYS)),
+                    )
+                    gap = deck_network.median_gap_minutes([r[0] for r in cursor.fetchall()])
+                    installs[install] = (user, gap)
+                self._deck_installs = (now, installs)
+            found = {}
+            for install, (user, gap) in installs.items():
+                cursor.execute(
+                    "SELECT observed_at, network_type FROM deck_context_history "
+                    "WHERE device_install_id = %s AND network_type IS NOT NULL "
+                    "AND observed_at >= %s",
+                    (install, now - timedelta(hours=self.DECK_RECENT_HOURS)),
+                )
+                row = deck_network.observe(user, install, cursor.fetchall(), now, gap)
+                if row is not None:
+                    found[str(user)] = row  # one Deck per person is enough; the first wins
+        finally:
+            db.close()
+        rows = list(found.values())
+        if rows:
+            self._persist(rows)
+        return rows
 
     def layer2(self, frame, cards=None):
         """Layer 2: combine the fresh layer-1 rows in sa_inferences (sa/layer2.py), one pass for

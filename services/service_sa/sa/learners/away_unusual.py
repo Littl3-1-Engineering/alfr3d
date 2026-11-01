@@ -7,6 +7,11 @@ The second LAYER-2 inference. It reads layer-1 rows only, never raw data:
 - `device.online` deviations (offline when usually on) for devices that person owns,
 - a `calendar.busy` row (an event covers now) EXPLAINS the absence: it discounts the surprise
   (layer2.Rule.explained_discount) rather than voting, so a booked absence stops being unusual,
+- a `deck.network` row for the person (learners/deck_network.py), an independent family because the
+  phone reports its own network: sustained cellular CORROBORATES the absence (full confidence,
+  whatever the device share), sustained wifi EXPLAINS it away (the arp stay model's sleeping-phone
+  gap). A person with no row is no evidence either way, so a household whose members have no Deck
+  behaves exactly as before,
 - optional parents from other source families (Home Assistant trackers) when a learner for them
   exists.
 
@@ -33,7 +38,7 @@ runs it over the lake's presence history to check a past day.
 """
 
 from sa import layer2
-from sa.learners import device_rhythm, presence
+from sa.learners import deck_network, device_rhythm, presence
 
 NAME = "away_unusual"
 VERSION = "1"
@@ -71,6 +76,11 @@ class AwayUnusualRule(layer2.Rule):
         # A booked event covering now explains an absence: it discounts the surprise instead of
         # silencing the result (the household calendar has no per-person owner).
         explained = [p for p in parents if p.signal == layer2.SIGNAL_CALENDAR_BUSY]
+        deck = {
+            str(p.subject_id): p
+            for p in parents
+            if p.signal == deck_network.SIGNAL and p.kind == "state"
+        }
         out = []
         for parent in parents:
             if parent.signal != presence.SIGNAL or parent.kind != "deviation":
@@ -80,17 +90,26 @@ class AwayUnusualRule(layer2.Rule):
             user = str(parent.subject_id)
             mine = devices.get(user, [])
             with_profile = owned.get(user, 0)
+            share = min(1.0, len(mine) / with_profile) if with_profile else None
+            explained_here = list(explained)
+            seen = deck.get(user)
+            deck_state = (seen.observed or {}).get("state") if seen else None
+            if deck_state == deck_network.OUT:
+                share = 1.0  # the phone says it is on cellular: independent corroboration
+            elif deck_state == deck_network.WIFI:
+                explained_here.append(seen)  # on wifi: arp likely lost a sleeping phone
             out.append(
                 layer2.Group(
                     user,
                     parent,
                     [parent] + mine,
-                    share=min(1.0, len(mine) / with_profile) if with_profile else None,
-                    explained_by=explained,
+                    share=share,
+                    explained_by=explained_here,
                     evidence={
                         "username": (parent.evidence or {}).get("username"),
                         "devices_offline": len(mine),
                         "devices_with_profile": with_profile,
+                        "deck_network": deck_state,
                     },
                 )
             )
