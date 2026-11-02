@@ -275,6 +275,7 @@ ALFR3D supports integration with Home Assistant, SmartThings, and ESPHome for un
 - On sync: looks up MAC in device table, sets device_id FK (no auto-creation for unmatched devices)
 - Sync only inserts/updates — it never deletes. A device that disappears from HA (unpaired, or left behind in a move) keeps its row, marked offline, until removed via `DELETE /api/iot/devices/{id}`
 - `online` reflects reachability: true unless HA reports the entity `unavailable`/`unknown` (a switched-off light or an idle speaker is still online)
+- After a successful HA control command, the API re-reads that entity from HA (waiting briefly for cloud-backed integrations such as Tuya to catch up) and stores its new `last_state`, so clients that re-fetch right away don't get the pre-command state back. ESPHome nodes update the same field live via their push-state connection
 - Frontend uses FK join for position data
 
 ### Authentication & RBAC

@@ -1,5 +1,6 @@
 import orjson
 import logging
+import time
 import requests
 import pymysql
 
@@ -119,29 +120,125 @@ def get_ha_devices():
             "binary_sensor",
             "camera",
         ]:
-            connections = state.get("attributes", {}).get("connections", [])
-            mac_address = None
-            for conn_type, conn_value in connections:
-                if conn_type == "mac":
-                    mac_address = conn_value.upper()
-                    break
-
-            device = {
-                "entity_id": entity_id,
-                "name": state.get("attributes", {}).get("friendly_name", entity_id),
-                "state": state.get("state"),
-                "domain": domain,
-                "last_changed": state.get("last_changed"),
-                "attributes": state.get("attributes", {}),
-                "mac_address": mac_address,
-            }
-
-            if "brightness" in state.get("attributes", {}):
-                device["brightness"] = state["attributes"]["brightness"]
-
-            devices.append(device)
+            devices.append(_state_to_device(state))
 
     return devices
+
+
+def _state_to_device(state):
+    """One raw HA state object -> the dict stored in smarthome_devices.last_state (and returned
+    by get_ha_devices). Shared by the periodic sync and refresh_ha_device_state so both write the
+    exact same shape."""
+    entity_id = state.get("entity_id", "")
+    domain = entity_id.split(".")[0] if "." in entity_id else ""
+    attributes = state.get("attributes", {})
+
+    mac_address = None
+    for conn_type, conn_value in attributes.get("connections", []):
+        if conn_type == "mac":
+            mac_address = conn_value.upper()
+            break
+
+    device = {
+        "entity_id": entity_id,
+        "name": attributes.get("friendly_name", entity_id),
+        "state": state.get("state"),
+        "domain": domain,
+        "last_changed": state.get("last_changed"),
+        "attributes": attributes,
+        "mac_address": mac_address,
+    }
+
+    if "brightness" in attributes:
+        device["brightness"] = attributes["brightness"]
+
+    return device
+
+
+# What state a command should leave the entity in, so refresh_ha_device_state can tell when HA
+# has caught up. Cloud-backed integrations (Tuya, ...) acknowledge the service call before the
+# entity's reported state flips.
+_EXPECTED_STATE_AFTER = {"turn_on": "on", "turn_off": "off"}
+
+
+def _signature(state, attributes):
+    """What 'changed' means when a command has no fixed target state (toggle, set_brightness,
+    set_temperature, ...): the entity's state or any of its attributes differ."""
+    return (state, orjson.dumps(attributes or {}, option=orjson.OPT_SORT_KEYS))
+
+
+def _stored_signature(cursor, entity_id):
+    cursor.execute(
+        "SELECT last_state FROM smarthome_devices "
+        "WHERE source = 'homeassistant' AND ha_entity_id = %s",
+        (entity_id,),
+    )
+    row = cursor.fetchone()
+    if not row or not row[0]:
+        return None
+    stored = row[0]
+    if isinstance(stored, (str, bytes)):
+        stored = orjson.loads(stored)
+    return _signature(stored.get("state"), stored.get("attributes"))
+
+
+def refresh_ha_device_state(entity_id, command=None, timeout=3.0, interval=0.3):
+    """Re-read one HA entity and persist it to smarthome_devices.last_state/online.
+
+    smarthome_devices is otherwise only refreshed by the 15-minute sync_ha_devices, so right
+    after a control command the stored state is stale -- and every client that re-fetches the
+    device list (the Deck does, immediately) gets the pre-command state back and overwrites its
+    own correct optimistic one, e.g. sending `turn_off` again instead of `turn_on`.
+
+    Cloud-backed integrations (Tuya, ...) ack the service call before the entity's reported
+    state changes, so this polls for up to `timeout` seconds until HA has caught up: for
+    turn_on/turn_off, until the entity reports on/off; for anything else (toggle,
+    set_brightness, ...), until its state or attributes differ from what is stored. A command
+    that changes nothing (e.g. set_brightness to the current value) therefore waits the full
+    timeout before the response returns.
+
+    Best-effort: never raises, since the control itself already succeeded. Returns True if the
+    row was updated."""
+    try:
+        expected = _EXPECTED_STATE_AFTER.get(command)
+        db = get_connection()
+        try:
+            cursor = db.cursor()
+            before = None if expected else _stored_signature(cursor, entity_id)
+
+            def caught_up(state):
+                if expected:
+                    return state.get("state") == expected
+                return (
+                    before is None
+                    or _signature(state.get("state"), state.get("attributes")) != before
+                )
+
+            deadline = time.monotonic() + timeout
+            state = get_ha_device_state(entity_id)
+            while state and not caught_up(state) and time.monotonic() < deadline:
+                time.sleep(interval)
+                state = get_ha_device_state(entity_id) or state
+            if not state:
+                return False
+
+            device = _state_to_device(state)
+            cursor.execute(
+                "UPDATE smarthome_devices SET last_state = %s, online = %s "
+                "WHERE source = 'homeassistant' AND ha_entity_id = %s",
+                (
+                    orjson.dumps(device).decode("utf-8"),
+                    ha_state_is_online(device["state"]),
+                    entity_id,
+                ),
+            )
+            db.commit()
+        finally:
+            db.close()
+        return True
+    except Exception as e:  # noqa: BLE001 -- best-effort; the command already succeeded
+        logger.warning(f"Could not refresh stored state for {entity_id}: {e}")
+        return False
 
 
 def get_ha_device_state(entity_id):

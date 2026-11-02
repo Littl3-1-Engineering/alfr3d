@@ -223,6 +223,14 @@ async def control_ha_device(
             context={"endpoint": "ha_control"},
         )
         if success:
+            # Same stale-state problem as control_iot_device: persist the new state before
+            # clients re-read smarthome_devices (otherwise it's the pre-command value for up to
+            # 15 min), then push the fresh list to connected clients.
+            await asyncio.get_event_loop().run_in_executor(
+                None, ha_utils.refresh_ha_device_state, entity_id, data.command
+            )
+            devices = await asyncio.get_event_loop().run_in_executor(None, fetch_iot_devices_data)
+            await manager.broadcast("iot_devices", devices)
             return {"message": message, "entity_id": entity_id, "command": data.command}
         else:
             raise HTTPException(status_code=500, detail=message)
@@ -659,6 +667,12 @@ async def control_iot_device(
             )
             if success:
                 _emit_device_event(device_id, device_type, command, message)
+                # Persist the entity's new state first: smarthome_devices is otherwise only
+                # refreshed every 15 min, so the fetch below would hand clients the stale
+                # pre-command state (the Deck then re-sent the same command).
+                await asyncio.get_event_loop().run_in_executor(
+                    None, ha_utils.refresh_ha_device_state, ha_entity_id, command
+                )
                 devices = await asyncio.get_event_loop().run_in_executor(
                     None, fetch_iot_devices_data
                 )
