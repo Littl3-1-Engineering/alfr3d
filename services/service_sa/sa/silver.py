@@ -25,9 +25,12 @@ What the data taught us (Phase 0, 2026-10-10, on the household's real device_his
 - The same physical phone appears under several device ids (private-MAC rotation), so presence
   is computed per user across all of a user's phone ids, never per device.
 - Phones go quiet for ~30 minutes without leaving, and the observed gaps decay smoothly through
-  30-60 minutes with no clean separation. PRESENCE_GAP_MINUTES sits just above the ~31 minute
-  offline-marking bump. Absences shorter than that are merged into presence and counted in
-  `short_gaps_merged` so a learner can see how much of an interval was inferred.
+  30-60 minutes with no clean separation, but how often differs hugely per phone (2026-11-01: one
+  resident's phone naps 53 times a week, Athos's 4.5). So the bridge is learned per person from the
+  gaps that begin at night (sa/presence_bridge.py, table person_bridge); PRESENCE_GAP_MINUTES is
+  only the default for someone with too few observed nights. Absences shorter than the bridge are
+  merged into presence and counted in `short_gaps_merged` so a learner can see how much of an
+  interval was inferred.
 
 Assumptions, stated so a violation is easy to spot:
 - Bronze timestamps are naive UTC (MySQL session clock is UTC on the NUC).
@@ -49,18 +52,20 @@ import duckdb
 import pyarrow as pa
 import pymysql
 
-from sa import silver_contexts
+from sa import presence_bridge, silver_contexts
 
 logger = logging.getLogger("SASilver")
 
 LAKE_DIR = os.environ.get("SA_LAKE_DIR", "/lake")
 TIMEZONE = os.environ.get("SA_TIMEZONE", "America/Toronto")
 
-# A gap between consecutive phone sightings longer than this starts a new presence interval.
-PRESENCE_GAP_MINUTES = 45
+# A gap between consecutive phone sightings longer than this starts a new presence interval. This is
+# only the default: each person gets their own bridge (sa/presence_bridge.py, table person_bridge)
+# unless build(gap_minutes=N) pins one number for everybody (replays).
+PRESENCE_GAP_MINUTES = presence_bridge.DEFAULT_BRIDGE_MINUTES
 # Gaps at least this long (and <= PRESENCE_GAP_MINUTES) that were merged into one interval are
 # counted as `short_gaps_merged`: the stretch where presence was inferred, not observed.
-AMBIGUOUS_GAP_MINUTES = 10
+AMBIGUOUS_GAP_MINUTES = presence_bridge.AMBIGUOUS_GAP_MINUTES
 # An hour counts as "observed" when the collector wrote at least this fraction of its typical
 # (median) hourly row count. device_history fell ~30x in July 2026 without ever reaching zero, so
 # "any rows at all" would have called a collection outage a long absence.
@@ -81,6 +86,7 @@ NON_PERSON_USERNAMES = ("unknown",)
 
 SILVER_TABLES = (
     "presence_intervals",
+    "person_bridge",
     "device_sessions",
     "sensor_15m",
     "events_clean",
@@ -295,13 +301,15 @@ def _setup(con, lake, exclusions, aliases, tz):
 
     if {"snap_user", "snap_user_types"} <= have:
         # The most recent snapshot only: a person's current name and type.
-        con.execute(f"""CREATE VIEW persons AS
+        con.execute(
+            f"""CREATE VIEW persons AS
             SELECT u.id AS user_id, u.username, t.type AS user_type
             FROM (SELECT * FROM snap_user WHERE date = (SELECT MAX(date) FROM snap_user)) u
             JOIN (SELECT * FROM snap_user_types
                   WHERE date = (SELECT MAX(date) FROM snap_user_types)) t ON u.type = t.id
             WHERE t.type NOT IN ({_sql_list(NON_PERSON_USER_TYPES)})
-              AND u.username NOT IN ({_sql_list(NON_PERSON_USERNAMES)})""")
+              AND u.username NOT IN ({_sql_list(NON_PERSON_USERNAMES)})"""
+        )
         have.add("persons")
     return have
 
@@ -310,7 +318,7 @@ def _sql_list(values):
     return ", ".join("'" + str(v).replace("'", "''") + "'" for v in values)
 
 
-def _build_presence(con, lake, have, gap):
+def _build_presence(con, lake, have, gap, fixed=False):
     """presence_intervals (per person, phone sightings) and device_sessions (per device)."""
     results = {}
     if "device_history" in have:
@@ -332,30 +340,38 @@ def _build_presence(con, lake, have, gap):
         )
         # Distinct last_online values are the sightings. The snapshot adds each phone's newest
         # sighting, which is not in device_history until the device row is next updated.
-        con.execute(f"""CREATE TABLE sightings AS
+        con.execute(
+            f"""CREATE TABLE sightings AS
             SELECT DISTINCT h.user_id, h.device_id, h.last_online AS ts
             FROM b_device_history h JOIN persons p ON p.user_id = h.user_id
             WHERE h.device_type IN ({types}) AND h.last_online IS NOT NULL
               AND h.last_online >= (SELECT t FROM collector_start)
-            {snapshot_part}""")
-        con.execute(f"""CREATE TABLE phone_islands AS
+            {snapshot_part}"""
+        )
+        _build_person_bridge(con, gap if fixed else None)
+        con.execute(
+            f"""CREATE TABLE phone_islands AS
             WITH g AS (
-              SELECT user_id, device_id, ts,
+              SELECT s.user_id, s.device_id, s.ts, COALESCE(b.bridge_minutes, {gap}) AS bridge,
                      date_diff('second',
-                       LAG(ts) OVER (PARTITION BY user_id ORDER BY ts, device_id), ts) / 60.0
-                       AS gap_min
-              FROM sightings),
+                       LAG(s.ts) OVER (PARTITION BY s.user_id ORDER BY s.ts, s.device_id), s.ts)
+                       / 60.0 AS gap_min
+              FROM sightings s LEFT JOIN person_bridge b ON b.user_id = s.user_id),
             i AS (
-              SELECT *, SUM(CASE WHEN gap_min > {gap} THEN 1 ELSE 0 END)
+              SELECT *, SUM(CASE WHEN gap_min > bridge THEN 1 ELSE 0 END)
                           OVER (PARTITION BY user_id ORDER BY ts, device_id
                                 ROWS UNBOUNDED PRECEDING) AS island
               FROM g)
             SELECT user_id, island, MIN(ts) AS start_utc, MAX(ts) AS end_utc,
                    COUNT(*) AS sightings, COUNT(DISTINCT device_id) AS devices,
-                   SUM(CASE WHEN gap_min >= {AMBIGUOUS_GAP_MINUTES} AND gap_min <= {gap}
+                   SUM(CASE WHEN gap_min >= {AMBIGUOUS_GAP_MINUTES} AND gap_min <= bridge
                             THEN 1 ELSE 0 END) AS short_gaps_merged
-            FROM i GROUP BY user_id, island""")
-        results["presence_intervals"] = """
+            FROM i GROUP BY user_id, island"""
+        )
+        results["person_bridge"] = "SELECT * FROM person_bridge ORDER BY user_id"
+        results[
+            "presence_intervals"
+        ] = """
             SELECT p.user_id, p.username, p.user_type, 'wifi_phone' AS source,
                    i.start_utc, i.end_utc,
                    to_local(i.start_utc) AS start_local, to_local(i.end_utc) AS end_local,
@@ -363,12 +379,14 @@ def _build_presence(con, lake, have, gap):
             FROM phone_islands i JOIN persons p ON p.user_id = i.user_id
             ORDER BY p.user_id, i.start_utc"""
     if "device_history" in have:
-        con.execute("""CREATE TABLE device_latest AS
+        con.execute(
+            """CREATE TABLE device_latest AS
             SELECT device_id, arg_max(name, timestamp) AS name,
                    arg_max(user_id, timestamp) AS user_id,
                    arg_max(device_type, timestamp) AS device_type,
                    MAX(last_online) AS last_seen
-            FROM b_device_history GROUP BY device_id""")
+            FROM b_device_history GROUP BY device_id"""
+        )
         # One logical device can own several rows: a phone that rotates its private MAC gets a
         # new `device` row each time and the old one stays offline. Rows with the same name and the
         # same owning person are one device; the row seen most recently is its identity. A name
@@ -378,14 +396,17 @@ def _build_presence(con, lake, have, gap):
             if "persons" in have
             else ("l.user_id IS NOT NULL")
         )
-        con.execute(f"""CREATE TABLE device_identity AS
+        con.execute(
+            f"""CREATE TABLE device_identity AS
             SELECT l.device_id,
                    CASE WHEN {owned} AND l.name IS NOT NULL AND l.name <> 'unknown'
                         THEN arg_max(l.device_id, l.last_seen)
                                OVER (PARTITION BY l.user_id, l.name)
                         ELSE l.device_id END AS identity_id
-            FROM device_latest l""")
-        con.execute(f"""CREATE TABLE device_islands AS
+            FROM device_latest l"""
+        )
+        con.execute(
+            f"""CREATE TABLE device_islands AS
             WITH s AS (SELECT DISTINCT i.identity_id AS device_id, h.last_online AS ts
                        FROM b_device_history h JOIN device_identity i USING (device_id)
                        WHERE h.last_online IS NOT NULL
@@ -398,8 +419,11 @@ def _build_presence(con, lake, have, gap):
                                     ROWS UNBOUNDED PRECEDING) AS island FROM g)
             SELECT device_id, island, MIN(ts) AS start_utc, MAX(ts) AS end_utc,
                    COUNT(*) AS sightings
-            FROM i GROUP BY device_id, island""")
-        results["device_sessions"] = """
+            FROM i GROUP BY device_id, island"""
+        )
+        results[
+            "device_sessions"
+        ] = """
             SELECT i.device_id, l.name, l.user_id, l.device_type,
                    i.start_utc, i.end_utc,
                    to_local(i.start_utc) AS start_local, to_local(i.end_utc) AS end_local,
@@ -411,11 +435,71 @@ def _build_presence(con, lake, have, gap):
     return results
 
 
+def _build_person_bridge(con, fixed_gap):
+    """person_bridge (user_id, bridge_minutes, basis, nap_gaps, nights): the longest unseen stretch
+    that still counts as the same stay, per person (sa/presence_bridge.py). `fixed_gap` pins one
+    number for everybody (replays and tests)."""
+    users = [r[0] for r in con.execute("SELECT DISTINCT user_id FROM sightings").fetchall()]
+    night = (presence_bridge.NIGHT_START_HOUR, presence_bridge.NIGHT_END_HOUR)
+    rows = []
+    if fixed_gap is not None:
+        rows = [(u, int(fixed_gap), "fixed", 0, 0) for u in users]
+    elif users:
+        ref = con.execute("SELECT MAX(ts) FROM sightings").fetchone()[0]
+        since = ref - timedelta(days=presence_bridge.WINDOW_DAYS)
+        gaps = {}
+        for user_id, gap in con.execute(
+            """WITH g AS (SELECT user_id, ts,
+                                 LAG(ts) OVER (PARTITION BY user_id ORDER BY ts) AS prev_ts
+                          FROM sightings WHERE ts >= ?)
+               SELECT user_id, date_diff('second', prev_ts, ts) / 60.0 FROM g
+               WHERE prev_ts IS NOT NULL
+                 AND hour(to_local(prev_ts)) >= ? AND hour(to_local(prev_ts)) < ?""",
+            [since - timedelta(hours=1), *night],
+        ).fetchall():
+            gaps.setdefault(user_id, []).append(gap)
+        nights = dict(
+            con.execute(
+                """SELECT user_id, COUNT(DISTINCT CAST(to_local(ts) AS DATE)) FROM sightings
+                   WHERE ts >= ? AND hour(to_local(ts)) >= ? AND hour(to_local(ts)) < ?
+                   GROUP BY user_id""",
+                [since, *night],
+            ).fetchall()
+        )
+        for user_id in users:
+            mine = gaps.get(user_id, [])
+            minutes, basis = presence_bridge.decide(mine, nights.get(user_id, 0))
+            rows.append(
+                (user_id, minutes, basis, sum(1 for g in mine if presence_bridge.is_nap(g)),
+                 nights.get(user_id, 0))
+            )  # fmt: skip
+    con.register(
+        "pb_rows",
+        pa.Table.from_pylist(
+            [
+                {"user_id": u, "bridge_minutes": m, "basis": b, "nap_gaps": n, "nights": d}
+                for u, m, b, n, d in rows
+            ],
+            schema=pa.schema(
+                [
+                    ("user_id", pa.int64()),
+                    ("bridge_minutes", pa.int64()),
+                    ("basis", pa.string()),
+                    ("nap_gaps", pa.int64()),
+                    ("nights", pa.int64()),
+                ]
+            ),
+        ),
+    )
+    con.execute("CREATE TABLE person_bridge AS SELECT * FROM pb_rows")
+
+
 def _build_silver_other(con, have):
     results = {}
     if "smarthome_sensor_history" in have:
         if "snap_smarthome_devices" in have:
-            con.execute("""CREATE VIEW sensor_identity AS
+            con.execute(
+                """CREATE VIEW sensor_identity AS
                 WITH latest AS (
                   SELECT id, arg_max(name, date) AS name, arg_max(source, date) AS source,
                          arg_max(esp_entity_id, date) AS esp, arg_max(ha_entity_id, date) AS ha,
@@ -424,14 +508,17 @@ def _build_silver_other(con, have):
                 SELECT id, CASE source
                          WHEN 'esphome' THEN split_part(esp, ':', 1) || ':' || name
                          ELSE source || ':' || COALESCE(ha, st, name) END AS sensor_key
-                FROM latest""")
+                FROM latest"""
+            )
         else:
             con.execute(
                 "CREATE VIEW sensor_identity AS "
                 "SELECT NULL::BIGINT AS id, NULL::VARCHAR AS sensor_key WHERE false"
             )
         # An alias is a human decision about a retired id, so it wins over the snapshot.
-        results["sensor_15m"] = """
+        results[
+            "sensor_15m"
+        ] = """
             SELECT COALESCE(a.sensor_key, s.sensor_key,
                             'id:' || h.smarthome_device_id) AS sensor_key,
                    time_bucket(INTERVAL 15 MINUTE, h.recorded_at) AS bucket_utc,
@@ -443,7 +530,9 @@ def _build_silver_other(con, have):
             WHERE h.value IS NOT NULL
             GROUP BY ALL ORDER BY 1, 2"""
     if "household_events" in have:
-        results["events_clean"] = """
+        results[
+            "events_clean"
+        ] = """
             SELECT e.id, e.event_type, e.subject_type, e.subject_id, e.verb, e.message,
                    e.source_service, e.occurred_at AS occurred_utc,
                    to_local(e.occurred_at) AS occurred_local
@@ -457,7 +546,9 @@ def _build_silver_other(con, have):
             ORDER BY e.occurred_at"""
     if "calendar_events" in have:
         # Busy intervals only: titles and notes are deliberately left behind in bronze.
-        results["calendar_busy"] = """
+        results[
+            "calendar_busy"
+        ] = """
             SELECT start_time AS start_utc, end_time AS end_utc,
                    to_local(start_time) AS start_local, to_local(end_time) AS end_local,
                    date_diff('minute', start_time, end_time) >= 23 * 60 AS all_day,
@@ -479,19 +570,26 @@ def _build_gold(con, have, lake):
         # Hourly UTC buckets from each person's first sighting to the data horizon. `observed`
         # says whether the collector wrote anything that hour at all: a zero there is an outage
         # (device_history dropped ~30x in July 2026), not an absence.
-        con.execute(f"""CREATE TABLE collector_hours AS
+        con.execute(
+            f"""CREATE TABLE collector_hours AS
             WITH raw AS (SELECT time_bucket(INTERVAL 1 HOUR, timestamp) AS b, COUNT(*) AS n
                          FROM b_device_history GROUP BY 1)
             SELECT b, n, n >= {OBSERVED_MIN_FRACTION} * (SELECT MEDIAN(n) FROM raw) AS ok
-            FROM raw""")
-        con.execute("""CREATE TABLE horizon AS
-            SELECT time_bucket(INTERVAL 1 HOUR, MAX(timestamp)) AS h FROM b_device_history""")
-        con.execute("""CREATE TABLE person_hours AS
+            FROM raw"""
+        )
+        con.execute(
+            """CREATE TABLE horizon AS
+            SELECT time_bucket(INTERVAL 1 HOUR, MAX(timestamp)) AS h FROM b_device_history"""
+        )
+        con.execute(
+            """CREATE TABLE person_hours AS
             SELECT user_id, username, UNNEST(generate_series(
                      time_bucket(INTERVAL 1 HOUR, MIN(start_utc)), (SELECT h FROM horizon),
                      INTERVAL 1 HOUR)) AS b
-            FROM s_presence_intervals GROUP BY user_id, username""")
-        con.execute("""CREATE TABLE home_minutes AS
+            FROM s_presence_intervals GROUP BY user_id, username"""
+        )
+        con.execute(
+            """CREATE TABLE home_minutes AS
             WITH e AS (
               SELECT user_id, start_utc, end_utc,
                      UNNEST(generate_series(time_bucket(INTERVAL 1 HOUR, start_utc),
@@ -501,8 +599,11 @@ def _build_gold(con, have, lake):
             SELECT user_id, b,
                    SUM(date_diff('second', GREATEST(start_utc, b),
                                  LEAST(end_utc, b + INTERVAL 1 HOUR)) / 60.0) AS minutes_home
-            FROM e GROUP BY user_id, b""")
-        results["presence_grid"] = """
+            FROM e GROUP BY user_id, b"""
+        )
+        results[
+            "presence_grid"
+        ] = """
             SELECT p.user_id, p.username, p.b AS bucket_utc,
                    CAST(to_local(p.b) AS DATE) AS date_local,
                    hour(to_local(p.b)) AS hour_local,
@@ -518,12 +619,15 @@ def _build_gold(con, have, lake):
 
         # One row per person per local day (zero-filled), with first/last seen and the longest
         # absence between intervals inside the day.
-        con.execute("""CREATE TABLE person_days AS
+        con.execute(
+            """CREATE TABLE person_days AS
             SELECT user_id, username, UNNEST(generate_series(
                      CAST(to_local(MIN(start_utc)) AS DATE),
                      CAST(to_local((SELECT h FROM horizon)) AS DATE), INTERVAL 1 DAY))::DATE AS d
-            FROM s_presence_intervals GROUP BY user_id, username""")
-        con.execute("""CREATE TABLE clipped AS
+            FROM s_presence_intervals GROUP BY user_id, username"""
+        )
+        con.execute(
+            """CREATE TABLE clipped AS
             WITH e AS (
               SELECT user_id, start_local, end_local,
                      UNNEST(generate_series(CAST(start_local AS DATE), CAST(end_local AS DATE),
@@ -532,11 +636,16 @@ def _build_gold(con, have, lake):
             SELECT user_id, d,
                    GREATEST(start_local, CAST(d AS TIMESTAMP)) AS s,
                    LEAST(end_local, CAST(d AS TIMESTAMP) + INTERVAL 1 DAY) AS e
-            FROM e""")
-        con.execute("""CREATE TABLE observed_days AS
+            FROM e"""
+        )
+        con.execute(
+            """CREATE TABLE observed_days AS
             SELECT CAST(to_local(b) AS DATE) AS d, COUNT(*) AS hours
-            FROM collector_hours WHERE ok GROUP BY 1""")
-        results["daily_rhythm"] = f"""
+            FROM collector_hours WHERE ok GROUP BY 1"""
+        )
+        results[
+            "daily_rhythm"
+        ] = f"""
             WITH gaps AS (
               SELECT user_id, d, s, e,
                      date_diff('minute', LAG(e) OVER (PARTITION BY user_id, d ORDER BY s), s) AS gap
@@ -562,7 +671,9 @@ def _build_gold(con, have, lake):
     if silver["events_clean"].exists():
         # Sparse: only hours with at least one event. A learner zero-fills against the data
         # horizon (see presence_grid.observed).
-        results["hourly_rates"] = """
+        results[
+            "hourly_rates"
+        ] = """
             SELECT event_type || '/' || COALESCE(subject_type, '-') || '/' || COALESCE(verb, '-')
                      AS signal,
                    time_bucket(INTERVAL 1 HOUR, occurred_utc) AS bucket_utc,
@@ -571,7 +682,9 @@ def _build_gold(con, have, lake):
                    COUNT(*) AS n
             FROM s_events_clean GROUP BY ALL ORDER BY 1, 2"""
     if silver["sensor_15m"].exists():
-        results["sensor_hourly"] = """
+        results[
+            "sensor_hourly"
+        ] = """
             SELECT sensor_key, time_bucket(INTERVAL 1 HOUR, bucket_utc) AS bucket_utc,
                    CAST(to_local(time_bucket(INTERVAL 1 HOUR, bucket_utc)) AS DATE) AS date_local,
                    hour(to_local(time_bucket(INTERVAL 1 HOUR, bucket_utc))) AS hour_local,
@@ -590,7 +703,7 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
     counts = {}
     try:
         have = _setup(con, lake, exclusions, aliases or {}, tz)
-        queries = _build_presence(con, lake, have, gap)
+        queries = _build_presence(con, lake, have, gap, fixed=gap_minutes is not None)
         queries.update(_build_silver_other(con, have))
         queries.update(silver_contexts.build_ha(con, have))
         queries.update(silver_contexts.build_weather(con, have))

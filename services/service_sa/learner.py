@@ -1,11 +1,10 @@
 #!/usr/bin/python
 """sa-learner: the slow path of service_sa.
 
-Runs compute_entity_baselines() every 6 hours (the job service_daemon used to run on its own
-schedule, LF-1a) and the nightly lake job: Parquet bronze export (LF-1b, sa/lake.py) followed by
-the silver/gold rebuild (LF-2, sa/silver.py). Both take minutes on
-the NUC, which is exactly why they don't share a loop with anything time-sensitive. Later phases
-add silver/gold and the layer-1 learners.
+Runs the nightly lake job: Parquet bronze export (LF-1b, sa/lake.py) followed by the silver/gold
+rebuild (LF-2, sa/silver.py) and the layer-1 learner fits. It takes minutes on the NUC, which is
+exactly why it doesn't share a loop with anything time-sensitive. (compute_entity_baselines(), the
+6-hourly job this process used to run, was retired with the LF-4 departure_anomaly cutover.)
 """
 
 import os
@@ -15,18 +14,27 @@ import time
 import schedule
 
 from sa import disk, engine, external, inference_store, lake, silver
-from sa.learners import daytime, device_rhythm, drift, household_day, presence, rates, scalar, stay
+from sa.learners import (
+    bridge,
+    daytime,
+    device_rhythm,
+    drift,
+    household_day,
+    presence,
+    rates,
+    scalar,
+    stay,
+)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
 from common import heartbeat  # noqa: E402
 
 logger = engine.logger
 
-# compute_entity_baselines() alone measured ~175s on the NUC and blocks this loop while it runs,
-# so the stale window must comfortably exceed one run plus a loop tick.
+# A long export or silver build blocks this loop while it runs, so the stale window must
+# comfortably exceed one run plus a loop tick.
 HEARTBEAT_PATH = "/tmp/sa_learner_heartbeat"
 HEARTBEAT_STALE_SECONDS = 900
-BASELINE_INTERVAL_HOURS = 6
 # Container time is UTC. 03:30 UTC = 23:30 local, after the day's partitions have mostly settled.
 BRONZE_EXPORT_AT = "03:30"
 DISK_SAMPLE_INTERVAL_HOURS = 4
@@ -81,6 +89,13 @@ def run_learners():
     conn = None
     try:
         conn = inference_store.connect()
+        outcome = bridge.run_fit(lake.LAKE_DIR, conn)
+        logger.info(f"presence bridge done: {outcome}")
+    except Exception as e:
+        logger.error(f"presence bridge failed: {e}")
+    try:
+        if conn is None:
+            conn = inference_store.connect()
         outcome = presence.run_fit(lake.LAKE_DIR, conn)
         logger.info(f"presence learner done: {outcome}")
     except Exception as e:
@@ -151,9 +166,6 @@ if __name__ == "__main__":
     logger.info("sa-learner starting")
     heartbeat.touch(HEARTBEAT_PATH)
     heartbeat.start_watchdog(HEARTBEAT_PATH, HEARTBEAT_STALE_SECONDS, log=logger)
-    # Same cadence as the daemon's old `schedule.every(6).hours.do(compute_entity_baselines)`:
-    # first run 6h after start, not at start.
-    schedule.every(BASELINE_INTERVAL_HOURS).hours.do(engine.compute_entity_baselines)
     schedule.every().day.at(BRONZE_EXPORT_AT).do(run_bronze_export)
     # Sampled on its own, short job so a long export can't delay it, and a sample at start so the
     # trend has a fresh point after every deploy.

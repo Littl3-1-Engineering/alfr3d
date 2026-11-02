@@ -12,20 +12,17 @@ compute_entity_baselines() every 6h.
 # Standard library imports
 import logging
 import math
-import statistics
 import time
 import os
 import sys
-import bisect
 from datetime import datetime, timedelta, timezone
-from datetime import time as dtime
 import orjson
 
 # Third party imports
 import pymysql
 from sa import context_frame, focus_utils, inference_store, mood_utils, routing_utils, shadow
 from sa import disk, layer2
-from sa.learners import device_rhythm, household_day
+from sa.learners import device_rhythm, household_day, stay
 from sa.learners import presence as presence_learner
 from sa.learners import scalar
 
@@ -238,41 +235,6 @@ ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
 # in migration 039 (2026-09-13) -- see that migration's own comment for why. No Python constant
 # for their retention window lives here any more; it's in the EVENT bodies themselves, same as
 # device_location_history's own event already was.
-
-# check_departure_anomaly() (SA-3): how far back device_history is scanned when computing a
-# resident's per-weekday/weekend departure-hour baseline. Longer than a 30-day window
-# deliberately -- splitting into weekday/weekend buckets roughly quarters the sample size a
-# device baseline gets from the same window, and the confirmed-home-overnight anchor
-# (_departure_hours_by_bucket()) rejects many days outright. Verified against this household's
-# real history (todo/sa/todo_departure_anomaly.md): 60 days left every resident under the sample
-# floor; 120 days was the first window where multiple residents actually cleared it. 180 would
-# match device_history's own retention ceiling exactly, leaving no margin before rows this
-# window depends on get pruned daily -- 120 leaves a 60-day cushion.
-DEPARTURE_BASELINE_LOOKBACK_DAYS = 120
-
-# A gap this long between consecutive device_history writes for a claimed device is treated as a
-# genuine absence, not scan noise -- service_device's own check_offline_devices() only flips a
-# device to 'offline' once its last_online is stale by 30 minutes, so any gap at or above that
-# (+1 minute buffer) reflects an already-confirmed offline transition, not scan jitter.
-DEPARTURE_GAP_MINUTES = 31
-
-# A resident's per-day-bucket (weekday/weekend) departure baseline needs at least this many
-# observed first-departure days before check_departure_anomaly() trusts it -- same "degrade to
-# silence below a reliability floor" precedent as the other small-baseline floors.
-DEPARTURE_BASELINE_MIN_SAMPLES = 8
-
-# check_departure_anomaly() also requires the baseline's observed hour range
-# (typical_daily_max - typical_daily_min) to be at or under this many hours. The Phase 0 spike
-# found some residents' real departure-hour history is too scattered (multi-hour spread, no
-# real "typical" time) to be worth alerting on at all -- above this floor that household member
-# simply gets no departure-anomaly baseline, rather than firing on noise dressed up as a pattern.
-DEPARTURE_BASELINE_MAX_SPREAD_HOURS = 4
-
-# How many hours past a resident's typical departure hour check_departure_anomaly() waits before
-# firing -- a grace window so running a bit late on an otherwise-normal day doesn't trigger a
-# card, mirroring the old rhythm-break grace window's reasoning at the coarser (hour, not minute)
-# granularity appropriate for a once-a-day event.
-DEPARTURE_ANOMALY_GRACE_HOURS = 1.5
 
 # Continuous-stay guest decay: max how far check_gatherings() can nudge its own priority-3 slot
 # as its guests' decayed energy (spotify_utils.aggregate_guest_energy()) drops toward
@@ -1346,111 +1308,71 @@ class SAEngine:
         return card
 
     def check_departure_anomaly(self, frame):
-        """SA-3: "usually gone by now, still home" -- the human analogue of
-        check_rhythm_break_anomaly(), reading compute_entity_baselines()'s `entity_type='user'`
-        rows instead of `'device'`. See todo/sa/todo_departure_anomaly.md for the Phase 0 spike that
-        justified deriving this from the existing device_history/entity_baselines pattern rather
-        than a new table.
+        """SA-3: a resident who has been home an unusually long stretch for them. Since the LF-4
+        cutover this shows the stay learner's inference (sa/learners/stay.py) instead of an
+        `entity_baselines` "usually gone by now" hour: the shadow pass scores every resident's stay
+        so far each cycle and stores any deviation in sa_inferences, so the card lags it by at most
+        one cycle.
 
-        Fires only when every one of these holds, for at least one resident:
-        - a reliable baseline exists for today's weekday/weekend bucket (sample-count floor
-          *and* a tight-enough observed hour spread -- DEPARTURE_BASELINE_MIN_SAMPLES/
-          DEPARTURE_BASELINE_MAX_SPREAD_HOURS; a resident whose real departure times are just
-          scattered gets no baseline at all rather than a noisy one),
-        - the local hour is past that baseline's typical departure hour, plus a grace window
-          (DEPARTURE_ANOMALY_GRACE_HOURS) so running a bit late isn't an anomaly,
-        - at least one of that resident's claimed devices is online right now,
-        - and no household calendar event covers this exact moment (a booked morning at home,
-          e.g. WFH, is not a deviation -- checked directly against calendar_events, not
-          frame.upcoming_events, which only looks a couple hours *forward* and would miss an
-          event already in progress).
+        What it means, deliberately: no outing longer than the person's own bridge (see
+        sa/presence_bridge.py, 15-60 minutes) in a stay far longer than their comparable past
+        stays. A short walk does not end a stay, so the wording says "hasn't been out" and never
+        "home the whole time". Calendar suppression (a booked stretch at home) and the audience
+        (owner, technoking, resident) are applied where the inference is produced.
 
-        Only one card per cycle, same "single most-overdue" precedent as
-        check_rhythm_break_anomaly() -- picks the resident furthest past their typical hour.
-
-        Tone constraint (from the task doc): this is an ambient observation, never a welfare
-        check. "Still home -- unusual for a Tuesday," never "is everything okay?"
+        One card per cycle, the most surprising stay whose confidence clears MIN_CARD_CONFIDENCE.
+        Tone constraint (from the task doc): an ambient observation, never a welfare check.
         """
-        if frame.local_dt is None or frame.day_mood is None:
+        if frame.now is None:
             return None
-        local_dt = frame.local_dt
-        day_bucket = "weekend" if local_dt.weekday() >= 5 else "weekday"
-        current_hour = local_dt.hour + local_dt.minute / 60
-
+        now_utc = frame.now.replace(tzinfo=None)
         db = None
         try:
             db = pymysql.connect(
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
-            cursor = db.cursor()
-            cursor.execute(
-                """
-                SELECT eb.entity_id, u.username, eb.typical_active_hour, eb.sample_count
-                FROM entity_baselines eb
-                JOIN user u ON u.id = eb.entity_id
-                JOIN user_types ut ON u.type = ut.id
-                WHERE eb.entity_type = 'user' AND eb.day_bucket = %s
-                  AND eb.sample_count >= %s
-                  AND (eb.typical_daily_max - eb.typical_daily_min) <= %s
-                  AND ut.type IN ('owner', 'technoking', 'resident')
-                """,
-                (day_bucket, DEPARTURE_BASELINE_MIN_SAMPLES, DEPARTURE_BASELINE_MAX_SPREAD_HOURS),
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
             )
-            candidates = cursor.fetchall()
-            if not candidates:
-                return None
-
-            overdue = []
-            for user_id, username, typical_hour, sample_count in candidates:
-                if current_hour < typical_hour + DEPARTURE_ANOMALY_GRACE_HOURS:
-                    continue
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) FROM device d
-                    JOIN states s ON d.state = s.id
-                    WHERE d.user_id = %s AND s.state = 'online'
-                    """,
-                    (user_id,),
-                )
-                (online_count,) = cursor.fetchone()
-                if online_count == 0:
-                    continue
-                overdue.append((current_hour - typical_hour, username, typical_hour, sample_count))
-
-            if not overdue:
-                return None
-
-            cursor.execute(
-                "SELECT 1 FROM calendar_events WHERE start_time <= %s AND end_time >= %s LIMIT 1",
-                (frame.now, frame.now),
-            )
-            if cursor.fetchone():
-                return None
-
-            overdue.sort(reverse=True)
-            _over_by, username, typical_hour, sample_count = overdue[0]
-            day_of_week = frame.day_mood["day_of_week"]
-            return {
-                "mode": "departure_anomaly",
-                "content": f"{username} still home — unusual for a {day_of_week}",
-                "priority": 2.7,
-                "entity_name": username,
-                "data": {
-                    "typical_departure_hour": int(typical_hour),
-                    "sample_count": sample_count,
-                    "because": [
-                        f"usually gone by {int(typical_hour):02d}:00 on a {day_bucket}",
-                        f"{sample_count} samples in the last "
-                        f"{DEPARTURE_BASELINE_LOOKBACK_DAYS} days",
-                    ],
-                },
-            }
         except pymysql.Error as e:
             logger.error("Departure anomaly check error: " + str(e))
             return None
         finally:
             if db:
                 db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == stay.NAME
+            and i.signal == stay.SIGNAL
+            and (i.evidence or {}).get("username")
+            and i.confidence >= presence_learner.MIN_CARD_CONFIDENCE
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.surprise)
+        username = inference.evidence["username"]
+        minutes = inference.observed["stay_minutes"]
+        hours = round(minutes / 60.0)
+        span = f"{hours} h" if minutes < 48 * 60 else f"{round(minutes / 1440.0)} days"
+        daytype = (frame.day_mood or {}).get("day_of_week") or inference.context.get("daytype")
+        usual = round(inference.expected["p_stay_at_least"] * 100)
+        return {
+            "mode": "departure_anomaly",
+            "content": f"{username} hasn't been out in {span} — unusual for a {daytype}",
+            "priority": 2.7,
+            "entity_name": username,
+            "data": {
+                "stay_minutes": round(minutes),
+                "surprise_bits": inference.surprise,
+                "confidence": inference.confidence,
+                "p_stay_at_least": inference.expected["p_stay_at_least"],
+                "because": [
+                    f"{span} without a longer outing, which only {usual}% of comparable "
+                    f"past stays reached",
+                ],
+            },
+        }
 
     # --- LF-3: presence deviation ---------------------------------------------------------
 
@@ -2429,58 +2351,6 @@ class SAEngine:
             logger.info("Published situational awareness: " + str(data))
 
 
-def _departure_hours_by_bucket(timestamps):
-    """Reduce one resident's raw device_history timestamps (union of every claimed device,
-    already sorted ascending) into {"weekday": [hour, ...], "weekend": [hour, ...]} -- one entry
-    per day this resident's first real departure could be confirmed.
-
-    `device_history.state` is not used here (SA-3's Phase 0 spike found it unreliable for this --
-    see todo/sa/todo_departure_anomaly.md: the `before_device_update` trigger logs each row's state
-    from *before* that write, so a per-cycle "still online" ping and the offline-flip event both
-    log the same value, and only a reconnect-after-absence row logs the other one). The real
-    signal is in the *gaps* between consecutive writes: `device.update()` fires on every arp-scan
-    sighting (~60-90s while a device is actually seen), so a gap of DEPARTURE_GAP_MINUTES+ can
-    only mean the device (and everything that shares this list) went undetected for that long.
-
-    A day only counts if this resident was confirmed home overnight (some row before 05:00) --
-    without that anchor, a day's first-seen row could just be a late-morning reappearance of an
-    absence that started the night before, which would misattribute a multi-day trip's single
-    real departure to every day it spans.
-    """
-    buckets = {"weekday": [], "weekend": []}
-    if len(timestamps) < 2:
-        return buckets
-
-    days_seen = set()
-    for ts in timestamps:
-        day = ts.date()
-        if day in days_seen:
-            continue
-        days_seen.add(day)
-
-        day_start_idx = bisect.bisect_left(timestamps, datetime.combine(day, dtime.min))
-        if timestamps[day_start_idx].time() >= dtime(5, 0):
-            continue  # no overnight confirmation -- likely spillover from a prior absence
-
-        anchor_idx = bisect.bisect_left(timestamps, datetime.combine(day, dtime(4, 0)))
-        if anchor_idx >= len(timestamps) or timestamps[anchor_idx].date() != day:
-            continue
-
-        departure = None
-        for i in range(anchor_idx, len(timestamps) - 1):
-            gap_minutes = (timestamps[i + 1] - timestamps[i]).total_seconds() / 60
-            if gap_minutes >= DEPARTURE_GAP_MINUTES:
-                departure = timestamps[i]
-                break
-        if departure is None:
-            continue
-
-        bucket = "weekend" if departure.weekday() >= 5 else "weekday"
-        buckets[bucket].append(departure.hour)
-
-    return buckets
-
-
 def _active_hours_mask(sessions):
     """24-bit mask (bit h = UTC hour h) of the hours a device is usually online: hours covered by
     a session on at least ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE of the days it had any session.
@@ -2498,94 +2368,3 @@ def _active_hours_mask(sessions):
         if len(days) / len(days_seen) >= ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE:
             mask |= 1 << hour
     return mask
-
-
-def compute_entity_baselines():
-    """Recompute the per-resident departure-hour baselines into `entity_baselines`
-    (`entity_type='user'`, SA-3, see todo/sa/todo_departure_anomaly.md), used by
-    check_departure_anomaly(). Guests excluded.
-
-    The other row types this job used to write are retired: `device` (check_rhythm_break_anomaly
-    reads the device rhythm learner), `household` (the household-day learner) and `room` climate
-    bands (the scalar learner). This one goes when `departure_anomaly` is cut over to the stay
-    learner, after which the job and the table are dropped.
-    """
-    logger.info("Computing entity rhythm baselines")
-    db = None
-    try:
-        db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
-        cursor = db.cursor()
-        # Guests excluded via the same ut.type convention services.common.db_utils's "worthy
-        # listeners" check already uses (owner/technoking/resident only).
-        tz_offset = timedelta(seconds=db_utils.get_env_timezone(ENV_NAME))
-        departure_lookback_start = datetime.now(timezone.utc) - timedelta(
-            days=DEPARTURE_BASELINE_LOOKBACK_DAYS
-        )
-        cursor.execute(
-            """
-            SELECT DISTINCT u.id, u.username
-            FROM user u
-            JOIN user_types ut ON u.type = ut.id
-            JOIN device d ON d.user_id = u.id
-            WHERE ut.type IN ('owner', 'technoking', 'resident')
-            """
-        )
-        eligible_users = cursor.fetchall()
-
-        for user_id, username in eligible_users:
-            cursor.execute("SELECT id FROM device WHERE user_id = %s", (user_id,))
-            device_ids = [row[0] for row in cursor.fetchall()]
-            if not device_ids:
-                continue
-
-            placeholders = ",".join(["%s"] * len(device_ids))
-            cursor.execute(
-                f"""
-                SELECT timestamp FROM device_history
-                WHERE device_id IN ({placeholders}) AND timestamp >= %s
-                ORDER BY timestamp ASC
-                """,
-                (*device_ids, departure_lookback_start),
-            )
-            local_timestamps = sorted(row[0] + tz_offset for row in cursor.fetchall())
-            buckets = _departure_hours_by_bucket(local_timestamps)
-
-            for day_bucket, hours in buckets.items():
-                if len(hours) < DEPARTURE_BASELINE_MIN_SAMPLES:
-                    continue
-                cursor.execute(
-                    """
-                    INSERT INTO entity_baselines
-                        (entity_type, entity_id, day_bucket, typical_active_hour,
-                         typical_daily_min, typical_daily_max, sample_count, min_sample_count,
-                         computed_at)
-                    VALUES ('user', %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        typical_active_hour = VALUES(typical_active_hour),
-                        typical_daily_min = VALUES(typical_daily_min),
-                        typical_daily_max = VALUES(typical_daily_max),
-                        sample_count = VALUES(sample_count),
-                        min_sample_count = VALUES(min_sample_count),
-                        computed_at = VALUES(computed_at)
-                    """,
-                    (
-                        user_id,
-                        day_bucket,
-                        statistics.mode(hours),
-                        min(hours),
-                        max(hours),
-                        len(hours),
-                        DEPARTURE_BASELINE_MIN_SAMPLES,
-                        datetime.now(timezone.utc),
-                    ),
-                )
-            logger.info(f"Departure baseline for {username}: {buckets}")
-
-        db.commit()
-    except pymysql.Error as e:
-        logger.error(f"Entity baseline computation error: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
