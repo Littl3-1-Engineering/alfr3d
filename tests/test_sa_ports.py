@@ -491,6 +491,51 @@ class TestShadowRunner:
 
         assert runner._stay_starts == {}
 
+    def test_a_walk_longer_than_the_persons_bridge_starts_a_new_live_stay(self):
+        from sa.learners import bridge, stay
+
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+        quiet = bridge.profiles_from_rows([(1, 15, "quiet_phone", 1, 28)])
+        stay_profile = self._stay_profile()
+        runner.profiles = lambda name: (
+            quiet if name == bridge.NAME else [stay_profile] if name == stay.NAME else []
+        )
+        start = datetime(2026, 10, 9, 13, 0)
+        first = MagicMock()
+        first.fetchall.return_value = [(start,), (start + timedelta(minutes=5),)]
+        first.fetchone.return_value = None
+        runner._connect = lambda: MagicMock(cursor=lambda: first)
+        runner.departure(frame)
+        assert runner._stay_starts["1"] == start
+        # 20 minutes unseen, then the phone is back. user.state never flipped to offline.
+        back = runner._stay_seen["1"] + timedelta(minutes=20)
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(back,), (back + timedelta(minutes=1),)]
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
+
+        assert runner._stay_start(1, back + timedelta(minutes=2)) == back
+        assert runner._stay_starts["1"] == back
+
+    def test_the_same_walk_is_bridged_for_a_phone_that_naps(self):
+        from sa.learners import bridge
+
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+        napper = bridge.profiles_from_rows([(1, 45, "naps", 90, 28)])
+        original = runner.profiles
+        runner.profiles = lambda name: napper if name == bridge.NAME else original(name)
+        start = datetime(2026, 10, 9, 13, 0)
+        first = MagicMock()
+        first.fetchall.return_value = [(start,), (start + timedelta(minutes=5),)]
+        first.fetchone.return_value = None
+        runner._connect = lambda: MagicMock(cursor=lambda: first)
+        runner.departure(frame)
+        back = runner._stay_seen["1"] + timedelta(minutes=20)
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(back,)]
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
+
+        assert runner._stay_start(1, back + timedelta(minutes=2)) == datetime(2026, 10, 9, 13, 0)
+
     def test_rhythm_ignores_an_offline_row_replaced_by_an_online_row_of_the_same_name(self):
         runner, _ = self._runner()
         profile = TestDeviceRhythm()._profile()

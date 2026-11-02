@@ -9,7 +9,8 @@ home at ANY hour, so being home is always improbable and every visit scores as a
 Model
 -----
 A stay is one merged presence interval (silver, phone sightings with gaps under
-PRESENCE_GAP_MINUTES): an arrival, then a departure. Stays shorter than MIN_STAY_MINUTES are
+the person's learned bridge, sa/presence_bridge.py): an arrival, then a departure. Stays
+shorter than MIN_STAY_MINUTES are
 blips and neither teach the model nor get scored. For a stay in progress, the question is the
 survival probability
 
@@ -25,7 +26,8 @@ has a fat tail and nothing is ever surprising; a person who is always gone withi
 surprised by the second.
 
 Confidence is sa/confidence.py's product: sufficiency of the comparable weight, the collector's
-coverage, the phone's source quality and a stability term (see stability_of; it can be passed in, e.g. by tests).
+coverage, the phone's source quality and a stability term (see stability_of; it can be passed in,
+e.g. by tests).
 """
 
 import math
@@ -47,10 +49,10 @@ LOOKBACK_DAYS = 4  # how far back the live stay start is searched; a longer stay
 ARRIVAL_SIGMA_HOURS = 2.5
 DAYTYPE_MISMATCH_WEIGHT = 0.25
 MIN_COMPARABLE_WEIGHT = 5.0
-# 5 bits = p <= 3 %. At 3 bits (p <= 12.5 %) about one stay in nine flags by construction, and a flag
-# stays on until the person leaves (survival only falls), so a handful of long stays filled most of
-# the shadow window. Leave-one-out replay of the last 8 weeks, four residents: 22 stays flag at 3
-# bits, 11 at 4, 3 at 5, 1 at 6 -- 5 is about one overstay card every two to three weeks.
+# 5 bits = p <= 3 %. At 3 bits (p <= 12.5 %) about one stay in nine flags by construction, and a
+# flag stays on until the person leaves (survival only falls), so a handful of long stays filled
+# most of the shadow window. Leave-one-out replay of the last 8 weeks, four residents: 22 stays flag
+# at 3 bits, 11 at 4, 3 at 5, 1 at 6 -- 5 is about one overstay card every two to three weeks.
 MIN_SURPRISE_BITS = 5.0
 STABILITY_UNKNOWN = 0.5
 LIVE_OFFLINE_LAG_MINUTES = presence.LIVE_OFFLINE_LAG_MINUTES
@@ -255,19 +257,27 @@ def current_stay_start(intervals, at_utc):
     return start
 
 
+def stay_state(sightings, bridge_minutes, start=None, last_seen=None):
+    """(start, last_seen), both naive UTC: the stay in progress after walking forward over
+    `sightings`, where sightings at most `bridge_minutes` apart belong to one stay (the rule silver
+    merges presence intervals by, with this person's bridge, sa/presence_bridge.py). Pass the
+    previous (start, last_seen) to continue from them over newer sightings only; sightings at or
+    before `last_seen` are ignored. (None, None) with no sightings."""
+    for t in sorted(set(sightings)):
+        if last_seen is None or start is None:
+            start = last_seen = t
+        elif t <= last_seen:
+            continue
+        elif (t - last_seen).total_seconds() / 60.0 > bridge_minutes:
+            start = last_seen = t
+        else:
+            last_seen = t
+    return start, last_seen
+
+
 def stay_start_from_sightings(sightings, gap_minutes=silver.PRESENCE_GAP_MINUTES):
-    """Start (naive UTC) of the stay that ends at the newest sighting: walk back while consecutive
-    sightings are at most `gap_minutes` apart, the rule silver merges presence intervals by. Returns
-    None with no sightings."""
-    times = sorted(sightings)
-    if not times:
-        return None
-    start = times[-1]
-    for earlier in reversed(times[:-1]):
-        if (start - earlier).total_seconds() / 60.0 > gap_minutes:
-            break
-        start = earlier
-    return start
+    """Start (naive UTC) of the stay that ends at the newest sighting, or None with no sightings."""
+    return stay_state(sightings, gap_minutes)[0]
 
 
 def run_fit(lake_dir, conn, tz=None):
