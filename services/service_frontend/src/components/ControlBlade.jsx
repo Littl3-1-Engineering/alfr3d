@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
+import { roundReading } from '../utils/formatReading';
 import { X, Settings, Thermometer, Lock, Unlock, Fan, Blinds, Volume2 } from 'lucide-react';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
@@ -273,7 +274,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
           <span className="text-text-secondary">Climate</span>
         </div>
         <span className="text-primary font-mono">
-          {device?.last_state?.attributes?.current_temperature || '--'}°
+          {roundReading(device?.last_state?.attributes?.current_temperature) ?? '--'}°
         </span>
       </div>
 
@@ -515,7 +516,7 @@ const ControlBlade = ({ device, onClose, anchor }) => {
             <div className="flex items-center justify-center py-4">
               <div className="text-center">
                 <div className="text-4xl font-bold text-primary">
-                  {sensorValue !== null ? sensorValue : '--'}
+                  {sensorValue !== null ? roundReading(sensorValue) : '--'}
                 </div>
                 <div className="text-sm text-text-secondary">{sensorUnit}</div>
               </div>

@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { roundReading } from '../utils/formatReading';
 import { Lightbulb, Power, Thermometer, Fan, Blinds, Lock, Unlock, Play, Volume2, X } from 'lucide-react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
@@ -356,7 +357,7 @@ const FavoriteDeviceTile = ({ device, canControl, editMode, onRemove, onSelect }
       case 'binary_sensor':
         return (
           <div className="text-center text-fui-accent font-mono text-sm">
-            {state.state !== undefined ? String(state.state) : '--'}
+            {state.state !== undefined ? String(roundReading(state.state)) : '--'}
           </div>
         );
       default:
