@@ -596,6 +596,32 @@ async def get_iot_devices(linked: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _resolve_live_ha_entity(device_id: int, ha_entity_id: str) -> str:
+    """The HA entity a control command should actually hit.
+
+    HA's service API answers 200 for an entity that no longer exists, so a stored entity_id that
+    HA has renamed or removed made every command "succeed" while doing nothing. If HA no longer
+    has the entity, re-run the sync now -- it re-points a renamed row (matched by MAC / HA device
+    id) or prunes a removed one -- and use the row's current entity_id; 404 if it is gone."""
+    from common import ha_utils
+
+    loop = asyncio.get_event_loop()
+    exists = await loop.run_in_executor(None, ha_utils.ha_entity_exists, ha_entity_id)
+    if exists is not False:  # True, or None when HA is unreachable (let the command report it)
+        return ha_entity_id
+
+    await loop.run_in_executor(None, ha_utils.sync_ha_devices)
+    devices = await loop.run_in_executor(None, fetch_iot_devices_data)
+    await manager.broadcast("iot_devices", devices)
+    current = next((d for d in devices if d["id"] == device_id), None)
+    if current and current.get("ha_entity_id") and current["ha_entity_id"] != ha_entity_id:
+        return current["ha_entity_id"]
+    raise HTTPException(
+        status_code=404,
+        detail="This device no longer exists in Home Assistant and has been removed.",
+    )
+
+
 @router.post("/iot/devices/{device_id}/control")
 async def control_iot_device(
     device_id: int, data: IOTDeviceControl, _perm=Depends(require_permission("iot", "control"))
@@ -625,6 +651,8 @@ async def control_iot_device(
 
         if source == "homeassistant" and ha_entity_id:
             from common import ha_utils
+
+            ha_entity_id = await _resolve_live_ha_entity(device_id, ha_entity_id)
 
             if command == "turn_on":
                 service = "turn_on"

@@ -17,6 +17,25 @@ logger = logging.getLogger("HALog")
 HA_UNREACHABLE_STATES = ("unavailable", "unknown")
 
 
+# Entity domains mirrored into smarthome_devices.
+SYNCED_DOMAINS = (
+    "light",
+    "switch",
+    "fan",
+    "climate",
+    "cover",
+    "lock",
+    "media_player",
+    "sensor",
+    "binary_sensor",
+    "camera",
+)
+
+# Never prune more than this share of the stored HA rows in one sync: a sync that suddenly
+# "loses" most of the house is HA mid-reload (integration restarting), not the user deleting it.
+MAX_PRUNE_FRACTION = 0.5
+
+
 def ha_state_is_online(state):
     """True when a Home Assistant entity state indicates the device is reachable."""
     return bool(state) and state not in HA_UNREACHABLE_STATES
@@ -108,21 +127,80 @@ def get_ha_devices():
         entity_id = state.get("entity_id", "")
         domain = entity_id.split(".")[0] if "." in entity_id else ""
 
-        if domain in [
-            "light",
-            "switch",
-            "fan",
-            "climate",
-            "cover",
-            "lock",
-            "media_player",
-            "sensor",
-            "binary_sensor",
-            "camera",
-        ]:
+        if domain in SYNCED_DOMAINS:
             devices.append(_state_to_device(state))
 
     return devices
+
+
+_REGISTRY_TEMPLATE = """
+{%% set ns = namespace(out=[]) %%}
+{%% for s in states if s.domain in %(domains)s %%}
+{%% set d = device_id(s.entity_id) %%}
+{%% set ns.out = ns.out + [{'e': s.entity_id, 'd': d,
+   'c': (device_attr(d, 'connections') | list) if d else []}] %%}
+{%% endfor %%}{{ ns.out | tojson }}
+"""
+
+
+def get_ha_registry_info():
+    """{entity_id: {"device_id": str|None, "mac": str|None}} from HA's device registry.
+
+    `/api/states` carries neither the device id nor the MAC (both live in the device registry,
+    not in entity attributes), so they are read with one `/api/template` render. The device id
+    survives an entity_id rename; the MAC is what ALFR3D links devices by. Best-effort: any
+    failure returns {} and the sync falls back to plain entity_id identity (the old behaviour)."""
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+    if not ha_url or not ha_token:
+        return {}
+    try:
+        template = _REGISTRY_TEMPLATE % {"domains": repr(list(SYNCED_DOMAINS))}
+        response = requests.post(
+            f"{ha_url}/api/template",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            json={"template": template},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            logger.warning(f"HA registry lookup failed: HTTP {response.status_code}")
+            return {}
+        info = {}
+        for row in orjson.loads(response.text):
+            mac = None
+            for conn in row.get("c") or []:
+                if len(conn) == 2 and conn[0] == "mac" and conn[1]:
+                    mac = str(conn[1]).upper()
+                    break
+            info[row["e"]] = {"device_id": row.get("d"), "mac": mac}
+        return info
+    except Exception as e:
+        logger.warning(f"HA registry lookup failed: {e}")
+        return {}
+
+
+def ha_entity_exists(entity_id):
+    """True/False whether HA still has this entity, None when that can't be determined (HA
+    unreachable). HA's service API answers 200 for an entity that does not exist, so without this
+    check a command to a renamed/removed entity looks successful and does nothing."""
+    config = get_ha_config()
+    ha_url = config.get("ha_url", "").rstrip("/")
+    ha_token = config.get("ha_token", "")
+    if not ha_url or not ha_token:
+        return None
+    try:
+        response = requests.get(
+            f"{ha_url}/api/states/{entity_id}",
+            headers={"Authorization": f"Bearer {ha_token}"},
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error(f"Error checking HA entity {entity_id}: {e}")
+        return None
+    if response.status_code == 404:
+        return False
+    return True if response.status_code == 200 else None
 
 
 def _state_to_device(state):
@@ -345,6 +423,27 @@ def _ha_control_device(entity_id, service, data=None):
         return False, "Failed to control device"
 
 
+def _find_renamed_row(cursor, stale, device, ha_device_id, claimed):
+    """The stored row of an entity that HA has since renamed, or None.
+
+    A row is `stale` when its entity_id is no longer in HA. It is this entity's previous
+    incarnation when the MAC matches (ALFR3D's own identity for a device), else when it is the
+    only stale row of the same HA device and domain -- a device can own several entities of one
+    domain, so a tie is left alone (the old row is pruned and the new one inserted) rather than
+    guessed at."""
+    mac = device.get("mac_address")
+    candidates = [r for r in stale if r["id"] not in claimed and r["domain"] == device["domain"]]
+    if mac:
+        by_mac = [r for r in candidates if (r["mac"] or "").upper() == mac.upper()]
+        if len(by_mac) == 1:
+            return by_mac[0]
+    if ha_device_id:
+        by_device = [r for r in candidates if r["ha_device_id"] == ha_device_id]
+        if len(by_device) == 1:
+            return by_device[0]
+    return None
+
+
 def sync_ha_devices():
     if not is_ha_configured():
         logger.warning("HA not configured, skipping sync")
@@ -355,6 +454,8 @@ def sync_ha_devices():
         logger.warning("No HA devices found")
         return False
 
+    registry = get_ha_registry_info()
+
     db = get_connection()
     cursor = db.cursor()
 
@@ -362,15 +463,32 @@ def sync_ha_devices():
     env_row = cursor.fetchone()
     env_id = env_row[0] if env_row else None
 
+    live_ids = {d["entity_id"] for d in devices}
+    cursor.execute(
+        "SELECT id, ha_entity_id, device_type, mac_address, ha_device_id "
+        "FROM smarthome_devices WHERE source = 'homeassistant' AND ha_entity_id IS NOT NULL"
+    )
+    stored = [
+        {"id": r[0], "entity_id": r[1], "domain": r[2], "mac": r[3], "ha_device_id": r[4]}
+        for r in cursor.fetchall()
+    ]
+    stale = [r for r in stored if r["entity_id"] not in live_ids]
+    stored_ids = {r["entity_id"] for r in stored}
+    claimed = set()
+
     synced = 0
     updated = 0
     linked = 0
+    renamed = 0
     for device in devices:
         entity_id = device["entity_id"]
         name = device["name"]
         device_type = device["domain"]
         state = device["state"]
-        mac_address = device.get("mac_address")
+        reg = registry.get(entity_id, {})
+        mac_address = device.get("mac_address") or reg.get("mac")
+        device["mac_address"] = mac_address
+        ha_device_id = reg.get("device_id")
 
         device_id = None
 
@@ -393,38 +511,97 @@ def sync_ha_devices():
         )
         existing = cursor.fetchone()
 
+        if not existing and entity_id not in stored_ids:
+            old = _find_renamed_row(cursor, stale, device, ha_device_id, claimed)
+            if old:
+                # HA renamed the entity: re-point the row we already have (keeping its id, so
+                # favorites and links survive) instead of orphaning it beside a new one.
+                claimed.add(old["id"])
+                cursor.execute(
+                    "UPDATE smarthome_devices SET ha_entity_id = %s WHERE id = %s",
+                    (entity_id, old["id"]),
+                )
+                existing = (old["id"],)
+                renamed += 1
+                logger.info(f"HA entity renamed: {old['entity_id']} -> {entity_id}")
+
         if existing:
             cursor.execute(
                 """
                 UPDATE smarthome_devices
                 SET name = %s,
                     mac_address = COALESCE(%s, mac_address),
+                    ha_device_id = COALESCE(%s, ha_device_id),
                     device_type = %s,
                     online = %s,
                     last_state = %s,
                     device_id = COALESCE(device_id, %s)
                 WHERE id = %s
                 """,
-                (name, mac_address, device_type, online, last_state, device_id, existing[0]),
+                (
+                    name,
+                    mac_address,
+                    ha_device_id,
+                    device_type,
+                    online,
+                    last_state,
+                    device_id,
+                    existing[0],
+                ),
             )
             updated += 1
         else:
             cursor.execute(
                 """
                 INSERT INTO smarthome_devices
-                    (name, source, ha_entity_id, mac_address, device_type, online,
+                    (name, source, ha_entity_id, mac_address, ha_device_id, device_type, online,
                      last_state, environment_id, device_id)
-                VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 'homeassistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (name, entity_id, mac_address, device_type, online, last_state, env_id, device_id),
+                (
+                    name,
+                    entity_id,
+                    mac_address,
+                    ha_device_id,
+                    device_type,
+                    online,
+                    last_state,
+                    env_id,
+                    device_id,
+                ),
             )
         synced += 1
+
+    pruned = _prune_removed_entities(cursor, stored, stale, claimed)
 
     db.commit()
     db.close()
 
-    logger.info(f"Synced {synced} HA devices ({updated} updated), linked {linked}")
+    logger.info(
+        f"Synced {synced} HA devices ({updated} updated, {renamed} renamed, "
+        f"{pruned} removed), linked {linked}"
+    )
     return True
+
+
+def _prune_removed_entities(cursor, stored, stale, claimed):
+    """Delete rows whose entity HA no longer has (and that were not just re-pointed by a
+    rename). HA keeps `unavailable` entities in /api/states, so absence there means the entity
+    was genuinely removed -- not merely offline. device_favorites cascades. Refuses to prune
+    when it would remove more than MAX_PRUNE_FRACTION of the HA rows (HA mid-reload)."""
+    doomed = [r for r in stale if r["id"] not in claimed]
+    if not doomed:
+        return 0
+    if stored and len(doomed) / len(stored) > MAX_PRUNE_FRACTION:
+        logger.warning(
+            f"Not pruning {len(doomed)} of {len(stored)} HA devices: looks like HA is "
+            "mid-reload, not a real removal"
+        )
+        return 0
+    for row in doomed:
+        cursor.execute("DELETE FROM smarthome_devices WHERE id = %s", (row["id"],))
+        logger.info(f"Removed HA device no longer in Home Assistant: {row['entity_id']}")
+    return len(doomed)
 
 
 def save_ha_config(ha_url, ha_token):
