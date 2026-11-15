@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { roundReading } from '../utils/formatReading';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { API_BASE_URL } from '../config';
@@ -104,7 +105,7 @@ const WeatherPanel = ({ initialWeather = null }) => {
             <div>
               <span className="text-fui-text/60 font-mono">PRESSURE:</span>
               <span className="text-fui-text font-mono ml-1">
-                {weatherData.pressure != null ? `${weatherData.pressure} hPa` : 'N/A'} {TrendIcon}
+                {weatherData.pressure != null ? `${roundReading(weatherData.pressure)} hPa` : 'N/A'} {TrendIcon}
               </span>
             </div>
           </div>
@@ -112,11 +113,11 @@ const WeatherPanel = ({ initialWeather = null }) => {
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
               <span className="text-fui-text/60 font-mono">LOW:</span>
-              <span className="text-fui-text font-mono ml-1">{weatherData.low || 'N/A'}°C</span>
+              <span className="text-fui-text font-mono ml-1">{roundReading(weatherData.low) || 'N/A'}°C</span>
             </div>
             <div>
               <span className="text-fui-text/60 font-mono">HIGH:</span>
-              <span className="text-fui-text font-mono ml-1">{weatherData.high || 'N/A'}°C</span>
+              <span className="text-fui-text font-mono ml-1">{roundReading(weatherData.high) || 'N/A'}°C</span>
             </div>
             <div>
               <span className="text-fui-text/60 font-mono">SUNRISE:</span>
@@ -128,7 +129,7 @@ const WeatherPanel = ({ initialWeather = null }) => {
             </div>
             <div>
               <span className="text-fui-text/60 font-mono">HUMIDITY:</span>
-              <span className="text-fui-text font-mono ml-1">{weatherData.humidity || 'N/A'}%</span>
+              <span className="text-fui-text font-mono ml-1">{roundReading(weatherData.humidity) || 'N/A'}%</span>
             </div>
           </div>
         </div>

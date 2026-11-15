@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render as rtlRender, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { ThemeProvider } from '../utils/ThemeContext'
 import SituationalAwareness from './SituationalAwareness'
 import socket from '../utils/socket'
 
@@ -9,6 +10,9 @@ vi.mock('../utils/socket', () => ({
     off: vi.fn(),
   },
 }))
+
+// The card controls use HudRing, which reads the theme the app always provides (main.jsx).
+const render = (ui) => rtlRender(<ThemeProvider>{ui}</ThemeProvider>)
 
 const mockSaData = (mode) => ([
   { mode, content: `${mode} content`, priority: 1 },
@@ -306,6 +310,75 @@ describe('SituationalAwareness', () => {
 
       await waitFor(() => expect(bodies('dismissed').length).toBe(1))
       expect(bodies('impression').length).toBe(0)
+    })
+
+    describe('explicit feedback', () => {
+      it('"Got it" clears the card and reports acked under the display\'s id', async () => {
+        await renderCard()
+        now += 5000
+
+        fireEvent.click(screen.getByLabelText('Got it'))
+
+        expect(screen.queryByText('sunny')).toBeFalsy()
+        await waitFor(() => expect(bodies('acked').length).toBe(1))
+        expect(bodies('acked')[0]).toMatchObject({ rule_id: 'weather', surface: 'web' })
+        expect(bodies('acked')[0].impression_id).toBe(bodies('shown')[0].impression_id)
+        expect(bodies('acked')[0].detail).toBeUndefined()
+        expect(bodies('dismissed').length).toBe(0)
+        await waitFor(() => expect(bodies('impression').length).toBe(1))
+        expect(bodies('impression')[0].visible_ms).toBe(5000)
+      })
+
+      it('the x stays a plain dismissal, with no reason', async () => {
+        await renderCard()
+
+        fireEvent.click(screen.getByLabelText('Dismiss card'))
+
+        await waitFor(() => expect(bodies('dismissed').length).toBe(1))
+        expect(bodies('dismissed')[0].detail).toBeUndefined()
+        expect(bodies('not_useful').length).toBe(0)
+        expect(bodies('acked').length).toBe(0)
+      })
+
+      it('"Not useful" opens a reasons menu and reports the chosen reason in detail', async () => {
+        await renderCard()
+        expect(screen.queryByRole('menu')).toBeFalsy()
+
+        fireEvent.click(screen.getByLabelText('Not useful'))
+        expect(screen.getByRole('menu')).toBeTruthy()
+        // Opening the menu reports nothing and keeps the card.
+        expect(bodies('not_useful').length).toBe(0)
+        expect(screen.getByText('sunny')).toBeTruthy()
+
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Already knew' }))
+
+        expect(screen.queryByText('sunny')).toBeFalsy()
+        await waitFor(() => expect(bodies('not_useful').length).toBe(1))
+        expect(bodies('not_useful')[0]).toMatchObject({
+          rule_id: 'weather', surface: 'web', detail: 'already_knew',
+        })
+        expect(bodies('not_useful')[0].impression_id).toBe(bodies('shown')[0].impression_id)
+      })
+
+      it('"Not useful" with no reason reports no detail', async () => {
+        await renderCard()
+
+        fireEvent.click(screen.getByLabelText('Not useful'))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'No reason' }))
+
+        await waitFor(() => expect(bodies('not_useful').length).toBe(1))
+        expect(bodies('not_useful')[0].detail).toBeUndefined()
+      })
+
+      it('an urgent card offers none of the three controls', async () => {
+        await renderCard([
+          { mode: 'system_health', rule_id: 'system_health', subject_key: '', content: 'HA down', priority: 2.2, urgent: true },
+        ])
+
+        expect(screen.queryByLabelText('Got it')).toBeFalsy()
+        expect(screen.queryByLabelText('Not useful')).toBeFalsy()
+        expect(screen.queryByLabelText('Dismiss card')).toBeFalsy()
+      })
     })
 
     it('opening a music playlist is reported as a tap saying what it opened', async () => {

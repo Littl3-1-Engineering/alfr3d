@@ -18,6 +18,7 @@ swallowed, and no result of this module reaches a card.
 import logging
 from datetime import datetime, timedelta
 
+from common.presence_utils import INFRASTRUCTURE_USERNAMES
 from sa import inference_store, layer2
 from sa import presence_bridge, silver
 from sa.learners.base import Inference, utcnow
@@ -127,6 +128,7 @@ class ShadowRunner:
             ("attention_focus", self.attention),
             ("departure_anomaly", self.departure),
             ("rhythm_break_anomaly", self.rhythm),
+            ("device_health", self.device_health),
         ):
             if name not in cards:
                 continue
@@ -392,30 +394,65 @@ class ShadowRunner:
             self._stay_starts[key], self._stay_seen[key] = start, seen
         return start
 
-    def rhythm(self, frame):
-        profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
-        if not profiles or frame.local_dt is None:
-            return []
+    def _device_rows(self):
+        """(id, state, last_online, name, owner username) for every device that has been seen."""
         db = self._connect()
         try:
             cursor = db.cursor()
             cursor.execute(
-                "SELECT d.id, s.state, d.last_online, d.name FROM device d "
-                "JOIN states s ON d.state = s.id WHERE d.last_online IS NOT NULL"
+                "SELECT d.id, s.state, d.last_online, d.name, u.username FROM device d "
+                "JOIN states s ON d.state = s.id LEFT JOIN user u ON d.user_id = u.id "
+                "WHERE d.last_online IS NOT NULL"
             )
-            rows = cursor.fetchall()
+            return cursor.fetchall()
         finally:
             db.close()
+
+    def device_health(self, frame):
+        """Household hardware (devices owned by the infrastructure user: a camera, a sensor) that
+        has been offline much longer than it ever ordinarily is. These devices are kept out of
+        `rhythm`: "on at an unusual hour" means nothing for a camera, "offline" does."""
+        profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
+        if not profiles or frame.local_dt is None:
+            return []
+        rows = self._device_rows()
+        learner = device_rhythm.DeviceRhythmLearner()
+        now_utc = frame.now.replace(tzinfo=None)
+        online_names = {name for _id, state, _seen, name, _owner in rows if state == "online"}
+        findings = []
+        for device_id, state, last_online, name, owner in rows:
+            profile = profiles.get(str(device_id))
+            if profile is None or state == "online" or owner not in INFRASTRUCTURE_USERNAMES:
+                continue
+            if name in online_names and name != "unknown":
+                continue  # a replaced row, see rhythm()
+            found = learner.score_health(
+                profile,
+                {
+                    "offline_minutes": (now_utc - last_online).total_seconds() / 60.0,
+                    "local_dt": frame.local_dt,
+                },
+                now_utc,
+            )
+            if found is not None:
+                findings.append(found)
+        return findings
+
+    def rhythm(self, frame):
+        profiles = {str(p.subject_id): p for p in self.profiles(device_rhythm.NAME)}
+        if not profiles or frame.local_dt is None:
+            return []
+        rows = self._device_rows()
         learner = device_rhythm.DeviceRhythmLearner()
         now_utc = frame.now.replace(tzinfo=None)
         findings = []
         # A device whose row was replaced (MAC rotation, re-adoption) leaves an old row offline for
         # good while the same name is online under a new id: not an absence.
-        online_names = {name for _id, state, _seen, name in rows if state == "online"}
-        for device_id, state, last_online, name in rows:
+        online_names = {name for _id, state, _seen, name, _owner in rows if state == "online"}
+        for device_id, state, last_online, name, owner in rows:
             profile = profiles.get(str(device_id))
-            if profile is None:
-                continue
+            if profile is None or owner in INFRASTRUCTURE_USERNAMES:
+                continue  # household hardware has device_health, not a rhythm
             if state != "online" and name in online_names and name != "unknown":
                 continue
             minutes = (now_utc - last_online).total_seconds() / 60.0

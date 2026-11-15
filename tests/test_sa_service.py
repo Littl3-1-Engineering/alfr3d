@@ -5,7 +5,6 @@ import os
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
-import orjson
 import pytest
 
 
@@ -100,6 +99,12 @@ class TestDecideDisplays:
         "urgent": True,
     }
     DISK_HEALTH_CARD = {"mode": "disk_health", "content": "dh", "priority": 5.9}
+    DEVICE_HEALTH_CARD = {
+        "mode": "device_health",
+        "content": "C200 has been offline for 10 h",
+        "priority": 2.65,
+        "entity_name": "C200",
+    }
     TIME_CARD = {"mode": "time", "content": "t", "priority": 1}
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
@@ -245,6 +250,7 @@ class TestDecideDisplays:
         check_household_unusual_day=None,
         check_system_health=None,
         check_disk_health=None,
+        check_device_health=None,
     ):
         """Build a SAEngine with each check_* replaced by a stub returning the given card."""
         from services.service_sa.sa.engine import SAEngine
@@ -277,6 +283,7 @@ class TestDecideDisplays:
         daemon.check_household_unusual_day = MagicMock(return_value=check_household_unusual_day)
         daemon.check_system_health = MagicMock(return_value=check_system_health)
         daemon.check_disk_health = MagicMock(return_value=check_disk_health)
+        daemon.check_device_health = MagicMock(return_value=check_device_health)
         return daemon
 
     def test_all_ten_checks_produce_cards_in_priority_order(self):
@@ -349,6 +356,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -462,6 +470,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -474,7 +483,7 @@ class TestDecideDisplays:
         # rule fired exactly once, so all twenty-four cards come back -- nothing dropped.
         from services.service_sa.sa.engine import SAEngine
 
-        assert len(result) == 25 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
+        assert len(result) == 26 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -488,6 +497,7 @@ class TestDecideDisplays:
             "empty_house_still_on",
             "travel",
             "rhythm_break_anomaly",
+            "device_health",
             "departure_anomaly",
             "presence_deviation",
             "music",
@@ -635,6 +645,142 @@ class TestCardSuppression(TestDecideDisplays):
 
             assert SAEngine()._card_suppression_reason("weather", "") is None
 
+    def test_checkmark_and_swipe_share_the_normal_cooldown(self):
+        """acked ("got it") and dismissed (swipe) both clear the card for the normal cooldown."""
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+        )
+
+        for action in ("acked", "dismissed"):
+            with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+                mock_cursor = MagicMock()
+                mock_connect.return_value.cursor.return_value = mock_cursor
+                recent = datetime.now(timezone.utc).replace(tzinfo=None)
+                mock_cursor.fetchall.return_value = [(action, recent)]
+                assert SAEngine()._card_suppression_reason("weather", "") == "cooldown", action
+
+                old = datetime.now(timezone.utc) - timedelta(
+                    minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5
+                )
+                mock_cursor.fetchall.return_value = [(action, old.replace(tzinfo=None))]
+                assert SAEngine()._card_suppression_reason("weather", "") is None, action
+
+    def test_not_useful_silences_far_longer_than_a_swipe(self):
+        """A swipe is neutral and is back after an hour; not_useful is strong and is still
+        suppressed at that point, then released after its own (day-long) cooldown."""
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+            CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES,
+        )
+
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            engine = SAEngine()
+
+            past_swipe = datetime.now(timezone.utc) - timedelta(
+                minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5
+            )
+            mock_cursor.fetchall.return_value = [("dismissed", past_swipe.replace(tzinfo=None))]
+            assert engine._card_suppression_reason("weather", "") is None
+            mock_cursor.fetchall.return_value = [("not_useful", past_swipe.replace(tzinfo=None))]
+            assert engine._card_suppression_reason("weather", "") == "cooldown"
+
+            past_not_useful = datetime.now(timezone.utc) - timedelta(
+                minutes=CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES + 5
+            )
+            mock_cursor.fetchall.return_value = [
+                ("not_useful", past_not_useful.replace(tzinfo=None))
+            ]
+            assert engine._card_suppression_reason("weather", "") is None
+
+    @staticmethod
+    def _history_cursor(feedback_rows, history_rows):
+        """A cursor that answers each of _card_suppression_reason's two queries: the latest
+        feedback/tap row, then the recent-history window (told apart by the SQL)."""
+        cursor = MagicMock()
+
+        def fetchall():
+            sql = cursor.execute.call_args.args[0]
+            return feedback_rows if "'acked'" in sql else history_rows
+
+        cursor.fetchall.side_effect = fetchall
+        return cursor
+
+    def test_a_later_shown_does_not_cancel_a_cooldown(self):
+        """The other surface (or the next refresh) reports `shown` after the dismissal; the card
+        must stay suppressed -- the bug the first live not_useful test exposed."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            for action in ("dismissed", "acked", "not_useful"):
+                cursor = self._history_cursor(
+                    feedback_rows=[(action, now - timedelta(minutes=2))],
+                    history_rows=[("shown", now)] * 3 + [(action, now - timedelta(minutes=2))],
+                )
+                mock_connect.return_value.cursor.return_value = cursor
+                assert SAEngine()._card_suppression_reason("weather", "") == "cooldown", action
+
+    def test_a_cooldown_outlives_the_history_window(self):
+        """Ten newer `shown` rows push the feedback row out of the 10-row history query; the
+        dedicated feedback query still finds it."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_connect.return_value.cursor.return_value = self._history_cursor(
+                feedback_rows=[("dismissed", now - timedelta(minutes=10))],
+                history_rows=[("shown", now)] * 10,
+            )
+            assert SAEngine()._card_suppression_reason("weather", "") == "cooldown"
+
+    def test_a_tap_after_feedback_ends_the_cooldown(self):
+        """A later tap is real re-engagement, so the card may show again."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_connect.return_value.cursor.return_value = self._history_cursor(
+                feedback_rows=[("tapped", now - timedelta(minutes=1))],
+                history_rows=[("tapped", now - timedelta(minutes=1))],
+            )
+            assert SAEngine()._card_suppression_reason("weather", "") is None
+
+    def test_not_useful_never_suppresses_an_urgent_card(self):
+        """Whatever feedback says, an urgent card is never suppressed, and the history is not
+        even read for it."""
+        daemon = self._stub_daemon(check_system_health=self.SYSTEM_HEALTH_CARD)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = [
+                ("not_useful", datetime.now(timezone.utc).replace(tzinfo=None))
+            ]
+            result = daemon.decide_displays()
+        assert [card["mode"] for card in result] == ["system_health"]
+
+    def test_checkmark_breaks_a_run_of_unacknowledged_shows(self):
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+            CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES,
+        )
+
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            old = (
+                datetime.now(timezone.utc)
+                - timedelta(minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5)
+            ).replace(tzinfo=None)
+            mock_cursor.fetchall.return_value = [("acked", old)] + [
+                ("shown", old)
+            ] * CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES
+            assert SAEngine()._card_suppression_reason("weather", "") is None
+
     def test_suppression_reason_is_repetition_after_enough_unacknowledged_shows(self):
         from services.service_sa.sa.engine import (
             SAEngine,
@@ -763,7 +909,7 @@ class TestCardSuppression(TestDecideDisplays):
         from services.service_sa.sa.engine import SAEngine
 
         def fetchall_by_subject_key(*args, **_kwargs):
-            _rule_id, subject_key, _limit = args
+            _rule_id, subject_key, *_rest = args
             if subject_key == "Garage light":
                 return [("dismissed", datetime.now(timezone.utc).replace(tzinfo=None))]
             return []  # "Kitchen light" has no history at all
@@ -1409,6 +1555,71 @@ class TestCheckRhythmBreakAnomaly:
             assert SAEngine().check_rhythm_break_anomaly(_make_frame()) is None
 
 
+class TestCheckDeviceHealth:
+    """SAEngine.check_device_health(): household hardware offline far longer than it ordinarily
+    is (the learner's score_health inference), one card per cycle."""
+
+    def _inference(self, device="C200", offline=600.0, usual=175.0):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            learner="device_rhythm",
+            signal="device.offline_long",
+            evidence={"device": device},
+            observed={"offline_minutes": offline},
+            expected={"usual_longest_offline_minutes": usual, "threshold_minutes": 262.5},
+            confidence=0.1,  # not gated on: a threshold, not a surprise
+        )
+
+    def _check(self, recent, failures=0):
+        from services.service_sa.sa import engine
+        from services.service_sa.sa.engine import SAEngine
+
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+            patch.dict(engine.SYSTEM_HEALTH_STATE, {"ha": {"failures": failures}}, clear=True),
+        ):
+            return SAEngine().check_device_health(_make_frame())
+
+    def test_a_camera_offline_much_longer_than_usual(self):
+        card = self._check([self._inference()])
+
+        assert card["mode"] == "device_health"
+        assert card["priority"] == 2.65
+        assert card["entity_name"] == "C200"
+        assert card["content"] == "C200 has been offline for 10 h"
+        assert card["data"]["offline_minutes"] == 600
+        assert card["data"]["because"] == ["offline 10 h; it is ordinarily off for at most 3 h"]
+
+    def test_a_device_with_no_history_of_being_off(self):
+        card = self._check([self._inference(usual=None, offline=110.0)])
+
+        assert card["content"] == "C200 has been offline for 110 min"
+        assert card["data"]["because"] == [
+            "offline 110 min, and it has no history of being off for long"
+        ]
+
+    def test_the_device_off_longest_wins(self):
+        recent = [self._inference(device="Sensor", offline=300.0), self._inference(offline=900.0)]
+
+        assert self._check(recent)["entity_name"] == "C200"
+
+    def test_quiet_while_an_integration_is_unreachable(self):
+        assert self._check([self._inference()], failures=2) is None
+
+    def test_other_signals_are_ignored(self):
+        other = self._inference()
+        other.signal = "device.online"
+        assert self._check([other]) is None
+
+    def test_subject_key_is_the_device(self):
+        from services.service_sa.sa.engine import SAEngine
+
+        card = {"entity_name": "C200"}
+        assert SAEngine._card_subject_key("device_health", card) == "C200"
+
+
 class TestCheckDepartureAnomaly:
     """SAEngine.check_departure_anomaly() since the LF-4 cutover: a card for the stay learner's
     most surprising fresh inference (one per cycle). The stay itself is tested in
@@ -1622,7 +1833,7 @@ class TestCheckNowPlaying:
 
     @patch("services.service_sa.sa.engine.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_new_track_persists_state_and_publishes_event(self, mock_connect, mock_producer):
+    def test_new_track_persists_state_and_publishes_no_event(self, mock_connect, mock_producer):
         from services.service_sa.sa.engine import SAEngine
 
         frame = _make_frame(playback=self._playback_state(), persisted_now_playing=None)
@@ -1648,12 +1859,9 @@ class TestCheckNowPlaying:
             c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]
         ]
         assert len(update_calls) == 1
-        mock_p.send.assert_called_once()
-        assert mock_p.send.call_args.args[0] == "event-stream"
-        published_event = orjson.loads(mock_p.send.call_args.args[1])
-        assert published_event["subject_type"] == "track"
-        assert published_event["subject_id"] == "track1"
-        assert published_event["verb"] == "play_start"
+        # The daemon's now_playing_monitor owns the play_start event; a second one here doubled
+        # every play in the event log and in the learners' counts.
+        mock_p.send.assert_not_called()
 
     @patch("services.service_sa.sa.engine.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")

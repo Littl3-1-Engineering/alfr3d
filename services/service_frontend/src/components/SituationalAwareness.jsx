@@ -1,14 +1,15 @@
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import {
-  Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X,
+  Clock, Thermometer, Mail, Calendar, Music, Smile, PhoneCall, CloudRain, Car, X, ThumbsDown,
   Focus, Repeat, DoorOpen, Lightbulb, Users, Activity, Gauge, PartyPopper, Moon, ServerCrash, HardDrive,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { formatTimeWithTimezone } from '../utils/timeUtils';
 import socket from '../utils/socket';
 import { apiFetch } from '../utils/apiClient';
+import HudRing from './HudRing';
 
 // No fixed frontend card ceiling. The backend already caps each cycle to its own
 // dynamic limit (MAX_DISPLAYS = len(DISPLAY_RULES) in
@@ -43,6 +44,18 @@ const newImpressionId = () =>
 
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
+// Card feedback (SA-1). Three explicit actions, none of them a "like":
+//   Got it      -> `acked`      acknowledges and clears the card; a mild positive
+//   x (swipe)   -> `dismissed`  "seen, no comment"; neutral
+//   Not useful  -> `not_useful` the only clearly negative one, with an optional reason in `detail`
+// The reasons must match _NOT_USEFUL_REASONS in service_api/routes/context.py.
+const NOT_USEFUL_REASONS = [
+  { value: 'wrong_time', label: 'Wrong time' },
+  { value: 'already_knew', label: 'Already knew' },
+  { value: 'not_relevant', label: 'Not relevant' },
+  { value: 'other', label: 'Other' },
+];
+
 const reportCardInteraction = (card, action, extra = {}) => {
   apiFetch(`${API_BASE_URL}/api/context/card-interaction`, {
     method: 'POST',
@@ -58,7 +71,10 @@ const reportCardInteraction = (card, action, extra = {}) => {
 };
 
 const SituationalAwareness = ({ timezone = null }) => {
+  const reducedMotion = useReducedMotion();
   const [saData, setSaData] = useState([]);
+  // The card whose "Not useful" reasons menu is open (its cardKey), if any.
+  const [feedbackMenuKey, setFeedbackMenuKey] = useState(null);
   const [dismissedKeys, setDismissedKeys] = useState(() => new Set());
   // key -> { id, card, visibleMs, since }: the displays in progress (see the impression note above).
   const impressions = useRef(new Map());
@@ -179,10 +195,18 @@ const SituationalAwareness = ({ timezone = null }) => {
     });
   }, [saData]);
 
-  const handleDismiss = (card) => {
-    reportCardInteraction(card, 'dismissed', impressionIdFor(card));
+  // Every feedback action reports against the card's current display and hides it at once,
+  // without waiting for the next server push.
+  const handleFeedback = (card, action, detail) => {
+    reportCardInteraction(card, action, {
+      ...impressionIdFor(card),
+      ...(detail ? { detail } : {}),
+    });
+    setFeedbackMenuKey(null);
     setDismissedKeys((prev) => new Set(prev).add(cardKey(card)));
   };
+
+  const handleDismiss = (card) => handleFeedback(card, 'dismissed');
 
   const visibleCards = saData.filter((card) => !dismissedKeys.has(cardKey(card)));
 
@@ -216,6 +240,8 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'household_unusual_day': return <Activity className="text-fui-accent" />;
       // Appliance running outside its learned rhythm -- observation, cyan.
       case 'rhythm_break_anomaly': return <Gauge className="text-fui-accent" />;
+      // Household hardware (camera, sensor) offline far longer than it ever ordinarily is -- magenta.
+      case 'device_health': return <ServerCrash className="text-fui-magenta" />;
       // Party-night energy advisory -- actionable, magenta.
       case 'party_advisory': return <PartyPopper className="text-fui-magenta" />;
       // Late-hour wind-down nudge -- ambient evening, cyan.
@@ -234,10 +260,10 @@ const SituationalAwareness = ({ timezone = null }) => {
         visibleCards.map((card, index) => (
           <motion.div
             key={cardKey(card)}
-            initial={{ opacity: 0, y: 20 }}
+            initial={reducedMotion ? false : { opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
-            className="flex items-center space-x-3 p-2 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
+            transition={reducedMotion ? { duration: 0 } : { delay: index * 0.1 }}
+            className="relative flex items-center space-x-3 p-2 border border-fui-border/30 hover:border-fui-accent/50 transition-colors duration-200"
           >
             <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">{getIcon(card.mode)}</div>
             <div className="min-w-0 flex-1">
@@ -265,14 +291,60 @@ const SituationalAwareness = ({ timezone = null }) => {
               <p className="text-xs text-fui-text/60 font-mono">PRIO: {card.priority || 4}</p>
             </div>
             {!card.urgent && (
-              <button
-                type="button"
-                aria-label="Dismiss card"
-                onClick={() => handleDismiss(card)}
-                className="w-6 h-6 flex items-center justify-center flex-shrink-0 text-fui-text/40 hover:text-fui-text transition-colors duration-200"
+              <div className="flex items-center space-x-1 flex-shrink-0">
+                <HudRing
+                  shape="compass"
+                  size={22}
+                  label="Got it"
+                  onClick={() => handleFeedback(card, 'acked')}
+                />
+                <button
+                  type="button"
+                  aria-label="Not useful"
+                  aria-expanded={feedbackMenuKey === cardKey(card)}
+                  onClick={() =>
+                    setFeedbackMenuKey((open) => (open === cardKey(card) ? null : cardKey(card)))
+                  }
+                  className="w-6 h-6 flex items-center justify-center text-fui-text/40 hover:text-fui-text transition-colors duration-200"
+                >
+                  <ThumbsDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Dismiss card"
+                  onClick={() => handleDismiss(card)}
+                  className="w-6 h-6 flex items-center justify-center text-fui-text/40 hover:text-fui-text transition-colors duration-200"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+            {!card.urgent && feedbackMenuKey === cardKey(card) && (
+              <div
+                role="menu"
+                aria-label="Why was this not useful?"
+                className="absolute right-2 top-full z-10 mt-1 flex flex-col border border-fui-border/50 bg-fui-bg font-mono text-xs"
               >
-                <X size={16} />
-              </button>
+                {NOT_USEFUL_REASONS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => handleFeedback(card, 'not_useful', value)}
+                    className="px-3 py-1 text-left text-fui-text/80 hover:bg-fui-accent/10"
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleFeedback(card, 'not_useful')}
+                  className="px-3 py-1 text-left text-fui-text/60 hover:bg-fui-accent/10"
+                >
+                  No reason
+                </button>
+              </div>
             )}
           </motion.div>
         ))
