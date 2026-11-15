@@ -295,8 +295,7 @@ services:
   # LF-1a (todo/sa/todo_lf1a_sa_service_split.md): situational awareness moved out of
   # service-daemon into one service_sa image with two entries, split by speed. sa-awareness is
   # the 60s card loop (context frame, rules, suppression, publish to `situational-awareness`);
-  # sa-learner runs the slow jobs (compute_entity_baselines every 6h, later the Parquet lake and
-  # learners) so they can never stall cards. Same network/env/secrets as service-daemon, whose
+  # sa-learner runs the slow jobs (the nightly Parquet lake, silver rebuild and learners) so they can never stall cards. Same network/env/secrets as service-daemon, whose
   # code they were lifted from (Gmail and HA/ST credentials are read from /secrets).
   sa-awareness:
     build:

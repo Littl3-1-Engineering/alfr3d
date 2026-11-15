@@ -1,12 +1,13 @@
 """Situational-awareness engine: context frame, display rules, card suppression, publishing,
-and the entity-baseline computation those rules read.
+and publishing. (The entity-baseline computation that used to live here is gone; see
+migration 0062.)
 
 LF-1a (todo/sa/todo_lf1a_sa_service_split.md): moved verbatim out of
 service_daemon/alfr3ddaemon.py -- the SA constants, the SA methods of MyDaemon (now SAEngine)
 and compute_entity_baselines() -- so the daemon stays a fast loop engine and SA has one owner.
 No behaviour change: same rules, same priorities, same queries, same Kafka topic.
-`awareness.py` runs SAEngine.check_situational_awareness() every 60s; `learner.py` runs
-compute_entity_baselines() every 6h.
+`awareness.py` runs SAEngine.check_situational_awareness() every 60s; `learner.py` runs the
+nightly lake and learner jobs.
 """
 
 # Standard library imports
@@ -247,7 +248,7 @@ ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES = 180
 
 # An hour of the (UTC) day is part of a device's usual window when the device was online during it
 # on at least this share of the days it was seen at all. Stored as a 24-bit mask in
-# entity_baselines.active_hours_mask and read by check_rhythm_break_anomaly()'s unusual-hour branch.
+# the device-rhythm learner's active-hours mask (formerly entity_baselines.active_hours_mask).
 ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
 
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
