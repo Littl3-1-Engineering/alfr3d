@@ -6,6 +6,13 @@ Writes nothing. Run it inside a service_sa container (it uses their MySQL enviro
 
     docker compose exec -T sa-awareness python - < scripts/sa_shadow_review.py
     docker compose exec -T sa-awareness python - --days 14 < scripts/sa_shadow_review.py
+    docker compose exec -T sa-awareness python - --since 2026-11-01 < scripts/sa_shadow_review.py
+
+--since starts the window after a learner fix (a broken learner's rows would otherwise inflate the
+rates). Besides the learner's firing episodes it counts the cards actually published:
+card_interactions
+`shown` rows, merged into one card per subject within EPISODE_GAP. When any were published, that
+count (not the raw firing) is what the flag budget is judged on.
 
 The table keeps one row each time a rule's (legacy, learner) pair changes, so a row is the state
 from its own time until the next row's (or now, for the last one).
@@ -29,7 +36,8 @@ from sa import inference_store  # noqa: E402
 MIN_SPAN_DAYS = 7.0
 # Learner episodes per week the household would tolerate as cards.
 MAX_LEARNER_EPISODES_PER_WEEK = 4.0
-# Cards below this confidence are not shown (the layer-1 card floor), so a learner firing only counts
+# Cards below this confidence are not shown (the layer-1 card floor), so a learner firing only
+# counts
 # as a flag when some subject in it clears the floor.
 CARD_CONFIDENCE_FLOOR = 0.3
 # Firing separated by less than this is one episode (the pair flips as inputs wobble).
@@ -74,6 +82,23 @@ def episodes(rows, now, fires):
     return out
 
 
+def published_cards(shown, since=None):
+    """[(start, subject_key)] for the cards the household was actually shown.
+
+    `shown` is (subject_key, occurred_at) rows from card_interactions (action 'shown') in time
+    order. Every surface repeats `shown` on each refresh, so rows of one subject closer than
+    EPISODE_GAP are one card; a later row of the same subject starts another.
+    """
+    last, cards = {}, []
+    for key, at in shown:
+        if since is not None and at < since:
+            continue
+        if key not in last or at - last[key] >= EPISODE_GAP:
+            cards.append((at, key))
+        last[key] = at
+    return cards
+
+
 def overlaps(a, others):
     return any(a[0] < b[1] and b[0] < a[1] for b in others)
 
@@ -81,6 +106,11 @@ def overlaps(a, others):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=float, default=0, help="only the last N days (0 = all)")
+    parser.add_argument(
+        "--since",
+        help="only rows from this UTC date/time on (YYYY-MM-DD or 'YYYY-MM-DD HH:MM'), e.g. the "
+        "day after a learner fix, so earlier rows from a broken learner stay out of the rates",
+    )
     parser.add_argument("--all", action="store_true", help="list every episode, not the last 12")
     parser.add_argument(
         "--min-confidence",
@@ -93,18 +123,35 @@ def main():
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     conn = inference_store.connect()
     cur = conn.cursor()
+    since = None
+    if args.since:
+        try:
+            since = datetime.fromisoformat(args.since)
+        except ValueError:
+            parser.error("--since must look like 2026-11-01 or '2026-11-01 08:30'")
+    if args.days:
+        days_start = now - timedelta(days=args.days)
+        since = max(since, days_start) if since else days_start
     sql = (
         "SELECT rule_id, observed_at, verdict, legacy, learner, learner_count "
         "FROM sa_shadow_comparison"
     )
     params = ()
-    if args.days:
+    if since:
         sql += " WHERE observed_at >= %s"
-        params = (now - timedelta(days=args.days),)
+        params = (since,)
     cur.execute(sql + " ORDER BY rule_id, observed_at", params)
     by_rule = defaultdict(list)
     for row in cur.fetchall():
         by_rule[row[0]].append(row)
+    shown_by_rule = defaultdict(list)
+    cur.execute(
+        "SELECT rule_id, subject_key, occurred_at FROM card_interactions "
+        "WHERE action = 'shown' AND occurred_at >= %s ORDER BY rule_id, occurred_at",
+        (since or datetime(2000, 1, 1),),
+    )
+    for rule_id, key, at in cur.fetchall():
+        shown_by_rule[rule_id].append((key, at))
     conn.close()
 
     print(f"Shadow review at {now:%Y-%m-%d %H:%M} UTC\n")
@@ -139,6 +186,11 @@ def main():
             f"legacy {len(legacy_eps)}; only the learner saw {len(learner_only)}, "
             f"only legacy saw {len(missed)}"
         )
+        cards = published_cards(shown_by_rule.get(rule, []), since)
+        print(
+            f"   published cards (shown to the household): {len(cards)} "
+            f"({len(cards) / weeks:.1f}/wk)"
+        )
         shown = (lambda xs: xs) if args.all else (lambda xs: xs[-12:])
         for label, eps in (("learner only", learner_only), ("legacy only", missed)):
             for at, end, text in shown(eps):
@@ -150,9 +202,15 @@ def main():
         problems = []
         if span / 86400 < MIN_SPAN_DAYS:
             problems.append(f"only {span / 86400:.1f} of {MIN_SPAN_DAYS:.0f} days of shadow")
-        if len(learner_eps) / weeks > MAX_LEARNER_EPISODES_PER_WEEK:
+        # The budget is about what the household sees. When cards were published, that count is
+        # the truth; otherwise the learner's firing episodes stand in.
+        if cards:
+            rate, what = len(cards) / weeks, "published cards"
+        else:
+            rate, what = len(learner_eps) / weeks, "learner episodes"
+        if rate > MAX_LEARNER_EPISODES_PER_WEEK:
             problems.append(
-                f"{len(learner_eps) / weeks:.1f} learner episodes/week is over the "
+                f"{rate:.1f} {what}/week is over the "
                 f"{MAX_LEARNER_EPISODES_PER_WEEK:.0f}/week flag budget"
             )
         todo = []
