@@ -228,6 +228,8 @@ owning LF doc as they land.
 - [ ] Transitions (SA-12): re-check monthly, with a concrete trigger of N organic cross-entity pairs. No calendar re-check is scheduled today.
 - [ ] Calendar history: the table keeps 24 h, so "today's events" is only right for today; decide whether to keep a longer free/busy history.
 
+- [x] `dedupe-now-playing-events` (2026-11-15, [todo](../todo_dedupe_now_playing_events.md)): every `play_start` was doubled (SA and the daemon monitor); the monitor now owns it, silver drops the historical duplicates. Learned `play_start` rates roughly halve at the next refit.
+
 ### Step 5: later
 - [ ] "Gathering likely tonight" (needs an occasional-visitor model: days since last visit, inter-visit gaps).
 - [ ] Card policy for rate deviations (email burst, notification storm): a product decision for Athos.
