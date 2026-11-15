@@ -211,6 +211,12 @@ CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
     "guest_overstay_advisory": 1440,
 }
 
+# "Not useful" is the one clearly negative feedback action, so it silences the card for far longer
+# than a neutral swipe-away or a checkmark: a day by default. Product default, not yet tuned against
+# real feedback (there is none yet); per-rule override in the _BY_RULE dict below.
+CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES = 1440
+CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE = {}
+
 # A card identity shown this many cycles in a row with no interaction at all (no dismiss, no
 # tap) gets suppressed until its underlying state changes (i.e. until something -- a different
 # device, a content change on a singleton rule -- gives it a new identity, or a real interaction
@@ -577,10 +583,17 @@ class SAEngine:
                 return None
 
             latest_action, latest_at = rows[0]
-            if latest_action == "dismissed":
-                cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
-                    rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
-                )
+            # A swipe-away (dismissed) and a checkmark (acked) both clear the card for the normal
+            # cooldown and say nothing against the rule; only not_useful is a strong signal.
+            if latest_action in ("dismissed", "acked", "not_useful"):
+                if latest_action == "not_useful":
+                    cooldown = CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES
+                    )
+                else:
+                    cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
+                    )
                 since = datetime.now(timezone.utc) - latest_at.replace(tzinfo=timezone.utc)
                 if since < timedelta(minutes=cooldown):
                     return "cooldown"
