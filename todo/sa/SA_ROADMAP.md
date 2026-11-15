@@ -232,6 +232,8 @@ owning LF doc as they land.
 - [ ] Transitions (SA-12): re-check monthly, with a concrete trigger of N organic cross-entity pairs. No calendar re-check is scheduled today.
 - [ ] Calendar history: the table keeps 24 h, so "today's events" is only right for today; decide whether to keep a longer free/busy history.
 
+- [x] `dedupe-now-playing-events` (2026-11-15, [todo](../todo_dedupe_now_playing_events.md)): every `play_start` was doubled (SA and the daemon monitor); the monitor now owns it, silver drops the historical duplicates. Learned `play_start` rates roughly halve at the next refit.
+
 ### Phase 0 findings, 2026-11-14 (card feedback + gaps session; read-only, verified live on the NUC)
 
 - **Repos.** `alfr3d` `main` = `bf6d42c7` (#384), `services/VERSION` 0.4.10, tag v0.4.10; the local checkout sits on the already-merged `fix/ha-device-identity` (0 commits ahead of `origin/main`, clean). `alfr3d_deck` `main` = `91a952a` (#62), tag v1.2.2. `littl31` `main` = `e6ae26f` with an uncommitted `timeline.json` edit (+13 lines, not mine).

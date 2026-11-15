@@ -311,6 +311,32 @@ class TestEventsClean:
         assert self._events(lake, []) == {1, 2, 3, 4}
 
 
+class TestPlayStartDuplicates:
+    def test_the_old_sa_play_start_duplicates_are_dropped_from_history(self, lake):
+        def play(id_, message, source, minute):
+            return {"id": id_, "event_type": "audio", "subject_type": "track", "subject_id": "t1",
+                    "verb": "play_start", "message": message, "source_service": source,
+                    "occurred_at": datetime(2026, 10, 5, 12, minute)}  # fmt: skip
+
+        _bronze(
+            lake,
+            "household_events",
+            [
+                play(1, "playing song: Song by Artist", "daemon", 0),
+                play(2, "Now playing: Song by Artist", "daemon", 1),
+                play(3, "playing song: Next by Artist", "daemon", 5),
+                {"id": 4, "event_type": "audio", "subject_type": "track", "subject_id": "t1",
+                 "verb": "play_stop", "message": "Now playing: stopped", "source_service": "daemon",
+                 "occurred_at": datetime(2026, 10, 5, 12, 6)},
+            ],
+            "occurred_at",
+        )  # fmt: skip
+        _build(lake, exclusions=[])
+
+        # One play stays one event; only a play_start with the duplicate's wording goes.
+        assert {r["id"] for r in _rows(lake, "silver", "events_clean")} == {1, 3, 4}
+
+
 class TestSensors:
     def test_retired_ids_resolve_through_aliases_to_one_stable_series(self, lake):
         _snapshot(

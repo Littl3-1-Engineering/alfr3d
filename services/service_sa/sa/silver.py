@@ -537,7 +537,13 @@ def _build_silver_other(con, have):
                    e.source_service, e.occurred_at AS occurred_utc,
                    to_local(e.occurred_at) AS occurred_local
             FROM b_household_events e
-            WHERE NOT EXISTS (
+            -- Until 2026-11-15 SA's check_now_playing published a second play_start ("Now
+            -- playing: ...") for every track the daemon's monitor had just announced ("playing
+            -- song: ..."), so every play was counted twice (6,611 rows, 26 without a monitor
+            -- twin). The monitor owns the event now; drop the old duplicates from history so the
+            -- learners see one play as one event across the change.
+            WHERE NOT (e.verb = 'play_start' AND e.message LIKE 'Now playing:%')
+            AND NOT EXISTS (
               SELECT 1 FROM exclusions x
               WHERE x.source = 'household_events'
                 AND e.occurred_at >= x.start_ts AND e.occurred_at < x.end_ts

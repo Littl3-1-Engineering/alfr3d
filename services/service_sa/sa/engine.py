@@ -1726,9 +1726,12 @@ class SAEngine:
 
         Runs every ~60s cycle like every other DISPLAY_RULES check (no
         separate poll loop -- the daemon's outer loop only ticks that often
-        anyway). Only persists to `config` and publishes an event-stream
-        message when the track or play state actually changed, so it
-        doesn't repeat the same "now playing" line every cycle.
+        anyway). Only persists to `config` when the track or play state
+        actually changed. It publishes no event: the daemon's
+        now_playing_monitor already announces every track change (with the
+        track details the Nexus card uses), and a second `play_start` here put
+        two lines per song in the event log and doubled every play_start count
+        the rate and household-day learners read.
 
         Persists on a play->pause transition too (not just track changes),
         even though no card is returned for the paused state itself --
@@ -1766,25 +1769,6 @@ class SAEngine:
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                if is_playing:
-                    p = get_producer()
-                    if p:
-                        message = (
-                            f"Now playing: {title} by {artist}"
-                            if artist
-                            else f"Now playing: {title}"
-                        )
-                        event = {
-                            "id": f"now_playing_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                            "type": "audio",
-                            "message": message,
-                            "time": datetime.now(timezone.utc).isoformat(),
-                            "subject_type": "track",
-                            "subject_id": track_id,
-                            "verb": "play_start",
-                        }
-                        p.send("event-stream", orjson.dumps(event))
-
             if not is_playing:
                 return None
 
