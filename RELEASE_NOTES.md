@@ -1,3 +1,38 @@
+# Release v0.5.0
+
+## Release Name: Learning Curve
+
+### Notes:
+- **Feature:** every situational-awareness card now reads a learned model instead of a hand-set
+  threshold: `climate_deviation`, `attention_focus`, `wind_down_signal`, `rhythm_break_anomaly`,
+  `departure_anomaly` and `household_unusual_day` (which also learns its own features and sets its
+  own bar from the household's past days). Each person gets their own presence bridge. The old
+  device, household and room `entity_baselines` rows are retired. Stability (how much to trust a
+  learner after a routine changes) is measured for the stay, daytime and device-rhythm learners,
+  and device-rhythm stability is measured per day type, so a school break no longer holds down a
+  weekend flag.
+- **Feature:** `device_health` card. Household hardware (devices owned by the `alfr3d` system user:
+  camera, sensor) that has been offline longer than max(2 h, 1.5x the longest offline stretch it
+  ordinarily shows) gets its own card; those devices no longer get rhythm cards. Quiet while an
+  integration is unreachable. Thresholds are untuned against a real outage.
+- **Feature:** card feedback semantics (got it / swipe / not useful with a reason), card
+  impressions (surface, id, visible time, what a tap opened) and a later "shown" no longer cancels
+  a feedback cooldown. Migration 0061.
+- **Feature:** Layer 2 gained a second independent witness (Deck network) for "someone is away
+  unusually"; disk and lake growth monitoring with a `disk_health` card; daily gzipped DB backup
+  with 7-day rotation; configurable quiet hours (default 22:00-07:00).
+- **Feature:** local certificate authority and a self-healing HTTPS certificate (`service_tls`), so
+  the Deck pairs once and survives a new IP address; per-user UI theme sync; the phone-speech SSE
+  stream `GET /api/events/stream`; local speech playback on the USB speaker; the daily wisdom quote
+  in katakana and Yuji Boku brush font.
+- **Fix:** the device-rhythm loader counted every idle hour as online (#362), which made every
+  device look always-on and every offline period a deviation. Fixed; the shadow review gained
+  `--since` and counts the cards actually shown.
+- **Fix:** one `play_start` per song, not two; HA entity renames and removed entities are tracked
+  and pruned; HA state persists after a control command and `switch` is a device type; sensor
+  readings show as whole numbers; `alfr3d.service` rebuilds images and times out instead of hanging.
+- **Chore:** dependency updates across the API, device, speak and frontend services.
+
 # Release v0.4.10
 
 ## Release Name: Button Up
