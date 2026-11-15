@@ -20,3 +20,23 @@ One event per playback (per track change), not two.
 
 ## Notes
 Found from alfr3d_deck tactical home style, 2026-10-22. Deck needs no change.
+
+## Status: done 2026-11-15 (PR fix/dedupe-now-playing-events); deployed state noted below
+
+**Traced.** Both paths reached `/api/events` and `household_events`: the daemon's
+`now_playing_monitor` ("playing song: ...", with the `track` details the Nexus card uses) and SA's
+`check_now_playing` ("Now playing: ..."). Every `play_start` was doubled: 13,518 rows since
+2026-08-30, 6,906 monitor and 6,610 SA, an exact 50/50 split on every day. Pairing them by track
+within 120 s: only 26 of 6,611 SA rows had no monitor twin (0.4%), while 267 monitor rows had no
+SA twin, so the monitor is the reliable owner.
+
+**Fix.** `check_now_playing` no longer publishes an event; it still persists the playback state
+(continuity needs it) and still returns the card. The change also reaches the learners:
+`audio/track/play_start` feeds the rate and household-day learners, which had been counting every
+play twice, so silver's `events_clean` now drops the old "Now playing:" `play_start` duplicates
+from history. One play is one event across the change, and learned `play_start` expectations will
+roughly halve at the next silver rebuild and refit. Bronze and MySQL keep the old rows (nothing
+was deleted).
+
+**Not verified yet:** one line per song in the Deck EVT LOG on a device, and the next learner
+refit after deploy.

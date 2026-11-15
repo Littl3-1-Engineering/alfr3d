@@ -5,7 +5,6 @@ import os
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
-import orjson
 import pytest
 
 
@@ -1834,7 +1833,7 @@ class TestCheckNowPlaying:
 
     @patch("services.service_sa.sa.engine.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
-    def test_new_track_persists_state_and_publishes_event(self, mock_connect, mock_producer):
+    def test_new_track_persists_state_and_publishes_no_event(self, mock_connect, mock_producer):
         from services.service_sa.sa.engine import SAEngine
 
         frame = _make_frame(playback=self._playback_state(), persisted_now_playing=None)
@@ -1860,12 +1859,9 @@ class TestCheckNowPlaying:
             c for c in mock_cursor.execute.call_args_list if "UPDATE config" in c.args[0]
         ]
         assert len(update_calls) == 1
-        mock_p.send.assert_called_once()
-        assert mock_p.send.call_args.args[0] == "event-stream"
-        published_event = orjson.loads(mock_p.send.call_args.args[1])
-        assert published_event["subject_type"] == "track"
-        assert published_event["subject_id"] == "track1"
-        assert published_event["verb"] == "play_start"
+        # The daemon's now_playing_monitor owns the play_start event; a second one here doubled
+        # every play in the event log and in the learners' counts.
+        mock_p.send.assert_not_called()
 
     @patch("services.service_sa.sa.engine.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
