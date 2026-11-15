@@ -195,6 +195,9 @@ CARD_SUBJECT_KEY_EXTRACTORS = {
 # one today, but this is a generic field check so any future rule can opt in the same way.
 CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD = "urgent"
 
+# The explicit answers that start a card's cooldown (SA-1); see _card_suppression_reason.
+CARD_FEEDBACK_ACTIONS = ("dismissed", "acked", "not_useful")
+
 # decide_displays()'s suppression pass looks at up to this many of a card identity's most recent
 # card_interactions rows -- must cover both the cooldown check (just the latest row) and the
 # repetition-damping run-length count below.
@@ -572,6 +575,32 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
+            # The cooldown comes from the latest feedback or tap, found by its own query. A later
+            # `shown` (a surface that has not got the news yet, or just a refresh) must not cancel
+            # it, and a burst of `shown` rows from two surfaces must not push the feedback row out
+            # of the history window below. Only a later tap, real re-engagement, ends it early.
+            cursor.execute(
+                "SELECT action, occurred_at FROM card_interactions "
+                "WHERE rule_id = %s AND subject_key = %s "
+                "AND action IN ('dismissed', 'acked', 'not_useful', 'tapped') "
+                "ORDER BY occurred_at DESC, id DESC LIMIT 1",
+                (rule_id, subject_key),
+            )
+            feedback = cursor.fetchall()
+            if feedback and feedback[0][0] in CARD_FEEDBACK_ACTIONS:
+                feedback_action, feedback_at = feedback[0]
+                if feedback_action == "not_useful":
+                    cooldown = CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES
+                    )
+                else:
+                    cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
+                    )
+                since = datetime.now(timezone.utc) - feedback_at.replace(tzinfo=timezone.utc)
+                if since < timedelta(minutes=cooldown):
+                    return "cooldown"
+
             cursor.execute(
                 "SELECT action, occurred_at FROM card_interactions "
                 "WHERE rule_id = %s AND subject_key = %s AND action <> 'impression' "
@@ -580,23 +609,6 @@ class SAEngine:
             )
             rows = cursor.fetchall()
             if not rows:
-                return None
-
-            latest_action, latest_at = rows[0]
-            # A swipe-away (dismissed) and a checkmark (acked) both clear the card for the normal
-            # cooldown and say nothing against the rule; only not_useful is a strong signal.
-            if latest_action in ("dismissed", "acked", "not_useful"):
-                if latest_action == "not_useful":
-                    cooldown = CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE.get(
-                        rule_id, CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES
-                    )
-                else:
-                    cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
-                        rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
-                    )
-                since = datetime.now(timezone.utc) - latest_at.replace(tzinfo=timezone.utc)
-                if since < timedelta(minutes=cooldown):
-                    return "cooldown"
                 return None
 
             run_length = 0

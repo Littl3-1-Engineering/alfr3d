@@ -222,6 +222,19 @@ the web dashboard and the Deck:
   snooze/dismiss and still report `dismissed` with no `impression_id`: they are not tracked as
   impressions on the Deck at all.
 
+**Found by the first live test on the phone, 2026-11-14 (fixed in the same PR).** After a `not_useful`
+on a rhythm card and a checkmark on `now_playing`, both cards were still published a minute later.
+Cause, in the 08-29 design and not in the new controls: `_card_suppression_reason` looked only at the
+latest of the 10 most recent rows, so any later `shown` (the other surface, or the next refresh)
+cancelled the cooldown, and with two surfaces reporting about once a minute the dismissal itself fell
+out of the 10-row window within minutes. The cooldown now comes from its own query for the latest
+`dismissed`/`acked`/`not_useful`/`tapped` row, with no row limit, so a later `shown` cannot cancel it;
+only a later tap (re-engagement) ends it early. Not understood: why the Deck sent a `shown` for a card it
+had just hidden locally (00:43:08 and 00:44:09 UTC); the backend no longer depends on that.
+**Also found, not fixed (Deck, predates this work):** the "ALFR3D's music pick" rule matches any card with
+`mode == "music"`, including plain `now_playing`, and always says "Gathering detected", so it claims a
+gathering that is not happening, and feedback on it lands on `now_playing`.
+
 **Verified live 2026-11-14** against a throwaway MySQL 8.0 (empty volume, port 3307, removed
 afterwards; production untouched): the full Alembic chain 0001 to 0061 applies, downgrade 0061
 deletes the two new actions and restores the old enum, re-upgrade is idempotent; the real route

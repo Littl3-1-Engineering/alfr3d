@@ -686,6 +686,59 @@ class TestCardSuppression(TestDecideDisplays):
             ]
             assert engine._card_suppression_reason("weather", "") is None
 
+    @staticmethod
+    def _history_cursor(feedback_rows, history_rows):
+        """A cursor that answers each of _card_suppression_reason's two queries: the latest
+        feedback/tap row, then the recent-history window (told apart by the SQL)."""
+        cursor = MagicMock()
+
+        def fetchall():
+            sql = cursor.execute.call_args.args[0]
+            return feedback_rows if "'acked'" in sql else history_rows
+
+        cursor.fetchall.side_effect = fetchall
+        return cursor
+
+    def test_a_later_shown_does_not_cancel_a_cooldown(self):
+        """The other surface (or the next refresh) reports `shown` after the dismissal; the card
+        must stay suppressed -- the bug the first live not_useful test exposed."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            for action in ("dismissed", "acked", "not_useful"):
+                cursor = self._history_cursor(
+                    feedback_rows=[(action, now - timedelta(minutes=2))],
+                    history_rows=[("shown", now)] * 3 + [(action, now - timedelta(minutes=2))],
+                )
+                mock_connect.return_value.cursor.return_value = cursor
+                assert SAEngine()._card_suppression_reason("weather", "") == "cooldown", action
+
+    def test_a_cooldown_outlives_the_history_window(self):
+        """Ten newer `shown` rows push the feedback row out of the 10-row history query; the
+        dedicated feedback query still finds it."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_connect.return_value.cursor.return_value = self._history_cursor(
+                feedback_rows=[("dismissed", now - timedelta(minutes=10))],
+                history_rows=[("shown", now)] * 10,
+            )
+            assert SAEngine()._card_suppression_reason("weather", "") == "cooldown"
+
+    def test_a_tap_after_feedback_ends_the_cooldown(self):
+        """A later tap is real re-engagement, so the card may show again."""
+        from services.service_sa.sa.engine import SAEngine
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_connect.return_value.cursor.return_value = self._history_cursor(
+                feedback_rows=[("tapped", now - timedelta(minutes=1))],
+                history_rows=[("tapped", now - timedelta(minutes=1))],
+            )
+            assert SAEngine()._card_suppression_reason("weather", "") is None
+
     def test_not_useful_never_suppresses_an_urgent_card(self):
         """Whatever feedback says, an urgent card is never suppressed, and the history is not
         even read for it."""
@@ -846,7 +899,7 @@ class TestCardSuppression(TestDecideDisplays):
         from services.service_sa.sa.engine import SAEngine
 
         def fetchall_by_subject_key(*args, **_kwargs):
-            _rule_id, subject_key, _limit = args
+            _rule_id, subject_key, *_rest = args
             if subject_key == "Garage light":
                 return [("dismissed", datetime.now(timezone.utc).replace(tzinfo=None))]
             return []  # "Kitchen light" has no history at all
