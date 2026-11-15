@@ -177,8 +177,19 @@ def _cross_surface_continuity_subject_key(card):
     return f"{card.get('resume_type')}:{card.get('resume_target')}"
 
 
+def _span_text(minutes):
+    """ "45 min", "5 h" or "3 days" for a length of time in minutes."""
+    if minutes < 120:
+        return f"{minutes} min"
+    if minutes < 48 * 60:
+        return f"{round(minutes / 60.0)} h"
+    return f"{round(minutes / 1440.0)} days"
+
+
 CARD_SUBJECT_KEY_EXTRACTORS = {
     "rhythm_break_anomaly": lambda card: card.get("entity_name") or "",
+    # One device_health card per device, so dismissing the camera's doesn't hide the sensor's.
+    "device_health": lambda card: card.get("entity_name") or "",
     # LF-3: one presence_deviation card per person, so dismissing one doesn't hide another's.
     "presence_deviation": lambda card: card.get("entity_name") or "",
     "cross_surface_continuity": _cross_surface_continuity_subject_key,
@@ -301,6 +312,8 @@ class SAEngine:
     #                           over_by_minutes/typical_daily_max_minutes; unusual_hour:
     #                           current_hour/typical_active_hour; expected_absent:
     #                           typical_active_hour; all three also carry because
+    #   device_health:         offline_minutes/usual_longest_offline_minutes/threshold_minutes,
+    #                           because
     #   cross_surface_continuity (music candidate only): minutes_ago
     #   attention_focus:       because
     #   wind_down_signal:      because
@@ -379,6 +392,9 @@ class SAEngine:
         # Actionable, near event/gathering: a genuine deviation from a device's
         # established on/off rhythm is worth surfacing promptly.
         ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),
+        # Household hardware (camera, sensor) offline far longer than it ever ordinarily is: the
+        # same "something's off" tier, just below the routine-break card.
+        ("device_health", 2.65, "check_device_health"),
         # SA-3: the human analogue of rhythm_break_anomaly, one priority tier below it --
         # "usually gone by now, still home" is a genuine routine deviation, not an alert.
         ("departure_anomaly", 2.7, "check_departure_anomaly"),
@@ -1331,6 +1347,71 @@ class SAEngine:
                 because=[f"on at {hour:02d}:00, when it is usually on only {usual}% of the time"],
             )
         return card
+
+    def check_device_health(self, frame):
+        """Household hardware (a camera, a sensor: devices owned by the infrastructure user) that
+        has been offline much longer than it ever ordinarily is. The trigger is the device's own
+        history, not a device type or a person's schedule: max(floor, 1.5 x the longest offline
+        stretch it ordinarily shows), so a PC that sleeps eight hours a night is not flagged by one
+        (see DeviceRhythmLearner.score_health). Reads the stored inferences like
+        check_rhythm_break_anomaly. Stays quiet while an integration is unreachable
+        (check_system_health owns that), since every device it syncs then reads offline.
+
+        One card per cycle, the device that has been off longest; its identity is the device, so
+        SA-1's cooldown quiets one that is dismissed."""
+        if frame.now is None:
+            return None
+        if any(
+            state["failures"] >= SYSTEM_HEALTH_FAILURES_BEFORE_ALERT
+            for state in SYSTEM_HEALTH_STATE.values()
+        ):
+            return None
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Device health check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == device_rhythm.NAME
+            and i.signal == device_rhythm.SIGNAL_HEALTH
+            and (i.evidence or {}).get("device")
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.observed["offline_minutes"])
+        name = inference.evidence["device"]
+        minutes = round(inference.observed["offline_minutes"])
+        usual = inference.expected.get("usual_longest_offline_minutes")
+        span = _span_text(minutes)
+        because = (
+            [f"offline {span}; it is ordinarily off for at most {_span_text(round(usual))}"]
+            if usual
+            else [f"offline {span}, and it has no history of being off for long"]
+        )
+        return {
+            "mode": "device_health",
+            "content": f"{name} has been offline for {span}",
+            "priority": 2.65,
+            "entity_name": name,
+            "data": {
+                "offline_minutes": minutes,
+                "usual_longest_offline_minutes": usual,
+                "threshold_minutes": inference.expected["threshold_minutes"],
+                "because": because,
+            },
+        }
 
     def check_departure_anomaly(self, frame):
         """SA-3: a resident who has been home an unusually long stretch for them. Since the LF-4

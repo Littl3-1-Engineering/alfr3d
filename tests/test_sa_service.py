@@ -100,6 +100,12 @@ class TestDecideDisplays:
         "urgent": True,
     }
     DISK_HEALTH_CARD = {"mode": "disk_health", "content": "dh", "priority": 5.9}
+    DEVICE_HEALTH_CARD = {
+        "mode": "device_health",
+        "content": "C200 has been offline for 10 h",
+        "priority": 2.65,
+        "entity_name": "C200",
+    }
     TIME_CARD = {"mode": "time", "content": "t", "priority": 1}
     EVENT_CARD = {"mode": "event", "content": "e", "priority": 2}
     MUSIC_CARD = {"mode": "music", "content": "m", "priority": 3}
@@ -245,6 +251,7 @@ class TestDecideDisplays:
         check_household_unusual_day=None,
         check_system_health=None,
         check_disk_health=None,
+        check_device_health=None,
     ):
         """Build a SAEngine with each check_* replaced by a stub returning the given card."""
         from services.service_sa.sa.engine import SAEngine
@@ -277,6 +284,7 @@ class TestDecideDisplays:
         daemon.check_household_unusual_day = MagicMock(return_value=check_household_unusual_day)
         daemon.check_system_health = MagicMock(return_value=check_system_health)
         daemon.check_disk_health = MagicMock(return_value=check_disk_health)
+        daemon.check_device_health = MagicMock(return_value=check_device_health)
         return daemon
 
     def test_all_ten_checks_produce_cards_in_priority_order(self):
@@ -349,6 +357,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -462,6 +471,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
         result = daemon.decide_displays()
@@ -474,7 +484,7 @@ class TestDecideDisplays:
         # rule fired exactly once, so all twenty-four cards come back -- nothing dropped.
         from services.service_sa.sa.engine import SAEngine
 
-        assert len(result) == 25 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
+        assert len(result) == 26 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -488,6 +498,7 @@ class TestDecideDisplays:
             "empty_house_still_on",
             "travel",
             "rhythm_break_anomaly",
+            "device_health",
             "departure_anomaly",
             "presence_deviation",
             "music",
@@ -1543,6 +1554,71 @@ class TestCheckRhythmBreakAnomaly:
 
         with patch("services.service_sa.sa.engine.pymysql.connect", side_effect=pymysql.Error):
             assert SAEngine().check_rhythm_break_anomaly(_make_frame()) is None
+
+
+class TestCheckDeviceHealth:
+    """SAEngine.check_device_health(): household hardware offline far longer than it ordinarily
+    is (the learner's score_health inference), one card per cycle."""
+
+    def _inference(self, device="C200", offline=600.0, usual=175.0):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            learner="device_rhythm",
+            signal="device.offline_long",
+            evidence={"device": device},
+            observed={"offline_minutes": offline},
+            expected={"usual_longest_offline_minutes": usual, "threshold_minutes": 262.5},
+            confidence=0.1,  # not gated on: a threshold, not a surprise
+        )
+
+    def _check(self, recent, failures=0):
+        from services.service_sa.sa import engine
+        from services.service_sa.sa.engine import SAEngine
+
+        with (
+            patch("services.service_sa.sa.engine.pymysql.connect"),
+            patch("services.service_sa.sa.engine.inference_store.load_recent", return_value=recent),
+            patch.dict(engine.SYSTEM_HEALTH_STATE, {"ha": {"failures": failures}}, clear=True),
+        ):
+            return SAEngine().check_device_health(_make_frame())
+
+    def test_a_camera_offline_much_longer_than_usual(self):
+        card = self._check([self._inference()])
+
+        assert card["mode"] == "device_health"
+        assert card["priority"] == 2.65
+        assert card["entity_name"] == "C200"
+        assert card["content"] == "C200 has been offline for 10 h"
+        assert card["data"]["offline_minutes"] == 600
+        assert card["data"]["because"] == ["offline 10 h; it is ordinarily off for at most 3 h"]
+
+    def test_a_device_with_no_history_of_being_off(self):
+        card = self._check([self._inference(usual=None, offline=110.0)])
+
+        assert card["content"] == "C200 has been offline for 110 min"
+        assert card["data"]["because"] == [
+            "offline 110 min, and it has no history of being off for long"
+        ]
+
+    def test_the_device_off_longest_wins(self):
+        recent = [self._inference(device="Sensor", offline=300.0), self._inference(offline=900.0)]
+
+        assert self._check(recent)["entity_name"] == "C200"
+
+    def test_quiet_while_an_integration_is_unreachable(self):
+        assert self._check([self._inference()], failures=2) is None
+
+    def test_other_signals_are_ignored(self):
+        other = self._inference()
+        other.signal = "device.online"
+        assert self._check([other]) is None
+
+    def test_subject_key_is_the_device(self):
+        from services.service_sa.sa.engine import SAEngine
+
+        card = {"entity_name": "C200"}
+        assert SAEngine._card_subject_key("device_health", card) == "C200"
 
 
 class TestCheckDepartureAnomaly:
