@@ -138,6 +138,7 @@ class DeviceRhythmLearner(Learner):
             return None
         cells = presence.fit_cells(observed, ref)
         stability, detail = presence.stability_of(observed, ref)
+        by_daytype = presence.stability_by_daytype(observed, ref)
         cutoff = ref - timedelta(days=SESSION_LOOKBACK_DAYS)
         kept = [
             (dur, 0.5 ** (max(0, (ref - d).days) / SESSION_HALF_LIFE_DAYS))
@@ -169,6 +170,10 @@ class DeviceRhythmLearner(Learner):
             "sessions": [[round(d, 1), round(w, 4)] for d, w in kept],
             "offline_flicker_minutes": None if flicker is None else round(flicker, 1),
             "offline_gap_minutes": None if usual_gap is None else round(usual_gap, 1),
+            # Availability is scored against the stability of that day's own kind: a change in
+            # the weekday rhythm must not hold down the confidence of a weekend flag, or the
+            # reverse. `stability` (pooled) still serves the duration score.
+            "stability_daytype": {k: round(v[0], 4) for k, v in by_daytype.items()},
             "stability_detail": {
                 k: (round(v, 4) if isinstance(v, float) else v) for k, v in detail.items()
             },
@@ -208,12 +213,20 @@ class DeviceRhythmLearner(Learner):
         logger.info(f"device rhythm: fitted {len(profiles)} device(s) as of {ref}")
         return profiles
 
-    def _terms(self, profile, weight):
+    def _terms(self, profile, weight, day=None):
+        """Confidence terms. With a local date, stability is the one measured on that day's own
+        kind (weekday / weekend-or-holiday); profiles fitted before that was stored fall back to
+        the pooled number."""
+        stability = profile.stability
+        if day is not None:
+            stability = profile.params.get("stability_daytype", {}).get(
+                presence._daytype(day), stability
+            )
         return confidence.Confidence(
             confidence.sufficiency(weight),
             profile.coverage,
             profile.source_quality,
-            profile.stability,
+            stability,
         )
 
     def score(self, profile, state, now):
@@ -235,7 +248,7 @@ class DeviceRhythmLearner(Learner):
             off_minutes is None or not minimum <= off_minutes <= MAX_OFFLINE_MINUTES
         ):
             return None
-        terms = self._terms(profile, weight)
+        terms = self._terms(profile, weight, day)
         return Inference(
             kind="deviation",
             subject_type="device",
