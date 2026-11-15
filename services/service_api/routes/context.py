@@ -506,7 +506,17 @@ async def report_device_location(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-_CARD_INTERACTION_ACTIONS = {"shown", "tapped", "dismissed", "expired", "impression"}
+_CARD_INTERACTION_ACTIONS = {
+    "shown",
+    "tapped",
+    "dismissed",
+    "expired",
+    "impression",
+    "acked",
+    "not_useful",
+}
+# Why a card was "not useful" (carried in `detail`); optional, but a present value must be one.
+_NOT_USEFUL_REASONS = {"wrong_time", "already_knew", "not_relevant", "other"}
 _CARD_SURFACES = {"web", "deck"}
 _IMPRESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,36}$")
 _MAX_VISIBLE_MS = 24 * 60 * 60 * 1000
@@ -541,6 +551,8 @@ def _card_interaction_extras(data, action):
         if not isinstance(detail, str) or len(detail) > _MAX_DETAIL_CHARS:
             raise _bad_request(f"detail must be text up to {_MAX_DETAIL_CHARS} chars")
         detail = detail.strip() or None
+    if action == "not_useful" and detail is not None and detail not in _NOT_USEFUL_REASONS:
+        raise _bad_request(f"a not_useful reason must be one of {sorted(_NOT_USEFUL_REASONS)}")
     if action == "impression" and (impression_id is None or visible_ms is None):
         raise _bad_request("an impression needs impression_id and visible_ms")
     return surface, impression_id, visible_ms, detail
@@ -574,6 +586,10 @@ async def report_card_interaction(
     display ends and must carry `impression_id` and `visible_ms`: `shown` repeats every refresh and
     says nothing about how long a card was actually on screen. The suppression pass in
     service_sa ignores `impression` rows.
+
+    Feedback semantics: `acked` is the checkmark ("got it", a mild positive that clears the card),
+    `dismissed` is a swipe-away (neutral, "seen, no comment"), `not_useful` is the one clearly
+    negative action, with an optional reason in `detail` (see `_NOT_USEFUL_REASONS`).
     """
     try:
         data = data or {}
