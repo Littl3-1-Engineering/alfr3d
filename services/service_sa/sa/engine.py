@@ -177,8 +177,19 @@ def _cross_surface_continuity_subject_key(card):
     return f"{card.get('resume_type')}:{card.get('resume_target')}"
 
 
+def _span_text(minutes):
+    """ "45 min", "5 h" or "3 days" for a length of time in minutes."""
+    if minutes < 120:
+        return f"{minutes} min"
+    if minutes < 48 * 60:
+        return f"{round(minutes / 60.0)} h"
+    return f"{round(minutes / 1440.0)} days"
+
+
 CARD_SUBJECT_KEY_EXTRACTORS = {
     "rhythm_break_anomaly": lambda card: card.get("entity_name") or "",
+    # One device_health card per device, so dismissing the camera's doesn't hide the sensor's.
+    "device_health": lambda card: card.get("entity_name") or "",
     # LF-3: one presence_deviation card per person, so dismissing one doesn't hide another's.
     "presence_deviation": lambda card: card.get("entity_name") or "",
     "cross_surface_continuity": _cross_surface_continuity_subject_key,
@@ -195,6 +206,9 @@ CARD_SUBJECT_KEY_EXTRACTORS = {
 # one today, but this is a generic field check so any future rule can opt in the same way.
 CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD = "urgent"
 
+# The explicit answers that start a card's cooldown (SA-1); see _card_suppression_reason.
+CARD_FEEDBACK_ACTIONS = ("dismissed", "acked", "not_useful")
+
 # decide_displays()'s suppression pass looks at up to this many of a card identity's most recent
 # card_interactions rows -- must cover both the cooldown check (just the latest row) and the
 # repetition-damping run-length count below.
@@ -210,6 +224,12 @@ CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
     # day, so re-showing this more than daily is pure noise on a signal that hasn't moved.
     "guest_overstay_advisory": 1440,
 }
+
+# "Not useful" is the one clearly negative feedback action, so it silences the card for far longer
+# than a neutral swipe-away or a checkmark: a day by default. Product default, not yet tuned against
+# real feedback (there is none yet); per-rule override in the _BY_RULE dict below.
+CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES = 1440
+CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE = {}
 
 # A card identity shown this many cycles in a row with no interaction at all (no dismiss, no
 # tap) gets suppressed until its underlying state changes (i.e. until something -- a different
@@ -292,6 +312,8 @@ class SAEngine:
     #                           over_by_minutes/typical_daily_max_minutes; unusual_hour:
     #                           current_hour/typical_active_hour; expected_absent:
     #                           typical_active_hour; all three also carry because
+    #   device_health:         offline_minutes/usual_longest_offline_minutes/threshold_minutes,
+    #                           because
     #   cross_surface_continuity (music candidate only): minutes_ago
     #   attention_focus:       because
     #   wind_down_signal:      because
@@ -370,6 +392,9 @@ class SAEngine:
         # Actionable, near event/gathering: a genuine deviation from a device's
         # established on/off rhythm is worth surfacing promptly.
         ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),
+        # Household hardware (camera, sensor) offline far longer than it ever ordinarily is: the
+        # same "something's off" tier, just below the routine-break card.
+        ("device_health", 2.65, "check_device_health"),
         # SA-3: the human analogue of rhythm_break_anomaly, one priority tier below it --
         # "usually gone by now, still home" is a genuine routine deviation, not an alert.
         ("departure_anomaly", 2.7, "check_departure_anomaly"),
@@ -566,6 +591,32 @@ class SAEngine:
                 host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
             )
             cursor = db.cursor()
+            # The cooldown comes from the latest feedback or tap, found by its own query. A later
+            # `shown` (a surface that has not got the news yet, or just a refresh) must not cancel
+            # it, and a burst of `shown` rows from two surfaces must not push the feedback row out
+            # of the history window below. Only a later tap, real re-engagement, ends it early.
+            cursor.execute(
+                "SELECT action, occurred_at FROM card_interactions "
+                "WHERE rule_id = %s AND subject_key = %s "
+                "AND action IN ('dismissed', 'acked', 'not_useful', 'tapped') "
+                "ORDER BY occurred_at DESC, id DESC LIMIT 1",
+                (rule_id, subject_key),
+            )
+            feedback = cursor.fetchall()
+            if feedback and feedback[0][0] in CARD_FEEDBACK_ACTIONS:
+                feedback_action, feedback_at = feedback[0]
+                if feedback_action == "not_useful":
+                    cooldown = CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES
+                    )
+                else:
+                    cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
+                        rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
+                    )
+                since = datetime.now(timezone.utc) - feedback_at.replace(tzinfo=timezone.utc)
+                if since < timedelta(minutes=cooldown):
+                    return "cooldown"
+
             cursor.execute(
                 "SELECT action, occurred_at FROM card_interactions "
                 "WHERE rule_id = %s AND subject_key = %s AND action <> 'impression' "
@@ -574,16 +625,6 @@ class SAEngine:
             )
             rows = cursor.fetchall()
             if not rows:
-                return None
-
-            latest_action, latest_at = rows[0]
-            if latest_action == "dismissed":
-                cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
-                    rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
-                )
-                since = datetime.now(timezone.utc) - latest_at.replace(tzinfo=timezone.utc)
-                if since < timedelta(minutes=cooldown):
-                    return "cooldown"
                 return None
 
             run_length = 0
@@ -1307,6 +1348,71 @@ class SAEngine:
             )
         return card
 
+    def check_device_health(self, frame):
+        """Household hardware (a camera, a sensor: devices owned by the infrastructure user) that
+        has been offline much longer than it ever ordinarily is. The trigger is the device's own
+        history, not a device type or a person's schedule: max(floor, 1.5 x the longest offline
+        stretch it ordinarily shows), so a PC that sleeps eight hours a night is not flagged by one
+        (see DeviceRhythmLearner.score_health). Reads the stored inferences like
+        check_rhythm_break_anomaly. Stays quiet while an integration is unreachable
+        (check_system_health owns that), since every device it syncs then reads offline.
+
+        One card per cycle, the device that has been off longest; its identity is the device, so
+        SA-1's cooldown quiets one that is dismissed."""
+        if frame.now is None:
+            return None
+        if any(
+            state["failures"] >= SYSTEM_HEALTH_FAILURES_BEFORE_ALERT
+            for state in SYSTEM_HEALTH_STATE.values()
+        ):
+            return None
+        now_utc = frame.now.replace(tzinfo=None)
+        db = None
+        try:
+            db = pymysql.connect(
+                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+            )
+            recent = inference_store.load_recent(
+                db, 1, now_utc - timedelta(minutes=layer2.FRESH_MINUTES), kinds=("deviation",)
+            )
+        except pymysql.Error as e:
+            logger.error("Device health check error: " + str(e))
+            return None
+        finally:
+            if db:
+                db.close()
+        found = [
+            i
+            for i in recent
+            if i.learner == device_rhythm.NAME
+            and i.signal == device_rhythm.SIGNAL_HEALTH
+            and (i.evidence or {}).get("device")
+        ]
+        if not found:
+            return None
+        inference = max(found, key=lambda i: i.observed["offline_minutes"])
+        name = inference.evidence["device"]
+        minutes = round(inference.observed["offline_minutes"])
+        usual = inference.expected.get("usual_longest_offline_minutes")
+        span = _span_text(minutes)
+        because = (
+            [f"offline {span}; it is ordinarily off for at most {_span_text(round(usual))}"]
+            if usual
+            else [f"offline {span}, and it has no history of being off for long"]
+        )
+        return {
+            "mode": "device_health",
+            "content": f"{name} has been offline for {span}",
+            "priority": 2.65,
+            "entity_name": name,
+            "data": {
+                "offline_minutes": minutes,
+                "usual_longest_offline_minutes": usual,
+                "threshold_minutes": inference.expected["threshold_minutes"],
+                "because": because,
+            },
+        }
+
     def check_departure_anomaly(self, frame):
         """SA-3: a resident who has been home an unusually long stretch for them. Since the LF-4
         cutover this shows the stay learner's inference (sa/learners/stay.py) instead of an
@@ -1620,9 +1726,12 @@ class SAEngine:
 
         Runs every ~60s cycle like every other DISPLAY_RULES check (no
         separate poll loop -- the daemon's outer loop only ticks that often
-        anyway). Only persists to `config` and publishes an event-stream
-        message when the track or play state actually changed, so it
-        doesn't repeat the same "now playing" line every cycle.
+        anyway). Only persists to `config` when the track or play state
+        actually changed. It publishes no event: the daemon's
+        now_playing_monitor already announces every track change (with the
+        track details the Nexus card uses), and a second `play_start` here put
+        two lines per song in the event log and doubled every play_start count
+        the rate and household-day learners read.
 
         Persists on a play->pause transition too (not just track changes),
         even though no card is returned for the paused state itself --
@@ -1660,25 +1769,6 @@ class SAEngine:
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                if is_playing:
-                    p = get_producer()
-                    if p:
-                        message = (
-                            f"Now playing: {title} by {artist}"
-                            if artist
-                            else f"Now playing: {title}"
-                        )
-                        event = {
-                            "id": f"now_playing_{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                            "type": "audio",
-                            "message": message,
-                            "time": datetime.now(timezone.utc).isoformat(),
-                            "subject_type": "track",
-                            "subject_id": track_id,
-                            "verb": "play_start",
-                        }
-                        p.send("event-stream", orjson.dumps(event))
-
             if not is_playing:
                 return None
 

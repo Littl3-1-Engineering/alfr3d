@@ -44,6 +44,118 @@ class TestDeviceRhythm:
         ]
         return device_rhythm.DeviceRhythmLearner().fit_device(7, "Lamp", rows, sessions, REF, None)
 
+    def _camera_profile(self, gaps_minutes):
+        """An always-on device whose sessions are separated by the given offline gaps (minutes),
+        oldest first, each session an hour long; the newest ends at REF 12:00 UTC."""
+        end = datetime.combine(REF, datetime.min.time()) + timedelta(hours=12)
+        sessions = []
+        for gap in reversed(gaps_minutes + [0]):
+            sessions.append((end.date(), 60.0, end))
+            end = end - timedelta(minutes=60 + gap)
+        sessions.reverse()
+        rows = _rows(40, lambda d, h: True)
+        return device_rhythm.DeviceRhythmLearner().fit_device(9, "C200", rows, sessions, REF, None)
+
+    def _camera_profile_for_shadow(self):
+        return self._camera_profile([10, 20, 30, 15, 25, 20, 10, 30, 15, 20, 25])
+
+    def test_the_profile_learns_the_longest_ordinary_offline_stretch(self):
+        profile = self._camera_profile([10, 20, 30, 15, 25, 20, 10, 30, 15, 20, 500])
+        assert profile is not None
+        assert profile.params["offline_gap_minutes"] is not None
+
+    def test_health_fires_past_the_floor_for_a_device_that_barely_drops(self):
+        profile = self._camera_profile([10, 20, 30, 15, 25, 20, 10, 30, 15, 20, 25])
+        learner, now = device_rhythm.DeviceRhythmLearner(), datetime(2026, 10, 10, 7, 0)
+        local = datetime(2026, 10, 10, 3, 0)
+
+        assert (
+            learner.score_health(profile, {"offline_minutes": 90, "local_dt": local}, now) is None
+        )
+        inf = learner.score_health(profile, {"offline_minutes": 130, "local_dt": local}, now)
+        assert inf.signal == device_rhythm.SIGNAL_HEALTH
+        assert inf.expected["threshold_minutes"] == device_rhythm.HEALTH_FLOOR_MINUTES
+
+    def test_health_waits_longer_for_a_device_that_ordinarily_sleeps_long(self):
+        # nightly eight-hour sleeps: 'much longer than it sleeps' is 1.5 x that, not two hours
+        profile = self._camera_profile([480] * 11)
+        learner, now = device_rhythm.DeviceRhythmLearner(), datetime(2026, 10, 10, 7, 0)
+        local = datetime(2026, 10, 10, 3, 0)
+
+        assert (
+            learner.score_health(profile, {"offline_minutes": 600, "local_dt": local}, now) is None
+        )
+        inf = learner.score_health(profile, {"offline_minutes": 800, "local_dt": local}, now)
+        assert inf is not None and inf.expected["threshold_minutes"] == 720.0
+
+    def test_health_ignores_a_device_that_is_online(self):
+        profile = self._camera_profile([480] * 11)
+        learner = device_rhythm.DeviceRhythmLearner()
+        local = datetime(2026, 10, 10, 3, 0)
+        assert (
+            learner.score_health(
+                profile, {"offline_minutes": None, "local_dt": local}, datetime(2026, 10, 10, 7)
+            )
+            is None
+        )
+
+    def _school_break_profile(self):
+        """Out 09-15 on weekdays for months, then home on weekdays for the last 10 days (a break);
+        weekends never changed."""
+
+        def online(d, h):
+            if d.weekday() < 5 and 9 <= h < 15 and d < REF - timedelta(days=9):
+                return False
+            return 7 <= h < 23
+
+        rows = _rows(90, online)
+        sessions = [
+            (
+                d,
+                900.0 + (d.day % 5) * 10,
+                datetime.combine(d, datetime.min.time()) + timedelta(hours=27),
+            )
+            for d in (REF - timedelta(days=i) for i in range(89, -1, -1))
+        ]
+        return device_rhythm.DeviceRhythmLearner().fit_device(7, "Phone", rows, sessions, REF, None)
+
+    def test_a_weekday_change_does_not_lower_the_weekend_stability(self):
+        profile = self._school_break_profile()
+        by_type = profile.params["stability_daytype"]
+        assert by_type["offday"] > 0.95
+        assert by_type["weekday"] < 0.6
+        # the pooled number is dragged down by the weekday change; that is the bug this fixes
+        assert profile.stability < by_type["offday"]
+
+    def test_availability_confidence_uses_the_stability_of_that_days_own_kind(self):
+        profile, learner = self._school_break_profile(), device_rhythm.DeviceRhythmLearner()
+        now = datetime(2026, 10, 14, 7, 0)
+
+        def flag(local_dt):
+            return learner.score(
+                profile, {"online": True, "offline_minutes": None, "local_dt": local_dt}, now
+            )
+
+        weekday, weekend = flag(datetime(2026, 10, 13, 3, 0)), flag(datetime(2026, 10, 10, 3, 0))
+        assert weekday is not None and weekend is not None
+        assert (
+            weekday.evidence["terms"]["stability"] == profile.params["stability_daytype"]["weekday"]
+        )
+        assert (
+            weekend.evidence["terms"]["stability"] == profile.params["stability_daytype"]["offday"]
+        )
+        assert weekend.confidence > weekday.confidence
+
+    def test_a_profile_fitted_before_daytype_stability_falls_back_to_the_pooled_number(self):
+        profile, learner = self._school_break_profile(), device_rhythm.DeviceRhythmLearner()
+        del profile.params["stability_daytype"]
+        inf = learner.score(
+            profile,
+            {"online": True, "offline_minutes": None, "local_dt": datetime(2026, 10, 10, 3, 0)},
+            datetime(2026, 10, 10, 7, 0),
+        )
+        assert inf.evidence["terms"]["stability"] == profile.stability
+
     def test_a_device_with_no_recent_sessions_gets_no_profile(self):
         rows = _rows(40, lambda d, h: False)
         assert device_rhythm.DeviceRhythmLearner().fit_device(7, "x", rows, [], REF, None) is None
@@ -544,13 +656,51 @@ class TestShadowRunner:
         now = datetime(2026, 10, 10, 18, 0)
         cursor = MagicMock()
         cursor.fetchall.return_value = [
-            (4, "offline", now - timedelta(hours=14), "Phone"),
-            (137, "online", now - timedelta(minutes=1), "Phone"),
+            (4, "offline", now - timedelta(hours=14), "Phone", None),
+            (137, "online", now - timedelta(minutes=1), "Phone", None),
         ]
         runner._connect = lambda: MagicMock(cursor=lambda: cursor)
         frame = MagicMock()
         frame.local_dt, frame.now = datetime(2026, 10, 10, 14, 0), now
         assert runner.rhythm(frame) == []
+
+
+class TestDeviceHealthShadow:
+    """Household hardware (owned by the infrastructure user) gets device_health, not a rhythm."""
+
+    def _runner(self, rows, now):
+        runner = shadow.ShadowRunner(MagicMock(), MagicMock())
+        profile = TestDeviceRhythm()._camera_profile_for_shadow()
+        profile.subject_id = "4"
+        runner.profiles = lambda name: [profile]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = rows
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
+        frame = MagicMock()
+        frame.local_dt, frame.now = datetime(2026, 10, 10, 3, 0), now
+        return runner, frame
+
+    def test_infrastructure_device_offline_for_long_gets_a_health_finding_and_no_rhythm(self):
+        now = datetime(2026, 10, 10, 7, 0)
+        rows = [(4, "offline", now - timedelta(hours=6), "C200", "alfr3d")]
+        runner, frame = self._runner(rows, now)
+
+        assert [f.signal for f in runner.device_health(frame)] == ["device.offline_long"]
+        assert runner.rhythm(frame) == []
+
+    def test_a_residents_device_is_not_a_health_finding(self):
+        now = datetime(2026, 10, 10, 7, 0)
+        rows = [(4, "offline", now - timedelta(hours=6), "Laptop", "athos")]
+        runner, frame = self._runner(rows, now)
+
+        assert runner.device_health(frame) == []
+
+    def test_an_online_infrastructure_device_is_not_a_health_finding(self):
+        now = datetime(2026, 10, 10, 7, 0)
+        rows = [(4, "online", now - timedelta(minutes=1), "C200", "alfr3d")]
+        runner, frame = self._runner(rows, now)
+
+        assert runner.device_health(frame) == []
 
 
 class TestHouseholdDayAsRule:

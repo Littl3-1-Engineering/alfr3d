@@ -1144,6 +1144,81 @@ def test_card_interaction_defaults_subject_key_to_empty_string(mock_db_connectio
     assert insert_calls[0].args[1][1] == ""
 
 
+def _post_card_interaction(api_client, mock_db_connection, body):
+    mock_db = MagicMock()
+    mock_cursor = MagicMock()
+    mock_db_connection.return_value.__enter__.return_value = mock_db
+    mock_db.cursor.return_value = mock_cursor
+    response = api_client.post(
+        "/api/context/card-interaction", json=body, headers=_bearer(2, "resident")
+    )
+    inserts = [
+        c
+        for c in mock_cursor.execute.call_args_list
+        if "INSERT INTO card_interactions" in c.args[0]
+    ]
+    return response, inserts
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_records_a_checkmark_as_acked(mock_db_connection, api_client):
+    response, inserts = _post_card_interaction(
+        api_client,
+        mock_db_connection,
+        {"rule_id": "weather", "action": "acked", "surface": "web", "impression_id": "abc-1"},
+    )
+    assert response.status_code == 200
+    params = inserts[0].args[1]
+    assert params[2] == "acked"
+    assert params[5] == "web"
+    assert params[6] == "abc-1"
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_records_a_swipe_as_dismissed_on_the_deck(mock_db_connection, api_client):
+    response, inserts = _post_card_interaction(
+        api_client,
+        mock_db_connection,
+        {"rule_id": "weather", "action": "dismissed", "surface": "deck", "impression_id": "d-1"},
+    )
+    assert response.status_code == 200
+    params = inserts[0].args[1]
+    assert (params[2], params[5], params[6]) == ("dismissed", "deck", "d-1")
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_not_useful_keeps_its_reason_in_detail(mock_db_connection, api_client):
+    response, inserts = _post_card_interaction(
+        api_client,
+        mock_db_connection,
+        {"rule_id": "mood", "action": "not_useful", "surface": "web", "detail": "wrong_time"},
+    )
+    assert response.status_code == 200
+    params = inserts[0].args[1]
+    assert params[2] == "not_useful"
+    assert params[8] == "wrong_time"
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_not_useful_reason_is_optional(mock_db_connection, api_client):
+    response, inserts = _post_card_interaction(
+        api_client, mock_db_connection, {"rule_id": "mood", "action": "not_useful"}
+    )
+    assert response.status_code == 200
+    assert inserts[0].args[1][8] is None
+
+
+@patch("routes.context.db_connection")
+def test_card_interaction_rejects_an_unknown_not_useful_reason(mock_db_connection, api_client):
+    response, inserts = _post_card_interaction(
+        api_client,
+        mock_db_connection,
+        {"rule_id": "mood", "action": "not_useful", "detail": "meh"},
+    )
+    assert response.status_code == 400
+    assert inserts == []
+
+
 class TestInferSourceService:
     """Tests for app._infer_source_service() (SA-11 Phase 1)."""
 
