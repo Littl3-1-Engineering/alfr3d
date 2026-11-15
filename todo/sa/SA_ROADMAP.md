@@ -214,7 +214,8 @@ owning LF doc as they land.
 ### Step 2: calibrate layer 2 against real data
 - [ ] Replay harness: walk-forward over the lake for every layer-2 rule, with calendar and Deck states reconstructed.
 - [ ] Set the calendar discount (70 %), the `day_off` 0.3x factor and the Deck-family discount/floor from observed flag rates (target about one flag-day in 14, like the household rule), not guesses.
-- [ ] Wire `stability` for device rhythm and household day (add a daily feature to the drift detector); measure it for the daytime learner (fixed 0.5 today).
+- [x] Device rhythm `stability` is measured per day type (weekday vs weekend/holiday), 2026-11-14: availability flags use the stability of the day they fire on, so a weekday change (e.g. a school break) no longer holds down a weekend flag. Not yet verified on production data: whether a real school-day break (e.g. Vaxter iFone home at 11:00) now clears the 0.3 card floor; check after the next nightly fit.
+- [ ] Wire `stability` for household day (add a daily feature to the drift detector); measure it for the daytime learner (fixed 0.5 today).
 - [ ] Replay-vs-live parity check for every live-scored learner (this caught the household device-count bug on 2026-10-12).
 
 ### Step 3: close the live-scoring gaps (LF-1c)
