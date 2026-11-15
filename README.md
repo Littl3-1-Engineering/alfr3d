@@ -435,7 +435,7 @@ The `setup/` directory contains scripts for database initialization, maintenance
   - `019_esphome.sql` (ESPHome per-entity ID column + `esphome_nodes` table)
   - `020_camera_stream_url.sql` / `021_widen_secret_columns.sql` / `022_refresh_tokens.sql`
   - `023_entity_baselines.sql` (per-device rhythm baselines, later widened to per-resident/
-    household by `033_entity_baselines_generalize.sql`) / `024_routines_updated_at.sql`
+    household by `033_entity_baselines_generalize.sql`; table dropped by Alembic 0062) / `024_routines_updated_at.sql`
   - `025_device_history_partitioning.sql` / `026_household_events.sql` (durable event log) /
     `027_household_events_structured_fields.sql`
   - `028_attention_telemetry_history.sql` / `029_card_interactions.sql` (card feedback loop)

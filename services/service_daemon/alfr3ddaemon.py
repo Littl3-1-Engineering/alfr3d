@@ -496,7 +496,7 @@ def init_daemon():
         schedule.every(60).minutes.do(discover_esphome_devices)
         schedule.every().day.at("08:00").do(play_tune_scheduled)
         schedule.every(6).hours.do(rebuild_music_recommendations)
-        # compute_entity_baselines() moved to service_sa's sa-learner (LF-1a), same 6h cadence.
+        # compute_entity_baselines() moved to service_sa (LF-1a), retired in LF-4 (migration 0062).
         # household_events/attention_telemetry_history/card_interactions retention and the daily
         # SA storage-metrics snapshot moved to DB-native scheduled EVENTs (migration 039,
         # 2026-09-13) -- see that migration's own comment. Nothing schedules them from here any
