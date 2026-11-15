@@ -178,23 +178,28 @@ def cell(cells, day, hour):
     return cells["p_dow"][day.weekday()][hour], cells["w_dow"][day.weekday()][hour]
 
 
-def _mean_abs_error(rows, cells, start, end):
-    """Mean |f - p| over observed hours with start <= date < end, and how many there were."""
+def _mean_abs_error(rows, cells, start, end, daytype=None):
+    """Mean |f - p| over observed hours with start <= date < end, and how many there were.
+    `daytype` ("weekday" or "offday") limits it to hours on days of that kind."""
     total, count = 0.0, 0
     for day, hour, _dow, minutes in rows:
-        if start <= day < end:
+        if start <= day < end and (daytype is None or _daytype(day) == daytype):
             p, _w = cell(cells, day, hour)
             total += abs(min(1.0, max(0.0, minutes / 60.0)) - p)
             count += 1
     return (total / count if count else None), count
 
 
-def stability_of(rows, ref):
+def stability_of(rows, ref, daytype=None):
     """How well a model fitted without the last STABILITY_WINDOW_DAYS predicted them, vs. how well
     one fitted without the 14 before predicted those. Returns (stability, detail). 1.0 means the
     recent past was no harder to predict than the past before it; it falls to 0 as the recent error
     exceeds the earlier one by STABILITY_SCALE. A person whose pattern changed recently is exactly
-    who this catches: the old baseline is no longer a safe thing to call 'unusual' against."""
+    who this catches: the old baseline is no longer a safe thing to call 'unusual' against.
+
+    With `daytype`, only weekdays (or only weekends/holidays) are compared. One pooled number lets
+    a change on one kind of day (a school break, a new work-from-home day) lower confidence for the
+    other kind, whose rhythm did not move; see stability_by_daytype."""
     w = STABILITY_WINDOW_DAYS
     recent_start, prior_start = ref - timedelta(days=w - 1), ref - timedelta(days=2 * w - 1)
     end = ref + timedelta(days=1)
@@ -204,8 +209,8 @@ def stability_of(rows, ref):
     prior_model = fit_cells(
         [r for r in rows if r[0] < prior_start], prior_start - timedelta(days=1)
     )
-    e_recent, n_recent = _mean_abs_error(rows, recent_model, recent_start, end)
-    e_prior, n_prior = _mean_abs_error(rows, prior_model, prior_start, recent_start)
+    e_recent, n_recent = _mean_abs_error(rows, recent_model, recent_start, end, daytype)
+    e_prior, n_prior = _mean_abs_error(rows, prior_model, prior_start, recent_start, daytype)
     detail = {
         "error_recent": e_recent,
         "error_prior": e_prior,
@@ -217,6 +222,13 @@ def stability_of(rows, ref):
         return STABILITY_UNKNOWN, detail
     worse = max(0.0, e_recent - e_prior)
     return max(0.0, 1.0 - worse / STABILITY_SCALE), detail
+
+
+def stability_by_daytype(rows, ref):
+    """{"weekday": (stability, detail), "offday": (stability, detail)}: stability_of measured on
+    each kind of day separately, so a break in one rhythm is judged against that rhythm's own
+    recent predictability."""
+    return {kind: stability_of(rows, ref, kind) for kind in ("weekday", "offday")}
 
 
 def coverage_of(all_rows, ref):
