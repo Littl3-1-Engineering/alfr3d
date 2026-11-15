@@ -635,6 +635,89 @@ class TestCardSuppression(TestDecideDisplays):
 
             assert SAEngine()._card_suppression_reason("weather", "") is None
 
+    def test_checkmark_and_swipe_share_the_normal_cooldown(self):
+        """acked ("got it") and dismissed (swipe) both clear the card for the normal cooldown."""
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+        )
+
+        for action in ("acked", "dismissed"):
+            with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+                mock_cursor = MagicMock()
+                mock_connect.return_value.cursor.return_value = mock_cursor
+                recent = datetime.now(timezone.utc).replace(tzinfo=None)
+                mock_cursor.fetchall.return_value = [(action, recent)]
+                assert SAEngine()._card_suppression_reason("weather", "") == "cooldown", action
+
+                old = datetime.now(timezone.utc) - timedelta(
+                    minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5
+                )
+                mock_cursor.fetchall.return_value = [(action, old.replace(tzinfo=None))]
+                assert SAEngine()._card_suppression_reason("weather", "") is None, action
+
+    def test_not_useful_silences_far_longer_than_a_swipe(self):
+        """A swipe is neutral and is back after an hour; not_useful is strong and is still
+        suppressed at that point, then released after its own (day-long) cooldown."""
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+            CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES,
+        )
+
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            engine = SAEngine()
+
+            past_swipe = datetime.now(timezone.utc) - timedelta(
+                minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5
+            )
+            mock_cursor.fetchall.return_value = [("dismissed", past_swipe.replace(tzinfo=None))]
+            assert engine._card_suppression_reason("weather", "") is None
+            mock_cursor.fetchall.return_value = [("not_useful", past_swipe.replace(tzinfo=None))]
+            assert engine._card_suppression_reason("weather", "") == "cooldown"
+
+            past_not_useful = datetime.now(timezone.utc) - timedelta(
+                minutes=CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES + 5
+            )
+            mock_cursor.fetchall.return_value = [
+                ("not_useful", past_not_useful.replace(tzinfo=None))
+            ]
+            assert engine._card_suppression_reason("weather", "") is None
+
+    def test_not_useful_never_suppresses_an_urgent_card(self):
+        """Whatever feedback says, an urgent card is never suppressed, and the history is not
+        even read for it."""
+        daemon = self._stub_daemon(check_system_health=self.SYSTEM_HEALTH_CARD)
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = [
+                ("not_useful", datetime.now(timezone.utc).replace(tzinfo=None))
+            ]
+            result = daemon.decide_displays()
+        assert [card["mode"] for card in result] == ["system_health"]
+
+    def test_checkmark_breaks_a_run_of_unacknowledged_shows(self):
+        from services.service_sa.sa.engine import (
+            SAEngine,
+            CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+            CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES,
+        )
+
+        with patch("services.service_sa.sa.engine.pymysql.connect") as mock_connect:
+            mock_cursor = MagicMock()
+            mock_connect.return_value.cursor.return_value = mock_cursor
+            old = (
+                datetime.now(timezone.utc)
+                - timedelta(minutes=CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES + 5)
+            ).replace(tzinfo=None)
+            mock_cursor.fetchall.return_value = [("acked", old)] + [
+                ("shown", old)
+            ] * CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES
+            assert SAEngine()._card_suppression_reason("weather", "") is None
+
     def test_suppression_reason_is_repetition_after_enough_unacknowledged_shows(self):
         from services.service_sa.sa.engine import (
             SAEngine,

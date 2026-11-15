@@ -191,6 +191,48 @@ Deck from `CardInteractionTracker`. A learner (Beta-Binomial of interaction per 
 rule and hour, plus a visible-time scalar) is worth building once a few hundred impressions with
 interactions exist.
 
+## Feedback semantics (2026-11-14, branch `feat/card-feedback-semantics`)
+
+Dismissal is not purely negative, and there is no "like". Three explicit actions, same meaning on
+the web dashboard and the Deck:
+
+| control | `action` | meaning | suppression |
+|---|---|---|---|
+| checkmark ("Got it") | `acked` | acknowledges and clears the card; a mild positive | normal cooldown (60 min) |
+| x (swipe-away) | `dismissed` | "seen, no comment"; neutral | normal cooldown (60 min) |
+| thumbs-down menu ("Not useful") | `not_useful` | the only clearly negative action; optional reason in `detail` | long cooldown (`CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES`, 1440) |
+
+- Reasons (`detail` for `not_useful`): `wrong_time`, `already_knew`, `not_relevant`, `other`; a
+  present value outside that set is a 400, no reason is fine. The set lives in
+  `routes/context.py` (`_NOT_USEFUL_REASONS`), `SituationalAwareness.jsx` and the Deck's
+  `NotUsefulReason`.
+- Migration 0061 / raw SQL 055 adds the two enum values. Old rows are not remapped; every historic
+  `dismissed` row stays "neutral".
+- `urgent` cards offer none of the three controls and are never suppressed, whatever was reported.
+- A swipe or a checkmark still triggers the cooldown, but nothing counts against the rule: the
+  cooldown is the only thing either does today. Only `not_useful` is meant to count against a rule
+  once the learner exists (todo_lf5_more_learners.md).
+- Both new values break a run of `shown` rows, like a tap or a dismissal.
+- **Cooldown numbers are product defaults, not tuned**: 60 min is the existing one, the 24 h
+  `not_useful` value is new and untested against real feedback (there is none: zero explicit
+  interactions since the impression capture began 2026-11-01).
+- The Deck has no swipe gesture today: its x button is the neutral action, exactly like the web's.
+  A real swipe-to-dismiss was not added (cannot be verified without a device).
+- Brief items (leave-by and the other backend cards in the home Brief) keep their own
+  snooze/dismiss and still report `dismissed` with no `impression_id`: they are not tracked as
+  impressions on the Deck at all.
+
+**Verified live 2026-11-14** against a throwaway MySQL 8.0 (empty volume, port 3307, removed
+afterwards; production untouched): the full Alembic chain 0001 to 0061 applies, downgrade 0061
+deletes the two new actions and restores the old enum, re-upgrade is idempotent; the real route
+handler stored `shown`, `acked`, `impression`, `dismissed` (deck) and `not_useful` with and without
+a reason as distinct rows carrying surface, impression id, visible time and user id, and returned 400 for
+an unknown reason and an unknown action; the real `_card_suppression_reason` query returned
+cooldown for all four, released the checkmark and the swipe after 61 minutes, kept `not_useful`
+suppressed, and released it after 25 hours. **Unit-tested only**: the web controls (jsdom, 30 tests
+including reduced motion) and the Deck's controls (wire-value tests; the Compose UI itself is
+**not verified on a device**). Not run: the full docker stack, a browser session.
+
 ## Not yet done
 
 - ~~**Android launcher (`alfr3d_deck`) reporting.**~~ Built, see above. Original note: The task requires both surfaces to report;

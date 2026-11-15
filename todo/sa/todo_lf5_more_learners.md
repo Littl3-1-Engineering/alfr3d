@@ -35,6 +35,10 @@
 - [ ] **Card feedback as a learning signal** (SA-1 Phase 3 "earned priority",
       [todo_card_feedback_loop.md](todo_card_feedback_loop.md)): fix the double-counted `shown`
       (web and Deck both report it) before using it.
+      **Update 2026-11-14:** impressions are one per display with an id since 2026-10-31 (46 so
+      far, no explicit interactions among them), and the explicit signal now has three kinds:
+      `acked` (mild positive), `dismissed` (neutral), `not_useful` (strong, with a reason). Only
+      `not_useful` should count against a rule. Still waiting on data, no learner built.
       **Checked 2026-10-31 against the production `card_interactions` table: there is nothing to
       learn from yet, so no learner was built.** 110,319 rows in 8.5 weeks, but 110,300 of them
       are `shown` reported every cycle by two surfaces (rows with and without a user id), not
