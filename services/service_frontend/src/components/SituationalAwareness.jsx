@@ -240,6 +240,8 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'household_unusual_day': return <Activity className="text-fui-accent" />;
       // Appliance running outside its learned rhythm -- observation, cyan.
       case 'rhythm_break_anomaly': return <Gauge className="text-fui-accent" />;
+      // Household hardware (camera, sensor) offline far longer than it ever ordinarily is -- magenta.
+      case 'device_health': return <ServerCrash className="text-fui-magenta" />;
       // Party-night energy advisory -- actionable, magenta.
       case 'party_advisory': return <PartyPopper className="text-fui-magenta" />;
       // Late-hour wind-down nudge -- ambient evening, cyan.

@@ -214,6 +214,7 @@ owning LF doc as they land.
 ### Step 2: calibrate layer 2 against real data
 - [ ] Replay harness: walk-forward over the lake for every layer-2 rule, with calendar and Deck states reconstructed.
 - [ ] Set the calendar discount (70 %), the `day_off` 0.3x factor and the Deck-family discount/floor from observed flag rates (target about one flag-day in 14, like the household rule), not guesses.
+- [x] `device_health` card, 2026-11-14: household hardware (devices owned by the `alfr3d` system user: camera, sensor) offline longer than max(2 h, 1.5 x the longest offline stretch the device itself ordinarily shows), so a nightly sleeper is not flagged by one. Those devices no longer get rhythm cards. Quiet while an integration is unreachable. Thresholds not tuned against a real outage (the clean period has none). Web icon added; **Deck has no dedicated rule yet** (falls back to the generic situational card): follow-up in `alfr3d_deck`.
 - [ ] Wire `stability` for device rhythm and household day (add a daily feature to the drift detector); measure it for the daytime learner (fixed 0.5 today).
 - [ ] Replay-vs-live parity check for every live-scored learner (this caught the household device-count bug on 2026-10-12).
 

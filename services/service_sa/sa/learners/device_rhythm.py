@@ -33,6 +33,7 @@ NAME = "device_rhythm"
 VERSION = "1"
 SIGNAL_AVAILABILITY = "device.online"
 SIGNAL_DURATION = "device.session_minutes"
+SIGNAL_HEALTH = "device.offline_long"
 
 MIN_OBSERVED_HOURS = 72
 MIN_SESSIONS = 10
@@ -51,6 +52,13 @@ MAX_FLICKER_MINUTES = 24 * 60  # a longer gap is an absence, not a flicker, and 
 USUALLY_ON = 0.5  # an hour counts as "usually on" when the device is online in at least this share
 P_DURATION_FLAG = 0.02  # at most 2 % of past sessions ran this long
 DURATION_GRACE_MINUTES = 30  # and it has to be genuinely longer than the longest ordinary one
+# Device health (always-on household hardware: a camera, a sensor): offline "much longer than it
+# ever sleeps". Not a surprise score: it fires on a threshold, which is the larger of a fixed
+# floor and HEALTH_MARGIN x the longest ordinary offline stretch the device itself has shown.
+OFFLINE_GAP_QUANTILE = 0.95
+MAX_GAP_MINUTES = 14 * 24 * 60  # a longer gap is a different device, not a sleep
+HEALTH_FLOOR_MINUTES = 120
+HEALTH_MARGIN = 1.5
 
 
 def offline_flicker_minutes(sessions, cells, ref, cutoff, tz):
@@ -80,6 +88,30 @@ def offline_flicker_minutes(sessions, cells, ref, cutoff, tz):
         return None
     gaps.sort()
     target, running = GAP_QUANTILE * sum(w for _, w in gaps), 0.0
+    for minutes, weight in gaps:
+        running += weight
+        if running >= target:
+            return minutes
+    return gaps[-1][0]
+
+
+def offline_gap_minutes(sessions, ref, cutoff):
+    """The OFFLINE_GAP_QUANTILE of this device's own offline stretches of any kind (a nightly
+    sleep, a reboot, a flicker): the gaps between consecutive sessions, recency-weighted. This is
+    "the longest it ordinarily stays off"; None with fewer than MIN_GAPS gaps.
+    sessions: [(start_date, minutes, end_utc)]."""
+    ordered = sorted(sessions, key=lambda s: s[2])
+    gaps = []
+    for prev, nxt in zip(ordered, ordered[1:]):
+        minutes = (nxt[2] - timedelta(minutes=nxt[1]) - prev[2]).total_seconds() / 60.0
+        end_day = nxt[2].date()
+        if 0 < minutes <= MAX_GAP_MINUTES and end_day >= cutoff:
+            age = max(0, (ref - end_day).days)
+            gaps.append((minutes, 0.5 ** (age / SESSION_HALF_LIFE_DAYS)))
+    if len(gaps) < MIN_GAPS:
+        return None
+    gaps.sort()
+    target, running = OFFLINE_GAP_QUANTILE * sum(w for _, w in gaps), 0.0
     for minutes, weight in gaps:
         running += weight
         if running >= target:
@@ -123,6 +155,7 @@ class DeviceRhythmLearner(Learner):
         from sa import silver
 
         flicker = offline_flicker_minutes(sessions, cells, ref, cutoff, silver.TIMEZONE)
+        usual_gap = offline_gap_minutes(sessions, ref, cutoff)
         recent_cut = ref - timedelta(days=presence.COVERAGE_WINDOW_DAYS - 1)
         window = [ok for d, _h, _dw, _m, ok in rows if recent_cut <= d <= ref]
         coverage = sum(1 for ok in window if ok) / len(window) if window else 0.0
@@ -135,6 +168,7 @@ class DeviceRhythmLearner(Learner):
             "w_daytype": {k: [round(w, 3) for w in v] for k, v in cells["w_dt"].items()},
             "sessions": [[round(d, 1), round(w, 4)] for d, w in kept],
             "offline_flicker_minutes": None if flicker is None else round(flicker, 1),
+            "offline_gap_minutes": None if usual_gap is None else round(usual_gap, 1),
             "stability_detail": {
                 k: (round(v, 4) if isinstance(v, float) else v) for k, v in detail.items()
             },
@@ -223,6 +257,43 @@ class DeviceRhythmLearner(Learner):
             expected={"p_online": round(p_on, 4)},
             probability=round(p_observed, 6),
             surprise=round(surprise, 3),
+            confidence=round(terms.value, 4),
+            n_eff=round(weight, 3),
+            evidence={"terms": terms.as_dict(), "device": profile.params.get("device")},
+            expires_at=now + timedelta(hours=6),
+        )
+
+    def score_health(self, profile, state, now):
+        """Device-health deviation for always-on hardware: state {"offline_minutes": float}. Fires
+        when the device has been offline longer than max(HEALTH_FLOOR_MINUTES, HEALTH_MARGIN x the
+        longest offline stretch it ordinarily shows), so a PC that sleeps eight hours a night is
+        not flagged by one, and a camera that never drops is flagged after the floor. No
+        probability: it is a threshold on the device's own history, so `confidence` here is only
+        how much history backs the threshold and the card does not gate on it."""
+        off = state.get("offline_minutes")
+        if off is None:
+            return None
+        usual = profile.params.get("offline_gap_minutes")
+        threshold = max(HEALTH_FLOOR_MINUTES, HEALTH_MARGIN * (usual or 0))
+        if off < threshold:
+            return None
+        weight = sum(w for _d, w in profile.params.get("sessions", []))
+        terms = self._terms(profile, weight)
+        return Inference(
+            kind="deviation",
+            subject_type="device",
+            subject_id=profile.subject_id,
+            signal=SIGNAL_HEALTH,
+            learner=self.name,
+            learner_version=self.version,
+            window_start=now - timedelta(minutes=off),
+            window_end=now.replace(microsecond=0),
+            context={"hour_local": state["local_dt"].hour},
+            observed={"offline_minutes": round(off, 1)},
+            expected={
+                "usual_longest_offline_minutes": usual,
+                "threshold_minutes": round(threshold, 1),
+            },
             confidence=round(terms.value, 4),
             n_eff=round(weight, 3),
             evidence={"terms": terms.as_dict(), "device": profile.params.get("device")},
