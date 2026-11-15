@@ -223,6 +223,7 @@ owning LF doc as they land.
 
 ### Step 4: widen the signal base (parallel, mostly capture)
 - [x] Card-feedback capture, cross-repo: done. Backend + web 2026-10-31 (PR #360, migration 0058); the Deck already sends every field (checked 2026-11-14, `HttpAlfr3dClient.reportCardInteraction`). **Feedback semantics built 2026-11-14** (branch `feat/card-feedback-semantics`, migration 0061): checkmark `acked`, x `dismissed` (neutral), "Not useful" `not_useful` with an optional reason; see todo_card_feedback_loop.md. Verified live on a throwaway MySQL (migration, route, suppression); the Deck UI still needs an on-device check.
+- [x] Implicit "acted on" linkage (Phase 2): checked 2026-11-14, stopped, not enough pairs; see the Phase 2 finding below.
 - [ ] Card-feedback learner: Beta-Binomial per (rule, daypart) once a few hundred impressions with explicit interactions exist. Count on 2026-11-14: 46 impressions, 0 explicit interactions since capture began.
 - [ ] Finish the Deck install-to-person mapping (a Deck with no location fix has no owner), then fit the DND and charging rhythm learners once a few weeks of Deck data exist.
 - [ ] A third independent layer-2 family for people without a Deck (HA trackers, calendar free/busy history, or geofence after precise location). Then build "away trip".
@@ -238,6 +239,22 @@ owning LF doc as they land.
 - **Double-counted `shown`: re-checked, partly resolved.** Impressions are one-per-display with an id, `surface` and `visible_ms` (web avg 20 s, deck avg 661 s, max 6,628 s). But `shown` still repeats every backend fetch by design: deck 550 rows over 28 distinct impressions (about 20 per display), web 61 over 46. So "one display = one impression" already holds; what is left is that `shown` is a per-fetch heartbeat feeding repetition damping (which has never fired, see the 10-11 finding).
 - **Contract vs Deck.** The backend accepts `surface`, `impression_id`, `visible_ms`, `detail`, action `impression` (`routes/context.py`, `_card_interaction_extras`). The Deck already sends all of them (`HttpAlfr3dClient.reportCardInteraction`, `surface: "deck"` always; `CardInteractionTracker` mints ids and visible time). **The "Remaining: the Deck must send the same fields" item in Step 4 is stale and done** (Deck v1.2.x). Gap: `BriefRepository.dismiss` reports `dismissed` with no `impression_id`, so a Brief-card dismissal is not tied to its display. Only `dismissed` and `tapped` exist as explicit actions; no "got it" or "not useful" action and no reason handling yet (the enum is `shown, tapped, dismissed, expired, impression`).
 - **Shadow review `--days 14` (run 11-14 23:39 UTC).** `departure_anomaly`: WITHIN BUDGET, 0 learner episodes at confidence >= 0.3 in 14 days (legacy never fired; 34.7 h of learner-only flags sit under the 0.3 card floor). `climate_deviation`: WITHIN BUDGET, 7 episodes (3.7/wk). `attention_focus`: NOT YET, 18.7 episodes/wk against a 4/wk budget (37 episodes; the 12 "legacy only" lines are a 03:30-daily artefact). `rhythm_break_anomaly`: NOT YET, 13.6/wk (27 episodes). Rhythm and attention are over the flag budget after their cutovers, which needs adjudicating before Phase 3 calibration.
+
+### Phase 2 finding, 2026-11-14: implicit "acted on" linkage is NOT buildable yet (stopped at Phase 0, nothing built)
+
+Checked on production over the last 8 weeks (card episodes = `shown` runs with gaps under 10 minutes). Per rule, the later event that would count as acting on the card, and what exists:
+
+| rule | episodes | candidate "acted on" event | what the data shows |
+|---|---|---|---|
+| `empty_house_still_on` | 1 | a device turned off | one episode in 8 weeks: nothing to measure |
+| `rhythm_break_anomaly` | 190 (26 subjects) | the device turned off | the subjects are LAN devices (phones, gateway, consoles); **0 of 26 match a controllable `smarthome_devices` row**, so there is no action a person could take on them. Not an acted-on candidate at all |
+| `travel` (leave-by) | 10 | `left_area` within 90 min | **0 of 10** (only 17 `left_area` events exist in total) |
+| `cross_surface_continuity` (music) | 33 | same-track `play_start` within 30 min | 2 of 33, and confounded: the card is built from that very playback |
+| explicit taps | 7 in 56 days | `tapped` | all 7 predate the impression capture; none since |
+
+Also: `device_command_history` only starts 2026-11-02 (120 user commands in 12 days), so an 8-week replay could not use it even where a pair existed. Fewer than a handful of usable pairs in every rule, so per the plan no linkage was invented and no replay was written.
+
+**Re-check when** `empty_house_still_on` has about 10 episodes, or `device_command_history` holds 8 weeks (about 2026-12-28), or a rule is added whose subject is a controllable device. The most promising future linkage is the explicit one: `acked` on a card that suggests an action. (Proposed trigger; not agreed.)
 
 ### Step 5: later
 - [ ] "Gathering likely tonight" (needs an occasional-visitor model: days since last visit, inter-visit gaps).

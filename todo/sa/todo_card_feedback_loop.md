@@ -233,6 +233,12 @@ suppressed, and released it after 25 hours. **Unit-tested only**: the web contro
 including reduced motion) and the Deck's controls (wire-value tests; the Compose UI itself is
 **not verified on a device**). Not run: the full docker stack, a browser session.
 
+## Implicit "acted on" linkage (2026-11-14): not buildable yet
+
+Checked on real data: too few card-to-action pairs in every rule (the one high-volume rule,
+`rhythm_break_anomaly`, is about LAN devices nobody can switch off; `travel` 0 of 10; the command
+log is 12 days old). Table and re-check triggers in [SA_ROADMAP.md](SA_ROADMAP.md) ("Phase 2 finding").
+
 ## Not yet done
 
 - ~~**Android launcher (`alfr3d_deck`) reporting.**~~ Built, see above. Original note: The task requires both surfaces to report;
