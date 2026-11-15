@@ -44,6 +44,63 @@ class TestDeviceRhythm:
         ]
         return device_rhythm.DeviceRhythmLearner().fit_device(7, "Lamp", rows, sessions, REF, None)
 
+    def _school_break_profile(self):
+        """Out 09-15 on weekdays for months, then home on weekdays for the last 10 days (a break);
+        weekends never changed."""
+
+        def online(d, h):
+            if d.weekday() < 5 and 9 <= h < 15 and d < REF - timedelta(days=9):
+                return False
+            return 7 <= h < 23
+
+        rows = _rows(90, online)
+        sessions = [
+            (
+                d,
+                900.0 + (d.day % 5) * 10,
+                datetime.combine(d, datetime.min.time()) + timedelta(hours=27),
+            )
+            for d in (REF - timedelta(days=i) for i in range(89, -1, -1))
+        ]
+        return device_rhythm.DeviceRhythmLearner().fit_device(7, "Phone", rows, sessions, REF, None)
+
+    def test_a_weekday_change_does_not_lower_the_weekend_stability(self):
+        profile = self._school_break_profile()
+        by_type = profile.params["stability_daytype"]
+        assert by_type["offday"] > 0.95
+        assert by_type["weekday"] < 0.6
+        # the pooled number is dragged down by the weekday change; that is the bug this fixes
+        assert profile.stability < by_type["offday"]
+
+    def test_availability_confidence_uses_the_stability_of_that_days_own_kind(self):
+        profile, learner = self._school_break_profile(), device_rhythm.DeviceRhythmLearner()
+        now = datetime(2026, 10, 14, 7, 0)
+
+        def flag(local_dt):
+            return learner.score(
+                profile, {"online": True, "offline_minutes": None, "local_dt": local_dt}, now
+            )
+
+        weekday, weekend = flag(datetime(2026, 10, 13, 3, 0)), flag(datetime(2026, 10, 10, 3, 0))
+        assert weekday is not None and weekend is not None
+        assert (
+            weekday.evidence["terms"]["stability"] == profile.params["stability_daytype"]["weekday"]
+        )
+        assert (
+            weekend.evidence["terms"]["stability"] == profile.params["stability_daytype"]["offday"]
+        )
+        assert weekend.confidence > weekday.confidence
+
+    def test_a_profile_fitted_before_daytype_stability_falls_back_to_the_pooled_number(self):
+        profile, learner = self._school_break_profile(), device_rhythm.DeviceRhythmLearner()
+        del profile.params["stability_daytype"]
+        inf = learner.score(
+            profile,
+            {"online": True, "offline_minutes": None, "local_dt": datetime(2026, 10, 10, 3, 0)},
+            datetime(2026, 10, 10, 7, 0),
+        )
+        assert inf.evidence["terms"]["stability"] == profile.stability
+
     def test_a_device_with_no_recent_sessions_gets_no_profile(self):
         rows = _rows(40, lambda d, h: False)
         assert device_rhythm.DeviceRhythmLearner().fit_device(7, "x", rows, [], REF, None) is None
