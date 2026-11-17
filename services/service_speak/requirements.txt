@@ -2,7 +2,7 @@ kafka-python-ng==2.2.3
 coqui-tts
 gtts
 schedule==1.2.2
-pymysql==1.2.3
+pymysql==1.2.4
 DBUtils==3.2.0
 anthropic>=2.6.0
 orjson==3.13.0
