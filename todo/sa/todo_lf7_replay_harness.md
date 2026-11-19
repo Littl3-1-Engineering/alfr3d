@@ -215,6 +215,30 @@ Run 2026-11-19, 11-02 onward (rates 11-16, devices 11-15):
   day on 11-15 to 11-17 (52 to 80 flagged grid times) while live flags nothing, which says the
   approximation is wrong for that device, not that live is. **Not evidence about live.**
 
+### Fix: per-series flag bar for the scalar learner (scalar `VERSION` 2)
+
+Each scalar profile now stores `params["z_bar"]`: the |z| its own weighted residuals exceed about
+once a week (`TARGET_FLAGS_PER_WEEK` = 1 of every 168 hours), clamped to `[MIN_ABS_Z, MAX_Z_BAR]`
+= `[4.0, 12.0]` and left at 4.0 with fewer than `MIN_BAR_RESIDUALS` = 336 hours. `score()` flags at
+that bar, with the global 4.0 as the fallback for profiles fitted before version 2; `z_bar` is also
+on the inference's evidence. A well-behaved series keeps exactly today's bar, so only a heavy-tailed
+one changes.
+
+Walk-forward on the production lake, 2026-10-12 to 11-18, each day's profile fitted on the days
+before it (flagged hours at the old global bar against the new per-series bar):
+
+| series | hours | old (4.0) | new (per-series) | bar range |
+|---|---|---|---|---|
+| `attention:switch_count` | 833 | 53 (6.4 %) | **4 (0.48 %, 0.81 a week)** | 6.22 to 12.00 |
+| `attention:unlock_count` | 833 | 0 | 0 | 4.00 |
+| ESPHome temperature | 787 | 7 (0.9 %) | 7 (1.49 a week) | 4.00 to 4.32 |
+| ESPHome humidity | 787 | 1 (0.1 %) | 1 | 4.00 |
+
+Only `switch_count` changes (53 to 4 flagged hours, against the 1-a-week target); the other three
+are identical. The bar sits at the 12.0 cap on some days, so its in-sample tail on those days was
+extreme; the cap exists so a series can never become unflaggable. Parity for scalar now judges each
+series against its own bar (`parity._scalar_bar`).
+
 ## Remaining for this phase
 
 - [x] Replay-versus-live parity script. Covers presence, stay, daytime, household day, scalar, event
@@ -226,8 +250,9 @@ Run 2026-11-19, 11-02 onward (rates 11-16, devices 11-15):
 - [ ] **Stay parity re-run** once the lake holds a few days after 2026-11-19 (needs 14 person-days:
       6 profiles, so 3 days). Expect the live-only stay days to stop.
 - [x] Scalar hypothesis checked and refuted (above); replaced by a measured finding.
-- [ ] **Decision needed:** per-series calibrated bar for `attention:switch_count` (6.4 % of hours
-      flagged at the global 4-sigma bar). Not implemented; it changes live cards.
+- [x] Per-series calibrated bar for the scalar learner (branch `fix/sa-scalar-per-series-bar`, see
+      "Fix" under the switch_count finding). **Not deployed**: it changes which attention cards fire,
+      so it waits for a go-ahead; on deploy, advance `parity.MATCHING_INPUTS_SINCE["scalar_baseline"]`.
 - [ ] Device-rhythm replay: reconstruct the `device` row state properly (from `device_history`,
       which has per-scan state) instead of from sessions.
 - [ ] Find why `service_user` emitted no `went_offline` for any user in three windows (11-07 to 11-09).
