@@ -1077,7 +1077,7 @@ class TestCheckGatherings:
     )
     @patch("services.service_sa.sa.engine.spotify_utils.resolve_playlist")
     @patch("services.service_sa.sa.engine.spotify_utils.recommend")
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_morning_gathering_passes_morning_time_of_day_to_recommend(
         self,
@@ -1162,7 +1162,7 @@ class TestCheckGatherings:
     )
     @patch("services.service_sa.sa.engine.spotify_utils.resolve_playlist")
     @patch("services.service_sa.sa.engine.spotify_utils.recommend")
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_resolved_playlist_fields_are_attached_to_the_card(
         self,
@@ -1231,7 +1231,7 @@ class TestCheckGatherings:
     )
     @patch("services.service_sa.sa.engine.spotify_utils.resolve_playlist")
     @patch("services.service_sa.sa.engine.spotify_utils.recommend")
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_guest_and_total_count_are_plain_ints_not_decimal(
         self,
@@ -1288,7 +1288,7 @@ class TestCheckGatherings:
     )
     @patch("services.service_sa.sa.engine.spotify_utils.resolve_playlist")
     @patch("services.service_sa.sa.engine.spotify_utils.recommend")
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_publishes_event_stream_message_when_producer_available(
         self,
@@ -1341,7 +1341,7 @@ class TestCheckGatherings:
     )
     @patch("services.service_sa.sa.engine.spotify_utils.resolve_playlist")
     @patch("services.service_sa.sa.engine.spotify_utils.recommend")
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("services.service_sa.sa.engine.pymysql.connect")
     def test_playlist_resolution_exception_falls_back_to_text_hint(
         self,
@@ -2265,7 +2265,7 @@ class TestCheckPartyAdvisory:
     frame.playback (SA-4) replace what used to be mocked get_env_local_time()/
     get_playback_state() calls."""
 
-    @patch("services.service_sa.sa.engine.get_producer")
+    @patch("sa.calendar_cards.get_producer")
     @patch("common.spotify_utils.get_track_energy")
     @patch("services.service_sa.sa.engine.spotify_utils.is_party_night")
     def test_fires_for_high_energy_track_on_a_weeknight_night(
