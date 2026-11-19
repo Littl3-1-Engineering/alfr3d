@@ -565,7 +565,11 @@ class TestShadowRunner:
         profile = self._stay_profile()
         runner.profiles = lambda name: [profile] if name == stay.NAME else []
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(stay_start,), (stay_start + timedelta(minutes=30),)]
+        # A phone seen every 30 minutes up to 23:00 UTC; the frame below is 23:30, inside the
+        # live offline lag, so the person is still home on this evidence.
+        cursor.fetchall.return_value = [
+            (stay_start + timedelta(minutes=30 * i),) for i in range(21)
+        ]
         cursor.fetchone.return_value = busy_event
         runner._connect = lambda: MagicMock(cursor=lambda: cursor)
         frame = MagicMock()
@@ -583,6 +587,35 @@ class TestShadowRunner:
 
         assert findings and findings[0].observed["state"] == "home"
         assert runner._stay_starts["1"] == datetime(2026, 10, 9, 13, 0)
+
+    def test_arrival_before_the_new_sighting_is_logged_does_not_score_the_previous_stay(self):
+        """device_history logs the previous last_online, so right after an arrival user.state is
+        online while the newest readable sighting is the last stay's. That used to be scored as one
+        ~24 h stay (parity check, 2026-11-19: user 9, 11-05 13:45 left, 20:28 back)."""
+        from sa.learners import stay
+
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+        previous = datetime(2026, 10, 8, 13, 0)  # yesterday's stay, last seen 2026-10-09 09:45
+        sightings = [(previous + timedelta(minutes=30 * i),) for i in range(40)]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = sightings
+        cursor.fetchone.return_value = None
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
+        runner.profiles = lambda name: [self._stay_profile()] if name == stay.NAME else []
+        frame.now = sightings[-1][0] + timedelta(hours=10)  # user.state: home; sighting 10 h old
+
+        assert runner._stay_start(1, frame.now) is None
+        assert runner.departure(frame) == []
+
+    def test_the_next_sighting_after_an_arrival_starts_a_fresh_stay(self):
+        runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0))
+        runner.departure(frame)  # caches the old stay (last sighting 23:00)
+        arrival = datetime(2026, 10, 10, 6, 0)
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(arrival,)]
+        runner._connect = lambda: MagicMock(cursor=lambda: cursor)
+
+        assert runner._stay_start(1, arrival + timedelta(minutes=2)) == arrival
 
     def test_departure_stays_quiet_while_a_calendar_event_covers_the_moment(self):
         runner, frame = self._departure_runner(datetime(2026, 10, 9, 13, 0), busy_event=(1,))
