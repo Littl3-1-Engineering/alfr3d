@@ -27,7 +27,7 @@ from sa.learners import (
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "common"))
-from common import heartbeat  # noqa: E402
+from common import get_producer, heartbeat, learner_health  # noqa: E402
 
 logger = engine.logger
 
@@ -102,76 +102,61 @@ def run_ledger():
             conn.close()
 
 
+# (learner name as stored in sa_profiles, label for the log, module with run_fit). The order is the
+# order they run in: the presence bridge first (the others read it), drift last (the learners above
+# rewrite their own stability, and drift caps it afterwards).
+LEARNER_STAGES = (
+    ("presence_bridge", "presence bridge", bridge),
+    ("presence_profile", "presence learner", presence),
+    ("scalar_baseline", "scalar learner", scalar),
+    ("event_rate", "rate learner", rates),
+    ("device_rhythm", "device rhythm learner", device_rhythm),
+    ("household_day", "household day learner", household_day),
+    ("stay_profile", "stay learner", stay),
+    ("daytime_profile", "daytime learner", daytime),
+    ("drift", "drift detector", drift),
+)
+
+
+def publish_fit_events(outcomes):
+    """Send the night's fit outcomes to the event stream so a failing learner is in the household
+    event log (and `/api/health`), not only in a container log. Best effort: it never raises, the
+    nightly job must finish whether or not Kafka answers."""
+    try:
+        import orjson
+
+        producer = get_producer()
+        for event in learner_health.fit_events(outcomes):
+            producer.send("event-stream", orjson.dumps(event))
+        producer.flush(5)
+    except Exception as e:
+        logger.error(f"fit events not published: {e}")
+
+
 def run_learners():
     """Fit the layer-1 learners on the gold layer and store their profiles and outlooks (LF-3).
-    Runs after every silver/gold rebuild; sa-awareness picks the new fit up on its next cycle."""
+    Runs after every silver/gold rebuild; sa-awareness picks the new fit up on its next cycle. Each
+    learner fails independently: one that raises is logged, recorded as `fit_failed`, and the rest
+    still run. The outcomes are published (`publish_fit_events`) and `learner_health.stale_fits`
+    reads the result back from the stored profiles."""
     conn = None
+    outcomes = {}
     try:
-        conn = inference_store.connect()
-        outcome = bridge.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"presence bridge done: {outcome}")
-    except Exception as e:
-        logger.error(f"presence bridge failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = presence.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"presence learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"presence learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = scalar.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"scalar learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"scalar learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = rates.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"rate learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"rate learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = device_rhythm.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"device rhythm learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"device rhythm learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = household_day.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"household day learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"household day learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = stay.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"stay learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"stay learner failed: {e}")
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = daytime.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"daytime learner done: {outcome}")
-    except Exception as e:
-        logger.error(f"daytime learner failed: {e}")
-    # Last: the learners above rewrite their own stability, and drift caps it afterwards.
-    try:
-        if conn is None:
-            conn = inference_store.connect()
-        outcome = drift.run_fit(lake.LAKE_DIR, conn)
-        logger.info(f"drift detector done: {outcome}")
-    except Exception as e:
-        logger.error(f"drift detector failed: {e}")
+        for name, label, module in LEARNER_STAGES:
+            try:
+                if conn is None:
+                    conn = inference_store.connect()
+                outcome = module.run_fit(lake.LAKE_DIR, conn)
+                logger.info(f"{label} done: {outcome}")
+                outcomes[name] = ("fit_ok", outcome)
+            except Exception as e:
+                logger.error(f"{label} failed: {e}")
+                outcomes[name] = ("fit_failed", str(e))
     finally:
         if conn:
             conn.close()
+    publish_fit_events(outcomes)
+    return outcomes
 
 
 def run():

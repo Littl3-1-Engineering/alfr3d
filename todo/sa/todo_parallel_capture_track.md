@@ -29,6 +29,8 @@ registry feature exposes the forecast columns yet.
 - **C. Store several leads** (+3 h, +12 h, +24 h). Needs the ENUM widened (a migration) and more
   rows per fetch; only worth it if a learner shows it can use a forecast at all.
 
+**Update 2026-11-19: option A approved and built** (`feat/sa-registry-forecast-and-calendar-null`): the forecast features are registered; 6-hour-lead forecast error is 1.55 C mean absolute so far. B is still open and waits for a held-out gain.
+
 **Recommendation: A now; B if A shows a held-out gain.** It answers the question with no schema
 change, and it is the cheaper way to find out whether forecasts are worth capturing better.
 **Needs from you:** a yes to A. B and C need a migration, so I would show the plan and backup first.
@@ -83,6 +85,8 @@ card.
    urgent card ("SA says I'm blind"), which already exists for exactly this kind of problem and is
    not a new card. That changes the wording of a card people see, so it is not in the default plan.
 
+**Update 2026-11-19: items 1 to 3 approved and built** (`feat/sa-stale-fit-alert`): `common/learner_health.py` (`stale_fits`, `summarize`, `fit_events`), `run_learners()` now records each learner's outcome and publishes `fit_failed` warnings plus one `fit_ok` or `fit_partial` summary per night to the event stream, and `GET /api/health` has an additive `learner_fits` block (`status` stays `ok`). Checked on real stamps: 9 learners ok; a simulated 3-day outage flags all 9. Item 4 (folding it into `check_system_health`) was not part of the approval and is not built.
+
 **Recommendation: 1 to 3 now, 4 only if you want it surfaced in the app.** No migration, no new
 card. **Needs from you:** a yes to 1 to 3, and a yes or no on 4.
 
@@ -124,6 +128,8 @@ references to `sa.engine`, patching `engine.pymysql.connect` (42 places), `engin
    that name, passed in or imported lazily).
 5. `engine.py` ends as the orchestrator (`DISPLAY_RULES`, `check_situational_awareness`,
    `decide_displays`), a few hundred lines.
+
+**Update 2026-11-19: step 0 built** (`test/sa-engine-split-safety-net`, `tests/test_sa_engine_structure.py`), with one change from the plan above. A golden test of card outputs would need a fixture frame and mocked databases for each of 26 rules, which is slow and still only checks what those fixtures happen to exercise. For a pure *move* a stronger and cheaper net exists: a snapshot of every `SAEngine` method's signature and a **hash of its source** (44 methods, plus the 3 module-level helpers), so after the split every moved method must still resolve on the class and be byte-identical, and an edit hidden inside a move is flagged by name. It also pins `DISPLAY_RULES`, `MAX_DISPLAYS == 26` and the names tests patch on the `engine` module (`engine.get_producer`, `engine.pymysql`, ...). Proven both ways: an added statement inside `check_time` fails it naming `check_time`; a verbatim move of a helper into another module (re-exported) passes. Steps 1 to 5 follow once this is on `main`, each its own PR. Regenerate the snapshot only on purpose: `UPDATE_ENGINE_SNAPSHOT=1 pytest tests/test_sa_engine_structure.py`.
 
 **Acceptance per step:** the full SA suite green with no test file edited; the golden test unchanged;
 the card budget assertion green; no behaviour change on a replay of the fixture frames.
