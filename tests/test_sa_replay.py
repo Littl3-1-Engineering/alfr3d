@@ -206,3 +206,97 @@ class TestStayReplayDeclaresItsHindsight:
         out = replay.replay_stay(lake, date(2026, 9, 28), LAST)
 
         assert any("bridge" in item for item in out["unreconstructed"])
+
+
+def _write_deck(root, kind, install="deck-1", user_id=1, day=LAST, local_from=8, local_to=17):
+    """Bronze Deck reports every 5 minutes across [local_from, local_to) on `day` (local EDT = UTC-4
+    in October) and the install-to-user link, as the nightly export writes them."""
+    start = datetime.combine(day, datetime.min.time()) + timedelta(hours=local_from + 4)
+    stop = datetime.combine(day, datetime.min.time()) + timedelta(hours=local_to + 4)
+    reports, at = [], start
+    while at < stop:
+        reports.append({"device_install_id": install, "observed_at": at, "network_type": kind})
+        at += timedelta(minutes=5)
+    (root / "bronze" / "deck_context_history" / f"date={day}").mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(reports),
+        root / "bronze" / "deck_context_history" / f"date={day}" / "part-0.parquet",
+    )
+    (root / "bronze" / "device_location_history" / f"date={day}").mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist([{"client_install_id": install, "user_id": user_id}]),
+        root / "bronze" / "device_location_history" / f"date={day}" / "part-0.parquet",
+    )
+
+
+def _absent_history(day, hour):
+    return 0 if day == LAST and 9 <= hour < 17 else 60
+
+
+class TestDeckFamily:
+    def test_no_bronze_is_no_deck_not_an_error(self, tmp_path):
+        assert replay.load_deck(str(tmp_path)) == ({}, {})
+
+    def test_sustained_wifi_and_cellular_become_states_like_live(self, tmp_path):
+        _write_deck(tmp_path, "wifi")
+        deck = replay.load_deck(str(tmp_path))
+        at = datetime.combine(LAST, datetime.min.time()) + timedelta(hours=14 + 4)
+
+        assert replay.deck_state_at(deck, 1, at).observed == {"state": "wifi"}
+        assert replay.deck_state_at(deck, 2, at) is None  # someone with no Deck: no evidence
+
+    def test_a_stale_deck_is_no_state(self, tmp_path):
+        _write_deck(tmp_path, "cellular")
+        deck = replay.load_deck(str(tmp_path))
+        long_after = datetime.combine(LAST, datetime.min.time()) + timedelta(hours=23 + 4)
+
+        assert replay.deck_state_at(deck, 1, long_after) is None
+
+    def test_a_wifi_deck_explains_an_absence_away_and_a_cellular_one_does_not(self, tmp_path):
+        wifi_lake = tmp_path / "wifi"
+        cell_lake = tmp_path / "cell"
+        for root in (wifi_lake, cell_lake):
+            root.mkdir()
+        _write_lake(wifi_lake, _absent_history)
+        _write_lake(cell_lake, _absent_history)
+        _write_deck(wifi_lake, "wifi")
+        _write_deck(cell_lake, "cellular")
+        window = (date(2026, 9, 28), LAST)
+
+        # A strong discount, so a sleeping-phone explanation is enough to silence this absence.
+        wifi = replay.replay_away_unusual(str(wifi_lake), *window, explained_discount=0.95)
+        cell = replay.replay_away_unusual(str(cell_lake), *window, explained_discount=0.95)
+
+        assert wifi["deck"]["flag_days_without_deck"] == 1
+        assert wifi["deck"]["flag_days_with_deck"] == 0  # a sleeping phone, not an absence
+        assert cell["deck"]["presence_deviations_by_deck_state"]["out"] > 0
+        assert cell["deck"]["flag_days_with_deck"] == 1  # cellular never explains it away
+        assert wifi["deck"]["users_with_a_reporting_deck"] == 1
+        assert not any("deck" in item for item in wifi["unreconstructed"])
+
+    def test_explained_discount_is_reported_and_sweepable(self, tmp_path):
+        _write_lake(tmp_path, _absent_history)
+        _write_deck(tmp_path, "wifi")
+
+        out = replay.sweep(
+            replay.replay_away_unusual,
+            str(tmp_path),
+            date(2026, 9, 28),
+            LAST,
+            "explained_discount",
+            [0.0, 0.95],
+        )
+
+        # With no discount a wifi explanation changes nothing: the absence still flags.
+        assert out[0]["flag_days"] == 1 and out[1]["flag_days"] == 0
+
+    def test_a_very_surprising_absence_survives_the_default_wifi_discount(self, tmp_path):
+        _write_lake(tmp_path, _absent_history)
+        _write_deck(tmp_path, "wifi")
+
+        out = replay.replay_away_unusual(str(tmp_path), date(2026, 9, 28), LAST)
+
+        # By design: an explanation removes 70 % of the surprise, it never silences everything.
+        assert out["explained_discount"] == 0.7
+        assert out["deck"]["presence_deviations_by_deck_state"]["wifi"] > 0
+        assert out["deck"]["flag_days_with_deck"] == 1

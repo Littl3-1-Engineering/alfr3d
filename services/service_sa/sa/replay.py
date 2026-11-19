@@ -19,9 +19,19 @@ Flag-day: a local day on which a rule would have raised at least one result at o
 confidence floor. The calibration target is about one flag-day in 14 (the household rule's own bar).
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
-from sa.learners import away_unusual, day_off, daytime, household_day, presence, stay
+from sa import silver
+from sa.learners import (
+    away_unusual,
+    day_off,
+    daytime,
+    deck_network,
+    household_day,
+    presence,
+    stay,
+)
 
 # A published card needs this much confidence (departure_anomaly, climate, ...). Replays count a
 # result as flagged when it would have reached a card, not merely when it exists.
@@ -32,7 +42,7 @@ CALENDAR_UNRECONSTRUCTABLE = (
     "calendar free/busy: the table is purged after each event, so no per-day history exists"
 )
 DECK_UNRECONSTRUCTABLE = (
-    "deck network family: history starts 2026-10-11 for two installs, not joined to the replay"
+    "deck network family: no reporting Deck is linked to anyone with presence data in this window"
 )
 BRIDGE_HINDSIGHT = (
     "presence intervals are silver as rebuilt today: the learned per-person presence bridge "
@@ -109,35 +119,125 @@ def _users(lake_dir):
     return sorted(grid)
 
 
-def replay_away_unusual(lake_dir, start, end):
+DECK_RECENT_HOURS = 12  # shadow.deck_network_state reads this much recent history per cycle
+DECK_CADENCE_DAYS = 14  # and measures each install's report cadence over this many days
+
+
+def load_deck(lake_dir):
+    """({install: [(observed_at, network_type)]}, {install: user_id}) from the bronze layer: the
+    Deck's own network reports and the install-to-user link live uses (the user on the install's
+    location fixes). Empty when the lake has neither, so a household without a Deck replays as the
+    live rule runs for it: no row, no evidence."""
+    import glob
+    import os
+
+    import duckdb
+
+    reports_glob = os.path.join(lake_dir, "bronze", "deck_context_history", "date=*", "*.parquet")
+    owners_glob = os.path.join(lake_dir, "bronze", "device_location_history", "date=*", "*.parquet")
+    if not (glob.glob(reports_glob) and glob.glob(owners_glob)):
+        return {}, {}
+    con = duckdb.connect()
+    try:
+        reports = {}
+        for install, at, kind in con.execute(
+            f"SELECT device_install_id, observed_at, network_type "
+            f"FROM read_parquet('{reports_glob}') WHERE network_type IS NOT NULL"
+        ).fetchall():
+            reports.setdefault(install, []).append((at, kind))
+        owners = dict(
+            con.execute(
+                f"SELECT client_install_id, MAX(user_id) "
+                f"FROM read_parquet('{owners_glob}') GROUP BY client_install_id"
+            ).fetchall()
+        )
+        return {i: sorted(r) for i, r in reports.items()}, owners
+    finally:
+        con.close()
+
+
+def deck_state_at(deck, user_id, at_utc):
+    """The Deck observer's layer-1 state row for `user_id` as live would have written it at
+    `at_utc` (naive UTC): sustained cellular or wifi on any of their installs, or None."""
+    reports, owners = deck
+    for install, owner in owners.items():
+        if owner != user_id or install not in reports:
+            continue
+        history = reports[install]
+        recent = [
+            r for r in history if at_utc - timedelta(hours=DECK_RECENT_HOURS) <= r[0] <= at_utc
+        ]
+        cadence = [
+            r[0] for r in history if at_utc - timedelta(days=DECK_CADENCE_DAYS) <= r[0] <= at_utc
+        ]
+        found = deck_network.observe(
+            user_id, install, recent, at_utc, deck_network.median_gap_minutes(cadence)
+        )
+        if found is not None:
+            return found
+    return None
+
+
+def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck=True):
     """Layer 2 `away_unusual` over the presence backtest: the person's `presence.home` deviation
-    fused by the real rule. Device, calendar and Deck parents are not reconstructed (see module
-    doc), so this is the presence-only floor of what the live rule would flag."""
-    rows = []
+    fused by the real rule, with the Deck family reconstructed from the bronze layer for people
+    whose Deck reports (sustained cellular corroborates, sustained wifi explains the absence away).
+    Calendar and owned-device parents are not reconstructed (see module doc). `explained_discount`
+    sweeps the share of surprise an explanation removes; in this replay only the Deck's wifi
+    state explains, so it calibrates that discount without touching the calendar's."""
+    from sa import layer2
+
+    rule = away_unusual.AwayUnusualRule()
+    if explained_discount is not None:
+        rule.explained_discount = explained_discount
+    deck = load_deck(lake_dir) if with_deck else ({}, {})
+    rows, plain_rows, by_state = [], [], {"out": 0, "wifi": 0, "none": 0}
+    zone = ZoneInfo(silver.TIMEZONE)
     for user in _users(lake_dir):
         for hit in presence.backtest(lake_dir, user, start, end, hours=range(6, 23)):
-            profile = hit["profile"]
-            fused = away_unusual.combine(
-                str(user),
-                profile.params.get("username"),
-                hit["inference"],
-                [],
-                0,
-                hit["at_local"],
+            inference = hit["inference"]
+            if inference is None:
+                rows.append(_row(user, hit["at_local"], None))
+                plain_rows.append(_row(user, hit["at_local"], None))
+                continue
+            at_utc = (
+                hit["at_local"].replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
             )
-            rows.append(_row(user, hit["at_local"], fused))
+            profile = hit["profile"]
+            plain = away_unusual.combine(
+                str(user), profile.params.get("username"), inference, [], 0, hit["at_local"]
+            )
+            plain_rows.append(_row(user, hit["at_local"], plain))
+            state = deck_state_at(deck, user, at_utc)
+            parents = [inference] + ([state] if state is not None else [])
+            fused = layer2.run_rules(
+                [rule], parents, {"owners": {}, "owned_with_profile": {}}, hit["at_local"]
+            )
+            by_state[(state.observed or {}).get("state", "none") if state else "none"] += 1
+            rows.append(_row(user, hit["at_local"], fused[0] if fused else None))
+    users_with_deck = len({o for o in deck[1].values() if o in set(_users(lake_dir))})
+    without = report("x", "layer2", start, end, plain_rows)
     return report(
         away_unusual.NAME,
         "layer2",
         start,
         end,
         rows,
-        unreconstructed=[
-            CALENDAR_UNRECONSTRUCTABLE,
-            DECK_UNRECONSTRUCTABLE,
-            DEVICES_UNRECONSTRUCTABLE,
-        ],
-        method="presence backtest (hourly 06-22 local) fused by away_unusual.combine",
+        unreconstructed=[CALENDAR_UNRECONSTRUCTABLE, DEVICES_UNRECONSTRUCTABLE]
+        + ([] if users_with_deck else [DECK_UNRECONSTRUCTABLE]),
+        method="presence backtest (hourly 06-22 local) fused by AwayUnusualRule with the Deck "
+        "network state reconstructed from bronze deck_context_history",
+        extra={
+            "deck": {
+                "users_with_a_reporting_deck": users_with_deck,
+                "presence_deviations_by_deck_state": by_state,
+                "flag_days_without_deck": without["flag_days"],
+                "flag_days_with_deck": len(
+                    {(r["subject"], _day_of(r["at"])) for r in rows if r["flagged"]}
+                ),
+            },
+            "explained_discount": rule.explained_discount,
+        },
     )
 
 
@@ -299,6 +399,19 @@ def main(argv=None):
         start, end = default_window(days=args.days)
     reports = run(args.lake, start, end, args.only)
     if args.sweep:
+        reports.append(
+            {
+                "name": "away_unusual.explained_discount_sweep",
+                "sweep": sweep(
+                    replay_away_unusual,
+                    args.lake,
+                    start,
+                    end,
+                    "explained_discount",
+                    [0.5, 0.7, 0.9],
+                ),
+            }
+        )
         reports.append(
             {
                 "name": "day_off.corroboration_floor_sweep",
