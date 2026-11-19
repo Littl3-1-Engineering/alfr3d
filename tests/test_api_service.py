@@ -2156,3 +2156,33 @@ def test_an_impression_needs_its_id_and_duration(mock_db_connection, api_client)
         )
         assert response.status_code == 400, extra
     mock_db_connection.assert_not_called()
+
+
+@patch("routes.health.db_connection")
+def test_health_reports_learner_fit_freshness_without_changing_status(mock_db, api_client):
+    """/api/health gains a read-only learner_fits block; `status` stays "ok" for monitors."""
+    from datetime import date, datetime, timedelta, timezone
+
+    today = datetime.now(timezone.utc).date()
+    _mock_connection(
+        mock_db,
+        [
+            ("scalar_baseline", today - timedelta(days=1), datetime.now(timezone.utc)),
+            ("stay_profile", today - timedelta(days=9), datetime.now(timezone.utc)),
+        ],
+    )
+
+    data = api_client.get("/api/health").json()
+
+    assert data["status"] == "ok"
+    assert data["learner_fits"]["status"] == "stale"
+    assert [s["learner"] for s in data["learner_fits"]["stale"]] == ["stay_profile"]
+    assert date  # imported for clarity of the date arithmetic above
+
+
+@patch("routes.health.db_connection", side_effect=RuntimeError("db down"))
+def test_health_survives_a_broken_learner_fit_check(_mock_db, api_client):
+    data = api_client.get("/api/health").json()
+
+    assert data["status"] == "ok"
+    assert data["learner_fits"] == {"status": "unknown", "error": "learner fit check failed"}

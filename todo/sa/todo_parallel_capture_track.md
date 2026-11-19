@@ -83,6 +83,8 @@ card.
    urgent card ("SA says I'm blind"), which already exists for exactly this kind of problem and is
    not a new card. That changes the wording of a card people see, so it is not in the default plan.
 
+**Update 2026-11-19: items 1 to 3 approved and built** (`feat/sa-stale-fit-alert`): `common/learner_health.py` (`stale_fits`, `summarize`, `fit_events`), `run_learners()` now records each learner's outcome and publishes `fit_failed` warnings plus one `fit_ok` or `fit_partial` summary per night to the event stream, and `GET /api/health` has an additive `learner_fits` block (`status` stays `ok`). Checked on real stamps: 9 learners ok; a simulated 3-day outage flags all 9. Item 4 (folding it into `check_system_health`) was not part of the approval and is not built.
+
 **Recommendation: 1 to 3 now, 4 only if you want it surfaced in the app.** No migration, no new
 card. **Needs from you:** a yes to 1 to 3, and a yes or no on 4.
 
