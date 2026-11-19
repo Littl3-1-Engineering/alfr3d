@@ -131,6 +131,39 @@ references to `sa.engine`, patching `engine.pymysql.connect` (42 places), `engin
 
 **Update 2026-11-19: step 0 built** (`test/sa-engine-split-safety-net`, `tests/test_sa_engine_structure.py`), with one change from the plan above. A golden test of card outputs would need a fixture frame and mocked databases for each of 26 rules, which is slow and still only checks what those fixtures happen to exercise. For a pure *move* a stronger and cheaper net exists: a snapshot of every `SAEngine` method's signature and a **hash of its source** (44 methods, plus the 3 module-level helpers), so after the split every moved method must still resolve on the class and be byte-identical, and an edit hidden inside a move is flagged by name. It also pins `DISPLAY_RULES`, `MAX_DISPLAYS == 26` and the names tests patch on the `engine` module (`engine.get_producer`, `engine.pymysql`, ...). Proven both ways: an added statement inside `check_time` fails it naming `check_time`; a verbatim move of a helper into another module (re-exported) passes. Steps 1 to 5 follow once this is on `main`, each its own PR. Regenerate the snapshot only on purpose: `UPDATE_ENGINE_SNAPSHOT=1 pytest tests/test_sa_engine_structure.py`.
 
+**Update 2026-11-19: the split is DONE (#433 step 0, #434 to #441), done differently from the plan above.**
+`engine.py` went from 2,461 to 498 lines. What was built, each as its own PR, none touching a
+method's source (the #433 hash snapshot passed unchanged every time):
+
+| PR | new module | moved |
+|---|---|---|
+| #434 | `sa/card_utils.py` | `_span_text`, subject-key extractors |
+| #436 | `sa/suppression.py` (`SuppressionMixin`) | `_card_suppression_reason` + `CARD_SUPPRESSION_*` |
+| #437 | `sa/health_cards.py` (`HealthCards`) | system, disk, email cards |
+| #438 | `sa/environment_cards.py` (`EnvironmentCards`) | weather, rain, climate x2, time, mood |
+| #439 | `sa/media_cards.py` (`MediaCards`) | now playing, cross-surface |
+| #440 | `sa/calendar_cards.py` (`CalendarCards`) | events, travel, focus, gatherings, guest overstay, party |
+| #441 | `sa/learned_cards.py` (`LearnedCards`) | household, rhythm, device health, departure, presence, attention, wind-down |
+
+**Where it departed from the plan.** (1) Step 3 (frame building into `context_frame.py`) was
+deliberately NOT done: `build_context_frame` reads six names that tests patch on `engine`
+(`db_utils`, `calendar_utils`, `context_frame`, ...), so moving it is not a pure move and a
+"one-line delegate" would change the method source the safety net pins. It stays in `engine.py`
+with `_read_config_json`, `publish_sa`, `_card_subject_key` (reads the patched
+`CARD_SUBJECT_KEY_EXTRACTORS`), `decide_displays` and `DISPLAY_RULES` (step 5, free). (2) "No test file
+edited" did not hold exactly: 7 one-line patch-target edits in total (`test_sa_disk.py` 1,
+`test_sa_service.py` 6), all `engine.get_producer` becoming `sa.<module>.get_producer`, for the
+cards that call it. Other patches were attribute patches on shared module objects and needed no
+change. (3) The golden-card test became the source-hash snapshot (above).
+
+**Gotchas for the next person.** Patch `get_producer` and other bare names where the code now looks
+them up, and use the `sa.` import path (`engine` imports siblings as `sa.x`, which is a different
+module object from `services.service_sa.sa.x`); a wrong target does not fail, it reaches the real
+Kafka producer and hangs. `PARTY_ADVISORY_LAST_NUDGE_TIME` is mutated with `global` and lives only in
+`calendar_cards.py`. `engine` still re-exports names the tests patch (`time`, `routing_utils`,
+`disk`, `gmail_utils`, `inference_store`, `get_producer`). `_active_hours_mask` in `engine.py` has no
+callers (dead code, left alone).
+
 **Acceptance per step:** the full SA suite green with no test file edited; the golden test unchanged;
 the card budget assertion green; no behaviour change on a replay of the fixture frames.
 **Risk and cost:** real but contained (steps 1 to 3 are small and mechanical; step 4 is the large
