@@ -46,7 +46,76 @@ for a day"). On the sampled series (`attention:switch_count`, `attention:unlock_
 `deck:...:battery`) it did not clear the gain bar (improvement -0.05 % to -5 %): no weather effect
 on those, recorded as "did not reduce held-out error enough", which is the honest outcome.
 
-## Steps 2+ (not started)
+## Step 2: the covariate probe, and what it found (2026-11-19, read-only on the NUC lake)
+
+`python -m sa.covariate_probe` (`sa/covariate_probe.py`) screens, per learner target, the residual
+after the hour-of-week mean (a PROXY for each learner's own residuals) against the registry's
+candidate features and lags with `covariates.screen`. It changes and registers nothing; it exists
+to decide which learners earn an opt-in PR.
+
+**Result: no effects, and mostly no power to find one.** 21 targets (11 presence people, 10 event
+streams), 6 candidates each (outdoor temperature anomaly at lags 0 and 3 h, humidity, pressure,
+calendar busy minutes at lags 0 and 1 h; the two forecast candidates had no data in the deployed
+`context_hourly` yet, they arrive with tonight's rebuild). Zero `effect`s. But **16 of the 21
+targets are at least 50 % zero** (all 10 event streams, 6 of 11 presence people), and on those the
+engine's test is blind: a Theil-Sen slope is the *median* of pairwise slopes and the gain is a
+*median* absolute deviation, so a mostly-constant target gives slope 0 and MAD 0, a gain of exactly
+0.0 whatever the relationship. The probe now flags them `LOW POWER` rather than calling them "no
+relationship". Only 4 presence targets (Elenka, Jenna, Munja, athos) were testable, and none
+showed a gain over the bar. The strongest uncorrected gains (0.10 to 0.17 on one person's
+temperature, pressure and humidity) did not survive the multiple-testing correction (p_adj 0.12 to
+0.52), which is the correction doing its job. The day-level learners (stay, daytime, household day)
+have one observation per day, 141 days of history: not testable.
+
+**What this meant for Phase 3.** The engine's slope test suits continuous targets (the scalar
+series) and was the wrong tool for the learners' real targets, which are binary, sparse or counts.
+That became step 3.
+
+## Step 3: `screen_rates`, the frequency-based screen (2026-11-19)
+
+`covariates.screen_rates` is `screen` for binary and count targets, on the same scaffold (`_screen`:
+candidate budget, sample floor, held-out final 30 %, circular-shift permutation null, Holm
+correction, fixed seed, the same three statuses). The question is asked in frequencies: **within
+the same cell (hour of week, chosen by the caller), is the outcome more or less common when the
+feature is in its top third than in its bottom third?** Fitted on the first 70 % (cell means, then
+the extra rate per feature tercile), judged on the final 30 % by how much the feature's offset
+reduces the squared error of the cell-mean prediction. The effect reported is `rate_shift`
+(outcome per hour, top third minus bottom third; a binary feature uses its two populated buckets).
+It needs `RATE_MIN_EVENTS` (20) non-zero outcomes: a rate cannot be estimated from a handful of
+events, so under that floor the answer is insufficient evidence, not a rate. The gain bar is 1 % of
+held-out squared error (`RATE_MIN_IMPROVEMENT`), lower than the slope screen's 10 % because the
+permutation + Holm test is the real guard against false positives, not the bar.
+
+**Tests** (`tests/test_sa_covariates.py::TestScreenRates`): a planted rate shift is found on data
+where the slope screen returns a gain of exactly 0.0 (the two screens side by side); planted nulls
+not found (6 seeds); 8 independent null candidates give 0 effects; the real candidate survives
+beside a decoy; hour-of-day structure is not mistaken for a feature effect; too few events is
+insufficient evidence; budget and reproducibility; a binary feature with random-length runs. Two
+things the tests taught: the circular-shift null correctly cannot separate a strictly periodic
+feature from its own shifted copy (so tests use random-length runs, and a real exactly-periodic
+feature would behave the same); and a feature that drifts (a random walk) leaves its training range
+in the held-out window, so features should be stationary anomalies, as the probe's are.
+
+**Probe re-run on the real lake (read-only, 2026-11-19), sparse targets now via `screen_rates`:**
+24 targets (11 presence people, 10 event streams, 3 email streams), 6 candidates each, **0 effects**.
+The 19 sparse targets, now genuinely tested rather than blind:
+- **Too few events to say anything** (floor, not "no relationship"): `iot/device/set` (0 to 8
+  events), `presence/user/entered_area` (11 to 19), presence for Biljana, Gorango, Kuma (0 to 9)
+  and mostly Predrag and Vesna.
+- **Tested, no gain over the bar:** `info/user/came_online`, `iot/device/turned_on`, `called`,
+  `messaged`, `went_offline`, `email/promotions` (best gains under 1 %).
+- **Closest to something, still not an effect:** `audio/track/play_start` (best gain 4.6 %, p_adj
+  0.06), `presence:Vanja` (4.4 %, p_adj 0.24), `routine/executed` (1.9 %, p_adj 0.12),
+  `email/updates` (2.1 %, p_adj 0.12). `play_start` at 0.06 is the one to re-run as history grows.
+- The 4 dense presence people (Elenka, Jenna, Munja, athos) still go through the slope screen: none.
+
+**What this means.** No learner earns an opt-in PR today ("insufficient evidence, leave it alone"
+is the recorded outcome), but the screen can now actually see a rate shift, which it could not
+before. The forecast candidates (`forecast_temp_c`, `forecast_rain_probability`) had no data in the
+deployed `context_hourly` yet; re-run after the nightly rebuild that includes them. Next: Phase 4's
+derived-target registry and the nightly screen both build on `screen` / `screen_rates`.
+
+## Later steps (not started)
 
 Other learners (presence, stay, daytime, household day, rates) opt in **one per PR, and only where
 Phase 1's replay shows held-out gain**; otherwise record "insufficient evidence" and leave the
