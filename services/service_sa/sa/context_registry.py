@@ -217,12 +217,12 @@ REGISTRY = (
         "float",
         "COALESCE(c.busy_minutes, 0)",
         ("calendar",),
-        provenance="calendar_events (household calendar); the table is purged after each event, "
-        "so history exists only as far back as the lake's bronze copy",
-        retention_days=1,
+        provenance="calendar_events (household calendar), kept 730 days since LF-0 "
+        "(2026-10-09) and exported nightly; the lake's copy starts 2026-10-09",
+        retention_days=730,
         readers=("calendar_observer",),
         description="ZERO-FILLED: an hour with no event reads 0, including every hour before the "
-        "calendar was first captured (bronze starts 2026-10-09), so 0 does not mean 'free' there. "
+        "calendar was first captured (2026-10-09), so 0 does not mean 'free' there. "
         "Kept as is so context_hourly is unchanged; a fix (NULL before capture) is proposed in "
         "todo_lf8_context_registry.md",
     ),

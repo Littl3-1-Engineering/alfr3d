@@ -64,8 +64,9 @@ the lake side); proposal 2 below removes that.
   (`COVARIATE_SERIES = "weather:temperature_c"`). The registry is the thing that makes the table
   worth reading; Phase 3's shared covariate engine is its first consumer.
 - **`calendar_busy_minutes` is zero-filled.** The original `COALESCE(c.busy_minutes, 0)` means the
-  ledger shows it "captured since 2026-04-12, 99.9 % coverage", but the calendar bronze only starts
-  2026-10-09: every hour before that reads 0 ("free") when the truth is "unknown". Pre-existing,
+  ledger shows it "captured since 2026-04-12, 99.9 % coverage", but the calendar was first captured
+  on 2026-10-09 (the MySQL table keeps 730 days since LF-0; an earlier version of this note and the
+  registry wrongly said it was purged after each event): every hour before that reads 0 ("free") when the truth is "unknown". Pre-existing,
   kept as is so `context_hourly` is unchanged, and flagged in the ledger `note`. This is the kind of
   fabricated-looking value the "no fabricated data" rule is about; see proposal 1.
 
