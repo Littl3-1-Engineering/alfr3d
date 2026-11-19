@@ -158,3 +158,79 @@ class TestScore:
         state, t = self._state(pts, 99)
         state["recent"] = []
         assert scalar.ScalarLearner().score(profile, state, t) is None
+
+
+class TestPerSeriesBar:
+    """One global 4-sigma bar flagged 6.4 % of `attention:switch_count`'s hours (a spiky series with
+    a heavy tail); each series now carries the |z| its own residuals exceed about once a week."""
+
+    def _zs(self, n, seed=3, spike_rate=0.0, spike=9.0):
+        rnd = random.Random(seed)
+        return [rnd.gauss(0, 1) + (spike if rnd.random() < spike_rate else 0.0) for _ in range(n)]
+
+    def test_too_few_residuals_keep_the_global_bar(self):
+        zs = self._zs(scalar.MIN_BAR_RESIDUALS - 1, spike_rate=0.2)
+
+        assert scalar.calibrated_z_bar(zs, [1.0] * len(zs)) == scalar.MIN_ABS_Z
+
+    def test_a_well_behaved_series_keeps_exactly_the_global_bar(self):
+        zs = self._zs(2000)
+
+        assert scalar.calibrated_z_bar(zs, [1.0] * len(zs)) == scalar.MIN_ABS_Z
+
+    def test_a_heavy_tailed_series_gets_a_higher_bar(self):
+        zs = self._zs(2000, spike_rate=0.04)
+
+        bar = scalar.calibrated_z_bar(zs, [1.0] * len(zs))
+
+        assert scalar.MIN_ABS_Z < bar <= scalar.MAX_Z_BAR
+
+    def test_the_bar_never_makes_a_series_unflaggable(self):
+        zs = self._zs(2000, spike_rate=0.2, spike=60.0)
+
+        assert scalar.calibrated_z_bar(zs, [1.0] * len(zs)) == scalar.MAX_Z_BAR
+
+    def test_the_bar_is_about_one_flag_a_week_on_its_own_residuals(self):
+        zs = self._zs(3360, spike_rate=0.04)  # 20 weeks of hours
+        bar = scalar.calibrated_z_bar(zs, [1.0] * len(zs))
+
+        per_week = sum(1 for z in zs if abs(z) >= bar) / 20.0
+
+        assert 0.5 <= per_week <= 2.0
+
+    def test_fit_stores_the_bar_and_a_spiky_series_gets_a_higher_one(self):
+        rnd = random.Random(5)
+
+        def spiky(i, t):
+            return _daily(i, t) + rnd.gauss(0, 0.3) + (3.0 if rnd.random() < 0.04 else 0.0)
+
+        calm_pts = _series(24 * 20, _noisy(4))
+        spiky_pts = _series(24 * 20, spiky)
+
+        calm = scalar.fit_points("indoor", calm_pts, _ref(calm_pts))
+        wild = scalar.fit_points("indoor", spiky_pts, _ref(spiky_pts))
+
+        assert calm.params["z_bar"] == scalar.MIN_ABS_Z
+        assert wild.params["z_bar"] > scalar.MIN_ABS_Z
+
+    def test_score_uses_the_profiles_own_bar(self):
+        helper = TestScore()
+        profile, pts = helper._profile()
+        state, t = helper._state(pts, _daily(0, pts[-1]["t"] + timedelta(hours=1)) + 8)
+
+        fires = scalar.ScalarLearner().score(profile, state, t)
+        profile.params["z_bar"] = 50.0
+        silent = scalar.ScalarLearner().score(profile, state, t)
+
+        assert fires is not None and fires.evidence["z_bar"] == scalar.MIN_ABS_Z
+        assert silent is None
+
+    def test_a_profile_fitted_before_the_bar_existed_falls_back_to_the_global_one(self):
+        helper = TestScore()
+        profile, pts = helper._profile()
+        state, t = helper._state(pts, _daily(0, pts[-1]["t"] + timedelta(hours=1)) + 8)
+        profile.params.pop("z_bar", None)
+
+        inf = scalar.ScalarLearner().score(profile, state, t)
+
+        assert inf is not None and inf.evidence["z_bar"] == scalar.MIN_ABS_Z

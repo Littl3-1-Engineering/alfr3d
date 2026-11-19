@@ -57,7 +57,7 @@ from sa.learners.base import Inference, Learner, Profile, utcnow
 logger = logging.getLogger("SAScalar")
 
 NAME = "scalar_baseline"
-VERSION = "1"
+VERSION = "2"  # 2: per-series flag bar (params["z_bar"])
 SIGNAL = "scalar.value"
 
 # --- Model ---------------------------------------------------------------------------------
@@ -87,6 +87,16 @@ QUALITY_FLOOR = 0.3
 # Chosen from the backtest on the household's indoor climate (see todo_lf4_port_baselines.md): the
 # smallest threshold that keeps flagged hours to a handful a week per series.
 MIN_ABS_Z = 4.0
+
+# One global 4-sigma bar assumes the residuals have a Gaussian tail. A spiky count series does not:
+# `attention:switch_count` crossed 4 sigma in 6.4 % of walk-forward hours, every week (parity check,
+# 2026-11-19), against about 0.006 % for a Gaussian. So each series carries its own bar, the |z| its
+# own residuals exceed about TARGET_FLAGS_PER_WEEK hours a week, never below MIN_ABS_Z (a
+# well-behaved series keeps exactly today's bar) and never above MAX_Z_BAR (a series is never made
+# unflaggable). With fewer than MIN_BAR_RESIDUALS hours there is no tail to see: MIN_ABS_Z.
+TARGET_FLAGS_PER_WEEK = 1.0
+MIN_BAR_RESIDUALS = 336
+MAX_Z_BAR = 12.0
 
 
 # Count-like series (switches and unlocks per report) are spiky and right-skewed: the natural
@@ -137,6 +147,25 @@ def weighted_mad_sigma(values, weights):
     if centre is None:
         return None, None
     return centre, 1.4826 * weighted_median([abs(v - centre) for v in values], weights)
+
+
+def calibrated_z_bar(zs, weights):
+    """The per-series flag bar: the |z| exceeded by about TARGET_FLAGS_PER_WEEK of every 168 hours
+    of this series' own (weighted) residuals, clamped to [MIN_ABS_Z, MAX_Z_BAR]."""
+    if len(zs) < MIN_BAR_RESIDUALS:
+        return MIN_ABS_Z
+    q = 1.0 - TARGET_FLAGS_PER_WEEK / 168.0
+    ordered = sorted(zip((abs(z) for z in zs), weights))
+    total = sum(w for _, w in ordered)
+    if total <= 0:
+        return MIN_ABS_Z
+    seen, bar = 0.0, ordered[-1][0]
+    for z, w in ordered:
+        seen += w
+        if seen / total >= q:
+            bar = z
+            break
+    return round(_clamp(bar, MIN_ABS_Z, MAX_Z_BAR), 2)
 
 
 def theil_sen(xs, ys):
@@ -305,6 +334,7 @@ def fit_points(series_key, points, ref_date, covariate=None, covariate_name="out
     weights = [x["w"] for x in residuals]
     bias, sigma = weighted_mad_sigma(adjusted, weights)
     sigma = max(sigma, SIGMA_FLOOR_FRACTION * spread, 1e-6)
+    z_bar = calibrated_z_bar([(r - bias) / sigma for r in adjusted], weights)
 
     # Stability: has the forecast error grown lately? (recent week vs. the two weeks before it)
     recent_cut = ref_date - timedelta(days=STABILITY_RECENT_DAYS - 1)
@@ -341,6 +371,7 @@ def fit_points(series_key, points, ref_date, covariate=None, covariate_name="out
             "series_key": series_key,
             "effects": [round(e, 5) for e in effects],
             "sigma": round(sigma, 6),
+            "z_bar": z_bar,
             "bias": round(bias, 6),
             "level_hours": LEVEL_HOURS,
             "level_half_life_hours": LEVEL_HALF_LIFE_HOURS,
@@ -388,13 +419,15 @@ class ScalarLearner(Learner):
         return (state["value"] - mu) / sigma, mu, sigma
 
     def score(self, profile, state, now):
-        """A deviation Inference if |z| >= MIN_ABS_Z, else None. state: {"value", "recent":
-        [(lag_hours, hour_local, value)], "local_dt", optional "covariate_anomaly"}."""
+        """A deviation Inference if |z| reaches the series' bar (params["z_bar"], else MIN_ABS_Z),
+        else None. state: {"value", "recent": [(lag_hours, hour_local, value)], "local_dt",
+        optional "covariate_anomaly"}."""
         scored = self.z_score(profile, state)
         if scored is None:
             return None
         z, mu, sigma = scored
-        if abs(z) < MIN_ABS_Z:
+        bar = profile.params.get("z_bar") or MIN_ABS_Z  # profiles fitted before version 2 have none
+        if abs(z) < bar:
             return None
         p = max(two_sided_p(z), 1e-12)
         terms = confidence.Confidence(
@@ -421,7 +454,11 @@ class ScalarLearner(Learner):
             surprise=round(-math.log2(p), 3),
             confidence=round(terms.value, 4),
             n_eff=profile.n_eff,
-            evidence={"terms": terms.as_dict(), "series": profile.params["series_key"]},
+            evidence={
+                "terms": terms.as_dict(),
+                "series": profile.params["series_key"],
+                "z_bar": bar,
+            },
             expires_at=now + timedelta(hours=6),
         )
 

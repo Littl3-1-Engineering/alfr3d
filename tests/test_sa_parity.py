@@ -347,3 +347,28 @@ class TestScalarBand:
 
         assert wide["outcomes"]["borderline"] == 1
         assert narrow["outcomes"]["live_only"] == 1
+
+
+class TestPerSubjectBar:
+    def _profile(self, **params):
+        return Profile("scalar_baseline", "1", "series", "attention:switch_count", "s", params)
+
+    def test_a_scalar_series_is_judged_against_its_own_calibrated_bar(self):
+        bar, band = parity._bar_for(
+            "scalar_baseline", parity.COVERED["scalar_baseline"], self._profile(z_bar=8.0)
+        )
+
+        assert bar == parity._z_bits(8.0)
+        assert band == parity._z_bits(8.5) - parity._z_bits(8.0)
+
+    def test_a_profile_without_a_bar_falls_back_to_the_global_one(self):
+        bar, _band = parity._bar_for(
+            "scalar_baseline", parity.COVERED["scalar_baseline"], self._profile()
+        )
+
+        assert bar == parity.BAR_BITS["scalar_baseline"]
+
+    def test_other_learners_keep_their_fixed_bar(self):
+        bar, band = parity._bar_for("presence_profile", parity.COVERED["presence_profile"], None)
+
+        assert bar == parity.BAR_BITS["presence_profile"] and band == parity.NEAR_BAR_BITS
