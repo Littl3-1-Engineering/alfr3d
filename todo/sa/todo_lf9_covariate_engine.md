@@ -46,7 +46,38 @@ for a day"). On the sampled series (`attention:switch_count`, `attention:unlock_
 `deck:...:battery`) it did not clear the gain bar (improvement -0.05 % to -5 %): no weather effect
 on those, recorded as "did not reduce held-out error enough", which is the honest outcome.
 
-## Steps 2+ (not started)
+## Step 2: the covariate probe, and what it found (2026-11-19, read-only on the NUC lake)
+
+`python -m sa.covariate_probe` (`sa/covariate_probe.py`) screens, per learner target, the residual
+after the hour-of-week mean (a PROXY for each learner's own residuals) against the registry's
+candidate features and lags with `covariates.screen`. It changes and registers nothing; it exists
+to decide which learners earn an opt-in PR.
+
+**Result: no effects, and mostly no power to find one.** 21 targets (11 presence people, 10 event
+streams), 6 candidates each (outdoor temperature anomaly at lags 0 and 3 h, humidity, pressure,
+calendar busy minutes at lags 0 and 1 h; the two forecast candidates had no data in the deployed
+`context_hourly` yet, they arrive with tonight's rebuild). Zero `effect`s. But **16 of the 21
+targets are at least 50 % zero** (all 10 event streams, 6 of 11 presence people), and on those the
+engine's test is blind: a Theil-Sen slope is the *median* of pairwise slopes and the gain is a
+*median* absolute deviation, so a mostly-constant target gives slope 0 and MAD 0, a gain of exactly
+0.0 whatever the relationship. The probe now flags them `LOW POWER` rather than calling them "no
+relationship". Only 4 presence targets (Elenka, Jenna, Munja, athos) were testable, and none
+showed a gain over the bar. The strongest uncorrected gains (0.10 to 0.17 on one person's
+temperature, pressure and humidity) did not survive the multiple-testing correction (p_adj 0.12 to
+0.52), which is the correction doing its job. The day-level learners (stay, daytime, household day)
+have one observation per day, 141 days of history: not testable.
+
+**What this means for Phase 3.** (1) Nothing here justifies an opt-in PR for any learner today:
+that is the "insufficient evidence, leave it alone" outcome the prompt asks for, recorded. (2) The
+engine is the right tool for continuous targets (the scalar series) and the wrong one for the
+learners' actual targets, which are binary, sparse or counts. Before Phase 4's derived targets
+(time outdoors, guest counts) can be screened honestly the engine needs a **frequency-based**
+effect measure alongside the robust slope: compare the outcome rate between feature terciles (or
+present/absent for a binary feature) on the held-out final 30 %, with the same candidate budget and
+the same permutation + Holm control. The prompt names "frequency counts" as an intended method.
+That is the proposed next step (`screen_rates`), not built.
+
+## Later steps (not started)
 
 Other learners (presence, stay, daytime, household day, rates) opt in **one per PR, and only where
 Phase 1's replay shows held-out gain**; otherwise record "insufficient evidence" and leave the
