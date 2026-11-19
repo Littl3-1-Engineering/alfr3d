@@ -125,6 +125,8 @@ references to `sa.engine`, patching `engine.pymysql.connect` (42 places), `engin
 5. `engine.py` ends as the orchestrator (`DISPLAY_RULES`, `check_situational_awareness`,
    `decide_displays`), a few hundred lines.
 
+**Update 2026-11-19: step 0 built** (`test/sa-engine-split-safety-net`, `tests/test_sa_engine_structure.py`), with one change from the plan above. A golden test of card outputs would need a fixture frame and mocked databases for each of 26 rules, which is slow and still only checks what those fixtures happen to exercise. For a pure *move* a stronger and cheaper net exists: a snapshot of every `SAEngine` method's signature and a **hash of its source** (44 methods, plus the 3 module-level helpers), so after the split every moved method must still resolve on the class and be byte-identical, and an edit hidden inside a move is flagged by name. It also pins `DISPLAY_RULES`, `MAX_DISPLAYS == 26` and the names tests patch on the `engine` module (`engine.get_producer`, `engine.pymysql`, ...). Proven both ways: an added statement inside `check_time` fails it naming `check_time`; a verbatim move of a helper into another module (re-exported) passes. Steps 1 to 5 follow once this is on `main`, each its own PR. Regenerate the snapshot only on purpose: `UPDATE_ENGINE_SNAPSHOT=1 pytest tests/test_sa_engine_structure.py`.
+
 **Acceptance per step:** the full SA suite green with no test file edited; the golden test unchanged;
 the card budget assertion green; no behaviour change on a replay of the fixture frames.
 **Risk and cost:** real but contained (steps 1 to 3 are small and mechanical; step 4 is the large
