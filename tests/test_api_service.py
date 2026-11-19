@@ -3,7 +3,7 @@
 import decimal
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import patch, MagicMock
 import orjson
 import pytest
@@ -2256,3 +2256,128 @@ def test_health_survives_a_broken_learner_fit_check(_mock_db, api_client):
 
     assert data["status"] == "ok"
     assert data["learner_fits"] == {"status": "unknown", "error": "learner fit check failed"}
+
+
+# --- GET /api/context/findings (read-only; the table is created by migration 0064) ---
+
+
+def _findings_db(latest=date(2026, 11, 19), history=None, rows=None, error=None):
+    cm = MagicMock()
+    db = MagicMock()
+    cursor = db.cursor.return_value
+    if error:
+        cursor.execute.side_effect = error
+    cursor.fetchone.return_value = (latest,)
+    cursor.fetchall.side_effect = [history or [], rows or []]
+    cm.__enter__.return_value = db
+    return cm, cursor
+
+
+def _finding_row(
+    feature="outdoor_temp_c", lag=0, status="effect", p_adj=0.04, target="guests_home"
+):
+    return (
+        target, feature, lag, "rates", status, "beat the null", 790, 0.15, "per hour", 0.05, 0.005,
+        p_adj, date(2026, 10, 16), date(2026, 11, 18), '{"transform": "anomaly"}',
+        datetime(2026, 11, 19, 3, 40),
+    )  # fmt: skip
+
+
+def test_findings_come_in_the_teach_me_shape_grouped_by_target(api_client):
+    cm, _ = _findings_db(
+        history=[
+            ("guests_home", "outdoor_temp_c", 0, 14, 3),
+            ("guests_home", "is_holiday", 0, 14, 0),
+        ],
+        rows=[
+            _finding_row(),
+            _finding_row("is_holiday", status="insufficient_evidence", p_adj=None),
+            _finding_row("*", status="insufficient_evidence", p_adj=None, target="house_empty"),
+        ],
+    )
+    with patch("routes.context.db_connection", return_value=cm):
+        data = api_client.get("/api/context/findings").json()
+
+    assert data["available"] is True and data["run_date"] == "2026-11-19"
+    assert data["computed_at"] == "2026-11-19T03:40:00" and data["window_nights"] == 14
+    assert [t["target"] for t in data["targets"]] == ["guests_home", "house_empty"]
+    guests = data["targets"][0]
+    assert guests["effects"] == 1
+    first = guests["findings"][0]
+    assert first["profile"] == {
+        "target": "guests_home",
+        "feature": "outdoor_temp_c",
+        "lag_hours": 0,
+        "method": "rates",
+        "whole_target": False,
+    }
+    assert first["confidence"]["status"] == "effect"
+    assert first["confidence"]["p_adjusted"] == 0.04 and first["confidence"]["n"] == 790
+    assert (first["confidence"]["effect_nights"], first["confidence"]["nights"]) == (3, 14)
+    assert first["evidence"]["effect"] == 0.15 and first["evidence"]["detail"] == {
+        "transform": "anomaly"
+    }
+    assert first["evidence"]["fitted_from"] == "2026-10-16"
+    other = guests["findings"][1]
+    assert (other["confidence"]["effect_nights"], other["confidence"]["nights"]) == (0, 14)
+
+
+def test_a_whole_target_row_has_no_feature(api_client):
+    cm, _ = _findings_db(
+        rows=[_finding_row("*", status="insufficient_evidence", p_adj=None, target="house_empty")]
+    )
+    with patch("routes.context.db_connection", return_value=cm):
+        data = api_client.get("/api/context/findings").json()
+
+    profile = data["targets"][0]["findings"][0]["profile"]
+    assert profile["feature"] is None and profile["whole_target"] is True
+
+
+def test_findings_before_the_migration_are_unavailable_not_an_error(api_client):
+    missing = pymysql.err.ProgrammingError(1146, "Table 'sa_covariate_findings' doesn't exist")
+    cm, _ = _findings_db(error=missing)
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get("/api/context/findings")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": False,
+        "run_date": None,
+        "computed_at": None,
+        "targets": [],
+    }
+
+
+def test_an_empty_findings_table_is_available_but_empty(api_client):
+    cm, _ = _findings_db(latest=None)
+    with patch("routes.context.db_connection", return_value=cm):
+        data = api_client.get("/api/context/findings").json()
+
+    assert data == {"available": True, "run_date": None, "computed_at": None, "targets": []}
+
+
+def test_filters_are_parameters_and_the_status_is_validated(api_client):
+    cm, cursor = _findings_db()
+    evil = "x'; DROP TABLE sa_covariate_findings; --"
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get("/api/context/findings", params={"target": evil})
+    assert response.status_code == 200
+    sql, params = cursor.execute.call_args.args
+    assert "DROP TABLE" not in sql and evil in params
+
+    assert api_client.get("/api/context/findings", params={"status": "bogus"}).status_code == 400
+    assert api_client.get("/api/context/findings", params={"nights": 0}).status_code == 422
+    assert api_client.get("/api/context/findings", params={"nights": 500}).status_code == 422
+
+
+def test_findings_failure_is_a_500_without_leaking_detail(api_client):
+    cm, _ = _findings_db(error=RuntimeError("secret host"))
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get("/api/context/findings")
+
+    assert response.status_code == 500 and "secret" not in response.text
+
+
+def test_findings_are_a_read_route_with_no_write_methods(api_client):
+    assert api_client.post("/api/context/findings").status_code in (404, 405)
+    assert api_client.delete("/api/context/findings").status_code in (404, 405)
