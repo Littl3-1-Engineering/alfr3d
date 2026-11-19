@@ -57,7 +57,7 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from sa import lake
+from sa import context_registry, lake
 
 # --- Daylight --------------------------------------------------------------------------------
 
@@ -202,16 +202,19 @@ def build_ha(con, have):
     series gold reuses) and returns the silver queries to write."""
     if "ha_state_history" not in have:
         return {}
-    con.execute("""CREATE TABLE ha_events AS
+    con.execute(
+        """CREATE TABLE ha_events AS
         SELECT entity_id, domain, state, last_changed AS changed_utc,
                strftime(last_changed, '%H:%M:%S.%f') = '00:00:00.000000' AS is_anchor
         FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY entity_id, last_changed
                                            ORDER BY last_updated DESC) AS rn
               FROM b_ha_state_history)
-        WHERE rn = 1""")
+        WHERE rn = 1"""
+    )
     # Consecutive identical states merge into one held interval. Each interval ends where the next
     # one begins, and the last ends at the source's export horizon.
-    con.execute("""CREATE TABLE ha_intervals AS
+    con.execute(
+        """CREATE TABLE ha_intervals AS
         WITH ordered AS (
           SELECT *, LAG(state) OVER w AS prev_state,
                  COALESCE(LEAD(changed_utc) OVER w, (SELECT h FROM horizon_ha_state_history))
@@ -229,8 +232,10 @@ def build_ha(con, have):
                MIN(changed_utc) AS start_utc,
                GREATEST(MAX(next_change), MIN(changed_utc)) AS end_utc,
                COUNT(*) AS n_points, BOOL_OR(NOT is_anchor) AS has_real_change
-        FROM marked GROUP BY entity_id, island, state""")
-    con.execute(f"""CREATE TABLE ha_entities AS
+        FROM marked GROUP BY entity_id, island, state"""
+    )
+    con.execute(
+        f"""CREATE TABLE ha_entities AS
         WITH per AS (
           SELECT entity_id, ANY_VALUE(domain) AS domain, COUNT(*) AS n_intervals,
                  SUM(n_points) AS n_points, COUNT(DISTINCT state) AS n_distinct_states,
@@ -250,10 +255,12 @@ def build_ha(con, have):
                     ELSE 'categorical' END AS kind,
                p.n_intervals, p.n_points, p.n_distinct_states, p.first_seen, p.last_seen,
                p.unavailable_share, p.entity_id LIKE '%forecast%' AS is_forecast
-        FROM per p ORDER BY p.entity_id""")
+        FROM per p ORDER BY p.entity_id"""
+    )
 
     # Hourly, time-weighted. A held value covers the hours it spans in proportion to the time held.
-    con.execute("""CREATE TABLE ha_hour_overlaps AS
+    con.execute(
+        """CREATE TABLE ha_hour_overlaps AS
         WITH spans AS (
           SELECT i.entity_id, e.kind, i.state, i.value, i.is_unavailable, i.start_utc, i.end_utc,
                  UNNEST(generate_series(
@@ -266,18 +273,23 @@ def build_ha(con, have):
         SELECT entity_id, kind, state, value, is_unavailable, bucket_utc,
                epoch(LEAST(end_utc, bucket_utc + INTERVAL 1 HOUR))
                  - epoch(GREATEST(start_utc, bucket_utc)) AS seconds
-        FROM spans""")
-    con.execute("""CREATE TABLE ha_hourly_numeric AS
+        FROM spans"""
+    )
+    con.execute(
+        """CREATE TABLE ha_hourly_numeric AS
         SELECT entity_id, bucket_utc,
                SUM(value * seconds) / SUM(seconds) AS mean, MIN(value) AS min, MAX(value) AS max,
                LEAST(1.0, SUM(seconds) / 3600.0) AS coverage
         FROM ha_hour_overlaps
         WHERE kind = 'numeric' AND NOT is_unavailable AND value IS NOT NULL AND seconds > 0
-        GROUP BY entity_id, bucket_utc""")
-    con.execute("""CREATE TABLE ha_hourly_state AS
+        GROUP BY entity_id, bucket_utc"""
+    )
+    con.execute(
+        """CREATE TABLE ha_hourly_state AS
         SELECT entity_id, bucket_utc, state, SUM(seconds) / 60.0 AS minutes
         FROM ha_hour_overlaps WHERE kind = 'categorical' AND seconds > 0
-        GROUP BY entity_id, bucket_utc, state""")
+        GROUP BY entity_id, bucket_utc, state"""
+    )
 
     names_join = (
         "LEFT JOIN (SELECT ha_entity_id, arg_max(name, date) AS name "
@@ -325,7 +337,8 @@ def build_weather(con, have):
         if "device_history" in have
         else f"MAX(recorded_at) + INTERVAL {MAX_WEATHER_AGE_HOURS} HOUR"
     )
-    con.execute(f"""CREATE TABLE weather_hours AS
+    con.execute(
+        f"""CREATE TABLE weather_hours AS
         SELECT b AS bucket_utc, b + INTERVAL 1 HOUR AS hour_end
         FROM (SELECT UNNEST(generate_series(
                        time_bucket(INTERVAL 1 HOUR, MIN(recorded_at)),
@@ -333,8 +346,10 @@ def build_weather(con, have):
                                    LEAST(MAX(recorded_at) + INTERVAL {MAX_WEATHER_AGE_HOURS} HOUR,
                                          {horizon})),
                        INTERVAL 1 HOUR)) AS b
-              FROM b_environment_history WHERE kind = 'weather')""")
-    return {"weather_hourly": f"""
+              FROM b_environment_history WHERE kind = 'weather')"""
+    )
+    return {
+        "weather_hourly": f"""
             SELECT h.bucket_utc, to_local(h.bucket_utc) AS bucket_local,
                    e.temperature AS temperature_c, e.humidity AS humidity_pct,
                    e.pressure AS pressure_hpa, e.wind AS wind_kmh, e.wind_dir,
@@ -345,13 +360,15 @@ def build_weather(con, have):
             ASOF LEFT JOIN (SELECT * FROM b_environment_history WHERE kind = 'weather') e
               ON h.hour_end >= e.recorded_at
             WHERE (h.hour_end - e.recorded_at) <= INTERVAL {MAX_WEATHER_AGE_HOURS} HOUR
-            ORDER BY h.bucket_utc"""}
+            ORDER BY h.bucket_utc"""
+    }
 
 
 def build_email(con, have):
     if "email_messages" not in have:
         return {}
-    return {"email_events": """
+    return {
+        "email_events": """
             SELECT message_id, thread_id, received_utc, to_local(received_utc) AS received_local,
                    sender_name, sender_email, sender_domain, subject, labels, is_unread,
                    labels LIKE '%INBOX%' AS in_inbox,
@@ -362,7 +379,8 @@ def build_email(con, have):
                         WHEN labels LIKE '%CATEGORY_PERSONAL%' THEN 'personal'
                         ELSE 'uncategorised' END AS category,
                    size_estimate
-            FROM b_email_messages ORDER BY received_utc"""}
+            FROM b_email_messages ORDER BY received_utc"""
+    }
 
 
 # --- Deck context (LF-0c) ----------------------------------------------------------------------
@@ -393,7 +411,8 @@ def build_deck(con, have):
     key = ", ".join(f"COALESCE(CAST({c} AS VARCHAR), '~')" for c in columns)
     anys = ", ".join(f"ANY_VALUE({c}) AS {c}" for c in columns)
     part = "PARTITION BY source, COALESCE(device_install_id, '')"
-    con.execute(f"""CREATE TABLE deck_intervals AS
+    con.execute(
+        f"""CREATE TABLE deck_intervals AS
         WITH keyed AS (
           SELECT *, concat_ws('|', {key}) AS skey FROM b_deck_context_history),
         flagged AS (
@@ -411,8 +430,10 @@ def build_deck(con, have):
                               last_utc + INTERVAL {DECK_SILENCE_MINUTES} MINUTE),
                      last_utc + INTERVAL {DECK_SILENCE_MINUTES} MINUTE) AS end_utc,
                n_reports, n_heartbeats, {", ".join(columns)}
-        FROM runs""")
-    con.execute("""CREATE TABLE deck_hour_overlaps AS
+        FROM runs"""
+    )
+    con.execute(
+        """CREATE TABLE deck_hour_overlaps AS
         WITH spans AS (
           SELECT *, UNNEST(generate_series(
                    time_bucket(INTERVAL 1 HOUR, start_utc),
@@ -422,15 +443,18 @@ def build_deck(con, have):
           FROM deck_intervals)
         SELECT *, epoch(LEAST(end_utc, bucket_utc + INTERVAL 1 HOUR))
                     - epoch(GREATEST(start_utc, bucket_utc)) AS seconds
-        FROM spans""")
-    return {"deck_intervals": """
+        FROM spans"""
+    )
+    return {
+        "deck_intervals": """
             SELECT source, device_install_id, start_utc, end_utc,
                    to_local(start_utc) AS start_local, to_local(end_utc) AS end_local,
                    epoch(end_utc - start_utc) / 60.0 AS minutes, n_reports, n_heartbeats,
                    battery_bucket, is_charging, dnd_active, headset_connected, network_type,
                    network_quality, orientation, active_surface, top_app,
                    terminal_session_active, relay_enabled
-            FROM deck_intervals ORDER BY source, device_install_id, start_utc"""}
+            FROM deck_intervals ORDER BY source, device_install_id, start_utc"""
+    }
 
 
 # --- Gold ------------------------------------------------------------------------------------
@@ -442,55 +466,71 @@ def build_gold(con, have):
     queries = {}
     state_parts = []
     if "ha_state_history" in have:
-        state_parts.append("""
+        state_parts.append(
+            """
             SELECT 'ha:' || entity_id AS series_key, bucket_utc, state, minutes
-            FROM ha_hourly_state""")
+            FROM ha_hourly_state"""
+        )
     if "deck_context_history" in have:
         who = "COALESCE(left(device_install_id, 8), 'launcher')"
         for facet in DECK_FACETS:
-            state_parts.append(f"""
+            state_parts.append(
+                f"""
             SELECT 'deck:' || {who} || ':{facet}' AS series_key, bucket_utc,
                    CAST({facet} AS VARCHAR) AS state, SUM(seconds) / 60.0 AS minutes
             FROM deck_hour_overlaps WHERE {facet} IS NOT NULL AND seconds > 0
-            GROUP BY ALL""")
+            GROUP BY ALL"""
+            )
     if state_parts:
-        queries["state_hourly"] = f"""
+        queries[
+            "state_hourly"
+        ] = f"""
             SELECT series_key, bucket_utc, CAST(to_local(bucket_utc) AS DATE) AS date_local,
                    hour(to_local(bucket_utc)) AS hour_local, state, minutes
             FROM ({" UNION ALL ".join(state_parts)}) ORDER BY series_key, bucket_utc, state"""
     parts = []
     if "deck_context_history" in have:
         who = "COALESCE(left(device_install_id, 8), 'launcher')"
-        parts.append(f"""
+        parts.append(
+            f"""
             SELECT 'deck:' || {who} || ':battery' AS series_key, 'deck' AS source, bucket_utc,
                    SUM(LEAST(100.0, battery_bucket + 2.5) * seconds) / SUM(seconds) AS mean,
                    MIN(battery_bucket) AS min, MAX(LEAST(100, battery_bucket + 5)) AS max,
                    LEAST(1.0, SUM(seconds) / 3600.0) AS coverage
             FROM deck_hour_overlaps WHERE battery_bucket IS NOT NULL AND seconds > 0
-            GROUP BY ALL""")
+            GROUP BY ALL"""
+        )
     if "ha_state_history" in have:
-        parts.append("""
+        parts.append(
+            """
             SELECT 'ha:' || entity_id AS series_key, 'homeassistant' AS source, bucket_utc,
-                   mean, min, max, coverage FROM ha_hourly_numeric""")
+                   mean, min, max, coverage FROM ha_hourly_numeric"""
+        )
     if con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'g_sensor_hourly'"
     ).fetchone()[0]:
         # ESPHome sensors report about every 15 minutes: four readings cover an hour.
-        parts.append("""
+        parts.append(
+            """
             SELECT 'esphome:' || sensor_key AS series_key, 'esphome' AS source, bucket_utc,
-                   mean, min, max, LEAST(1.0, n / 4.0) AS coverage FROM g_sensor_hourly""")
+                   mean, min, max, LEAST(1.0, n / 4.0) AS coverage FROM g_sensor_hourly"""
+        )
     if "attention_telemetry_history" in have:
         # The Deck reports a window summary when it is in use: an hour with any report counts as
         # covered, and the hours with none are simply absent (the phone was down).
         for column in ("switch_count", "unlock_count"):
-            parts.append(f"""
+            parts.append(
+                f"""
             SELECT 'attention:{column}' AS series_key, 'deck' AS source,
                    time_bucket(INTERVAL 1 HOUR, reported_at) AS bucket_utc,
                    AVG({column}) AS mean, MIN({column}) AS min, MAX({column}) AS max,
                    LEAST(1.0, COUNT(*) / 2.0) AS coverage
-            FROM b_attention_telemetry_history GROUP BY 3""")
+            FROM b_attention_telemetry_history GROUP BY 3"""
+            )
     if parts:
-        queries["scalar_hourly"] = f"""
+        queries[
+            "scalar_hourly"
+        ] = f"""
             SELECT series_key, source, bucket_utc,
                    CAST(to_local(bucket_utc) AS DATE) AS date_local,
                    hour(to_local(bucket_utc)) AS hour_local,
@@ -499,7 +539,9 @@ def build_gold(con, have):
             FROM ({" UNION ALL ".join(parts)}) ORDER BY series_key, bucket_utc"""
 
     if "email_messages" in have:
-        queries["email_hourly"] = """
+        queries[
+            "email_hourly"
+        ] = """
             WITH spine AS (
               SELECT UNNEST(generate_series(time_bucket(INTERVAL 1 HOUR, MIN(received_utc)),
                        time_bucket(INTERVAL 1 HOUR,
@@ -527,18 +569,22 @@ def build_gold(con, have):
 
     sender_parts = []
     if "email_messages" in have:
-        sender_parts.append("""
+        sender_parts.append(
+            """
             SELECT 'gmail' AS source, sender_email AS sender, sender_domain AS domain,
                    CAST(received_local AS DATE) AS date_local, COUNT(*) AS n
-            FROM s_email_events GROUP BY ALL""")
+            FROM s_email_events GROUP BY ALL"""
+        )
     if con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_events_clean'"
     ).fetchone()[0]:
-        sender_parts.append("""
+        sender_parts.append(
+            """
             SELECT 'notification:' || verb AS source, subject_id AS sender, NULL::VARCHAR AS domain,
                    CAST(occurred_local AS DATE) AS date_local, COUNT(*) AS n
             FROM s_events_clean
-            WHERE event_type = 'notification' AND subject_type = 'sender' GROUP BY ALL""")
+            WHERE event_type = 'notification' AND subject_type = 'sender' GROUP BY ALL"""
+        )
     if sender_parts:
         queries["sender_daily"] = (
             f"SELECT * FROM ({' UNION ALL '.join(sender_parts)}) "
@@ -559,7 +605,8 @@ def build_gold(con, have):
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_calendar_busy'"
         ).fetchone()[0]
         if has_calendar:
-            con.execute("""CREATE TABLE calendar_hourly AS
+            con.execute(
+                """CREATE TABLE calendar_hourly AS
                 WITH e AS (
                   SELECT start_utc, end_utc,
                          UNNEST(generate_series(time_bucket(INTERVAL 1 HOUR, start_utc),
@@ -568,39 +615,19 @@ def build_gold(con, have):
                 SELECT b AS bucket_utc,
                        SUM(GREATEST(0, epoch(LEAST(end_utc, b + INTERVAL 1 HOUR))
                                        - epoch(GREATEST(start_utc, b)))) / 60.0 AS busy_minutes
-                FROM e GROUP BY b""")
-        weather_cols = (
-            "w.temperature_c AS outdoor_temp_c, w.humidity_pct AS outdoor_humidity_pct, "
-            "w.pressure_hpa AS outdoor_pressure_hpa, w.description AS outdoor_condition"
-            if has_weather
-            else "NULL::DOUBLE AS outdoor_temp_c, NULL::DOUBLE AS outdoor_humidity_pct, "
-            "NULL::DOUBLE AS outdoor_pressure_hpa, NULL::VARCHAR AS outdoor_condition"
-        )
-        queries["context_hourly"] = f"""
-            WITH people AS (
-              SELECT bucket_utc, BOOL_OR(observed) AS observed,
-                     SUM((minutes_home >= 30)::INT) AS people_home
-              FROM g_presence_grid GROUP BY bucket_utc),
-            spine AS (
-              SELECT UNNEST(generate_series(MIN(bucket_utc), MAX(bucket_utc), INTERVAL 1 HOUR))
-                       AS bucket_utc
-              FROM people)
-            SELECT s.bucket_utc, to_local(s.bucket_utc) AS bucket_local,
-                   CAST(to_local(s.bucket_utc) AS DATE) AS date_local,
-                   hour(to_local(s.bucket_utc)) AS hour_local, d.dow AS dow_local,
-                   d.is_weekend, d.is_holiday, d.holiday_name, d.month, d.season,
-                   CASE WHEN d.sunrise_utc IS NOT NULL
-                        THEN (s.bucket_utc + INTERVAL 30 MINUTE)
-                             BETWEEN d.sunrise_utc AND d.sunset_utc
-                   END AS is_daylight,
-                   {weather_cols},
-                   {"COALESCE(c.busy_minutes, 0)" if has_calendar else "NULL::DOUBLE"}
-                     AS calendar_busy_minutes,
-                   CASE WHEN p.observed THEN p.people_home END AS people_home
-            FROM spine s
-            LEFT JOIN s_day_context d ON d.date = CAST(to_local(s.bucket_utc) AS DATE)
-            {"LEFT JOIN s_weather_hourly w ON w.bucket_utc = s.bucket_utc" if has_weather else ""}
-            {"LEFT JOIN calendar_hourly c ON c.bucket_utc = s.bucket_utc" if has_calendar else ""}
-            LEFT JOIN people p ON p.bucket_utc = s.bucket_utc
-            ORDER BY s.bucket_utc"""
+                FROM e GROUP BY b"""
+            )
+        # The registry (sa/context_registry.py) declares every context feature once: the long-form
+        # `context_features` and the wide `context_hourly` (a pivot of it) are both generated from
+        # it. `context_features` is written first and registered as the view g_context_features
+        # before `context_hourly` is evaluated (see silver.build).
+        available = {"s_day_context", "g_presence_grid"}
+        if has_weather:
+            available.add("s_weather_hourly")
+        if has_calendar:
+            available.add("calendar_hourly")
+        features = context_registry.features_query(available)
+        if features:
+            queries["context_features"] = features
+            queries["context_hourly"] = context_registry.context_hourly_query(available)
     return queries
