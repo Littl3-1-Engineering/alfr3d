@@ -128,7 +128,7 @@ class TestCheckDiskHealth:
         ), patch("services.service_sa.sa.engine.disk.load_lake_totals", return_value=[]), patch(
             "services.service_sa.sa.engine.disk.assess", return_value=result
         ), patch(
-            "services.service_sa.sa.engine.get_producer", return_value=producer
+            "sa.health_cards.get_producer", return_value=producer
         ), patch(
             "services.service_sa.sa.engine.time.time", return_value=now
         ):
