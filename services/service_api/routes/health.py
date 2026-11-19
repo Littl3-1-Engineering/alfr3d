@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
 
+from common import db_connection, learner_health
 from dependencies import is_docker_available, read_version, run_docker_command
 
 logger = logging.getLogger("ApiLog")
@@ -61,6 +62,22 @@ def _fetch_service_uptimes() -> list:
     return services
 
 
+def _learner_fit_health() -> dict:
+    """Read-only freshness of every SA learner's fit (common.learner_health). Never raises: a
+    broken check is reported as `unknown`, it must not take the health endpoint down."""
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT learner, MAX(fitted_to), MAX(computed_at) FROM sa_profiles GROUP BY learner"
+            )
+            rows = cursor.fetchall()
+        return learner_health.summarize(rows, datetime.now(timezone.utc))
+    except Exception as e:
+        logger.error(f"Error checking learner fits: {str(e)}")
+        return {"status": "unknown", "error": "learner fit check failed"}
+
+
 @router.get("/health")
 async def get_health():
     try:
@@ -82,4 +99,6 @@ async def get_health():
         "uptime_seconds": system_uptime,
         "started_at": started_at,
         "services": services,
+        # additive: `status` above stays "ok" so existing monitors are unaffected
+        "learner_fits": await asyncio.get_event_loop().run_in_executor(None, _learner_fit_health),
     }
