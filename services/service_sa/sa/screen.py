@@ -263,6 +263,71 @@ def run_screen(
         con.close()
 
 
+RETENTION_DAYS = 90  # nightly findings kept (the same value is in migration 057's comment)
+
+_COLUMNS = (
+    "run_date, target_key, feature_key, lag_hours, method, status, reason, n, effect, "
+    "effect_unit, improvement, p, p_adjusted, fitted_from, fitted_to, evidence, computed_at"
+)
+
+
+def _db_row(r):
+    import json
+
+    return (
+        r["run_date"],
+        r["target_key"],
+        r["feature_key"],
+        r["lag_hours"],
+        r["method"],
+        r["status"],
+        (r["reason"] or "")[:255] or None,
+        r["n"],
+        r["effect"],
+        r["effect_unit"],
+        r["improvement"],
+        r["p"],
+        r["p_adjusted"],
+        r["fitted_from"],
+        r["fitted_to"],
+        json.dumps(r["evidence"], default=str),
+        r["computed_at"],
+    )
+
+
+def store(conn, rows, retention_days=RETENTION_DAYS):
+    """Write tonight's rows to `sa_covariate_findings` in one transaction: a re-run of the same
+    night replaces that night's rows, and runs older than the retention are pruned. Returns the
+    number of rows written. Rolls back and re-raises on any error."""
+    if not rows:
+        return 0
+    run_date = rows[0]["run_date"]
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM sa_covariate_findings WHERE run_date = %s", (run_date,))
+        marks = ", ".join(["%s"] * 17)
+        cursor.executemany(
+            f"INSERT INTO sa_covariate_findings ({_COLUMNS}) VALUES ({marks})",
+            [_db_row(r) for r in rows],
+        )
+        cursor.execute(
+            "DELETE FROM sa_covariate_findings WHERE run_date < %s",
+            (run_date - timedelta(days=retention_days),),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(rows)
+
+
+def run(lake_dir, conn, **kwargs):
+    """Screen the lake and store the findings. Called by sa-learner after the learners; returns
+    {"rows": n, "summary": {...}}."""
+    rows = run_screen(lake_dir, **kwargs)
+    return {"rows": store(conn, rows), "summary": summarize(rows)}
+
+
 def summarize(rows):
     """{target: {"effects": n, "insufficient_evidence": n, "not_tested": n}} for logging."""
     out = {}
