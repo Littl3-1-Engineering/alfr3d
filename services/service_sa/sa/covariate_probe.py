@@ -36,6 +36,11 @@ from collections import defaultdict
 from datetime import timedelta
 
 import duckdb
+from sa.screen import (  # noqa: F401  (moved to the production screen; kept importable here)
+    _naive,
+    anomaly_vs_trailing_week,
+    residual_by_hour_of_week,
+)
 
 HOUR = timedelta(hours=1)
 
@@ -63,30 +68,6 @@ DAY_LEVEL_LEARNERS = ("stay", "daytime", "household_day")
 
 def _path(lake_dir, layer, table):
     return os.path.join(lake_dir, layer, table, "part-0.parquet")
-
-
-def _naive(t):
-    return t.replace(tzinfo=None) if getattr(t, "tzinfo", None) else t
-
-
-def residual_by_hour_of_week(rows):
-    """{t: y - mean(y | dow, hour)} for `rows` of (t, dow, hour, y). In-sample on purpose: it only
-    removes the structure every learner already models."""
-    cells = defaultdict(list)
-    for _t, dow, hour, y in rows:
-        cells[(dow, hour)].append(y)
-    mean = {k: sum(v) / len(v) for k, v in cells.items()}
-    return {t: y - mean[(dow, hour)] for t, dow, hour, y in rows}
-
-
-def anomaly_by_hour_of_day(series):
-    """{t: value - that hour of day's mean} for a {t: value} series (None values dropped)."""
-    cells = defaultdict(list)
-    for t, v in series.items():
-        if v is not None:
-            cells[t.hour].append(v)
-    mean = {h: sum(v) / len(v) for h, v in cells.items()}
-    return {t: v - mean[t.hour] for t, v in series.items() if v is not None}
 
 
 def load_features(lake_dir):
@@ -161,7 +142,7 @@ def candidate_series(features):
 
 def anomaly_or_raw(series, anomaly):
     return (
-        anomaly_by_hour_of_day(series)
+        anomaly_vs_trailing_week(series)
         if anomaly
         else {t: v for t, v in series.items() if v is not None}
     )
