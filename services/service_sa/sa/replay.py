@@ -38,8 +38,9 @@ from sa.learners import (
 CARD_CONFIDENCE_FLOOR = 0.3
 TARGET_FLAG_DAYS_PER_14 = 1.0
 
-CALENDAR_UNRECONSTRUCTABLE = (
-    "calendar free/busy: the table is purged after each event, so no per-day history exists"
+CALENDAR_NO_HISTORY = (
+    "calendar: the lake holds no calendar events, so every replayed hour has no calendar parent "
+    "(unknown, not free)"
 )
 DECK_UNRECONSTRUCTABLE = (
     "deck network family: no reporting Deck is linked to anyone with presence data in this window"
@@ -119,6 +120,89 @@ def _users(lake_dir):
     return sorted(grid)
 
 
+def load_calendar(lake_dir):
+    """{"events": [(start_utc, end_utc)], "captured_from": naive UTC or None}. History starts when
+    the calendar was first exported (the earliest `created_at` in bronze `calendar_events`; the
+    MySQL table keeps 730 days since LF-0, 2026-10-09). Before that the calendar is UNKNOWN, which
+    is not the same as empty, and the replay says so instead of treating it as free."""
+    import glob
+    import os
+
+    import duckdb
+
+    silver_path = os.path.join(lake_dir, "silver", "calendar_busy", "part-0.parquet")
+    if not os.path.exists(silver_path):
+        return {"events": [], "captured_from": None}
+    con = duckdb.connect()
+    try:
+        events = con.execute(
+            f"SELECT start_utc, end_utc FROM read_parquet('{silver_path}') ORDER BY start_utc"
+        ).fetchall()
+        captured = None
+        bronze = os.path.join(lake_dir, "bronze", "calendar_events", "date=*", "*.parquet")
+        if glob.glob(bronze):
+            captured = con.execute(
+                f"SELECT MIN(created_at) FROM read_parquet('{bronze}')"
+            ).fetchone()[0]
+        if captured is None and events:
+            captured = events[0][0]
+        return {"events": events, "captured_from": captured}
+    finally:
+        con.close()
+
+
+def calendar_state_at(calendar, at_utc):
+    """The calendar observer's layer-1 state row as live writes it: an event on the household
+    calendar covers `at_utc`. None when none does, and also None before the calendar was captured
+    (unknown): the caller cannot tell those apart here, `calendar_known_at` can."""
+    from sa import layer2
+    from sa.learners.base import Inference
+
+    if not calendar_known_at(calendar, at_utc):
+        return None
+    if not any(start <= at_utc <= end for start, end in calendar["events"]):
+        return None
+    return Inference(
+        kind="state",
+        subject_type="household",
+        subject_id="calendar",
+        signal=layer2.SIGNAL_CALENDAR_BUSY,
+        learner="calendar_observer",
+        learner_version="1",
+        window_start=at_utc,
+        confidence=1.0,
+    )
+
+
+def calendar_known_at(calendar, at_utc):
+    captured = calendar["captured_from"]
+    return captured is not None and at_utc >= captured
+
+
+def calendar_events_on(calendar, day, zone):
+    """How many events overlap the local `day`, as live counts them (`calendar_events_today`), or
+    None when the day starts before the calendar was captured (unknown)."""
+    start = datetime.combine(day, datetime.min.time()).replace(tzinfo=zone)
+    start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    if not calendar_known_at(calendar, start):
+        return None
+    end = start + timedelta(days=1)
+    return sum(1 for s, e in calendar["events"] if s < end and e >= start)
+
+
+def _calendar_note(calendar, start):
+    """The `unreconstructed` line for the calendar, or None when it covers the whole window."""
+    captured = calendar["captured_from"]
+    if captured is None:
+        return CALENDAR_NO_HISTORY
+    if captured.date() > start:
+        return (
+            f"calendar: history starts {captured.date()}; replayed hours before then have no "
+            "calendar parent (unknown, not free)"
+        )
+    return None
+
+
 DECK_RECENT_HOURS = 12  # shadow.deck_network_state reads this much recent history per cycle
 DECK_CADENCE_DAYS = 14  # and measures each install's report cadence over this many days
 
@@ -191,7 +275,9 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
     if explained_discount is not None:
         rule.explained_discount = explained_discount
     deck = load_deck(lake_dir) if with_deck else ({}, {})
+    calendar = load_calendar(lake_dir)
     rows, plain_rows, by_state = [], [], {"out": 0, "wifi": 0, "none": 0}
+    no_calendar_rows, by_calendar = [], {"covering": 0, "none": 0, "unknown": 0}
     zone = ZoneInfo(silver.TIMEZONE)
     for user in _users(lake_dir):
         for hit in presence.backtest(lake_dir, user, start, end, hours=range(6, 23)):
@@ -210,8 +296,21 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
             plain_rows.append(_row(user, hit["at_local"], plain))
             state = deck_state_at(deck, user, at_utc)
             parents = [inference] + ([state] if state is not None else [])
+            ctx = {"owners": {}, "owned_with_profile": {}}
+            busy = calendar_state_at(calendar, at_utc)
+            by_calendar[
+                (
+                    "covering"
+                    if busy
+                    else ("none" if calendar_known_at(calendar, at_utc) else "unknown")
+                )
+            ] += 1
+            unexplained = layer2.run_rules([rule], parents, ctx, hit["at_local"])
+            no_calendar_rows.append(
+                _row(user, hit["at_local"], unexplained[0] if unexplained else None)
+            )
             fused = layer2.run_rules(
-                [rule], parents, {"owners": {}, "owned_with_profile": {}}, hit["at_local"]
+                [rule], parents + ([busy] if busy is not None else []), ctx, hit["at_local"]
             )
             by_state[(state.observed or {}).get("state", "none") if state else "none"] += 1
             rows.append(_row(user, hit["at_local"], fused[0] if fused else None))
@@ -223,7 +322,8 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
         start,
         end,
         rows,
-        unreconstructed=[CALENDAR_UNRECONSTRUCTABLE, DEVICES_UNRECONSTRUCTABLE]
+        unreconstructed=[n for n in (_calendar_note(calendar, start),) if n]
+        + [DEVICES_UNRECONSTRUCTABLE]
         + ([] if users_with_deck else [DECK_UNRECONSTRUCTABLE]),
         method="presence backtest (hourly 06-22 local) fused by AwayUnusualRule with the Deck "
         "network state reconstructed from bronze deck_context_history",
@@ -236,32 +336,50 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
                     {(r["subject"], _day_of(r["at"])) for r in rows if r["flagged"]}
                 ),
             },
+            "calendar": {
+                "captured_from": calendar["captured_from"],
+                "events": len(calendar["events"]),
+                "presence_deviations_by_calendar_state": by_calendar,
+                "flag_days_without_calendar": len(
+                    {(r["subject"], _day_of(r["at"])) for r in no_calendar_rows if r["flagged"]}
+                ),
+            },
             "explained_discount": rule.explained_discount,
         },
     )
 
 
 def replay_day_off(lake_dir, start, end, corroboration_floor=None):
-    """Layer 2 `day_off` over the daytime backtest. The calendar corroborates (share) but cannot be
-    replayed, so each result is fused under three calendar states: unknown (None, as the live rule
-    runs without a count), an empty day (share 1.0) and a fully booked one (share 0.0). The empty
-    calendar is the upper bound of flag-days; the booked one, with the 0.3 floor, the lower."""
+    """Layer 2 `day_off` over the daytime backtest. The calendar corroborates (share): the primary
+    report uses the REAL count of events overlapping each day since the calendar was captured, and
+    no count (as live runs without one) before that. `calendar_bounds` also fuses every result
+    under an empty day (share 1.0, the upper bound of flag-days) and a fully booked one (share 0.0,
+    the lower, with the 0.3 floor), so the effect of the calendar is bounded even where it is
+    unknown."""
     rule = day_off.DayOffRule()
     if corroboration_floor is not None:
         rule.corroboration_floor = corroboration_floor
     states = {"unknown": None, "empty_calendar": 0, "booked_calendar": 1}
     rows = {key: [] for key in states}
+    calendar, zone = load_calendar(lake_dir), ZoneInfo(silver.TIMEZONE)
+    primary, known_days = [], set()
     for user in _users(lake_dir):
         for hit in daytime.backtest(lake_dir, user, start, end):
             parent = hit["inference"]
             if parent is None:
                 continue
-            for key, events in states.items():
+            real = calendar_events_on(calendar, hit["date"], zone)
+            if real is not None:
+                known_days.add(hit["date"])
+            for key, events in dict(states, actual=real).items():
                 ctx = {"day_start_utc": None, "calendar_events_today": events}
                 for group in rule.groups([parent], ctx):
                     fused = _fuse(rule, group, parent)
-                    rows[key].append(_row(user, hit["date"], fused))
-    primary = rows["unknown"]
+                    row = _row(user, hit["date"], fused)
+                    if key == "actual":
+                        primary.append(row)  # the real count where known, else unknown (None)
+                    else:
+                        rows[key].append(row)
     extra = {
         "calendar_bounds": {
             key: {
@@ -271,6 +389,11 @@ def replay_day_off(lake_dir, start, end, corroboration_floor=None):
             for key, found in rows.items()
         },
         "corroboration_floor": rule.corroboration_floor,
+        "calendar": {
+            "captured_from": calendar["captured_from"],
+            "events": len(calendar["events"]),
+            "days_with_a_known_count": len(known_days),
+        },
     }
     return report(
         day_off.NAME,
@@ -278,8 +401,9 @@ def replay_day_off(lake_dir, start, end, corroboration_floor=None):
         start,
         end,
         primary,
-        unreconstructed=[CALENDAR_UNRECONSTRUCTABLE],
-        method="daytime backtest (13:00 and 17:00 checkpoints) fused by DayOffRule",
+        unreconstructed=[n for n in (_calendar_note(calendar, start),) if n],
+        method="daytime backtest (13:00 and 17:00 checkpoints) fused by DayOffRule, with the real "
+        "calendar count on days since the calendar was captured (unknown before)",
         extra=extra,
     )
 
