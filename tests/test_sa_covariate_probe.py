@@ -56,20 +56,39 @@ def test_a_planted_relationship_is_found_and_a_null_is_not():
     feature, rows = _feature_and_target(1.0)
     found = probe.probe_target(rows, [("signal", 0, feature)], **FAST)
     assert found["findings"][0]["status"] == "effect"
-    assert not found["low_power"]
+    assert found["method"] == "slope"
 
     feature, rows = _feature_and_target(0.0, seed=9)
     null = probe.probe_target(rows, [("signal", 0, feature)], **FAST)
     assert null["findings"][0]["status"] == "insufficient_evidence"
 
 
-def test_a_sparse_target_is_flagged_not_reported_as_no_relationship():
+def test_a_sparse_target_goes_to_the_rate_screen_and_a_planted_shift_is_found():
     rng = random.Random(4)
-    feature, _ = _feature_and_target(0.0)
-    rows = _rows(24 * 14, lambda i, t: 1.0 if rng.random() < 0.05 else 0.0)
-    result = probe.probe_target(rows, [("signal", 0, feature)], **FAST)
-    assert result["zero_share"] > 0.9
-    assert result["low_power"] is True
-    assert "LOW POWER" in probe.render(
+    feature, x = {}, 0.0
+    rows = []
+    for i in range(24 * 60):
+        t = T0 + timedelta(hours=i)
+        x = 0.9 * x + rng.gauss(0, 1)
+        feature[t] = x
+        high = x > 0.8
+        rows.append(
+            (t, t.weekday(), t.hour, 1.0 if rng.random() < (0.30 if high else 0.04) else 0.0)
+        )
+    result = probe.probe_target(rows, [("signal", 0, feature)], permutations=99)
+    assert result["method"] == "rates" and result["zero_share"] > 0.7
+    assert result["findings"][0]["status"] == "effect"
+    assert result["findings"][0]["rate_shift"] > 0.1
+    text = probe.render(
         {"candidates": ["signal@0h"], "targets": {"event:x": result}, "day_level": {}}
     )
+    assert "rates" in text and "effect=" in text
+
+
+def test_a_sparse_null_is_not_an_effect():
+    rng = random.Random(11)
+    feature, _ = _feature_and_target(0.0, n=24 * 60)
+    rows = _rows(24 * 60, lambda i, t: 1.0 if rng.random() < 0.08 else 0.0)
+    result = probe.probe_target(rows, [("signal", 0, feature)], permutations=99)
+    assert result["method"] == "rates"
+    assert result["findings"][0]["status"] == "insufficient_evidence"

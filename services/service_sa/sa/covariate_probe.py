@@ -11,6 +11,11 @@ feature (and lag) from `context_hourly`, and runs `covariates.screen`: a time-bl
 a sample floor, a candidate budget, and a Holm-corrected circular-shift permutation test. A
 relationship counts only as `effect`; everything else is `insufficient_evidence`, with the reason.
 
+Sparse targets (an event count that is zero in most hours, "is this person home" for someone who
+rarely is) cannot be screened by a median slope, so they go to `covariates.screen_rates`, which
+compares the outcome's frequency within each hour of week between the top and bottom third of the
+feature. The report says which method each target used.
+
 This is a PROXY for each learner's own residuals, not a replacement for them: a learner whose real
 model differs (the presence profile's recency weighting, the rate learner's day types) can behave
 differently, so an `effect` here earns an opt-in PR with its own replay before/after, and an
@@ -49,7 +54,9 @@ CANDIDATES = (
     ("forecast_temp_c", 0, True),
 )
 
-LOW_POWER_ZERO_SHARE = 0.5
+# A target at least this often exactly zero is screened by frequency, not by median slope: the
+# slope and the MAD are both 0 on it (measured on the real lake), so the slope screen sees nothing.
+SPARSE_ZERO_SHARE = 0.5
 
 DAY_LEVEL_LEARNERS = ("stay", "daytime", "household_day")
 
@@ -161,26 +168,40 @@ def anomaly_or_raw(series, anomaly):
 
 
 def probe_target(rows, cands, **screen_kwargs):
+    """Screen one target. A sparse target (most hours zero) goes to `screen_rates`, which compares
+    the outcome's frequency within each hour of week; a dense one goes to the robust-slope
+    `screen` on its residual. `method` says which, because the two are not comparable."""
     from sa import covariates
 
-    residual = residual_by_hour_of_week(rows)
-    candidates = [
-        {
-            "name": name,
-            "lag_hours": lag,
-            "pairs": covariates.lagged_pairs(series, residual, lag_hours=lag, step=HOUR),
-        }
-        for name, lag, series in cands
-    ]
     zero_share = sum(1 for *_, y in rows if y == 0) / len(rows) if rows else 0.0
+    sparse = zero_share >= SPARSE_ZERO_SHARE
+    if sparse:
+        outcome = [(t, (dow, hour), y) for t, dow, hour, y in rows]
+        candidates = [
+            {
+                "name": name,
+                "lag_hours": lag,
+                "pairs": covariates.rate_pairs(series, outcome, lag_hours=lag, step=HOUR),
+            }
+            for name, lag, series in cands
+        ]
+        findings = covariates.screen_rates(candidates, **screen_kwargs)
+    else:
+        residual = residual_by_hour_of_week(rows)
+        candidates = [
+            {
+                "name": name,
+                "lag_hours": lag,
+                "pairs": covariates.lagged_pairs(series, residual, lag_hours=lag, step=HOUR),
+            }
+            for name, lag, series in cands
+        ]
+        findings = covariates.screen(candidates, **screen_kwargs)
     return {
         "n": len(rows),
         "zero_share": round(zero_share, 3),
-        # A median-based slope and MAD gain are blind when most of the target is one value (an
-        # event count that is 0 in most hours): the slope is 0 and the MAD is 0, so the gain is
-        # exactly 0.0 whatever the relationship. Flag it instead of calling it "no relationship".
-        "low_power": zero_share >= LOW_POWER_ZERO_SHARE,
-        "findings": covariates.screen(candidates, **screen_kwargs),
+        "method": "rates" if sparse else "slope",
+        "findings": findings,
     }
 
 
@@ -207,19 +228,17 @@ def report(lake_dir, **screen_kwargs):
 def render(rep):
     lines = [f"candidates: {', '.join(rep['candidates'])}", ""]
     for name, t in sorted(rep["targets"].items()):
-        verdicts = [f for f in t["findings"] if f["status"] == "effect"]
+        effects = [f for f in t["findings"] if f["status"] == "effect"]
         lines.append(
-            f"{name}  (n={t['n']}, {t['zero_share']:.0%} zero)  effects: {len(verdicts)}"
-            + (
-                "  LOW POWER: sparse target, the median-based test cannot see an effect"
-                if t["low_power"]
-                else ""
-            )
+            f"{name}  (n={t['n']}, {t['zero_share']:.0%} zero, {t['method']})  "
+            f"effects: {len(effects)}"
         )
         for f in t["findings"]:
+            effect = f.get("rate_shift", f.get("beta"))
             lines.append(
                 f"    {f['name']}@{f['lag_hours']}h  {f['status']}"
                 + (f"  gain={f['improvement']}" if "improvement" in f else "")
+                + (f"  effect={effect}" if f["status"] == "effect" else "")
                 + (f"  p_adj={f['p_adjusted']}" if "p_adjusted" in f else "")
                 + (f"  [{f['reason']}]" if f["status"] != "effect" and "reason" in f else "")
             )
