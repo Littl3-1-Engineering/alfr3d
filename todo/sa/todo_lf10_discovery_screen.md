@@ -1,6 +1,17 @@
 # LF-10: discovery screen and derived targets (Context learning 4/5), PLAN
 
-Status: **plan approved 2026-11-19, nothing built yet** (decisions below). Prompt: Notion "Claude Code prompt:
+Status: **plan approved 2026-11-19.** Build order, each its own PR: (1) **target registry and
+validation: built 2026-11-19** (`sa/targets.py`, `tests/test_sa_targets.py`); (2) nightly screen
+`sa/screen.py` and its tests (not started); (3) migration 0064, the findings API and the
+`learner.py` stage (not started; migration only after the backup and plan are shown). Decisions
+below.
+
+**Step 1 verified live, read-only on the NUC lake (2026-11-19):** `validate()` and
+`validate_queries()` clean; the three queries return 3,245 hourly values each and reproduce the
+sizing numbers (guests_home non-zero 1,650, max 2; house_empty 182; away_minutes non-zero 2,791,
+max 240); `check_kind` passes for all three. Not live: nothing is deployed and nothing reads the
+registry yet. Note the forecast candidates read the long-form `context_features`, not
+`context_hourly` (the forecast features are not columns of it). Prompt: Notion "Claude Code prompt:
 context-agnostic learning and layer 3", Phase 4. Builds on LF-8 (registry: which signals exist) and
 LF-9 (`sa/covariates.py`: `screen` for continuous targets, `screen_rates` for binary and count).
 
