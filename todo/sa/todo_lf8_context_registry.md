@@ -2,8 +2,9 @@
 
 Layer: data and tooling | Roadmap: [SA_ROADMAP.md](SA_ROADMAP.md) | Depends on: LF-2b
 
-Status 2026-11-19: **built and proven on a copy of the production lake; not merged or deployed.**
-Branch `feat/sa-context-registry`. Everything here is lake-side or code; no MySQL schema change was
+Status 2026-11-19: **merged (#427) and deployed to the NUC**; the deployed image reproduces production's
+`context_hourly` exactly (5,289 rows, 0 differences, all 9 gold tables identical). Decisions 1 and the
+forecast items below were approved and built in `feat/sa-registry-forecast-and-calendar-null`. Everything here is lake-side or code; no MySQL schema change was
 made or is needed for the registry, the gold tables, the identity fix or the ledger script.
 
 ## What exists
@@ -70,9 +71,13 @@ the lake side); proposal 2 below removes that.
   kept as is so `context_hourly` is unchanged, and flagged in the ledger `note`. This is the kind of
   fabricated-looking value the "no fabricated data" rule is about; see proposal 1.
 
-## Needs your decision (nothing below is built)
+## Decisions: status after approval (2026-11-19)
 
-1. **Calendar zero-fill.** Make `calendar_busy_minutes` NULL for hours before the first calendar
+**Done in `feat/sa-registry-forecast-and-calendar-null`:** decision 1 (below) and the forecast features
+of the capture track. **Still to do, approved:** decision 2 (automatic aliases), decision 3's ledger route
+and migration 0063 (plan and verified backup shown to you first, per your rule).
+
+1. **Calendar zero-fill. DONE.** Make `calendar_busy_minutes` NULL for hours before the first calendar
    bronze day (and for any hour the calendar export did not run), 0 only where it was captured.
    Changes `context_hourly` values for about 4,300 hours (2026-04-12 to 10-08) from 0 to NULL; no
    reader today, so no behaviour changes. One line in the registry plus a test.
@@ -94,3 +99,18 @@ the lake side); proposal 2 below removes that.
    `context_features` and the registry-generated `context_hourly`, and `shadow.climate` starts using
    stable ids at once. Re-run the real-data diff against the then-current production table after the
    first nightly as the final check.
+
+## 2026-11-19, branch `feat/sa-registry-forecast-and-calendar-null` (real data, copy of the NUC lake)
+
+- **Calendar:** `calendar_busy_minutes` is NULL before the calendar was first captured (a new
+  `calendar_capture` relation, the earliest bronze `created_at`) and a real 0 after. On real data
+  `context_hourly` has the same columns and rows, **every other column identical**, and exactly **4,315
+  rows changed, all 0 to NULL, from 2026-04-12 19:00 to 2026-10-09 13:00**; the first known hour is
+  2026-10-09 14:00 (capture began 14:46). No reader of the column exists, so no behaviour changes.
+- **Forecast:** silver `weather_hourly` gained `forecast_temp_c`, `forecast_rain_probability` and
+  `forecast_updated_at` (additive); `context_features` gained `forecast_temp_c`,
+  `forecast_rain_probability` and `forecast_error_6h_c` (the temperature observed 6 h later minus the
+  forecast in effect), kept out of `context_hourly`. 968 hours of forecast, 962 of error from
+  2026-10-09 20:00; **first measurement: mean absolute error 1.55 C, mean signed +0.3 C at a lead of
+  about 6 h** (the lead is approximate because the forecast's target time is not stored). Both build
+  steps tolerate older bronze without the columns.

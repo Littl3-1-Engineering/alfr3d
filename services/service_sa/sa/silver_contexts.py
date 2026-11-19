@@ -348,12 +348,28 @@ def build_weather(con, have):
                        INTERVAL 1 HOUR)) AS b
               FROM b_environment_history WHERE kind = 'weather')"""
     )
+    have_cols = {
+        r[0]
+        for r in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'b_environment_history'"
+        ).fetchall()
+    }
+    forecast_cols = (
+        "e.forecast_temp AS forecast_temp_c, "
+        "e.forecast_rain_probability AS forecast_rain_probability, "
+        "e.forecast_updated_at AS forecast_updated_at"
+        if {"forecast_temp", "forecast_rain_probability", "forecast_updated_at"} <= have_cols
+        else "NULL::DOUBLE AS forecast_temp_c, NULL::DOUBLE AS forecast_rain_probability, "
+        "NULL::TIMESTAMP AS forecast_updated_at"
+    )
     return {
         "weather_hourly": f"""
             SELECT h.bucket_utc, to_local(h.bucket_utc) AS bucket_local,
                    e.temperature AS temperature_c, e.humidity AS humidity_pct,
                    e.pressure AS pressure_hpa, e.wind AS wind_kmh, e.wind_dir,
                    e.description, e.low AS low_c, e.high AS high_c,
+                   {forecast_cols},
                    epoch(h.hour_end - e.recorded_at) / 60.0 AS age_minutes,
                    'environment_history' AS source
             FROM weather_hours h
@@ -617,6 +633,30 @@ def build_gold(con, have):
                                        - epoch(GREATEST(start_utc, b)))) / 60.0 AS busy_minutes
                 FROM e GROUP BY b"""
             )
+        # When the calendar was first captured: before that it is UNKNOWN, not free
+        # (calendar_busy_minutes is NULL there, not a zero that reads as "no events").
+        has_capture = False
+        if "calendar_events" in have:
+            cols = {
+                r[0]
+                for r in con.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'b_calendar_events'"
+                ).fetchall()
+            }
+            first = "created_at" if "created_at" in cols else "start_time"
+            con.execute(
+                f"CREATE TABLE calendar_capture AS SELECT MIN({first}) AS captured_from "
+                "FROM b_calendar_events"
+            )
+            has_capture = True
+        has_forecast = (
+            has_weather
+            and con.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 's_weather_hourly' AND column_name = 'forecast_temp_c'"
+            ).fetchone()[0]
+        )
         # The registry (sa/context_registry.py) declares every context feature once: the long-form
         # `context_features` and the wide `context_hourly` (a pivot of it) are both generated from
         # it. `context_features` is written first and registered as the view g_context_features
@@ -626,6 +666,10 @@ def build_gold(con, have):
             available.add("s_weather_hourly")
         if has_calendar:
             available.add("calendar_hourly")
+        if has_capture:
+            available.add("calendar_capture")
+        if has_forecast:
+            available.add("s_weather_forecast")
         features = context_registry.features_query(available)
         if features:
             queries["context_features"] = features

@@ -29,6 +29,8 @@ registry feature exposes the forecast columns yet.
 - **C. Store several leads** (+3 h, +12 h, +24 h). Needs the ENUM widened (a migration) and more
   rows per fetch; only worth it if a learner shows it can use a forecast at all.
 
+**Update 2026-11-19: option A approved and built** (`feat/sa-registry-forecast-and-calendar-null`): the forecast features are registered; 6-hour-lead forecast error is 1.55 C mean absolute so far. B is still open and waits for a held-out gain.
+
 **Recommendation: A now; B if A shows a held-out gain.** It answers the question with no schema
 change, and it is the cheaper way to find out whether forecasts are worth capturing better.
 **Needs from you:** a yes to A. B and C need a migration, so I would show the plan and backup first.

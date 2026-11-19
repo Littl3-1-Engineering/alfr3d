@@ -70,6 +70,16 @@ JOINS = {
         "calendar_hourly", "LEFT JOIN calendar_hourly c ON c.bucket_utc = s.bucket_utc"
     ),
     "people": Join(None, "LEFT JOIN people p ON p.bucket_utc = s.bucket_utc"),
+    # when the calendar was first captured (one row): before it the calendar is unknown, not free
+    "capture": Join("calendar_capture", "CROSS JOIN calendar_capture cc"),
+    # the forecast columns of weather_hourly (a separate token: older builds do not have them)
+    "forecast": Join(
+        "s_weather_forecast", "LEFT JOIN s_weather_hourly wf ON wf.bucket_utc = s.bucket_utc"
+    ),
+    "forecast_plus6": Join(
+        "s_weather_forecast",
+        "LEFT JOIN s_weather_hourly wf6 ON wf6.bucket_utc = s.bucket_utc + INTERVAL 6 HOUR",
+    ),
 }
 
 
@@ -215,16 +225,15 @@ REGISTRY = (
     Feature(
         "calendar_busy_minutes",
         "float",
-        "COALESCE(c.busy_minutes, 0)",
-        ("calendar",),
+        "CASE WHEN s.bucket_utc >= time_bucket(INTERVAL 1 HOUR, cc.captured_from) "
+        "THEN COALESCE(c.busy_minutes, 0) END",
+        ("calendar", "capture"),
         provenance="calendar_events (household calendar), kept 730 days since LF-0 "
         "(2026-10-09) and exported nightly; the lake's copy starts 2026-10-09",
         retention_days=730,
         readers=("calendar_observer",),
-        description="ZERO-FILLED: an hour with no event reads 0, including every hour before the "
-        "calendar was first captured (2026-10-09), so 0 does not mean 'free' there. "
-        "Kept as is so context_hourly is unchanged; a fix (NULL before capture) is proposed in "
-        "todo_lf8_context_registry.md",
+        description="NULL before the calendar was first captured (unknown, not free); from then "
+        "an hour with no event is 0",
     ),
     Feature(
         "people_home",
@@ -233,6 +242,42 @@ REGISTRY = (
         ("people",),
         provenance="silver presence_intervals via the gold presence grid (phones only)",
         readers=("presence_profile", "daytime_profile", "household_day"),
+    ),
+    Feature(
+        "forecast_temp_c",
+        "float",
+        "wf.forecast_temp_c",
+        ("forecast",),
+        lags=(6,),
+        provenance="environment_history forecast: the OpenWeatherMap 3-hour window nearest "
+        "now + 6 h at fetch time (get_forecast, hours_ahead=6); its own target time is not stored",
+        retention_days=730,
+        in_context_hourly=False,
+        description="The forecast in effect at this hour. Lead is about 6 h, give or take the "
+        "3-hour grid and the age of the fetch",
+    ),
+    Feature(
+        "forecast_rain_probability",
+        "float",
+        "wf.forecast_rain_probability",
+        ("forecast",),
+        lags=(6,),
+        provenance="environment_history forecast (see forecast_temp_c)",
+        retention_days=730,
+        in_context_hourly=False,
+    ),
+    Feature(
+        "forecast_error_6h_c",
+        "float",
+        "wf6.temperature_c - wf.forecast_temp_c",
+        ("forecast", "forecast_plus6"),
+        lags=(6,),
+        provenance="derived: outdoor temperature observed 6 h later minus the forecast in effect "
+        "now, both from environment_history",
+        in_context_hourly=False,
+        description="Approximate: the forecast's lead is about 6 h but its target time is not "
+        "stored (a forecast_valid_at column would make it exact; see "
+        "todo_parallel_capture_track.md). NULL where the observation 6 h later does not exist yet",
     ),
     # Registered, not captured: the ledger lists it, no learner can ever see it.
     Feature(
