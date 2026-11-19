@@ -3,7 +3,7 @@
 Status: **plan approved 2026-11-19.** Build order, each its own PR: (1) **target registry and
 validation: built 2026-11-19** (`sa/targets.py`, `tests/test_sa_targets.py`); (2) nightly screen
 `sa/screen.py` and its tests: **built 2026-11-19** (see the step 2 notes below); (3) migration 0064, the findings API and the
-`learner.py` stage: **built 2026-11-19, migration NOT run on production** (see below). Decisions
+`learner.py` stage: **built, merged (#449) and DEPLOYED 2026-11-19; migration 0064 RUN on production** (see below). Decisions
 below.
 
 **Step 1 verified live, read-only on the NUC lake (2026-11-19):** `validate()` and
@@ -176,8 +176,7 @@ scratch to 0064; `downgrade 0063` (table gone); `upgrade head` again; `current -
 0064. Then the real store and the real route against the real table, with rows from the screen over
 three consecutive nights: 23 rows a night, a same-night re-run replaces (3 nights, not 4), an old
 row is pruned, the API returns the planted effect first with `effect_nights` 3 of 3, and the status
-and target filters work. 1,000+ unit tests cover the same paths with mocks. Not live: nothing is
-deployed and no row exists on production.
+and target filters work. 1,000+ unit tests cover the same paths with mocks. (That was before deployment.)
 
 **Production backup (taken and verified, read-only):**
 `/home/alfr3d/db_backups/alfr3d_backup_20261119_141508_pre_0064.sql.gz`, 40,463,020 bytes, gzip
@@ -193,3 +192,17 @@ one empty table), `up -d --no-deps sa-learner service-api sa-awareness`. 4. Veri
 `GET /api/context/findings` shows `available: true` with 3 targets. 5. **Rollback:** `alembic
 downgrade 0063` (drops the one table; the stage then logs and carries on) or restore the dump.
 Risk: low. Needs from the owner: a go to run step 3 on the NUC.
+
+## Deployed 2026-11-19 (owner's go; migration 0064 run on production)
+
+Backup `_pre_0064` (14:15 local, 6 minutes before the run, verified as above); `main` (3d3046a4)
+fast-forwarded on the NUC; `migrate` ran `0063 -> 0064`; `sa-learner`, `sa-awareness` and
+`service-api` rebuilt and restarted, all healthy, logs clean. `alembic_version` = 0064.
+
+**Verified live:** the stage run once by hand stored 23 rows (guests_home 8, house_empty 7,
+away_minutes 8), all `insufficient_evidence` with the reason "the feature has no data in the lake
+yet", and `GET /api/context/findings` returned `available: true` with 3 targets. That is the
+honest result today: the production lake has no `context_features` file until the first nightly
+build on the new code (03:30 UTC), which is when the screen sees real features. **Not yet
+verified live:** a night with real candidate data, and `effect_nights` above 1 (it counts from the
+first real night). Rollback unchanged: `alembic downgrade 0063` or restore the dump; not needed.
