@@ -54,8 +54,15 @@ class TestWindow:
         assert parity.local_day(datetime(2026, 11, 14, 4, 59, 59), ZONE) == date(2026, 11, 14)
         assert parity.local_day(datetime(2026, 11, 14, 17, 0, 0), ZONE) == date(2026, 11, 14)
 
-    def test_the_matching_inputs_date_is_not_before_the_presence_bridge_deploy(self):
-        assert parity.MATCHING_INPUTS_SINCE >= date(2026, 11, 1)
+    def test_no_learner_compares_the_day_the_presence_bridge_was_deployed(self):
+        # PR #365 landed during 2026-11-01, so that day's live profile predates it.
+        assert all(d >= date(2026, 11, 2) for d in parity.MATCHING_INPUTS_SINCE.values())
+
+    def test_the_stay_learner_compares_only_days_after_the_arrival_fix(self):
+        assert parity.MATCHING_INPUTS_SINCE["stay_profile"] >= date(2026, 11, 19)
+
+    def test_every_covered_learner_has_a_matching_inputs_date(self):
+        assert set(parity.COVERED) <= set(parity.MATCHING_INPUTS_SINCE)
 
 
 class TestLiveDays:
@@ -84,7 +91,13 @@ class TestCompare:
     def test_agreeing_flags_and_quiet_days_match(self):
         out = parity.compare_days({DAYS[1]: _strong()}, {DAYS[1]: _strong()}, DAYS)
 
-        assert out["outcomes"] == {"both": 1, "live_only": 0, "replay_only": 0, "neither": 4}
+        assert out["outcomes"] == {
+            "both": 1,
+            "live_only": 0,
+            "replay_only": 0,
+            "borderline": 0,
+            "neither": 4,
+        }
         assert out["mismatches"] == [] and out["card_floor_flips"] == []
 
     def test_a_day_only_live_flagged_is_named(self):
@@ -108,6 +121,37 @@ class TestCompare:
         out = parity.compare_days({DAYS[1]: _strong(None)}, {DAYS[1]: _strong(None)}, DAYS)
 
         assert out["card_floor_flips"] == []
+
+
+class TestBorderline:
+    def _bits(self, bits):
+        return {"bits": bits, "confidence": 0.5, "n": 1}
+
+    def test_a_one_sided_day_just_over_the_bar_is_borderline_not_a_mismatch(self):
+        out = parity.compare_days({DAYS[1]: self._bits(3.2)}, {}, DAYS, bar=3.0)
+
+        assert out["outcomes"]["borderline"] == 1 and out["outcomes"]["live_only"] == 0
+        assert out["mismatches"] == [] and out["borderline"][0]["kind"] == "live_only"
+
+    def test_a_one_sided_day_well_over_the_bar_is_still_a_mismatch(self):
+        out = parity.compare_days({}, {DAYS[1]: self._bits(5.4)}, DAYS, bar=3.0)
+
+        assert out["outcomes"]["replay_only"] == 1 and out["outcomes"]["borderline"] == 0
+        assert out["mismatches"][0]["kind"] == "replay_only"
+
+    def test_without_a_bar_nothing_is_borderline(self):
+        out = parity.compare_days({DAYS[1]: self._bits(3.01)}, {}, DAYS)
+
+        assert out["outcomes"]["live_only"] == 1 and out["borderline"] == []
+
+    def test_borderline_days_are_reported_in_the_verdict_not_hidden(self):
+        record = TestVerdict()._record(
+            parity.MIN_SUBJECT_DAYS,
+            outcomes={"both": 3, "live_only": 0, "replay_only": 0, "borderline": 2, "neither": 9},
+        )
+
+        assert "2 borderline" in parity.verdict([record])
+        assert parity.verdict([record]).startswith("MATCH")
 
 
 class TestVerdict:
@@ -218,4 +262,64 @@ class TestWalkForward:
         assert days == [LAST - timedelta(days=2), LAST - timedelta(days=1), LAST]
         assert (
             parity.observed_days(lake, 1, LAST + timedelta(days=1), LAST + timedelta(days=3)) == []
+        )
+
+
+class TestCoverage:
+    def _profile(self, subject_id, **params):
+        return Profile("p", "1", "series", subject_id, "s", params)
+
+    def test_scalar_compares_only_the_series_live_scores(self):
+        keep = [
+            "esphome:athom-tem-hum-sensor-4a4734.local:Temperature",
+            "esphome:athom-tem-hum-sensor-4a4734.local:Humidity",
+            "attention:switch_count",
+            "attention:unlock_count",
+        ]
+        drop = [
+            "ha:sensor.speedtest_ping",
+            "deck:376a3c33:battery",
+            "esphome:athom-tem-hum-sensor-4a4734.local:WiFi Signal dB",
+        ]
+
+        assert all(parity._select_scalar(None, self._profile(k))[0] for k in keep)
+        assert not any(parity._select_scalar(None, self._profile(k))[0] for k in drop)
+        assert "nightly" in parity._select_scalar(None, self._profile(drop[0]))[1]
+
+    def test_rates_compares_only_hourly_event_streams(self):
+        hourly = self._profile("event:x", window="hour", stream="event:play_start")
+        daily = self._profile("sender:y", window="day", stream="sender:someone")
+        email_hourly = self._profile("email", window="hour", stream="email_volume")
+
+        assert parity._select_rates(None, hourly)[0]
+        assert not parity._select_rates(None, daily)[0]
+        assert not parity._select_rates(None, email_hourly)[0]
+
+    def test_nightly_batch_rows_are_not_compared_with_a_walk_forward(self):
+        hour = datetime(2026, 11, 5, 3)
+        batch = _live(hour, hour + timedelta(hours=1))
+        live = _live(hour, hour + timedelta(minutes=17))
+
+        assert parity._batch_hour_rows([batch, live]) == [live]
+
+    def test_every_covered_learner_declares_how_to_compare_itself(self):
+        required = {"walk", "refit", "signal", "day_keyed", "subject", "days", "select"}
+
+        assert all(required <= set(spec) for spec in parity.COVERED.values())
+        assert set(parity.COVERED) == {
+            "presence_profile",
+            "stay_profile",
+            "daytime_profile",
+            "household_day",
+            "scalar_baseline",
+            "event_rate",
+            "device_rhythm",
+        }
+
+    def test_the_device_rhythm_replay_is_declared_approximate(self):
+        assert parity.COVERED["device_rhythm"].get("approximate") is True
+        assert not any(
+            spec.get("approximate")
+            for name, spec in parity.COVERED.items()
+            if name != "device_rhythm"
         )
