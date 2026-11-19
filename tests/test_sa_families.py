@@ -58,8 +58,12 @@ class TestParityWithTheOldMapping:
     def test_the_registry_is_sound(self):
         assert families.validate() == []
 
-    def test_the_derived_maps_are_exactly_the_old_literals(self):
-        assert layer2.FAMILY_BY_SIGNAL == OLD_BY_SIGNAL
+    def test_every_old_entry_is_unchanged_and_the_only_addition_is_the_witness(self):
+        # Step 1 of Phase 5 made these maps identical to the old literals; step 2 added exactly one
+        # signal, the deck_location witness, and nothing else changed.
+        new_signals = {k: v for k, v in layer2.FAMILY_BY_SIGNAL.items() if k not in OLD_BY_SIGNAL}
+        assert new_signals == {"deck.location": "deck_location"}
+        assert {k: layer2.FAMILY_BY_SIGNAL[k] for k in OLD_BY_SIGNAL} == OLD_BY_SIGNAL
         assert layer2.FAMILY_BY_KEY_PREFIX == OLD_BY_PREFIX
         assert layer2.SIGNAL_CALENDAR_BUSY == families.CALENDAR_BUSY
 
@@ -88,8 +92,11 @@ class TestParityWithTheOldMapping:
             ev = rng.choice([None, {"series": key}, {"stream": key}, {"family": "zz"}, {}])
             assert layer2.family_of(_inf(signal, ev)) == old_family_of(signal, ev)
 
-    def test_every_family_before_phase_5_is_a_voter(self):
-        assert {f.role for f in families.REGISTRY} == {families.VOTER}
+    def test_every_family_before_phase_5_is_a_voter_and_the_witness_is_the_only_one_added(self):
+        assert {f.name for f in families.REGISTRY if f.role == families.WITNESS} == {
+            "deck_location"
+        }
+        assert {f.role for f in families.REGISTRY if f.name != "deck_location"} == {families.VOTER}
         assert families.role_of("network") == families.VOTER
         assert families.role_of("not-a-family") == families.VOTER  # an override name votes
 
