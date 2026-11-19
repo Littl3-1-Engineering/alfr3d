@@ -38,7 +38,7 @@ runs it over the lake's presence history to check a past day.
 """
 
 from sa import layer2
-from sa.learners import deck_network, device_rhythm, presence
+from sa.learners import deck_location, deck_network, device_rhythm, presence
 
 NAME = "away_unusual"
 VERSION = "1"
@@ -81,6 +81,13 @@ class AwayUnusualRule(layer2.Rule):
             for p in parents
             if p.signal == deck_network.SIGNAL and p.kind == "state"
         }
+        # A coarse Deck location is a WITNESS (sa/families.py): far corroborates an absence, near
+        # contradicts it. Offered to every group; applied only if this rule enables the family.
+        location = {
+            str(p.subject_id): p
+            for p in parents
+            if p.signal == deck_location.SIGNAL and p.kind == "state"
+        }
         out = []
         for parent in parents:
             if parent.signal != presence.SIGNAL or parent.kind != "deviation":
@@ -98,6 +105,11 @@ class AwayUnusualRule(layer2.Rule):
                 share = 1.0  # the phone says it is on cellular: independent corroboration
             elif deck_state == deck_network.WIFI:
                 explained_here.append(seen)  # on wifi: arp likely lost a sleeping phone
+            here = location.get(user)
+            witnesses = []
+            if here is not None:
+                far = (here.observed or {}).get("state") == deck_location.FAR
+                witnesses.append((here, layer2.CORROBORATES if far else layer2.CONTRADICTS))
             out.append(
                 layer2.Group(
                     user,
@@ -105,6 +117,7 @@ class AwayUnusualRule(layer2.Rule):
                     [parent] + mine,
                     share=share,
                     explained_by=explained_here,
+                    witnesses=witnesses,
                     evidence={
                         "username": (parent.evidence or {}).get("username"),
                         "devices_offline": len(mine),

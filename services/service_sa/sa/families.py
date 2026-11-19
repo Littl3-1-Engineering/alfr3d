@@ -63,6 +63,13 @@ REGISTRY = (
     Family("attention", key_prefixes=("attention:",), description="Deck attention telemetry."),
     Family("email", key_prefixes=("email",), description="Email traffic."),
     Family("events", key_prefixes=("event:",), description="Household event-rate streams."),
+    Family(
+        "deck_location",
+        signals=("deck.location",),
+        role=WITNESS,
+        quality=0.3,
+        description="The phone's coarse (about 2 km) location: near home or clearly elsewhere.",
+    ),
 )
 
 

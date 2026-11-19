@@ -27,6 +27,7 @@ from sa.learners import (
     away_unusual,
     day_off,
     daytime,
+    deck_location,
     deck_network,
     household_day,
     presence,
@@ -262,7 +263,58 @@ def deck_state_at(deck, user_id, at_utc):
     return None
 
 
-def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck=True):
+LOCATION_RECENT_HOURS = 3  # fixes older than the observer's staleness bar cannot matter
+
+
+def load_locations(lake_dir):
+    """({install: [(captured_at, lat, lon, accuracy_m)]}, {install: user_id}, {install: home}) from
+    the bronze coarse location fixes. `home` is each install's most common place
+    (`deck_location.modal_home`), a stand-in for the backend's configured home coordinates, which
+    the lake does not hold. Empty when there are no fixes."""
+    import glob
+    import os
+
+    import duckdb
+
+    pattern = os.path.join(lake_dir, "bronze", "device_location_history", "date=*", "*.parquet")
+    if not glob.glob(pattern):
+        return {}, {}, {}
+    con = duckdb.connect()
+    try:
+        fixes, owners = {}, {}
+        for install, user, lat, lon, accuracy, at in con.execute(
+            f"SELECT client_install_id, user_id, latitude, longitude, accuracy_m, captured_at "
+            f"FROM read_parquet('{pattern}') WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+        ).fetchall():
+            fixes.setdefault(install, []).append((at, lat, lon, accuracy))
+            owners[install] = user
+        homes = {i: deck_location.modal_home(f) for i, f in fixes.items()}
+        return {i: sorted(f) for i, f in fixes.items()}, owners, homes
+    finally:
+        con.close()
+
+
+def location_state_at(locations, user_id, at_utc):
+    """The Deck-location observer's layer-1 state row for `user_id` as live would have written it at
+    `at_utc` (naive UTC), from the newest recent fix on any of their installs, or None."""
+    fixes, owners, homes = locations
+    for install, owner in owners.items():
+        if owner != user_id:
+            continue
+        recent = [
+            f
+            for f in fixes[install]
+            if at_utc - timedelta(hours=LOCATION_RECENT_HOURS) <= f[0] <= at_utc
+        ]
+        found = deck_location.observe(user_id, install, recent, at_utc, homes[install])
+        if found is not None:
+            return found
+    return None
+
+
+def replay_away_unusual(
+    lake_dir, start, end, explained_discount=None, with_deck=True, with_location=False
+):
     """Layer 2 `away_unusual` over the presence backtest: the person's `presence.home` deviation
     fused by the real rule, with the Deck family reconstructed from the bronze layer for people
     whose Deck reports (sustained cellular corroborates, sustained wifi explains the absence away).
@@ -274,6 +326,14 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
     rule = away_unusual.AwayUnusualRule()
     if explained_discount is not None:
         rule.explained_discount = explained_discount
+    # The Deck-location WITNESS is off in the live rule; the replay turns it on only on request, to
+    # measure it (Phase 5). `without_witness` is the same rule with witnesses off, as live runs.
+    without_witness = away_unusual.AwayUnusualRule()
+    without_witness.explained_discount = rule.explained_discount
+    if with_location:
+        rule.witness_families = (deck_location.FAMILY,)
+    locations = load_locations(lake_dir) if with_location else ({}, {}, {})
+    witness = {"by_location": {"far": 0, "near": 0, "none": 0}, "agreement": {}, "pairs": []}
     deck = load_deck(lake_dir) if with_deck else ({}, {})
     calendar = load_calendar(lake_dir)
     rows, plain_rows, by_state = [], [], {"out": 0, "wifi": 0, "none": 0}
@@ -295,7 +355,15 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
             )
             plain_rows.append(_row(user, hit["at_local"], plain))
             state = deck_state_at(deck, user, at_utc)
+            where = location_state_at(locations, user, at_utc) if with_location else None
             parents = [inference] + ([state] if state is not None else [])
+            if with_location:
+                parents_with_location = parents + ([where] if where is not None else [])
+                place = (where.observed or {}).get("state") if where else "none"
+                witness["by_location"][place] += 1
+                net = (state.observed or {}).get("state") if state else "none"
+                key = f"{place}|{net}"
+                witness["agreement"][key] = witness["agreement"].get(key, 0) + 1
             ctx = {"owners": {}, "owned_with_profile": {}}
             busy = calendar_state_at(calendar, at_utc)
             by_calendar[
@@ -309,9 +377,31 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
             no_calendar_rows.append(
                 _row(user, hit["at_local"], unexplained[0] if unexplained else None)
             )
+            extra_parents = [busy] if busy is not None else []
             fused = layer2.run_rules(
-                [rule], parents + ([busy] if busy is not None else []), ctx, hit["at_local"]
+                [rule],
+                (parents_with_location if with_location else parents) + extra_parents,
+                ctx,
+                hit["at_local"],
             )
+            if with_location:
+                baseline = layer2.run_rules(
+                    [without_witness], parents + extra_parents, ctx, hit["at_local"]
+                )
+                if fused and baseline:
+                    witness["pairs"].append(
+                        (
+                            baseline[0].confidence,
+                            fused[0].confidence,
+                            place,
+                            _day_of(hit["at_local"]),
+                            user,
+                            _reaches_card(baseline[0]),
+                            _reaches_card(fused[0]),
+                        )
+                    )
+                elif bool(fused) != bool(baseline):
+                    witness["flag_changed"] = witness.get("flag_changed", 0) + 1
             by_state[(state.observed or {}).get("state", "none") if state else "none"] += 1
             rows.append(_row(user, hit["at_local"], fused[0] if fused else None))
     users_with_deck = len({o for o in deck[1].values() if o in set(_users(lake_dir))})
@@ -345,8 +435,41 @@ def replay_away_unusual(lake_dir, start, end, explained_discount=None, with_deck
                 ),
             },
             "explained_discount": rule.explained_discount,
+            **({"deck_location_witness": _witness_summary(witness)} if with_location else {}),
         },
     )
+
+
+def _witness_summary(witness):
+    """The measurement block for the Deck-location witness: how often it spoke, whether it agrees
+    with the Deck's own network state (an independent family), whether any flag changed, and what it
+    did to the confidence of results that were flagged either way."""
+    pairs = witness["pairs"]
+    deltas = [p[1] - p[0] for p in pairs]
+    removed = [p for p in pairs if p[5] and not p[6]]
+    added = [p for p in pairs if p[6] and not p[5]]
+    return {
+        "presence_deviations_by_location_state": witness["by_location"],
+        "location_vs_deck_network": dict(sorted(witness["agreement"].items())),
+        "flagged_results_with_and_without": len(pairs),
+        "results_created_or_removed_by_the_witness": witness.get("flag_changed", 0),
+        # "Flagged" in this replay means the result reaches a card (surprise AND confidence), so a
+        # witness that lowers confidence can drop a result below the card bar, and one that raises
+        # it can lift a result over it. Counted here, not assumed away.
+        "card_flags_removed": len(removed),
+        "card_flags_added": len(added),
+        "card_flag_days_removed": len({(p[4], p[3]) for p in removed}),
+        "card_flag_days_added": len({(p[4], p[3]) for p in added}),
+        "confidence_raised": sum(1 for d in deltas if d > 1e-9),
+        "confidence_lowered": sum(1 for d in deltas if d < -1e-9),
+        "confidence_unchanged": sum(1 for d in deltas if abs(d) <= 1e-9),
+        "mean_confidence_change": round(sum(deltas) / len(deltas), 4) if deltas else None,
+        "flag_days_with_a_location_witness": len({(p[4], p[3]) for p in pairs if p[2] != "none"}),
+        "flagged_by_location_state": {
+            place: len({(p[4], p[3]) for p in pairs if p[2] == place})
+            for place in ("far", "near", "none")
+        },
+    }
 
 
 def replay_day_off(lake_dir, start, end, corroboration_floor=None):
@@ -516,12 +639,21 @@ def main(argv=None):
     parser.add_argument("--end", type=date.fromisoformat)
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--sweep", action="store_true", help="also sweep the day_off floor")
+    parser.add_argument(
+        "--witness-location",
+        action="store_true",
+        help="also replay away_unusual with the Deck-location witness ON, and report its effect",
+    )
     args = parser.parse_args(argv)
     if args.start and args.end:
         start, end = args.start, args.end
     else:
         start, end = default_window(days=args.days)
     reports = run(args.lake, start, end, args.only)
+    if args.witness_location:
+        report_ = replay_away_unusual(args.lake, start, end, with_location=True)
+        report_["name"] = "away_unusual.deck_location_witness"
+        reports.append(report_)
     if args.sweep:
         reports.append(
             {

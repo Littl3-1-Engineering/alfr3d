@@ -22,6 +22,7 @@ import math
 from datetime import timedelta
 
 from sa import families
+from sa import families as families_registry
 from sa.learners.base import Inference
 
 # A layer-1 deviation is re-upserted each awareness cycle (60 s) while it lasts. A row not
@@ -29,6 +30,11 @@ from sa.learners.base import Inference
 FRESH_MINUTES = 5
 DEFAULT_MIN_BITS = 3.0
 SIGNAL_CALENDAR_BUSY = "calendar.busy"
+
+# A witness (sa/families.py, role WITNESS) can only move a result's CONFIDENCE, and by at most this
+# fraction of it, however many witnesses agree: it can never create a surprise or remove one.
+WITNESS_CAP = 0.15
+CORROBORATES, CONTRADICTS = 1, -1
 
 # Where a layer-1 signal's evidence comes from is declared in sa/families.py (one `Family` per
 # source); a learner can still override per inference by putting evidence["family"]. Signals with
@@ -78,6 +84,7 @@ class Group:
         evidence=None,
         explained_by=(),
         window_start=None,
+        witnesses=(),
     ):
         self.subject_id = str(subject_id)
         self.anchor = anchor
@@ -86,6 +93,10 @@ class Group:
         self.evidence = evidence or {}
         self.explained_by = list(explained_by)
         self.window_start = window_start  # default: the anchor's; part of the upsert key
+        # [(row, CORROBORATES | CONTRADICTS)]: rows from WITNESS families the rule chose to offer
+        # for this group. They are applied only if the rule enables that family
+        # (`witness_families`).
+        self.witnesses = list(witnesses)
 
 
 class Rule:
@@ -106,6 +117,9 @@ class Rule:
     # confidences around 0.25 the weighted statistic can never reach a small combined p.
     weight_by_confidence = True
     ttl_hours = 6  # how long a result outlives the cycle that last refreshed it
+    # Witness families this rule listens to. Empty (the default) means witnesses are off: a group's
+    # witness rows are ignored and the result is exactly what it was before witnesses existed.
+    witness_families = ()
 
     def accept(self, voters):
         """A rule-specific gate on the voting parents (one per family), before the bar on bits."""
@@ -143,6 +157,32 @@ def _parent_ref(parent):
     return ref
 
 
+def witness_effects(rule, group):
+    """The witness rows that apply to this group, as [{family, signal, direction, effect}]:
+    only rows from a family the rule listens to (`rule.witness_families`) and that the registry
+    marks as a witness, weighted by the family's quality and the row's own confidence (a witness
+    with no confidence says nothing). `effect` is signed: positive raises confidence."""
+    used = []
+    for row, direction in group.witnesses:
+        family = family_of(row)
+        if family not in rule.witness_families:
+            continue
+        if families_registry.role_of(family) != families_registry.WITNESS:
+            continue
+        strength = max(0.0, min(1.0, row.confidence or 0.0))
+        effect = direction * families_registry.quality_of(family) * strength
+        if effect:
+            used.append(
+                {
+                    "family": family,
+                    "signal": row.signal,
+                    "direction": "corroborates" if direction == CORROBORATES else "contradicts",
+                    "effect": round(effect, 4),
+                }
+            )
+    return used
+
+
 def fuse(rule, group, now):
     """The layer-2 Inference for one group, or None if it is not surprising enough."""
     families = {}
@@ -150,6 +190,8 @@ def fuse(rule, group, now):
         family = family_of(parent)
         if family is None or parent.probability is None:
             continue
+        if families_registry.role_of(family) == families_registry.WITNESS:
+            continue  # a witness never votes
         best = families.get(family)
         if best is None or parent.probability < best.probability:
             families[family] = parent
@@ -174,6 +216,10 @@ def fuse(rule, group, now):
     confidence = sum(cs) / len(cs)
     if group.share is not None:
         confidence *= rule.corroboration_floor + (1.0 - rule.corroboration_floor) * group.share
+    used = witness_effects(rule, group)
+    if used:
+        shift = max(-WITNESS_CAP, min(WITNESS_CAP, sum(w["effect"] for w in used)))
+        confidence = min(1.0, max(0.0, confidence * (1.0 + shift)))
     anchor = group.anchor
     evidence = {
         "method": "fisher_by_family" if len(voters) > 1 else "single_family",
@@ -183,6 +229,8 @@ def fuse(rule, group, now):
     }
     if group.explained_by:
         evidence["explained_by"] = [_parent_ref(p) for p in group.explained_by]
+    if used:
+        evidence["witnesses"] = used
     evidence.update(group.evidence)
     return Inference(
         layer=2,
