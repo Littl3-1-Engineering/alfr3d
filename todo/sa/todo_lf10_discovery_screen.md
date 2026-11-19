@@ -3,7 +3,7 @@
 Status: **plan approved 2026-11-19.** Build order, each its own PR: (1) **target registry and
 validation: built 2026-11-19** (`sa/targets.py`, `tests/test_sa_targets.py`); (2) nightly screen
 `sa/screen.py` and its tests: **built 2026-11-19** (see the step 2 notes below); (3) migration 0064, the findings API and the
-`learner.py` stage (not started; migration only after the backup and plan are shown). Decisions
+`learner.py` stage: **built 2026-11-19, migration NOT run on production** (see below). Decisions
 below.
 
 **Step 1 verified live, read-only on the NUC lake (2026-11-19):** `validate()` and
@@ -155,3 +155,41 @@ trend pass for a cause. Both fixed, both tested, and the earlier probe results r
 **For step 3 / the API:** per-target Holm does not control error across targets or nights (about
 `0.05 x targets` false effects a night). Proposed: store every night, and have the API show how many
 of the last N nights a candidate was an `effect`, so a one-night flicker is visible as one.
+
+## Step 3 built (2026-11-19): table, store, stage, API. Migration 0064 NOT run on production.
+
+- `setup/migration_057_sa_covariate_findings.sql` + `setup/migrations/versions/0064_sa_covariate_findings.py`
+  (next free revision after 0063, checked): one table, `sa_covariate_findings`, primary key
+  `(run_date, target_key, feature_key, lag_hours)`. Downgrade drops it.
+- `screen.store(conn, rows)`: one transaction; a re-run of the same night replaces that night's
+  rows; runs older than 90 days are pruned; rolls back on error. `screen.run(lake, conn)` screens and
+  stores. `learner.run_discovery_screen()` is a best-effort stage after the learners (a missing
+  table, an unsound registry or any error is logged and the nightly job carries on).
+- `GET /api/context/findings` (ungated read, like the ledger): the Teach-me shape (`profile`,
+  `confidence`, `evidence`) per target, effects first then the closest misses by corrected p, plus
+  **`effect_nights` of `nights`**: on how many of the last N runs (default 14, max 90) the candidate
+  was an `effect`, so a one-night flicker reads as one. Filters `target`, `status`, `nights` are
+  parameters, never formatted into SQL. Before the migration it answers `available: false`.
+
+**Verified on a throwaway MySQL 8 (CI's recipe), container removed:** `alembic upgrade head` from
+scratch to 0064; `downgrade 0063` (table gone); `upgrade head` again; `current --check-heads` =
+0064. Then the real store and the real route against the real table, with rows from the screen over
+three consecutive nights: 23 rows a night, a same-night re-run replaces (3 nights, not 4), an old
+row is pruned, the API returns the planted effect first with `effect_nights` 3 of 3, and the status
+and target filters work. 1,000+ unit tests cover the same paths with mocks. Not live: nothing is
+deployed and no row exists on production.
+
+**Production backup (taken and verified, read-only):**
+`/home/alfr3d/db_backups/alfr3d_backup_20261119_141508_pre_0064.sql.gz`, 40,463,020 bytes, gzip
+integrity OK, `Dump completed` trailer, 38 tables, `alembic_version = '0063'`, no
+`sa_covariate_findings` yet (`--single-transaction --routines --events --triggers`, as
+`db_backup_daily.sh`).
+
+**Plan on production (nothing run yet):** 1. Merge (CI green). 2. NUC: fast-forward to `main`; a
+fresh `_pre_0064` dump if the one above is more than a few hours old. 3. `docker compose build
+migrate sa-learner service-api`, `docker compose --profile test run --rm migrate` (0063 to 0064:
+one empty table), `up -d --no-deps sa-learner service-api sa-awareness`. 4. Verify `alembic current`
+= 0064, `SHOW CREATE TABLE`, run the stage once (`learner.run_discovery_screen()`), then
+`GET /api/context/findings` shows `available: true` with 3 targets. 5. **Rollback:** `alembic
+downgrade 0063` (drops the one table; the stage then logs and carries on) or restore the dump.
+Risk: low. Needs from the owner: a go to run step 3 on the NUC.

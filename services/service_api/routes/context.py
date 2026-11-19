@@ -24,9 +24,10 @@ import re
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import orjson
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from common import db_connection, get_day_context
 from common.presence_utils import summarize_online_devices
@@ -1049,4 +1050,125 @@ async def get_context_ledger():
         "horizon": rows[0][15].isoformat() if rows and rows[0][15] else None,
         "features": [e for e in entries if e["kind"] == "feature"],
         "series": [e for e in entries if e["kind"] == "series"],
+    }
+
+
+# --- GET /api/context/findings: the discovery screen (sa/screen.py), read-only -------------------
+
+FINDINGS_DEFAULT_NIGHTS = 14
+FINDINGS_MAX_NIGHTS = 90
+_FINDING_STATUSES = ("effect", "insufficient_evidence", "not_tested")
+
+
+def _finding(row, effect_nights, nights):
+    (target, feature, lag, method, status, reason, n, effect, unit, improvement, p, p_adj,
+     fitted_from, fitted_to, evidence) = row  # fmt: skip
+    detail = orjson.loads(evidence) if isinstance(evidence, (str, bytes)) else (evidence or {})
+    return {
+        "profile": {
+            "target": target,
+            "feature": None if feature == "*" else feature,
+            "lag_hours": lag,
+            "method": method,
+            "whole_target": feature == "*",
+        },
+        "confidence": {
+            "status": status,
+            "p_adjusted": p_adj,
+            "p": p,
+            "improvement": improvement,
+            "n": n,
+            "effect_nights": effect_nights,
+            "nights": nights,
+        },
+        "evidence": {
+            "effect": effect,
+            "effect_unit": unit,
+            "reason": reason,
+            "fitted_from": fitted_from.isoformat() if fitted_from else None,
+            "fitted_to": fitted_to.isoformat() if fitted_to else None,
+            "detail": detail,
+        },
+    }
+
+
+@router.get("/context/findings")
+async def get_context_findings(
+    target: Optional[str] = Query(None, max_length=64),
+    status: Optional[str] = Query(None, max_length=32),
+    nights: int = Query(FINDINGS_DEFAULT_NIGHTS, ge=1, le=FINDINGS_MAX_NIGHTS),
+):
+    """What the nightly discovery screen found (sa/screen.py), in the Teach-me shape: for each
+    declared target, every candidate feature and lag with its profile, confidence and evidence.
+
+    Latest run only, `effect` rows first, then the closest `insufficient_evidence` rows by corrected
+    p, so "nothing yet, closest is X" is visible. `effect_nights` / `nights` say on how many of the
+    last `nights` runs the candidate was an `effect`: the screen's error rate is per target and per
+    night, so a one-night flicker should read as one. Findings are household-learned state; they
+    drive no card and no actuation. Read-only and ungated like `/api/context/ledger`.
+
+    Before migration 0064 is applied the table does not exist: `available: false` with empty lists,
+    not an error, so this can ship ahead of the migration.
+    """
+    import pymysql
+
+    if status is not None and status not in _FINDING_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {_FINDING_STATUSES}")
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT MAX(run_date) FROM sa_covariate_findings")
+            latest = cursor.fetchone()[0]
+            if latest is None:
+                return {"available": True, "run_date": None, "computed_at": None, "targets": []}
+            cursor.execute(
+                "SELECT target_key, feature_key, lag_hours, COUNT(*), SUM(status = 'effect') "
+                "FROM sa_covariate_findings WHERE run_date > %s AND run_date <= %s "
+                "GROUP BY target_key, feature_key, lag_hours",
+                (latest - timedelta(days=nights), latest),
+            )
+            history = {(r[0], r[1], r[2]): (int(r[4] or 0), int(r[3])) for r in cursor.fetchall()}
+            where, params = ["run_date = %s"], [latest]
+            if target:
+                where.append("target_key = %s")
+                params.append(target)
+            if status:
+                where.append("status = %s")
+                params.append(status)
+            cursor.execute(
+                "SELECT target_key, feature_key, lag_hours, method, status, reason, n, effect, "
+                "effect_unit, improvement, p, p_adjusted, fitted_from, fitted_to, evidence, "
+                f"computed_at FROM sa_covariate_findings WHERE {' AND '.join(where)} "
+                "ORDER BY target_key, FIELD(status, 'effect', 'insufficient_evidence', "
+                "'not_tested'), p_adjusted IS NULL, p_adjusted, improvement DESC, feature_key, "
+                "lag_hours",
+                params,
+            )
+            rows = cursor.fetchall()
+    except pymysql.err.ProgrammingError as e:
+        if e.args and e.args[0] == 1146:  # table doesn't exist: migration 0064 not applied yet
+            return {"available": False, "run_date": None, "computed_at": None, "targets": []}
+        logger.error(f"Error reading the covariate findings: {e}")
+        raise HTTPException(status_code=500, detail="covariate findings unavailable")
+    except Exception as e:
+        logger.error(f"Error reading the covariate findings: {e}")
+        raise HTTPException(status_code=500, detail="covariate findings unavailable")
+
+    targets = {}
+    for r in rows:
+        effect_nights, seen = history.get((r[0], r[1], r[2]), (0, 1))
+        targets.setdefault(r[0], []).append(_finding(r[:15], effect_nights, seen))
+    return {
+        "available": True,
+        "run_date": latest.isoformat(),
+        "computed_at": rows[0][15].isoformat() if rows and rows[0][15] else None,
+        "window_nights": nights,
+        "targets": [
+            {
+                "target": key,
+                "effects": sum(1 for f in found if f["confidence"]["status"] == "effect"),
+                "findings": found,
+            }
+            for key, found in targets.items()
+        ],
     }

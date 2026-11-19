@@ -13,7 +13,7 @@ import time
 
 import schedule
 
-from sa import disk, engine, external, inference_store, lake, ledger, silver
+from sa import disk, engine, external, inference_store, lake, ledger, screen, silver
 from sa.learners import (
     bridge,
     daytime,
@@ -65,6 +65,7 @@ def run_bronze_export():
         logger.error(f"silver/gold build failed: {e}")
     run_ledger()
     run_learners()
+    run_discovery_screen()
 
 
 def record_disk_sample():
@@ -97,6 +98,23 @@ def run_ledger():
             logger.warning(f"series with no registered family: {outcome['unregistered']}")
     except Exception as e:
         logger.error(f"context ledger failed: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def run_discovery_screen():
+    """Screen the declared targets against the context features and store the findings
+    (sa/screen.py, `sa_covariate_findings`). Best effort and independent of the learners, like the
+    ledger: a missing table (migration 0064 not applied), an unsound target registry or any error is
+    logged and the nightly job carries on. Findings drive no card and no actuation."""
+    conn = None
+    try:
+        conn = inference_store.connect()
+        outcome = screen.run(lake.LAKE_DIR, conn)
+        logger.info(f"discovery screen stored: {outcome}")
+    except Exception as e:
+        logger.error(f"discovery screen failed: {e}")
     finally:
         if conn:
             conn.close()
