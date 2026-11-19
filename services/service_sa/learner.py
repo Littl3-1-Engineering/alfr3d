@@ -13,7 +13,7 @@ import time
 
 import schedule
 
-from sa import disk, engine, external, inference_store, lake, silver
+from sa import disk, engine, external, inference_store, lake, ledger, silver
 from sa.learners import (
     bridge,
     daytime,
@@ -63,6 +63,7 @@ def run_bronze_export():
         logger.info(f"silver/gold build done: {counts}")
     except Exception as e:
         logger.error(f"silver/gold build failed: {e}")
+    run_ledger()
     run_learners()
 
 
@@ -78,6 +79,24 @@ def record_disk_sample():
             logger.warning("host usage snapshot missing or stale; card will omit Docker/backups")
     except Exception as e:
         logger.error(f"disk sample failed: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+def run_ledger():
+    """Write the context capture ledger (sa/ledger.py) for the API. Best effort and independent of
+    the learners: a missing table (migration 0063 not applied) or any error is logged, and the
+    nightly job carries on."""
+    conn = None
+    try:
+        conn = inference_store.connect()
+        outcome = ledger.run(lake.LAKE_DIR, conn)
+        logger.info(f"context ledger written: {outcome}")
+        if outcome["unregistered"]:
+            logger.warning(f"series with no registered family: {outcome['unregistered']}")
+    except Exception as e:
+        logger.error(f"context ledger failed: {e}")
     finally:
         if conn:
             conn.close()

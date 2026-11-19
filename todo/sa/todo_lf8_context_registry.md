@@ -94,3 +94,49 @@ the lake side); proposal 2 below removes that.
    `context_features` and the registry-generated `context_hourly`, and `shadow.climate` starts using
    stable ids at once. Re-run the real-data diff against the then-current production table after the
    first nightly as the final check.
+
+## Ledger API route and migration 0063: built, NOT yet run on production (2026-11-19)
+
+Branch `feat/sa-context-ledger-api`. Approved; built; held at your gate ("migration only after you
+show me the backup and the plan").
+
+**What was built.** `setup/migration_056_sa_context_ledger.sql` + Alembic `0063` (one table,
+`sa_context_ledger`, 17 columns, primary key `(ledger_key, kind)`; replace-all, no retention event,
+no storage-metrics entry). `sa/ledger.py` gained `store()` (DELETE then one parameterised
+`executemany`, one transaction, rollback on failure) and `run()`; `learner.run_ledger()` writes it
+after each nightly silver build, best effort (a missing table or any error is logged and the job
+carries on). `GET /api/context/ledger` (read-only, ungated like the other read routes) returns
+features and series apart; **before the migration is applied it answers `available: false` with empty
+lists, not an error**, so the code can ship ahead of the migration.
+
+**Evidence.**
+- Migration round trip on a throwaway MySQL 8 (the CI recipe): `alembic upgrade head` from scratch
+  to 0063, `downgrade 0062` (table gone), `upgrade head` again, `current --check-heads` = 0063.
+- The writer and the route's own `SELECT` against that real table: storing twice leaves 3 rows
+  (replace, not append); JSON `readers` round-trip; an empty ledger clears the table.
+- 185 tests in the touched suites pass; CI runs the same migration on a clean MySQL.
+
+**Production backup (taken and verified, read-only):**
+`/home/alfr3d/db_backups/alfr3d_backup_20261118_225150_pre_0063.sql.gz`, 40,194,146 bytes, gzip
+integrity OK, `-- Dump completed` trailer present, 37 tables including `sa_profiles`,
+`sa_inferences`, `household_events`, `calendar_events`, `card_interactions`, `sa_sensor_aliases`,
+24 EVENT definitions and the trigger, `alembic_version = '0062'`, and no `sa_context_ledger` yet.
+Taken with `--single-transaction --routines --events --triggers`, as `db_backup_daily.sh` does.
+(The nightly dumps also exist: `alfr3d_daily_20261118_040001.sql.gz`.)
+
+**Plan, in order (nothing below has been run):**
+1. Merge the PR (CI green, which includes the clean-MySQL migration job).
+2. On the NUC: fast-forward `~/alfr3d` to `main`; if the dump above is more than a few hours old take
+   a fresh `_pre_0063` one and verify it the same way.
+3. `docker compose build migrate sa-learner service-api` (compose v2), then
+   `docker compose --profile test run --rm migrate` (0062 to 0063: creates one empty table, changes no
+   existing data), then `up -d --no-deps sa-learner service-api`.
+4. Verify: `alembic current` is 0063; `SHOW CREATE TABLE sa_context_ledger`; run
+   `ledger.run` once in `sa-learner` (or wait for the 03:30 UTC build) and check
+   `GET /api/context/ledger` returns `available: true` with 13 features and about 43 series, and the
+   sa-learner log has `context ledger written`.
+5. **Rollback:** `alembic downgrade 0062` (drops the one table; nothing else reads it, and the next
+   nightly run logs "context ledger failed" and carries on), or restore the dump.
+
+Risk: low. One new empty table, additive, no change to any existing table, and the API route and the
+nightly stage both degrade quietly if the table is absent.

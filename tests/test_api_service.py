@@ -3,9 +3,11 @@
 import decimal
 import os
 import sys
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 import orjson
 import pytest
+import pymysql
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "service_api"))
@@ -2156,3 +2158,71 @@ def test_an_impression_needs_its_id_and_duration(mock_db_connection, api_client)
         )
         assert response.status_code == 400, extra
     mock_db_connection.assert_not_called()
+
+
+# --- GET /api/context/ledger (read-only; the table is created by migration 0063) ---
+
+
+def _db(rows=None, error=None):
+    cm = MagicMock()
+    db = MagicMock()
+    cursor = db.cursor.return_value
+    if error:
+        cursor.execute.side_effect = error
+    cursor.fetchall.return_value = rows or []
+    cm.__enter__.return_value = db
+    return cm
+
+
+def _row(key, kind, readers='["scalar_baseline"]'):
+    return (
+        key, kind, "captured", datetime(2026, 10, 9, 20), datetime(2026, 11, 18, 3), 944, 720,
+        0.999, 30, 730, "household", readers, "environment_history", None, None,
+        datetime(2026, 11, 18, 4), datetime(2026, 11, 19, 3, 31),
+    )  # fmt: skip
+
+
+def test_it_returns_features_and_series_apart_with_the_computed_stamps(api_client):
+    rows = [_row("outdoor_temp_c", "feature"), _row("esphome:n:T", "series", '["a", "b"]')]
+    with patch("routes.context.db_connection", return_value=_db(rows)):
+        data = api_client.get("/api/context/ledger").json()
+
+    assert data["available"] is True
+    assert [f["key"] for f in data["features"]] == ["outdoor_temp_c"]
+    assert data["series"][0]["readers"] == ["a", "b"]
+    assert data["computed_at"] == "2026-11-19T03:31:00" and data["horizon"] == "2026-11-18T04:00:00"
+    assert data["features"][0]["capture_start"] == "2026-10-09T20:00:00"
+
+
+def test_before_the_migration_the_table_is_missing_and_that_is_not_an_error(api_client):
+    missing = pymysql.err.ProgrammingError(1146, "Table 'sa_context_ledger' doesn't exist")
+    with patch("routes.context.db_connection", return_value=_db(error=missing)):
+        response = api_client.get("/api/context/ledger")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": False,
+        "computed_at": None,
+        "features": [],
+        "series": [],
+    }
+
+
+def test_an_empty_table_is_available_but_empty(api_client):
+    with patch("routes.context.db_connection", return_value=_db([])):
+        data = api_client.get("/api/context/ledger").json()
+
+    assert data["available"] is True and data["features"] == [] and data["computed_at"] is None
+
+
+def test_a_real_database_error_is_a_500_without_leaking_detail(api_client):
+    with patch("routes.context.db_connection", return_value=_db(error=RuntimeError("secret host"))):
+        response = api_client.get("/api/context/ledger")
+
+    assert response.status_code == 500
+    assert "secret" not in response.text
+
+
+def test_it_is_a_read_route_with_no_write_methods(api_client):
+    assert api_client.post("/api/context/ledger").status_code in (404, 405)
+    assert api_client.delete("/api/context/ledger").status_code in (404, 405)

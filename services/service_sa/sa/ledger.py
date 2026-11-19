@@ -138,6 +138,66 @@ def build(lake_dir, window_days=30, features=reg.REGISTRY, families=reg.SERIES_F
     }
 
 
+_COLUMNS = (
+    "ledger_key, kind, status, capture_start, last_seen, row_count, hours_with_data, coverage, "
+    "window_days, retention_days, privacy, readers, provenance, identity_rule, note, horizon, "
+    "computed_at"
+)
+
+
+def _rows(ledger, computed_at):
+    """The ledger dict as sa_context_ledger rows, parameter tuples in _COLUMNS order."""
+    window = ledger["window_days"]
+    horizon = ledger["horizon"]
+    for entry in ledger["features"] + ledger["series"]:
+        yield (
+            entry["key"],
+            entry["kind"],
+            entry["status"],
+            entry["capture_start"],
+            entry["last_seen"],
+            entry["rows"],
+            entry[f"hours_with_data_{window}d"],
+            entry[f"coverage_{window}d"],
+            window,
+            entry["retention_days"],
+            entry["privacy"],
+            json.dumps(entry["readers"]),
+            entry["provenance"],
+            entry.get("identity"),
+            entry.get("note") or None,
+            horizon,
+            computed_at,
+        )
+
+
+def store(conn, ledger, computed_at=None):
+    """Replace the contents of `sa_context_ledger` with this ledger, in one transaction (the table
+    is a snapshot of the lake, which stays the source of truth). Returns the rows written."""
+    from datetime import datetime, timezone
+
+    computed_at = computed_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    rows = list(_rows(ledger, computed_at))
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM sa_context_ledger")
+        if rows:
+            marks = ", ".join(["%s"] * len(rows[0]))
+            cursor.executemany(f"INSERT INTO sa_context_ledger ({_COLUMNS}) VALUES ({marks})", rows)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(rows)
+
+
+def run(lake_dir, conn, window_days=30):
+    """Build the ledger from the lake and store it. Called by sa-learner after each silver build;
+    returns {"rows": n, "unregistered": [...]}."""
+    ledger = build(lake_dir, window_days)
+    return {"rows": store(conn, ledger), "unregistered": ledger["unregistered"]}
+
+
 def main(argv=None):
     import argparse
 

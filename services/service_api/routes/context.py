@@ -986,3 +986,67 @@ async def report_notification_event(
     except Exception as e:
         logger.error(f"Error recording notification event: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _ledger_entry(row):
+    (key, kind, status, start, last, rows, hours, coverage, window, retention, privacy,
+     readers, provenance, identity, note) = row  # fmt: skip
+    return {
+        "key": key,
+        "kind": kind,
+        "status": status,
+        "capture_start": start.isoformat() if start else None,
+        "last_seen": last.isoformat() if last else None,
+        "rows": rows,
+        "hours_with_data": hours,
+        "coverage": coverage,
+        "window_days": window,
+        "retention_days": retention,
+        "privacy": privacy,
+        "readers": orjson.loads(readers) if isinstance(readers, (str, bytes)) else (readers or []),
+        "provenance": provenance,
+        "identity": identity,
+        "note": note,
+    }
+
+
+@router.get("/context/ledger")
+async def get_context_ledger():
+    """What the context lake actually holds: per feature and per series, whether it is captured,
+    since when, how much of the last 30 days it covers, how long its source keeps it, who reads
+    it and where it comes from (sa/ledger.py, written here by sa-learner after each nightly
+    build). Read-only and ungated like the other read routes; it lists capture metadata, never
+    values. A restricted feature (precise location) appears as `restricted` and is never built.
+
+    Before migration 0063 is applied the table does not exist: the answer is `available: false`
+    with empty lists, not an error, so the route can ship ahead of the migration.
+    """
+    import pymysql
+
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT ledger_key, kind, status, capture_start, last_seen, row_count, "
+                "hours_with_data, coverage, window_days, retention_days, privacy, readers, "
+                "provenance, identity_rule, note, horizon, computed_at "
+                "FROM sa_context_ledger ORDER BY kind, ledger_key"
+            )
+            rows = cursor.fetchall()
+    except pymysql.err.ProgrammingError as e:
+        if e.args and e.args[0] == 1146:  # table doesn't exist: migration 0063 not applied yet
+            return {"available": False, "computed_at": None, "features": [], "series": []}
+        logger.error(f"Error reading the context ledger: {e}")
+        raise HTTPException(status_code=500, detail="context ledger unavailable")
+    except Exception as e:
+        logger.error(f"Error reading the context ledger: {e}")
+        raise HTTPException(status_code=500, detail="context ledger unavailable")
+
+    entries = [_ledger_entry(r[:15]) for r in rows]
+    return {
+        "available": True,
+        "computed_at": rows[0][16].isoformat() if rows and rows[0][16] else None,
+        "horizon": rows[0][15].isoformat() if rows and rows[0][15] else None,
+        "features": [e for e in entries if e["kind"] == "feature"],
+        "series": [e for e in entries if e["kind"] == "series"],
+    }
