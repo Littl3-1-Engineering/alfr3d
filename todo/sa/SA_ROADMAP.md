@@ -190,6 +190,7 @@ Cross-cutting, not an LF phase: [todo_disk_and_lake_monitoring.md](todo_disk_and
 - Phase 0 against real production data before trusting any constant. Several past constants were
   invented and wrong (300 m geofence, raw min/max climate band).
 - Cards stay ambient observations, never welfare checks (SA-3's tone constraint).
+- **Autonomy (replaces "nothing actuates", owner-approved 2026-11-18):** Alfr3d acts on the household's behalf only through the autonomy ladder. Every action type starts at level 0 (predict only). An action type moves up only when the owner promotes it, shown the evidence. Every action is explained, logged and undoable where the device allows; an undo or a "not useful" demotes it; a kill switch returns everything to level 0. Observation, never concern.
 - Doc claims are checked against the live DB before acting on them. "Never fired" was stale twice.
 
 ## Next steps: plan of 2026-11-01
