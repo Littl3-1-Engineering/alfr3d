@@ -550,6 +550,14 @@ def _household_subject(profile):
     return None
 
 
+def _scalar_bar(profile):
+    """(bar bits, band bits) for a scalar series: each carries its own calibrated bar
+    (`params["z_bar"]`, else the global MIN_ABS_Z), and the band is half a sigma above it."""
+    z = profile.params.get("z_bar") or scalar.MIN_ABS_Z
+    bar = _z_bits(z)
+    return bar, _z_bits(z + NEAR_BAR_Z) - bar
+
+
 def _select_all(conn, profile):
     return True, None
 
@@ -603,6 +611,7 @@ def _batch_hour_rows(inferences):
 #   signal      signal of the stored deviation rows
 #   day_keyed   stored rows belong to their start day only
 #   subject     profile -> the subject key the replay and the stored rows use
+#   bar         optional profile -> (bar bits, band bits), for a learner whose bar is per subject
 #   select      (conn, profile) -> (live-scored?, reason if not): only live-scored subjects compare
 #   days        the days a subject was observed, so "neither" means checked and quiet
 #   live_rows   optional filter on the stored rows
@@ -653,6 +662,7 @@ COVERED = {
         days=observed_days_scalar,
         live_rows=_batch_hour_rows,
         select=_select_scalar,
+        bar=_scalar_bar,
     ),
     rates.NAME: dict(
         walk=walk_rates,
@@ -692,6 +702,13 @@ def _load_live(conn, learner, signal, subject_id, since):
         (learner, signal, str(subject_id), since),
     )
     return [inference_store._inference_from_row(row) for row in cursor.fetchall()]
+
+
+def _bar_for(name, spec, profile):
+    """(bar bits, band bits) for one subject: the learner's own per-subject bar if it has one."""
+    if spec.get("bar"):
+        return spec["bar"](profile)
+    return BAR_BITS.get(name), NEAR_BAR_MARGIN_BITS.get(name, NEAR_BAR_BITS)
 
 
 def run(lake_dir, conn, since=None, today=None, tz=None, only=None):
@@ -740,15 +757,7 @@ def run(lake_dir, conn, since=None, today=None, tz=None, only=None):
             live = live_days(rows, first, last, zone, start_day_only=spec["day_keyed"])
             replayed = spec["walk"](lake_dir, key, first, last, tz)
             record = {"subject": subject, "fitted_to": profile.fitted_to}
-            record.update(
-                compare_days(
-                    live,
-                    replayed,
-                    days,
-                    BAR_BITS.get(name),
-                    NEAR_BAR_MARGIN_BITS.get(name, NEAR_BAR_BITS),
-                )
-            )
+            record.update(compare_days(live, replayed, days, *_bar_for(name, spec, profile)))
             if spec["refit"] is not None:
                 fresh = spec["refit"](lake_dir, profile, tz)
                 record["profile"] = (
