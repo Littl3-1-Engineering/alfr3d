@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timedelta
 
 from common.presence_utils import INFRASTRUCTURE_USERNAMES
-from sa import inference_store, layer2
+from sa import identity, inference_store, layer2
 from sa import presence_bridge, silver
 from sa.learners.base import Inference, utcnow
 from sa.learners import (
@@ -258,33 +258,28 @@ class ShadowRunner:
         db = self._connect()
         try:
             cursor = db.cursor()
-            cursor.execute(
-                "SELECT id, name FROM smarthome_devices WHERE source = 'esphome' AND "
-                "device_type = 'sensor' AND (LOWER(name) LIKE '%%temperature%%' "
-                "OR LOWER(name) LIKE '%%humidity%%')"
-            )
-            ids = {
-                ("temperature" if "temperature" in n.lower() else "humidity"): i
-                for i, n in cursor.fetchall()
-            }
+            # Every row id the sensor has ever had, by its stable key (sa/identity.py): a power
+            # cycle gives the node new smarthome_devices ids, and its history must not stop there.
+            ids = identity.esphome_climate_ids(cursor)
             since = frame.now.replace(tzinfo=None, minute=0, second=0, microsecond=0) - timedelta(
                 hours=HOURS_BACK
-            )
-            query = (
-                "SELECT STR_TO_DATE(DATE_FORMAT(recorded_at, '%%Y-%%m-%%d %%H:00:00'), "
-                "'%%Y-%%m-%%d %%H:%%i:%%s') AS h, AVG(value) FROM smarthome_sensor_history "
-                "WHERE smarthome_device_id = %s AND recorded_at >= %s GROUP BY h"
             )
             findings = []
             for kind, suffix, value in (
                 ("temperature", ":Temperature", climate.get("temperature_c")),
                 ("humidity", ":Humidity", climate.get("humidity_pct")),
             ):
-                if kind not in ids or value is None or not climate.get(f"{kind}_online"):
+                if not ids.get(kind) or value is None or not climate.get(f"{kind}_online"):
                     continue
+                marks = ", ".join(["%s"] * len(ids[kind]))
+                query = (
+                    "SELECT STR_TO_DATE(DATE_FORMAT(recorded_at, '%%Y-%%m-%%d %%H:00:00'), "
+                    "'%%Y-%%m-%%d %%H:%%i:%%s') AS h, AVG(value) FROM smarthome_sensor_history "
+                    f"WHERE smarthome_device_id IN ({marks}) AND recorded_at >= %s GROUP BY h"
+                )
                 findings += self._scalar_findings(
                     frame, db, lambda k, s=suffix: k.startswith("esphome:") and k.endswith(s),
-                    value, query, lambda _p, i=ids[kind]: (i, since),
+                    value, query, lambda _p, i=tuple(ids[kind]): (*i, since),
                 )  # fmt: skip
             return findings
         finally:
