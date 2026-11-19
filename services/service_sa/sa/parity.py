@@ -56,7 +56,9 @@ from sa.learners import (
 #   2026-11-02: the learned presence bridge (PR #365) was deployed during 2026-11-01, so that day's
 #               live profile was fitted before it (found by this check: user 6, live 3.12 bits
 #               against 2.99 replayed).
-#   2026-11-19: the stay-arrival fix (`shadow._stay_start`), deployed the evening of 2026-11-18.
+#   2026-11-19: the stay-arrival fix (`shadow._stay_start`) and the scalar per-series bar (version
+#               2 profiles, first fitted by the 22:30 local run on 2026-11-18), both deployed the
+#               evening of 2026-11-18.
 #   2026-11-15: device-rhythm availability flags began using the stability of the day type they
 #               fire on (2026-11-14); event-rate `play_start` profiles halved at the next refit
 #               after the now-playing de-duplication (2026-11-15), so rates start 2026-11-16.
@@ -65,7 +67,7 @@ MATCHING_INPUTS_SINCE = {
     daytime.NAME: date(2026, 11, 2),
     household_day.NAME: date(2026, 11, 2),
     stay.NAME: date(2026, 11, 19),
-    scalar.NAME: date(2026, 11, 2),
+    scalar.NAME: date(2026, 11, 19),
     rates.NAME: date(2026, 11, 16),
     device_rhythm.NAME: date(2026, 11, 15),
 }
