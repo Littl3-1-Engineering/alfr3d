@@ -121,7 +121,7 @@ All under `/api/autonomy`, JSON, bearer-authenticated; `guest` is refused on eve
 3. **Recommendation thresholds** (20 proposals, 80 % acted on, at most 5 % undone): agreed as
    placeholders, to be set against real outcome data.
 4. **Proposals are layer-3 inferences in `sa_inferences`** (kind `proposal`), not a new table. Agreed.
-5. **Table design approved.** Migration 0065 is written (`setup/migration_058_sa_autonomy_policy.sql` plus `0065_sa_autonomy_policy.py`, round-tripped on a throwaway MySQL 8: upgrade, downgrade to 0064, upgrade, both tables empty, a bare row defaults to household scope and level 0) and **NOT run on production**; the verified backup and
+5. **Table design approved.** Migration 0065 is written (`setup/migration_058_sa_autonomy_policy.sql` plus `0065_sa_autonomy_policy.py`, round-tripped on a throwaway MySQL 8: upgrade, downgrade to 0064, upgrade, both tables empty, a bare row defaults to household scope and level 0) and **run on production 2026-11-19** (backup `_pre_0065`, 40.5 MB, verified; `alembic_version` 0065; both tables empty); the verified backup and
    the plan are shown before anything touches production. The kill switch is one row in the existing
    `config` table (name `autonomy_kill`), not a new table.
 6. The replacement wording for the "nothing actuates" rule is not applied anywhere; its diff comes
