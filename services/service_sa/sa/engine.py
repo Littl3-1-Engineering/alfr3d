@@ -15,7 +15,7 @@ import logging
 import time  # noqa: F401  (re-exported: tests patch engine.time)
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import orjson
 
 # Third party imports
@@ -128,11 +128,6 @@ CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD = "urgent"
 # the gap -- otherwise one lost transition becomes a phantom multi-day session that poisons
 # typical_daily_max and the still-on-past-typical rule.
 ENTITY_BASELINE_MAX_HISTORY_GAP_MINUTES = 180
-
-# An hour of the (UTC) day is part of a device's usual window when the device was online during it
-# on at least this share of the days it was seen at all. Stored as a 24-bit mask in
-# the device-rhythm learner's active-hours mask (formerly entity_baselines.active_hours_mask).
-ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE = 0.15
 
 # household_events/attention_telemetry_history/card_interactions retention, and the daily SA
 # storage-metrics snapshot, all moved from Python `schedule` jobs to DB-native scheduled EVENTs
@@ -477,22 +472,3 @@ class SAEngine(
         if p:
             p.send("situational-awareness", orjson.dumps(data))
             logger.info("Published situational awareness: " + str(data))
-
-
-def _active_hours_mask(sessions):
-    """24-bit mask (bit h = UTC hour h) of the hours a device is usually online: hours covered by
-    a session on at least ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE of the days it had any session.
-    Unlike a session's start hour, this describes the whole window the device is normally on."""
-    days_seen = set()
-    days_by_hour = {}
-    for start, end in sessions:
-        cursor_ts = start.replace(minute=0, second=0, microsecond=0)
-        while cursor_ts <= end:
-            days_seen.add(cursor_ts.date())
-            days_by_hour.setdefault(cursor_ts.hour, set()).add(cursor_ts.date())
-            cursor_ts += timedelta(hours=1)
-    mask = 0
-    for hour, days in days_by_hour.items():
-        if len(days) / len(days_seen) >= ENTITY_BASELINE_ACTIVE_HOUR_MIN_SHARE:
-            mask |= 1 << hour
-    return mask

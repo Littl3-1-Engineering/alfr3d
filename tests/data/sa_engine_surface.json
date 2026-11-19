@@ -311,10 +311,6 @@
   }
  },
  "module_functions": {
-  "_active_hours_mask": {
-   "sha": "sha256:7b43faa3ed6bbfa9",
-   "signature": "(sessions)"
-  },
   "_cross_surface_continuity_subject_key": {
    "sha": "sha256:bd9fa2b956e23cbb",
    "signature": "(card)"
