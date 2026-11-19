@@ -47,11 +47,11 @@ import logging
 import math
 import sys
 from datetime import datetime, timedelta
-from itertools import combinations
 
 import duckdb
 
-from sa import confidence, inference_store
+from sa import confidence, covariates, inference_store
+from sa.covariates import weighted_median  # noqa: F401  (shared; re-exported for callers)
 from sa.learners.base import Inference, Learner, Profile, utcnow
 
 logger = logging.getLogger("SAScalar")
@@ -126,20 +126,6 @@ def subject_id_for(series_key):
 # --- Small robust statistics ---------------------------------------------------------------
 
 
-def weighted_median(values, weights):
-    """Median where each value carries a weight; None for no data."""
-    pairs = sorted((v, w) for v, w in zip(values, weights) if w > 0)
-    if not pairs:
-        return None
-    half = sum(w for _, w in pairs) / 2.0
-    running = 0.0
-    for value, weight in pairs:
-        running += weight
-        if running >= half:
-            return value
-    return pairs[-1][0]
-
-
 def weighted_mad_sigma(values, weights):
     """1.4826 x weighted MAD, the consistent estimator of a normal sigma. (centre, sigma) or
     (None, None)."""
@@ -169,22 +155,8 @@ def calibrated_z_bar(zs, weights):
 
 
 def theil_sen(xs, ys):
-    """Robust slope: the median of all pairwise slopes. Evenly subsampled beyond
-    COVARIATE_MAX_PAIRS points so the cost stays bounded."""
-    n = len(xs)
-    if n > COVARIATE_MAX_PAIRS:
-        step = n / COVARIATE_MAX_PAIRS
-        picks = [int(i * step) for i in range(COVARIATE_MAX_PAIRS)]
-        xs, ys = [xs[i] for i in picks], [ys[i] for i in picks]
-    slopes = [
-        (y2 - y1) / (x2 - x1)
-        for (x1, y1), (x2, y2) in combinations(zip(xs, ys), 2)
-        if abs(x2 - x1) > 1e-9
-    ]
-    if not slopes:
-        return 0.0
-    slopes.sort()
-    return slopes[len(slopes) // 2]
+    """Robust slope (sa/covariates.py), subsampled beyond COVARIATE_MAX_PAIRS points."""
+    return covariates.theil_sen(xs, ys, COVARIATE_MAX_PAIRS)
 
 
 def two_sided_p(z):
@@ -271,31 +243,16 @@ def _residuals(points, effects, ref_date, covariate=None):
 
 
 def _select_covariate(residuals, name):
-    """(beta, detail) if the covariate earns its place on a held-out final 30 %, else None."""
+    """(beta, detail) if the covariate earns its place on a held-out final 30 %, else None. The
+    test itself is the shared engine's (sa/covariates.py); this only shapes the pairs."""
     pairs = [(x["c"], x["r"], x["t"]) for x in residuals if x["c"] is not None]
-    detail = {"name": name, "overlap_hours": len(pairs), "used": False}
-    if len(pairs) < MIN_COVARIATE_HOURS:
-        detail["note"] = f"under {MIN_COVARIATE_HOURS} hours of overlap"
-        return None, detail
-    pairs.sort(key=lambda p: p[2])
-    cut = int(len(pairs) * 0.7)
-    train, test = pairs[:cut], pairs[cut:]
-    beta = theil_sen([c for c, _, _ in train], [r for _, r, _ in train])
-
-    def mad(values):
-        centre = weighted_median(values, [1.0] * len(values))
-        return weighted_median([abs(v - centre) for v in values], [1.0] * len(values))
-
-    before = mad([r for _, r, _ in test])
-    after = mad([r - beta * c for c, r, _ in test])
-    improvement = 1.0 - after / before if before > 0 else 0.0
-    detail.update({"beta": beta, "improvement": round(improvement, 4)})
-    if improvement < COVARIATE_MIN_IMPROVEMENT:
-        detail["note"] = "did not reduce held-out error enough"
-        return None, detail
-    detail["used"] = True
-    # Refit the slope on all the data now that it has been validated.
-    return theil_sen([c for c, _, _ in pairs], [r for _, r, _ in pairs]), detail
+    return covariates.select(
+        pairs,
+        name,
+        min_hours=MIN_COVARIATE_HOURS,
+        min_improvement=COVARIATE_MIN_IMPROVEMENT,
+        max_pairs=COVARIATE_MAX_PAIRS,
+    )
 
 
 def fit_points(series_key, points, ref_date, covariate=None, covariate_name="outdoor_temp_c"):
@@ -376,6 +333,7 @@ def fit_points(series_key, points, ref_date, covariate=None, covariate_name="out
             "level_hours": LEVEL_HOURS,
             "level_half_life_hours": LEVEL_HALF_LIFE_HOURS,
             "covariate": cov_detail,
+            "covariates": [cov_detail] if cov_detail else [],
             "beta": beta,
             "stability_detail": detail,
             "value_range": [values[0], values[-1]],
