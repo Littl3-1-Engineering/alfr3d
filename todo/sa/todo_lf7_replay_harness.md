@@ -181,13 +181,34 @@ hourly event streams; device rhythm: not household hardware); the rest have only
 batch and are reported under `not_compared` with the reason. Nightly batch rows are filtered out.
 Run 2026-11-19, 11-02 onward (rates 11-16, devices 11-15):
 - **event_rate:** MATCH on quiet days only (8 live-scored streams, 2 days, neither side flagged).
-- **scalar_baseline: MISMATCH, 11 days.** Over the 4 live-scored series: 12 shared, 9 live-only,
-  2 replay-only, 4 borderline. The live-only flags are large (14 to 40 bits). Live observed values
-  differ from the lake's hourly means for the same hour (humidity 53.9 live against 51.7; attention
-  counts 3.2 against 0.7 in log units), consistent with live scoring a snapshot against a profile
-  fitted on hourly means, which would overstate z. **Hypothesis, not verified:** my hour lookup may
-  be off by the UTC/local bucket, and the snapshot semantics (`launcher.attention_snapshot`) were
-  not read. Needs a direct check before anyone changes scoring.
+- **scalar_baseline (live-scored series), after the band fix below: 12 shared days, 11
+  borderline, 4 live-only, 0 replay-only.** The first reading ("11 mismatches, hypothesis: live
+  scores a snapshot against an hourly-mean profile") was **checked and the hypothesis is not
+  supported**:
+  - The units do differ, as suspected: the Deck's counters reset after every report
+    (`AttentionTelemetryStore`), so live scores the latest single report's count, while the lake
+    series and the profile are the hourly mean of those reports (`silver_contexts`: AVG per hour).
+  - But single reports are *not* more extreme than hourly means under the stored profile (z over
+    11-02 to 11-18, trailing level supplied as live does): the share at or over the 4-sigma bar is
+    7.0 % for single reports against 7.3 % for hourly means on `switch_count`, and 0.3 % against
+    0 % on `unlock_count`. So the scoring unit does not inflate flags. The 4 remaining live-only
+    days are single reports that crossed the bar while their hour's mean did not, which is that
+    unit difference and nothing worse.
+  - The near-bar band was wrong for z-based learners: 0.5 bits is a sliver where the 4-sigma bar is
+    about 14 bits and half a sigma is about 3. The scalar band is now half a sigma
+    (`NEAR_BAR_Z`), which turned 7 false mismatches into borderline days.
+- **FINDING: `attention:switch_count` is badly calibrated, steadily.** Walk-forward over
+  2026-10-12 to 11-18 it crosses the 4-sigma bar in **6.4 % of hours** (53 of 833; 3 to 14 per
+  week of about 160, every week), against about 0.006 % for a 4-sigma bar on a Gaussian: the series
+  is spiky and heavy-tailed and the robust sigma (0.28 in log units) understates the tail (p95 of
+  |z| is 4.5, p99 is 7.8). The module's docstring says `MIN_ABS_Z` "was chosen from the backtest's
+  actual false-alarm rate"; for this series that does not hold today. The other live-scored series
+  are fine: `unlock_count` 0 % (p99 3.1), ESPHome temperature 0.9 % (7 of 787), humidity 0.1 %.
+  Effect: the series produces flag episodes almost daily (the `attention_focus` card is held to
+  3.5 a week by its own budget, not by the model). **Not changed here** (it would change what
+  cards fire). Proposed fix for a decision: calibrate the bar per series from the walk-forward
+  |z| distribution (for example the z that gives at most one flag a week) instead of one global
+  `MIN_ABS_Z`, and re-run this replay before and after.
 - **device_rhythm: 9 replay-only days, APPROXIMATE replay.** The live rule reads the `device` row's
   state and last_online; the lake has sessions, so online/offline is approximated (online until 31
   minutes after a session's last sighting). Replay flags device 4 (Athos's phone) for most of the
@@ -204,8 +225,9 @@ Run 2026-11-19, 11-02 onward (rates 11-16, devices 11-15):
 - [x] Deck family reconstructed; its discount cannot be calibrated yet (no overlap in the data).
 - [ ] **Stay parity re-run** once the lake holds a few days after 2026-11-19 (needs 14 person-days:
       6 profiles, so 3 days). Expect the live-only stay days to stop.
-- [ ] Verify or kill the scalar hypothesis (snapshot value against hourly-mean profile): read the
-      attention snapshot semantics and check the bucket alignment.
+- [x] Scalar hypothesis checked and refuted (above); replaced by a measured finding.
+- [ ] **Decision needed:** per-series calibrated bar for `attention:switch_count` (6.4 % of hours
+      flagged at the global 4-sigma bar). Not implemented; it changes live cards.
 - [ ] Device-rhythm replay: reconstruct the `device` row state properly (from `device_history`,
       which has per-scan state) instead of from sessions.
 - [ ] Find why `service_user` emitted no `went_offline` for any user in three windows (11-07 to 11-09).
