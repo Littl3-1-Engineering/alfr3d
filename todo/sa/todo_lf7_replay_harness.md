@@ -27,10 +27,15 @@ Replays registered: `away_unusual`, `day_off`, `household_unusual_day` (layer 2)
 
 ## What history cannot give back (declared on every report, never invented)
 
-- **Calendar free/busy**: purged after each event, no per-day history. `day_off` is replayed under
-  three calendar states (unknown, empty day, booked day) so the bounds are visible. The 70 %
-  calendar discount (`Rule.explained_discount`) only acts when an event covers "now", so it
-  **cannot be measured at all** until free/busy history is kept (parallel capture track).
+- **Calendar before 2026-10-09.** *Correction, 2026-11-19:* this section first said the calendar
+  has no history ("purged after each event"). **That was wrong**, taken from the prompt's and the
+  roadmap's stale line ("the table keeps ~24 hours"): LF-0 changed `cleanup_calendar_events_event`
+  to 730 days on 2026-10-09, 22 of the 29 events in MySQL ended more than two days ago and are
+  still there, and silver `calendar_busy` holds all 29. The replay now reconstructs the calendar
+  (a covering event is `calendar.busy`, the count of events overlapping a day is
+  `calendar_events_today`) from the day it was first captured, `bronze calendar_events`
+  `MIN(created_at)` = 2026-10-09 14:46. Before that day the calendar is **unknown, not free**, and
+  the report says so. A calendar-free replay window therefore starts 2026-10-09.
 - **Deck network family**: history starts 2026-10-11 for two installs and is not joined to the
   replay yet, so the Deck-family floor is **not calibrated** in this slice.
 - **Owned-device parents** of `away_unusual`: no owner map in the replay, so `away_unusual` is the
@@ -47,9 +52,9 @@ Replays registered: `away_unusual`, `day_off`, `household_unusual_day` (layer 2)
 
 `day_off.corroboration_floor` sweep over 0.3, 0.5, 0.7, 1.0: 1 flag-day at every value, so the
 0.3x factor is **not sensitive on this data** (the one flag has high confidence). **No constant is
-changed**: with one event per rule the observed rates cannot support a different value, and the
-calendar discount and Deck floor cannot be measured here. Revisit when more flags exist or once
-calendar free/busy history is kept.
+changed**: with one event per rule the observed rates cannot support a different value. (The
+calendar discount was later found measurable after all; see the correction above and the 41-day
+run below.)
 
 ## Resolved 2026-11-19: the `stay` replay-vs-live mismatch (not a defect, and not the drift cap)
 
@@ -239,6 +244,24 @@ are identical. The bar sits at the 12.0 cap on some days, so its in-sample tail 
 extreme; the cap exists so a series can never become unflaggable. Parity for scalar now judges each
 series against its own bar (`parity._scalar_bar`).
 
+## Calendar reconstructed: first real run (2026-10-09 to 11-18, 41 days, NUC lake, read-only)
+
+Branch `fix/sa-replay-calendar`. `away_unusual` now replays with the calendar and the Deck; `day_off`
+with the real per-day event count where known (16 of its 18 person-days).
+
+| | result |
+|---|---|
+| `away_unusual` | 6 flag-days of 381 person-days (**0.22 per 14**, under the one-in-14 target). 91 presence deviations: 4 coincided with a covering calendar event, 4 with a sustained Deck cellular state, 1 with Deck wifi. Flag-days with the calendar 6, without it 6; with the Deck 6, without 6. `explained_discount` sweep 0.5 / 0.7 / 0.9: 6 / 6 / 6 |
+| `day_off` | 2 flag-days of 18 person-days (**1.56 per 14**, near the target). Calendar bounds: unknown 3, empty 3, booked 0. `corroboration_floor` sweep 0.3 / 0.5 / 0.7 / 1.0: **2 / 2 / 2 / 3** |
+
+What it says. The `day_off` 0.3x floor is no longer insensitive: at 1.0 one more day would flag, so
+the calendar is doing work there (one flag-day is held down by a booked day). Against that, n is 18
+person-days and 2 flags, and the live rate (1.56 per 14) is already near the target, so there is no
+evidence for changing 0.3. The 70 % calendar discount and the Deck discount cannot be told apart
+from nothing on `away_unusual` (91 deviations, 4 with a covering event, no flag-day changes), so
+**no constant changes**; the reason is now "too few coincidences", not "cannot be measured". Revisit
+as events and Deck states accumulate.
+
 ## Remaining for this phase
 
 - [x] Replay-versus-live parity script. Covers presence, stay, daytime, household day, scalar, event
@@ -257,5 +280,6 @@ series against its own bar (`parity._scalar_bar`).
       which has per-scan state) instead of from sessions.
 - [ ] Find why `service_user` emitted no `went_offline` for any user in three windows (11-07 to 11-09).
 - [ ] Re-run parity for the Deck family once Deck states overlap presence deviations; re-run the
-      `explained_discount` sweep then. Same for the calendar discount once free/busy is kept.
+      `explained_discount` sweep then. The calendar discount can be re-run any time as events
+      accumulate (29 events in six weeks so far).
 - [ ] Notion and `timeline.json` follow each merged PR.
