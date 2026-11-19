@@ -392,6 +392,16 @@ class ShadowRunner:
         )
         if start is not None:
             self._stay_starts[key], self._stay_seen[key] = start, seen
+        # A person is home until LIVE_OFFLINE_LAG_MINUTES after their newest sighting (the rule
+        # user.state and the replay's stay.current_stay_start both follow). device_history logs
+        # the PREVIOUS last_online, so on arrival user.state flips to online a cycle or two before
+        # the new sighting is readable here; the newest sighting is then the previous stay's last
+        # one, and scoring it would read the old stay as lasting until now (found by the
+        # replay-versus-live parity check, 2026-11-19). Stay silent until a fresh sighting lands.
+        if start is None or seen is None:
+            return None
+        if now_utc - seen > timedelta(minutes=stay.LIVE_OFFLINE_LAG_MINUTES):
+            return None
         return start
 
     def _device_rows(self):
