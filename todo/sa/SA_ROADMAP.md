@@ -224,6 +224,9 @@ owning LF doc as they land.
 ### Context learning 2/5 (2026-11-19): registry and capture ledger
 - [~] [todo_lf8_context_registry.md](todo_lf8_context_registry.md), branch `feat/sa-context-registry`, **not merged or deployed**. Registry-generated `context_features` and `context_hourly` proven identical to the hand-written table on a copy of the production lake (5,265 rows, 0 differences, all 9 gold tables); stable identity in the live climate path (ESPHome ids 37885 then 37893 across the 2026-09-27 power cycle); ledger script matches the Phase 0 inventory; privacy scope enforced. Findings: no learner reads `context_hourly` yet; `calendar_busy_minutes` is zero-filled before the calendar was captured. Decisions pending: calendar NULL fix, automatic alias maintenance, ledger API route (needs migration 0063, plan and backup shown first).
 
+### Parallel capture track (2026-11-19): proposals written, nothing built
+- [ ] [todo_parallel_capture_track.md](todo_parallel_capture_track.md): (1) forecast history: already stored (953 forecast rows since 2026-10-09, one window nearest +6 h per fetch, target time not stored); propose registering the existing columns now, a `forecast_valid_at` column only if they earn it (migration). (2) calendar history: **already kept** (730 days since LF-0; earlier "24 h" claims were stale); nothing to build. (3) stale-fit alert: use `fitted_to`, not `computed_at` (drift re-stamps `computed_at`); function, per-night events, `/api/health`; no new card. (4) `engine.py` split: golden test first, then six small PRs behind unchanged tests. Each awaits a yes.
+
 ### Step 3: close the live-scoring gaps (LF-1c)
 - [ ] Event-driven `sa-awareness` (Kafka `event-stream`, in-memory state, reload on `sa-profiles-updated`).
 - [ ] Hourly live scoring for scalar and rate profiles (nightly only today); an email live counter; `sa_data_exclusions` honoured in live counts.
