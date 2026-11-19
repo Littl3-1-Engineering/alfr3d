@@ -61,6 +61,9 @@ class TestWindow:
     def test_the_stay_learner_compares_only_days_after_the_arrival_fix(self):
         assert parity.MATCHING_INPUTS_SINCE["stay_profile"] >= date(2026, 11, 19)
 
+    def test_the_scalar_learner_compares_only_days_under_the_per_series_bar(self):
+        assert parity.MATCHING_INPUTS_SINCE["scalar_baseline"] >= date(2026, 11, 19)
+
     def test_every_covered_learner_has_a_matching_inputs_date(self):
         assert set(parity.COVERED) <= set(parity.MATCHING_INPUTS_SINCE)
 

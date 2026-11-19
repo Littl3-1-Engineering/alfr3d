@@ -252,7 +252,9 @@ series against its own bar (`parity._scalar_bar`).
 - [x] Scalar hypothesis checked and refuted (above); replaced by a measured finding.
 - [x] Per-series calibrated bar for the scalar learner (branch `fix/sa-scalar-per-series-bar`, see
       "Fix" under the switch_count finding). **Not deployed**: it changes which attention cards fire,
-      so it waits for a go-ahead; on deploy, advance `parity.MATCHING_INPUTS_SINCE["scalar_baseline"]`.
+      so it waited for a go-ahead. **Merged (#425) and deployed 2026-11-18 21:46 local**; version 2 profiles
+      come from the 22:30 local nightly fit, so `parity.MATCHING_INPUTS_SINCE["scalar_baseline"]` is
+      2026-11-19. Re-run scalar parity once a few days exist.
 - [ ] Device-rhythm replay: reconstruct the `device` row state properly (from `device_history`,
       which has per-scan state) instead of from sessions.
 - [ ] Find why `service_user` emitted no `went_offline` for any user in three windows (11-07 to 11-09).
