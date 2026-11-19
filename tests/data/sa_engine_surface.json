@@ -1,0 +1,327 @@
+{
+ "display_rules": [
+  [
+   "time",
+   1,
+   "check_time"
+  ],
+  [
+   "event",
+   2,
+   "check_events"
+  ],
+  [
+   "travel",
+   2.5,
+   "check_travel"
+  ],
+  [
+   "music",
+   3,
+   "check_gatherings"
+  ],
+  [
+   "now_playing",
+   3.1,
+   "check_now_playing"
+  ],
+  [
+   "party_advisory",
+   3.2,
+   "check_party_advisory"
+  ],
+  [
+   "guest_overstay_advisory",
+   3.15,
+   "check_guest_overstay_advisory"
+  ],
+  [
+   "focus_needed",
+   3.5,
+   "check_focus_needed"
+  ],
+  [
+   "attention_focus",
+   3.6,
+   "check_attention_focus"
+  ],
+  [
+   "email",
+   4,
+   "check_emails"
+  ],
+  [
+   "weather_advisory",
+   4.5,
+   "check_weather_advisory"
+  ],
+  [
+   "weather",
+   5,
+   "check_weather"
+  ],
+  [
+   "climate_advisory",
+   5.3,
+   "check_climate_advisory"
+  ],
+  [
+   "climate_deviation",
+   5.4,
+   "check_climate_deviation"
+  ],
+  [
+   "mood",
+   6,
+   "check_mood"
+  ],
+  [
+   "household_composition",
+   6.2,
+   "check_household_composition"
+  ],
+  [
+   "system_health",
+   2.2,
+   "check_system_health"
+  ],
+  [
+   "disk_health",
+   5.9,
+   "check_disk_health"
+  ],
+  [
+   "rhythm_break_anomaly",
+   2.6,
+   "check_rhythm_break_anomaly"
+  ],
+  [
+   "device_health",
+   2.65,
+   "check_device_health"
+  ],
+  [
+   "departure_anomaly",
+   2.7,
+   "check_departure_anomaly"
+  ],
+  [
+   "presence_deviation",
+   2.75,
+   "check_presence_deviation"
+  ],
+  [
+   "cross_surface_continuity",
+   5.5,
+   "check_cross_surface_continuity"
+  ],
+  [
+   "wind_down_signal",
+   5.8,
+   "check_wind_down_signal"
+  ],
+  [
+   "empty_house_still_on",
+   2.4,
+   "check_empty_house_still_on"
+  ],
+  [
+   "household_unusual_day",
+   6.5,
+   "check_household_unusual_day"
+  ]
+ ],
+ "max_displays": 26,
+ "methods": {
+  "_any_device_in_dnd": {
+   "sha": "sha256:87bb3437e01442cf",
+   "signature": "(device_contexts)"
+  },
+  "_calendar_busy_at": {
+   "sha": "sha256:825ab2e2b11c095d",
+   "signature": "(self, moment)"
+  },
+  "_card_subject_key": {
+   "sha": "sha256:2477482855117766",
+   "signature": "(rule_id, card)"
+  },
+  "_card_suppression_reason": {
+   "sha": "sha256:6a898ae2f6e8748c",
+   "signature": "(self, rule_id, subject_key)"
+  },
+  "_fresh_attention_deviation": {
+   "sha": "sha256:74e7775fdd9b5f5e",
+   "signature": "(self, frame, series)"
+  },
+  "_media_dwell_fraction": {
+   "sha": "sha256:c62128e99e46c73c",
+   "signature": "(dwell_by_category_ms)"
+  },
+  "_online_guest_stay_days": {
+   "sha": "sha256:d4b6327fccb76eca",
+   "signature": "(self, cursor, now)"
+  },
+  "_persist_inferences": {
+   "sha": "sha256:982a794e467ca211",
+   "signature": "(self, inferences)"
+  },
+  "_presence_profiles": {
+   "sha": "sha256:b4cbed0136c829cb",
+   "signature": "(self)"
+  },
+  "_read_config_json": {
+   "sha": "sha256:5e9e13019910eff5",
+   "signature": "(self, key)"
+  },
+  "_read_fresh_attention_telemetry": {
+   "sha": "sha256:5152adeba8831fce",
+   "signature": "(self)"
+  },
+  "_read_fresh_device_contexts": {
+   "sha": "sha256:3972e50cf488cf36",
+   "signature": "(self)"
+  },
+  "_run_shadow": {
+   "sha": "sha256:a4b817d03277ca9c",
+   "signature": "(self, frame, legacy_cards)"
+  },
+  "_write_now_playing_config": {
+   "sha": "sha256:37aa969d660edf69",
+   "signature": "(self, state)"
+  },
+  "build_context_frame": {
+   "sha": "sha256:2316e6a2c7e10e8d",
+   "signature": "(self)"
+  },
+  "check_attention_focus": {
+   "sha": "sha256:667ce2e037334c04",
+   "signature": "(self, frame)"
+  },
+  "check_climate_advisory": {
+   "sha": "sha256:dfbfe5479e1eb5a3",
+   "signature": "(self, frame)"
+  },
+  "check_climate_deviation": {
+   "sha": "sha256:68117ba25d4f606e",
+   "signature": "(self, frame)"
+  },
+  "check_cross_surface_continuity": {
+   "sha": "sha256:03e27c6b860b602e",
+   "signature": "(self, frame)"
+  },
+  "check_departure_anomaly": {
+   "sha": "sha256:273d98a309fe3a2c",
+   "signature": "(self, frame)"
+  },
+  "check_device_health": {
+   "sha": "sha256:d9e19945a9da0c55",
+   "signature": "(self, frame)"
+  },
+  "check_disk_health": {
+   "sha": "sha256:86a65492590e03d4",
+   "signature": "(self, frame=None)"
+  },
+  "check_emails": {
+   "sha": "sha256:26eb53b54c16f28b",
+   "signature": "(self, frame=None)"
+  },
+  "check_empty_house_still_on": {
+   "sha": "sha256:0ff4aa3b6fcabb8c",
+   "signature": "(self, frame)"
+  },
+  "check_events": {
+   "sha": "sha256:a9ef3d014837143b",
+   "signature": "(self, frame)"
+  },
+  "check_focus_needed": {
+   "sha": "sha256:0d339758d8e7a6a9",
+   "signature": "(self, frame)"
+  },
+  "check_gatherings": {
+   "sha": "sha256:130326526f41bfde",
+   "signature": "(self, frame)"
+  },
+  "check_guest_overstay_advisory": {
+   "sha": "sha256:ae9e656011a73ea3",
+   "signature": "(self, frame)"
+  },
+  "check_household_composition": {
+   "sha": "sha256:394f18fdb0f437c1",
+   "signature": "(self, frame)"
+  },
+  "check_household_unusual_day": {
+   "sha": "sha256:8d6e657462088dcb",
+   "signature": "(self, frame)"
+  },
+  "check_mood": {
+   "sha": "sha256:f905c3f28355cdda",
+   "signature": "(self, frame)"
+  },
+  "check_now_playing": {
+   "sha": "sha256:1862d41f87d2a99f",
+   "signature": "(self, frame)"
+  },
+  "check_party_advisory": {
+   "sha": "sha256:2ab7b389b5948464",
+   "signature": "(self, frame)"
+  },
+  "check_presence_deviation": {
+   "sha": "sha256:c4ec0b951b2c4032",
+   "signature": "(self, frame)"
+  },
+  "check_rhythm_break_anomaly": {
+   "sha": "sha256:4ac21ed80858b60f",
+   "signature": "(self, frame)"
+  },
+  "check_situational_awareness": {
+   "sha": "sha256:e1ff1e2da44ea32e",
+   "signature": "(self)"
+  },
+  "check_system_health": {
+   "sha": "sha256:60d7af2c78d1eaa9",
+   "signature": "(self, frame=None)"
+  },
+  "check_time": {
+   "sha": "sha256:58050ac39f1d35a2",
+   "signature": "(self, frame)"
+  },
+  "check_travel": {
+   "sha": "sha256:011d338188de41d5",
+   "signature": "(self, frame)"
+  },
+  "check_weather": {
+   "sha": "sha256:5daafd66dfb22ae1",
+   "signature": "(self, frame)"
+  },
+  "check_weather_advisory": {
+   "sha": "sha256:475e3eb2db6c4792",
+   "signature": "(self, frame)"
+  },
+  "check_wind_down_signal": {
+   "sha": "sha256:d501bf8bf292a71d",
+   "signature": "(self, frame)"
+  },
+  "decide_displays": {
+   "sha": "sha256:fbe1c8a125b44b66",
+   "signature": "(self)"
+  },
+  "publish_sa": {
+   "sha": "sha256:de2efd926f3d590d",
+   "signature": "(self, data)"
+  }
+ },
+ "module_functions": {
+  "_active_hours_mask": {
+   "sha": "sha256:7b43faa3ed6bbfa9",
+   "signature": "(sessions)"
+  },
+  "_cross_surface_continuity_subject_key": {
+   "sha": "sha256:bd9fa2b956e23cbb",
+   "signature": "(card)"
+  },
+  "_span_text": {
+   "sha": "sha256:a8ae05771c18901a",
+   "signature": "(minutes)"
+  }
+ }
+}
