@@ -709,6 +709,8 @@ class TestOrchestration:
         ), patch.object(
             learner.silver, "run_build", side_effect=lambda **k: order.append("silver") or {}
         ), patch.object(
+            learner, "run_ledger"
+        ), patch.object(
             learner, "run_learners", side_effect=lambda: order.append("learners")
         ):
             learner.run_bronze_export()
@@ -723,6 +725,8 @@ class TestOrchestration:
             learner.external, "run_all", side_effect=RuntimeError("boom")
         ), patch.object(
             learner.silver, "run_build", side_effect=lambda **k: order.append("silver") or {}
+        ), patch.object(
+            learner, "run_ledger"
         ), patch.object(
             learner, "run_learners", side_effect=lambda: order.append("learners")
         ):
