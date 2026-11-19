@@ -25,11 +25,19 @@ def test_the_hour_of_week_structure_is_removed():
     assert all(abs(v) < 1e-9 for v in residual.values())
 
 
-def test_anomaly_is_relative_to_the_hour_of_day():
-    series = {T0 + timedelta(hours=i): float(10 + (i % 24)) for i in range(24 * 5)}
-    assert all(abs(v) < 1e-9 for v in probe.anomaly_by_hour_of_day(series).values())
-    series[T0 + timedelta(hours=30)] += 4
-    assert max(probe.anomaly_by_hour_of_day(series).values()) > 3
+def test_anomaly_is_relative_to_the_same_hour_of_the_previous_week():
+    series = {T0 + timedelta(hours=i): float(10 + (i % 24)) for i in range(24 * 14)}
+    anomaly = probe.anomaly_vs_trailing_week(series)
+    assert all(abs(v) < 1e-9 for v in anomaly.values())
+    assert min(anomaly) >= T0 + timedelta(days=7)  # needs the full previous week
+    series[T0 + timedelta(hours=24 * 10 + 5)] += 4
+    assert max(probe.anomaly_vs_trailing_week(series).values()) > 3
+
+
+def test_a_drifting_series_has_no_trend_left_in_its_anomaly():
+    ramp = {T0 + timedelta(hours=i): 0.1 * i for i in range(24 * 30)}
+    anomaly = list(probe.anomaly_vs_trailing_week(ramp).values())
+    assert max(anomaly) - min(anomaly) < 1e-6  # a constant offset: the trend itself is gone
 
 
 def test_raw_series_keep_a_real_zero():

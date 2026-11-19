@@ -22,7 +22,10 @@ the many-candidate version for discovery: candidate features x lags against one 
 - **multiple-testing control**: a circular-shift permutation null (the feature is shifted against
   the target, which keeps its autocorrelation and destroys any real alignment) gives each candidate
   an empirical p-value, and Holm's step-down correction is applied across the candidates tested,
-- a fixed seed, so a night's run is reproducible and cannot manufacture significance by retrying.
+- a fixed seed, so a night's run is reproducible and cannot manufacture significance by retrying,
+- enough permutations for the number of candidates examined: Holm multiplies the smallest possible
+  p (1 / (1 + B)) by that number, so too few permutations would make an effect impossible rather
+  than merely unlikely. B is raised to what is needed and recorded on each finding.
 
 `screen_rates` is the same screen for binary and count targets (an event that is 0 in most hours),
 where a median slope is blind: it compares the outcome rate within each hour-of-week between the
@@ -31,6 +34,7 @@ top and bottom third of the feature, on the same held-out split, budget, null an
 Nothing here reads a database or the lake; callers pass pairs. No cards, no actuation.
 """
 
+import math
 import random
 from collections import defaultdict
 from itertools import combinations
@@ -43,7 +47,7 @@ TRAIN_FRACTION = 0.7
 # screen() defaults
 MAX_CANDIDATES = 8  # per target; the screen has a fixed budget so it cannot fish
 ALPHA = 0.05
-PERMUTATIONS = 99
+PERMUTATIONS = 199
 SCREEN_MAX_PAIRS = 150  # smaller than MAX_PAIRS: it runs once per permutation
 MIN_SHIFT_FRACTION = 0.1  # a permutation shifts at least this far, so it is not the identity
 SEED = 20261118
@@ -214,6 +218,11 @@ def _screen(
     # The permutation null is only run for candidates that already cleared the floor and the gain,
     # but the correction counts every candidate that was looked at, so skipping the null for the
     # obvious misses cannot make the survivors look better than they are.
+    # Resolution: with B permutations the smallest possible p is 1 / (1 + B), and Holm multiplies
+    # it by the number of candidates looked at. If that product can never get under alpha, an
+    # "effect" is impossible however strong the relationship (99 permutations and 8 candidates
+    # cannot: 8 / 100 > 0.05). So raise B to what the number of candidates needs, and say so.
+    permutations = max(permutations, math.ceil(looked_at / alpha) - 1)
     rng = random.Random(seed)
     raw = [
         _permutation_p(pairs, improvement, permutations, rng, lambda p: evaluate(p)[1])
@@ -223,7 +232,7 @@ def _screen(
     adjusted = _holm(raw + [1.0] * (looked_at - len(raw)), alpha)
     for slot, (index, pairs, _) in enumerate(tested):
         p_adj, significant = adjusted[slot]
-        findings[index].update(p=round(raw[slot], 4), p_adjusted=p_adj)
+        findings[index].update(p=round(raw[slot], 4), p_adjusted=p_adj, permutations=permutations)
         if significant:
             findings[index].update(
                 status="effect",

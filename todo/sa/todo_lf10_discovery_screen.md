@@ -2,7 +2,7 @@
 
 Status: **plan approved 2026-11-19.** Build order, each its own PR: (1) **target registry and
 validation: built 2026-11-19** (`sa/targets.py`, `tests/test_sa_targets.py`); (2) nightly screen
-`sa/screen.py` and its tests (not started); (3) migration 0064, the findings API and the
+`sa/screen.py` and its tests: **built 2026-11-19** (see the step 2 notes below); (3) migration 0064, the findings API and the
 `learner.py` stage (not started; migration only after the backup and plan are shown). Decisions
 below.
 
@@ -128,3 +128,30 @@ access as `/api/context/ledger`.
    Recorded as the reading of "yes to all"; say so if a resident-role gate is wanted instead.
 5. **Table design** for `sa_covariate_findings` (migration 0064): approved. Writing it does not
    authorise running it: the verified backup and the plan are shown first, then the owner says go.
+
+## Step 2 built (2026-11-19): `sa/screen.py`, and what building it found
+
+`run_screen(lake_dir)` returns one row per declared candidate-lag per target (or one row saying why
+there are none: no presence tables, `context_hourly` missing, no observed hours, the target's kind
+not fitting its data). It refuses to run if `targets.validate` / `validate_queries` find a problem,
+so a registry that could fish never runs. Reasons are specific ("the feature has no data in the lake
+yet", "only 2 events (need 20)", "did not reduce held-out error enough", "not distinguishable from
+chance after multiple-testing correction"). Rows are plain dicts shaped for the table in step 3.
+Tests (`tests/test_sa_screen.py`, 13 s): a planted effect is found; an independent series and a
+planted null are not; every declared target and candidate is covered even with tables missing;
+a shared trend is not an effect; reproducible; refuses an unsound registry.
+
+**Verified live, read-only on the NUC (a throwaway lake copy rebuilt with the deployed image, then
+deleted; the production lake has no `context_features` until tonight's 03:30 UTC build):** 3 targets,
+23 candidate rows in 0.7 s, 0 effects: `guests_home` (2 events in the overlap) and `house_empty`
+(18) are under the event floor, `away_minutes` and the calendar/holiday/daylight/forecast
+candidates show no gain. The screen cannot yet be stored (no table) and is not wired into the
+nightly job.
+
+**What building it found (see also the correction in todo_lf9):** the engine's permutation
+resolution made effects impossible, and the whole-history weather anomaly let a shared seasonal
+trend pass for a cause. Both fixed, both tested, and the earlier probe results re-stated.
+
+**For step 3 / the API:** per-target Holm does not control error across targets or nights (about
+`0.05 x targets` false effects a night). Proposed: store every night, and have the API show how many
+of the last N nights a candidate was an `effect`, so a one-night flicker is visible as one.
