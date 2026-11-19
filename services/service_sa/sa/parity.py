@@ -73,13 +73,26 @@ MATCHING_INPUTS_SINCE = {
 # not a mismatch: the nightly silver rebuild re-derives history with the bridge learned that night,
 # so the same day scores a little differently live than from today's lake. Reported, never hidden.
 NEAR_BAR_BITS = 0.5
+# A z-based learner's bar sits near 14 bits, where half a sigma is about 3 bits: its band is the
+# bits between MIN_ABS_Z and MIN_ABS_Z + 0.5 sigma, not a fixed 0.5 bits.
+NEAR_BAR_Z = 0.5
+
+
+def _z_bits(z):
+    """Surprise in bits of a two-sided tail at `z` sigma."""
+    return -math.log2(scalar.two_sided_p(z))
+
+
 BAR_BITS = {
     presence.NAME: presence.MIN_SURPRISE_BITS,
     stay.NAME: stay.MIN_SURPRISE_BITS,
     daytime.NAME: daytime.MIN_SURPRISE_BITS,
-    scalar.NAME: -math.log2(scalar.two_sided_p(scalar.MIN_ABS_Z)),
+    scalar.NAME: _z_bits(scalar.MIN_ABS_Z),
     rates.NAME: -math.log2(rates.P_FLAG),
     device_rhythm.NAME: device_rhythm.MIN_SURPRISE_BITS,
+}
+NEAR_BAR_MARGIN_BITS = {
+    scalar.NAME: _z_bits(scalar.MIN_ABS_Z + NEAR_BAR_Z) - _z_bits(scalar.MIN_ABS_Z),
 }
 MIN_SUBJECT_DAYS = 14
 GRID_MINUTES = 15
@@ -395,10 +408,12 @@ def live_days(inferences, first, last, zone, start_day_only=False):
 # --- Comparison --------------------------------------------------------------------------------
 
 
-def compare_days(live, replayed, days, bar=None):
+def compare_days(live, replayed, days, bar=None, margin=NEAR_BAR_BITS):
     """Classify every comparable day. Returns the parity record for one (learner, subject). With
     `bar` (the learner's surprise bar in bits), a one-sided day whose flagged score is within
-    NEAR_BAR_BITS of it is `borderline`, counted separately and not a mismatch."""
+    `margin` bits (default NEAR_BAR_BITS) of it is `borderline`: counted separately, not a
+    mismatch.
+    """
     outcomes = {"both": 0, "live_only": 0, "replay_only": 0, "borderline": 0, "neither": 0}
     mismatches, borderline, pairs, flips = [], [], [], []
     floor = replay.CARD_CONFIDENCE_FLOOR
@@ -433,7 +448,7 @@ def compare_days(live, replayed, days, bar=None):
                 "replay": replayed.get(day),
             }
             flagged = live.get(day) or replayed.get(day)
-            if bar is not None and flagged["bits"] < bar + NEAR_BAR_BITS:
+            if bar is not None and flagged["bits"] < bar + margin:
                 kind = "borderline"
                 borderline.append(entry)
             else:
@@ -459,7 +474,7 @@ def verdict(records):
     if mismatched:
         return f"MISMATCH: {mismatched} day(s) to explain"
     near = sum(r["outcomes"].get("borderline", 0) for r in records)
-    suffix = f" ({near} borderline day(s) within {NEAR_BAR_BITS} bits of the bar)" if near else ""
+    suffix = f" ({near} borderline day(s) near the learner's bar)" if near else ""
     if both == 0 and not near:
         return "MATCH (neither side flagged anything: agreement on quiet days only)"
     return "MATCH" + suffix
@@ -725,7 +740,15 @@ def run(lake_dir, conn, since=None, today=None, tz=None, only=None):
             live = live_days(rows, first, last, zone, start_day_only=spec["day_keyed"])
             replayed = spec["walk"](lake_dir, key, first, last, tz)
             record = {"subject": subject, "fitted_to": profile.fitted_to}
-            record.update(compare_days(live, replayed, days, BAR_BITS.get(name)))
+            record.update(
+                compare_days(
+                    live,
+                    replayed,
+                    days,
+                    BAR_BITS.get(name),
+                    NEAR_BAR_MARGIN_BITS.get(name, NEAR_BAR_BITS),
+                )
+            )
             if spec["refit"] is not None:
                 fresh = spec["refit"](lake_dir, profile, tz)
                 record["profile"] = (
