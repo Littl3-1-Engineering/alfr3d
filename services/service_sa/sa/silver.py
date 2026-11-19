@@ -110,6 +110,7 @@ GOLD_TABLES = (
     "state_hourly",
     "email_hourly",
     "sender_daily",
+    "context_features",
     "context_hourly",
 )
 
@@ -747,6 +748,8 @@ def build(lake_dir=None, exclusions=(), aliases=None, tz=None, gap_minutes=None,
         for table in GOLD_TABLES:
             if table in more:
                 counts[table] = _write(con, more[table], "gold", table, lake)
+                # context_hourly is a pivot of context_features: expose what was just written
+                _register_views(con, lake)
                 if progress:
                     progress()
     finally:
