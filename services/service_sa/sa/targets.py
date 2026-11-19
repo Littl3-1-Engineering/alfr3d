@@ -37,7 +37,7 @@ from sa import context_registry, covariates
 
 CONTINUOUS, COUNT, BINARY = "continuous", "count", "binary"
 KINDS = (CONTINUOUS, COUNT, BINARY)
-RAW, ANOMALY = "raw", "anomaly"  # anomaly: the feature minus its own mean for that hour of day
+RAW, ANOMALY = "raw", "anomaly"  # anomaly: the feature minus its mean at that hour, previous 7 days
 TRANSFORMS = (RAW, ANOMALY)
 
 DEFAULT_LAGS = (0, 1, 3, 6, 24)  # hours a feature may lead; each target declares the ones it uses
@@ -96,8 +96,11 @@ AWAY_MINUTES = f"""
     FROM g_presence_grid g JOIN u USING (user_id)
     WHERE g.observed GROUP BY g.bucket_utc ORDER BY g.bucket_utc"""
 
-# Calendar and holiday features are used raw; the weather series as anomalies, because the target's
-# hour-of-week structure is already removed and raw temperature would only re-find the daily cycle.
+# Calendar and holiday features are used raw; the weather series as anomalies against the previous
+# week, because the target's hour-of-week structure is already removed, raw temperature would only
+# re-find the daily cycle, and (measured on the real lake) a feature measured against the whole
+# history keeps the autumn cooling trend and passes itself off as a cause of any outcome that also
+# drifts over those weeks.
 REGISTRY = (
     Target(
         key="guests_home",

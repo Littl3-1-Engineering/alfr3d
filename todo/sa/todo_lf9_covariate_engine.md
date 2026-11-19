@@ -129,3 +129,38 @@ flag-day rate beyond what the replay predicted. `screen` is the Phase 4 (discove
   400, for that reason.
 - Lags are the caller's job (`lagged_pairs`); the engine does not know what a feature is. Season
   and month stay off until there is about a year of history (prompt, direction).
+
+## Correction (2026-11-19, same day, found while building Phase 4 step 2): three flaws in the probe
+
+The Step 2 and Step 3 "0 effects" results above were produced by an engine and a probe with three
+flaws, found when the nightly screen (LF-10) first ran on the real lake and reported five strong
+"effects" that did not survive scrutiny. The conclusions "no learner earns an opt-in PR" and "closest
+is `audio/track/play_start` p_adj 0.06" are withdrawn as stated; the corrected picture is below.
+
+1. **Permutation resolution made an effect impossible.** With B permutations the smallest possible
+   p is 1 / (1 + B), and Holm multiplies it by the number of candidates looked at: 99 permutations
+   and 8 candidates give 8 / 100 = 0.08 > 0.05, so no candidate could ever be an `effect`. The
+   probe's `play_start` "p_adj 0.06" was 6 x the minimum possible p, not a near miss. Fixed in
+   `covariates._screen`: B is raised to `ceil(candidates / alpha) - 1` and recorded on each finding;
+   the default is now 199. A test planted an enormous effect (shift 0.39) and showed it returning
+   "insufficient evidence" before the fix.
+2. **The weather anomaly kept the autumn cooling trend.** Measured against the whole-history mean
+   for that hour of day, temperature still drifts over ~40 days; any outcome that also drifts then
+   looks caused by it. With flaw 1 fixed, the screen reported five effects (guests_home x 3,
+   house_empty x 2 against the temperature anomaly, held-out gain up to 0.23). Re-measured with the
+   anomaly taken against the **previous 7 days at the same hour** (causal, full window), all five
+   vanished: nearly all the guest-hours in the weather overlap were in its first week. That
+   definition is now `screen.anomaly_vs_trailing_week` and the probe uses it. A test plants a
+   shared drift (cooling temperature, increasingly frequent guests, no causal link) and requires
+   no effect.
+3. **Sparse overlap.** After the first week is dropped, the real weather overlap holds 2 guest-hours
+   and 18 empty-house hours, under the 20-event floor: `insufficient evidence`, the correct answer.
+
+**Re-run with all three fixed** (real lake, 24 targets x 6 candidates): 3 borderline "effects" at a
+corrected p of exactly 0.05 (`email/all` and `notification/sender/messaged` against the temperature
+anomaly, held-out gain 1.3 % to 2.1 %). At a 5 % family-wise level across 24 targets about one false
+positive is expected, so these are not evidence; they are what the nightly screen's "closest
+candidates" list is for. **No learner earns an opt-in PR on this evidence.** The honest lesson is
+that the per-target error rate multiplies across targets and across nights, so a real result should
+be seen on several nights before it is believed (a proposal for the findings API: show the number of
+recent nights a candidate was an `effect`).
