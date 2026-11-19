@@ -28,6 +28,17 @@ from sa.card_utils import (  # noqa: F401  (re-exported: tests patch these on `e
     _cross_surface_continuity_subject_key,
     _span_text,
 )
+from sa.suppression import (  # noqa: F401  (re-exported)
+    CARD_FEEDBACK_ACTIONS,
+    CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE,
+    CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES,
+    CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES,
+    CARD_SUPPRESSION_HISTORY_LIMIT,
+    CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES,
+    CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE,
+    CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE,
+    SuppressionMixin,
+)
 from sa.learners import device_rhythm, household_day, stay
 from sa.learners import presence as presence_learner
 from sa.learners import scalar
@@ -184,38 +195,6 @@ WIND_DOWN_MIN_MEDIA_DWELL_FRACTION = 0.5
 # one today, but this is a generic field check so any future rule can opt in the same way.
 CARD_SUPPRESSION_NEVER_OVERRIDE_FIELD = "urgent"
 
-# The explicit answers that start a card's cooldown (SA-1); see _card_suppression_reason.
-CARD_FEEDBACK_ACTIONS = ("dismissed", "acked", "not_useful")
-
-# decide_displays()'s suppression pass looks at up to this many of a card identity's most recent
-# card_interactions rows -- must cover both the cooldown check (just the latest row) and the
-# repetition-damping run-length count below.
-CARD_SUPPRESSION_HISTORY_LIMIT = 10
-
-# A card identity whose most recent interaction is "dismissed" is suppressed for this many
-# minutes before it's allowed to show again -- a conservative starting point, no real
-# interaction data yet to tune it against (same caveat as every other threshold in this file).
-# Per-mode override via CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.
-CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES = 60
-CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE = {
-    # Continuous-stay guest decay: the underlying signal (days-of-stay) only changes once a
-    # day, so re-showing this more than daily is pure noise on a signal that hasn't moved.
-    "guest_overstay_advisory": 1440,
-}
-
-# "Not useful" is the one clearly negative feedback action, so it silences the card for far longer
-# than a neutral swipe-away or a checkmark: a day by default. Product default, not yet tuned against
-# real feedback (there is none yet); per-rule override in the _BY_RULE dict below.
-CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES = 1440
-CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE = {}
-
-# A card identity shown this many cycles in a row with no interaction at all (no dismiss, no
-# tap) gets suppressed until its underlying state changes (i.e. until something -- a different
-# device, a content change on a singleton rule -- gives it a new identity, or a real interaction
-# resets the run). Per-mode override via CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE.
-CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES = 20
-CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE = {}
-
 # device_history is written about once a minute while the scanner runs. A silence longer than this
 # inside an "online" session means the offline transition was never observed (scanner/daemon
 # outage), so the session is closed at the last row seen online instead of being stretched across
@@ -251,7 +230,7 @@ GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 TRAVEL_STALE_AFTER_MINUTES = 30
 
 
-class SAEngine:
+class SAEngine(SuppressionMixin):
     def check_situational_awareness(self):
         """Poll data and publish array of situational awareness cards."""
         results = self.decide_displays()
@@ -555,73 +534,6 @@ class SAEngine:
         CARD_SUBJECT_KEY_EXTRACTORS, meaning the whole rule is one suppressible slot."""
         extractor = CARD_SUBJECT_KEY_EXTRACTORS.get(rule_id)
         return extractor(card) if extractor else ""
-
-    def _card_suppression_reason(self, rule_id, subject_key):
-        """Return a short reason string to suppress this (rule_id, subject_key) card
-        identity, or None to show it as normal. Reads card_interactions only -- the
-        daemon never writes to it, only consumers report shown/tapped/dismissed/expired
-        (see routes/context.py's POST /api/context/card-interaction); a published card
-        that never made it past a client's own display cap was never actually "shown",
-        and the daemon has no way to know that, so it must not assume otherwise."""
-        db = None
-        try:
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            cursor = db.cursor()
-            # The cooldown comes from the latest feedback or tap, found by its own query. A later
-            # `shown` (a surface that has not got the news yet, or just a refresh) must not cancel
-            # it, and a burst of `shown` rows from two surfaces must not push the feedback row out
-            # of the history window below. Only a later tap, real re-engagement, ends it early.
-            cursor.execute(
-                "SELECT action, occurred_at FROM card_interactions "
-                "WHERE rule_id = %s AND subject_key = %s "
-                "AND action IN ('dismissed', 'acked', 'not_useful', 'tapped') "
-                "ORDER BY occurred_at DESC, id DESC LIMIT 1",
-                (rule_id, subject_key),
-            )
-            feedback = cursor.fetchall()
-            if feedback and feedback[0][0] in CARD_FEEDBACK_ACTIONS:
-                feedback_action, feedback_at = feedback[0]
-                if feedback_action == "not_useful":
-                    cooldown = CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES_BY_RULE.get(
-                        rule_id, CARD_SUPPRESSION_NOT_USEFUL_COOLDOWN_MINUTES
-                    )
-                else:
-                    cooldown = CARD_SUPPRESSION_COOLDOWN_MINUTES_BY_RULE.get(
-                        rule_id, CARD_SUPPRESSION_DEFAULT_COOLDOWN_MINUTES
-                    )
-                since = datetime.now(timezone.utc) - feedback_at.replace(tzinfo=timezone.utc)
-                if since < timedelta(minutes=cooldown):
-                    return "cooldown"
-
-            cursor.execute(
-                "SELECT action, occurred_at FROM card_interactions "
-                "WHERE rule_id = %s AND subject_key = %s AND action <> 'impression' "
-                "ORDER BY occurred_at DESC LIMIT %s",
-                (rule_id, subject_key, CARD_SUPPRESSION_HISTORY_LIMIT),
-            )
-            rows = cursor.fetchall()
-            if not rows:
-                return None
-
-            run_length = 0
-            for action, _ in rows:
-                if action != "shown":
-                    break
-                run_length += 1
-            threshold = CARD_SUPPRESSION_REPETITION_CYCLES_BY_RULE.get(
-                rule_id, CARD_SUPPRESSION_DEFAULT_REPETITION_CYCLES
-            )
-            if run_length >= threshold:
-                return "repetition"
-            return None
-        except pymysql.Error as e:
-            logger.error(f"Card suppression check error: {e}")
-            return None
-        finally:
-            if db:
-                db.close()
 
     def check_system_health(self, frame=None):
         """Urgent card when a configured integration (Home Assistant, SmartThings) has failed
