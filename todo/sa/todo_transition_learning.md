@@ -369,4 +369,4 @@ producer above, once deployed and opted into) accumulate real history. That is w
 - Cross-household pattern sharing — moot.
 - Recency decay (Phase 3) — explicitly deferred by the task doc regardless of this Phase 0
   outcome.
-- Any autonomous action on a high-confidence prediction — moot.
+- Any action on a high-confidence prediction other than through the autonomy ladder — moot. The rule: "Alfr3d acts on the household's behalf only through the autonomy ladder. Every action type starts at level 0 (predict only). An action type moves up only when the owner promotes it, shown the evidence. Every action is explained, logged and undoable where the device allows; an undo or a "not useful" demotes it; a kill switch returns everything to level 0. Observation, never concern."

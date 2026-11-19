@@ -212,8 +212,8 @@ motivating history) warn against repeating.
 
 ## Out of scope (per the task doc, unchanged)
 
-- Autonomous actuation — not applicable regardless, no rule in `alfr3ddaemon.py` controls a
-  device.
+- Acting on a device: only through the autonomy ladder; no rule in `alfr3ddaemon.py` controls a
+  device today. The rule: "Alfr3d acts on the household's behalf only through the autonomy ladder. Every action type starts at level 0 (predict only). An action type moves up only when the owner promotes it, shown the evidence. Every action is explained, logged and undoable where the device allows; an undo or a "not useful" demotes it; a kill switch returns everything to level 0. Observation, never concern."
 - ESPHome Phase 5 (push-based state), unless Phase 0 finds it's a hard prerequisite — moot until
   Phase 0 itself completes.
 - Room-level presence trilateration (SA-8 Phase 3).

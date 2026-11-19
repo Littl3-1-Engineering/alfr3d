@@ -584,7 +584,8 @@ Do not build these here. Listed so the pipeline is designed to feed them:
 - **[[todo_context_frame]] (SA-4):** add "resident is ~Nkm from home, heading away/back" to the
   context frame the daemon and LLM prompt read.
 - **[[todo_esphome_situational_awareness]]:** geofence-based arrival could pre-warm the house
-  (lights/climate) — but that's actuation, explicitly out of scope until the data's proven.
+  (lights/climate) — but that is an action, and an action is only ever taken through the autonomy
+  ladder (a card at level 0 until the owner promotes it, shown the evidence). The rule: "Alfr3d acts on the household's behalf only through the autonomy ladder. Every action type starts at level 0 (predict only). An action type moves up only when the owner promotes it, shown the evidence. Every action is explained, logged and undoable where the device allows; an undo or a "not useful" demotes it; a kill switch returns everything to level 0. Observation, never concern."
 
 ## Related / precedent
 - Pattern analog: [[todo_attention_telemetry]] (deck→backend periodic telemetry, `routes/context.py`,

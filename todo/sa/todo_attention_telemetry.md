@@ -85,8 +85,8 @@ both) without either needing to change.
   `check_focus_needed()` calendar heuristic.
 - `check_wind_down_signal()`: fires when it's late (`mood_utils.get_day_mood()`'s
   `time_of_day == "night"`) and unlock count is high and dwell is concentrated in `"media"` --
-  the milestone's own "inverse case." Suggestion card only, no auto-actuation of lights/Spotify
-  (matches every other card built today).
+  the milestone's own "inverse case." Suggestion card only (level 0 of the autonomy ladder), so no action on lights/Spotify
+  unless the owner has promoted that action type (matches every other card built today). The rule: "Alfr3d acts on the household's behalf only through the autonomy ladder. Every action type starts at level 0 (predict only). An action type moves up only when the owner promotes it, shown the evidence. Every action is explained, logged and undoable where the device allows; an undo or a "not useful" demotes it; a kill switch returns everything to level 0. Observation, never concern."
 - Both registered in `DISPLAY_RULES`. Thresholds are conservative starting points -- open to
   tuning once real telemetry exists.
 
