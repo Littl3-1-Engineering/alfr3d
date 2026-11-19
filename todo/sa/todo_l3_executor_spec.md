@@ -59,7 +59,7 @@ which change was whose) **demotes straight to level 0** and raises a card.
 `POST /api/autonomy/kill` (owner) returns every action type to level 0 at once and takes effect at
 step 1 of the next attempt; `POST /api/autonomy/kill/reset` (owner) lifts it and promotes nothing.
 Teach me shows the ladder per action type with a **one-tap reset to level 0**. All of it is written
-to `sa_autonomy_log` (migration 0065, written, not run).
+to `sa_autonomy_log` (migration 0065, run on production 2026-11-19, empty; nothing writes to it yet).
 
 ## Ships dark
 
