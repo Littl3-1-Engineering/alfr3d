@@ -300,3 +300,115 @@ class TestDeckFamily:
         assert out["explained_discount"] == 0.7
         assert out["deck"]["presence_deviations_by_deck_state"]["wifi"] > 0
         assert out["deck"]["flag_days_with_deck"] == 1
+
+
+def _write_calendar(root, events, captured_from):
+    """Silver calendar_busy and the bronze export that says when capture began (the earliest
+    `created_at`), as the nightly build writes them."""
+    (root / "silver" / "calendar_busy").mkdir(parents=True)
+    schema = pa.schema(
+        [
+            pa.field("start_utc", pa.timestamp("us")),
+            pa.field("end_utc", pa.timestamp("us")),
+            pa.field("all_day", pa.bool_()),
+        ]
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"start_utc": s, "end_utc": e, "all_day": False} for s, e in events], schema=schema
+        ),
+        root / "silver" / "calendar_busy" / "part-0.parquet",
+    )
+    (root / "bronze" / "calendar_events" / f"date={captured_from.date()}").mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist([{"created_at": captured_from, "title": "x"}]),
+        root / "bronze" / "calendar_events" / f"date={captured_from.date()}" / "part-0.parquet",
+    )
+
+
+def _utc(day, hour):
+    return datetime.combine(day, datetime.min.time()) + timedelta(hours=hour)
+
+
+class TestCalendarIsReconstructed:
+    """The MySQL calendar table keeps 730 days since LF-0 (2026-10-09) and the lake exports it
+    nightly, so the calendar can be replayed from the day it was first captured."""
+
+    def _calendar(self, events, captured):
+        return {"events": events, "captured_from": captured}
+
+    def test_no_calendar_in_the_lake_is_no_history_not_an_error(self, tmp_path):
+        assert replay.load_calendar(str(tmp_path)) == {"events": [], "captured_from": None}
+
+    def test_load_reads_events_and_the_day_capture_began(self, tmp_path):
+        _write_calendar(tmp_path, [(_utc(LAST, 12), _utc(LAST, 20))], datetime(2026, 9, 1, 14, 46))
+
+        cal = replay.load_calendar(str(tmp_path))
+
+        assert cal["events"] == [(_utc(LAST, 12), _utc(LAST, 20))]
+        assert cal["captured_from"] == datetime(2026, 9, 1, 14, 46)
+
+    def test_a_covering_event_is_a_state_and_the_hour_after_is_not(self):
+        cal = self._calendar([(_utc(LAST, 12), _utc(LAST, 20))], datetime(2026, 9, 1))
+
+        assert replay.calendar_state_at(cal, _utc(LAST, 15)).signal == "calendar.busy"
+        assert replay.calendar_state_at(cal, _utc(LAST, 21)) is None
+
+    def test_before_capture_the_calendar_is_unknown_not_free(self):
+        cal = self._calendar([(_utc(LAST, 12), _utc(LAST, 20))], datetime(2026, 10, 9, 14, 46))
+
+        assert not replay.calendar_known_at(cal, datetime(2026, 10, 1))
+        assert replay.calendar_state_at(cal, datetime(2026, 10, 1)) is None
+        assert replay.calendar_known_at(cal, datetime(2026, 10, 10))
+
+    def test_events_on_a_day_count_overlaps_and_are_none_before_capture(self):
+        from zoneinfo import ZoneInfo
+
+        zone = ZoneInfo("America/Toronto")
+        cal = self._calendar(
+            [(_utc(LAST, 12), _utc(LAST, 20)), (_utc(LAST, 22), _utc(LAST + timedelta(1), 2))],
+            datetime(2026, 9, 1),
+        )
+
+        assert replay.calendar_events_on(cal, LAST, zone) == 2
+        assert replay.calendar_events_on(cal, LAST + timedelta(days=5), zone) == 0
+        assert replay.calendar_events_on(cal, date(2026, 8, 30), zone) is None
+
+    def test_a_booked_event_explains_an_absence_that_flags_without_it(self, tmp_path):
+        _write_lake(tmp_path, _absent_history)
+        # 12:00-22:00 UTC covers the whole absence (09:00-17:00 local is 13:00-21:00 UTC)
+        _write_calendar(tmp_path, [(_utc(LAST, 12), _utc(LAST, 22))], datetime(2026, 9, 1))
+
+        out = replay.replay_away_unusual(
+            str(tmp_path), date(2026, 9, 28), LAST, explained_discount=0.95
+        )
+
+        assert out["calendar"]["flag_days_without_calendar"] == 1
+        assert out["flag_days"] == 0  # a booked stretch is not an unusual absence
+        assert out["calendar"]["presence_deviations_by_calendar_state"]["covering"] > 0
+        assert not any("calendar" in item for item in out["unreconstructed"])
+
+    def test_hours_before_capture_are_declared_not_treated_as_free(self, tmp_path):
+        _write_lake(tmp_path, _absent_history)
+        # the calendar was first captured the evening AFTER the absence being replayed
+        _write_calendar(tmp_path, [], datetime(2026, 10, 9, 23))
+
+        out = replay.replay_away_unusual(str(tmp_path), date(2026, 9, 28), LAST)
+
+        note = next(item for item in out["unreconstructed"] if item.startswith("calendar"))
+        assert "history starts 2026-10-09" in note and "unknown, not free" in note
+        assert out["calendar"]["presence_deviations_by_calendar_state"]["unknown"] > 0
+
+    def test_day_off_uses_the_real_count_of_events_that_day(self, tmp_path):
+        def history(day, hour):
+            return 60 if day == LAST else _worker(day, hour)
+
+        _write_lake(tmp_path, history)
+        _write_calendar(tmp_path, [(_utc(LAST, 14), _utc(LAST, 15))], datetime(2026, 9, 1))
+
+        out = replay.replay_day_off(str(tmp_path), date(2026, 9, 14), LAST)
+
+        assert out["calendar"]["days_with_a_known_count"] > 0
+        assert out["calendar"]["events"] == 1
+        # a booked day lowers confidence to the floor: never more flag-days than an empty one
+        assert out["flag_days"] <= out["calendar_bounds"]["empty_calendar"]["flag_days"]
