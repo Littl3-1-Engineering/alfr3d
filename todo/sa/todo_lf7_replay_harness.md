@@ -2,9 +2,10 @@
 
 Layer: tooling for L1 and L2 | Roadmap: [SA_ROADMAP.md](SA_ROADMAP.md)
 
-Status 2026-11-19: **slices 1 and 2 built, in progress** (branch `feat/sa-replay-harness`,
-uncommitted). Replay harness and parity script exist; Deck reconstruction and the stay finding below
-are open.
+Status 2026-11-19: **slices 1 to 3 built, in progress**. Slices 1 and 2 (replay harness, parity
+script, the stay-arrival fix) merged in PR #422 and deployed to the NUC on 2026-11-18. Slice 3
+(branch `feat/sa-parity-coverage`) adds the Deck family to the replay and parity for the scalar,
+rate and device-rhythm learners. The stay parity re-run waits for days after the deploy.
 
 ## What exists
 
@@ -140,14 +141,74 @@ after any later learner or silver change, never backwards.
   confidence. **After deploying, advance `parity.MATCHING_INPUTS_SINCE`** to the deploy date: live
   behaviour changed, so earlier days no longer compare.
 
+## Slice 3: one-sided days explained, Deck family, three more learners (2026-11-19)
+
+**Presence and daytime one-sided days.**
+- Parity now starts at a **per-learner** date (`parity.MATCHING_INPUTS_SINCE`): the learned bridge
+  (PR #365) was deployed *during* 2026-11-01, so that day's live profile was fitted before it (user
+  6, 11-01: live 3.12 bits against 2.99 replayed). Presence, daytime and household start 11-02; the
+  stay learner starts 11-19 (the arrival fix); rates 11-16 (now-playing de-duplication halved
+  `play_start` rates at the next refit); device rhythm 11-15 (day-type stability).
+- A one-sided day whose flagged score is within 0.5 bits of the bar is `borderline`, reported and
+  never hidden: the nightly silver rebuild re-derives history with the bridge learned that night, so
+  the same day scores a little differently live than from today's lake.
+- Presence 11-02 to 11-17: **MATCH**, 16 shared flagged days, 1 borderline (user 1, 11-09: replay
+  3.2 bits, live nothing). That day is explained by a live-data gap, not a learner: `user.state`
+  never flipped offline for anyone in three windows (about 14:05 UTC 11-07, 20:00 UTC 11-08, 11:21
+  UTC 11-09; no `went_offline` event for users 1, 6, 9 or 10, and the event stream is silent in the
+  11-09 window), while the phones were unseen for 2 to 9 hours. Clean since 11-09 (every later
+  phone gap has its event). The cause in `service_user` is not found; the logs for those days are
+  gone.
+- Daytime 11-02 to 11-17: 8 shared, 2 borderline, **1 mismatch** left (user 6, 11-03, replay-only,
+  3.55 bits, confidence 0.14, below the card floor), 0.05 bits past the tolerance band. Not
+  explained; left flagged and not tuned away.
+- Household day: MATCH (the one flagged day, 6.84 live against 7.17 replayed).
+
+**Deck family reconstructed** (`replay.load_deck`, `replay.deck_state_at`, from bronze
+`deck_context_history` and the install-to-user link on `device_location_history`; two users have a
+reporting Deck). `replay_away_unusual` now runs the real rule with Deck states and
+`--sweep` varies `explained_discount` (only the Deck's wifi state explains in a replay, so this
+calibrates that discount without touching the calendar's). Over 2026-10-22 to 11-18: 11 presence
+deviations in total, **none coincided with a sustained Deck state**, so the Deck family changed no
+flag (1 flag-day with and without it) and the discount sweep (0.5, 0.7, 0.9) is flat. **Not
+calibratable on this data; no constant changed.** By design a very surprising absence survives the
+default 70 % wifi discount (a test pins it).
+
+**Parity for scalar, event_rate, device_rhythm** (`parity.COVERED` is now a per-learner spec: replay,
+subject key, observed days, live-row filter, subject selection). Only subjects live actually scores
+are compared (scalar: the ESPHome temperature and humidity and the two attention series; rates:
+hourly event streams; device rhythm: not household hardware); the rest have only the nightly 48 h
+batch and are reported under `not_compared` with the reason. Nightly batch rows are filtered out.
+Run 2026-11-19, 11-02 onward (rates 11-16, devices 11-15):
+- **event_rate:** MATCH on quiet days only (8 live-scored streams, 2 days, neither side flagged).
+- **scalar_baseline: MISMATCH, 11 days.** Over the 4 live-scored series: 12 shared, 9 live-only,
+  2 replay-only, 4 borderline. The live-only flags are large (14 to 40 bits). Live observed values
+  differ from the lake's hourly means for the same hour (humidity 53.9 live against 51.7; attention
+  counts 3.2 against 0.7 in log units), consistent with live scoring a snapshot against a profile
+  fitted on hourly means, which would overstate z. **Hypothesis, not verified:** my hour lookup may
+  be off by the UTC/local bucket, and the snapshot semantics (`launcher.attention_snapshot`) were
+  not read. Needs a direct check before anyone changes scoring.
+- **device_rhythm: 9 replay-only days, APPROXIMATE replay.** The live rule reads the `device` row's
+  state and last_online; the lake has sessions, so online/offline is approximated (online until 31
+  minutes after a session's last sighting). Replay flags device 4 (Athos's phone) for most of the
+  day on 11-15 to 11-17 (52 to 80 flagged grid times) while live flags nothing, which says the
+  approximation is wrong for that device, not that live is. **Not evidence about live.**
+
 ## Remaining for this phase
 
-- [x] Replay-versus-live parity script (this section). Covers presence, stay, daytime, household
-      day; not yet device_rhythm, scalar, rates, drift.
-- [x] Cause of the stay discrepancy found and fixed (above). Open: deploy it (ask first), then advance `MATCHING_INPUTS_SINCE` and re-run the parity script to confirm the live-only stay days stop.
-- [ ] Look at the 3 daytime one-sided days and the 2 presence ones near the bar.
-- [ ] Reconstruct the Deck family from `deck_context_history` (two installs) and calibrate its floor.
-- [ ] Replays and parity for the remaining learners (rates, scalar, device rhythm).
-- [ ] CI green on the PR; the PR is not opened yet.
-- [ ] Notion rows ("Context learning 1/5") and `timeline.json` (`/home/athos/Projects/littl31`): not
-      updated yet; wording to be approved first.
+- [x] Replay-versus-live parity script. Covers presence, stay, daytime, household day, scalar, event
+      rate and device rhythm (approximate); not drift.
+- [x] Cause of the stay discrepancy found and fixed, deployed 2026-11-18 (PR #422).
+- [x] Presence and daytime one-sided days looked at (above): one live-data gap, one tolerance band,
+      one bridge deploy date, one daytime day left unexplained.
+- [x] Deck family reconstructed; its discount cannot be calibrated yet (no overlap in the data).
+- [ ] **Stay parity re-run** once the lake holds a few days after 2026-11-19 (needs 14 person-days:
+      6 profiles, so 3 days). Expect the live-only stay days to stop.
+- [ ] Verify or kill the scalar hypothesis (snapshot value against hourly-mean profile): read the
+      attention snapshot semantics and check the bucket alignment.
+- [ ] Device-rhythm replay: reconstruct the `device` row state properly (from `device_history`,
+      which has per-scan state) instead of from sessions.
+- [ ] Find why `service_user` emitted no `went_offline` for any user in three windows (11-07 to 11-09).
+- [ ] Re-run parity for the Deck family once Deck states overlap presence deviations; re-run the
+      `explained_discount` sweep then. Same for the calendar discount once free/busy is kept.
+- [ ] Notion and `timeline.json` follow each merged PR.
