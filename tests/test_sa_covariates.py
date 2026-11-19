@@ -229,3 +229,119 @@ class TestScreen:
     def test_it_is_reproducible(self):
         cands = [{"name": "s", "lag_hours": 0, "pairs": _pairs(200, 4, slope=0.4, noise=1.0)}]
         assert covariates.screen(cands, **FAST) == covariates.screen(cands, **FAST)
+
+
+# --- screen_rates: binary and count targets, where a median slope is blind --------------------
+
+
+def _rate_rows(n, seed, driven=0.0, base=0.05):
+    """(feature_by_time, rows of (t, cell, y)): a binary outcome whose probability rises by
+    `driven` when the autocorrelated feature is in its top third. The cell is the hour of day:
+    the caller chooses how much structure to remove, and a cell needs enough rows for a mean."""
+    rng = random.Random(seed)
+    xs, x = [], 0.0
+    for _ in range(n):
+        x = 0.9 * x + rng.gauss(0, 1)  # autocorrelated but stationary, like a weather anomaly
+        xs.append(x)
+    cut = sorted(xs)[(2 * n) // 3]
+    feature, rows = {}, []
+    for i, value in enumerate(xs):
+        t = T0 + timedelta(hours=i)
+        feature[t] = value
+        p = base + (driven if value > cut else 0.0)
+        rows.append((t, t.hour, 1.0 if rng.random() < p else 0.0))
+    return feature, rows
+
+
+STEP = timedelta(hours=1)
+RATES = dict(permutations=99)
+
+
+def _rate_candidate(feature, rows, name="signal", lag=0):
+    return {
+        "name": name,
+        "lag_hours": lag,
+        "pairs": covariates.rate_pairs(feature, rows, lag_hours=lag, step=STEP),
+    }
+
+
+class TestScreenRates:
+    def test_a_planted_rate_shift_is_found_where_the_slope_screen_is_blind(self):
+        feature, rows = _rate_rows(900, 1, driven=0.35)
+        found = covariates.screen_rates([_rate_candidate(feature, rows)], **RATES)[0]
+        assert found["status"] == "effect"
+        assert found["rate_shift"] > 0.15  # the real shift is 0.35, shrunk by cell structure
+        assert found["p_adjusted"] <= 0.05
+
+        # the same data through the slope screen: a mostly-zero target gives a gain of exactly 0
+        slope_pairs = [(feature[t], y, t) for t, _cell, y in rows]
+        blind = covariates.screen([{"name": "signal", "lag_hours": 0, "pairs": slope_pairs}])[0]
+        assert blind["status"] == "insufficient_evidence"
+        assert blind["improvement"] == 0.0
+
+    def test_a_planted_null_is_not_found(self):
+        for seed in range(6):
+            feature, rows = _rate_rows(900, seed, driven=0.0, base=0.15)
+            finding = covariates.screen_rates([_rate_candidate(feature, rows)], **RATES)[0]
+            assert finding["status"] == "insufficient_evidence", seed
+
+    def test_many_null_candidates_do_not_manufacture_an_effect(self):
+        _, rows = _rate_rows(900, 50, driven=0.0, base=0.15)
+        candidates = []
+        for k in range(8):
+            feature, _ = _rate_rows(900, 2000 + k)
+            candidates.append(_rate_candidate(feature, rows, name=f"null{k}", lag=k))
+        findings = covariates.screen_rates(candidates, **RATES)
+        assert [f["status"] for f in findings].count("effect") == 0
+
+    def test_the_real_candidate_survives_among_nulls(self):
+        feature, rows = _rate_rows(900, 8, driven=0.35)
+        decoy, _ = _rate_rows(900, 4242)
+        findings = covariates.screen_rates(
+            [_rate_candidate(feature, rows, "real"), _rate_candidate(decoy, rows, "decoy", 1)],
+            **RATES,
+        )
+        by_name = {f["name"]: f for f in findings}
+        assert by_name["real"]["status"] == "effect"
+        assert by_name["decoy"]["status"] == "insufficient_evidence"
+
+    def test_hour_of_week_structure_is_not_mistaken_for_a_weather_effect(self):
+        # The outcome depends only on the hour of the day; the feature is a pure daily cycle.
+        # Within an hour-of-week cell the feature never varies, so there is nothing to find.
+        rng = random.Random(3)
+        feature, rows = {}, []
+        for i in range(24 * 40):
+            t = T0 + timedelta(hours=i)
+            feature[t] = float(t.hour)
+            rows.append((t, t.hour, 1.0 if rng.random() < 0.05 + 0.02 * t.hour else 0.0))
+        finding = covariates.screen_rates([_rate_candidate(feature, rows)], **RATES)[0]
+        assert finding["status"] == "insufficient_evidence"
+
+    def test_too_few_events_is_insufficient_evidence_not_a_rate(self):
+        feature, rows = _rate_rows(900, 5, driven=0.0, base=0.005)
+        rows = [(t, c, y if i % 40 == 0 else 0.0) for i, (t, c, y) in enumerate(rows)]
+        finding = covariates.screen_rates([_rate_candidate(feature, rows)], **RATES)[0]
+        assert finding["status"] == "insufficient_evidence"
+        assert "events (need 20)" in finding["reason"]
+
+    def test_the_budget_applies_and_it_is_reproducible(self):
+        feature, rows = _rate_rows(300, 6, driven=0.2)
+        cands = [_rate_candidate(feature, rows, f"c{k}", k) for k in range(5)]
+        findings = covariates.screen_rates(cands, max_candidates=3, **RATES)
+        assert [f["status"] == "not_tested" for f in findings] == [False] * 3 + [True] * 2
+        assert covariates.screen_rates(cands, **RATES) == covariates.screen_rates(cands, **RATES)
+
+    def test_a_binary_feature_works(self):
+        rng = random.Random(7)
+        feature, rows, flag, left = {}, [], 0.0, 0
+        for i in range(900):
+            if left == 0:  # runs of random length, like a calendar day or a holiday
+                flag, left = 1.0 - flag, rng.randint(10, 40)
+            left -= 1
+            t = T0 + timedelta(hours=i)
+            feature[t] = flag
+            y = 1.0 if rng.random() < 0.05 + 0.3 * flag else 0.0
+            rows.append((t, t.hour, y))
+        finding = covariates.screen_rates([_rate_candidate(feature, rows)], **RATES)[0]
+        assert finding["status"] == "effect"
+        assert finding["rate_shift"] == pytest.approx(0.3, abs=0.1)
