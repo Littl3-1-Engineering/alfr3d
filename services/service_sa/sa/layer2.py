@@ -21,6 +21,7 @@ the combination code, the persistence or the runner.
 import math
 from datetime import timedelta
 
+from sa import families
 from sa.learners.base import Inference
 
 # A layer-1 deviation is re-upserted each awareness cycle (60 s) while it lasts. A row not
@@ -29,24 +30,12 @@ FRESH_MINUTES = 5
 DEFAULT_MIN_BITS = 3.0
 SIGNAL_CALENDAR_BUSY = "calendar.busy"
 
-# Where a layer-1 signal's evidence comes from. A learner can override per inference by putting
-# evidence["family"]. Signals with no family are skipped, never silently counted as independent.
-FAMILY_BY_SIGNAL = {
-    "presence.home": "network",
-    "device.online": "network",
-    "device.session_minutes": "network",
-    "presence.daytime": "network",
-    SIGNAL_CALENDAR_BUSY: "calendar",
-    "deck.network": "deck",
-}
-# Series and streams share one signal each; their key says where they came from.
-FAMILY_BY_KEY_PREFIX = (
-    ("esphome:", "climate"),
-    ("ha:", "ha"),
-    ("attention:", "attention"),
-    ("email", "email"),
-    ("event:", "events"),
-)
+# Where a layer-1 signal's evidence comes from is declared in sa/families.py (one `Family` per
+# source); a learner can still override per inference by putting evidence["family"]. Signals with
+# no family are skipped, never silently counted as independent. The two names below are derived
+# from the registry and kept for callers that read them.
+FAMILY_BY_SIGNAL = families.signal_map()
+FAMILY_BY_KEY_PREFIX = families.prefix_map()
 
 
 def family_of(inference):
@@ -54,13 +43,8 @@ def family_of(inference):
     evidence = inference.evidence or {}
     if evidence.get("family"):
         return evidence["family"]
-    if inference.signal in FAMILY_BY_SIGNAL:
-        return FAMILY_BY_SIGNAL[inference.signal]
     key = evidence.get("series") or evidence.get("stream") or ""
-    for prefix, family in FAMILY_BY_KEY_PREFIX:
-        if key.startswith(prefix):
-            return family
-    return None
+    return families.family_for(inference.signal, key)
 
 
 def fisher_p(ps, weights):
