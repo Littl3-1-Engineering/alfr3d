@@ -48,6 +48,11 @@ from sa.environment_cards import (  # noqa: F401  (re-exported)
     FORECAST_HOURS_AHEAD,
     RAIN_ADVISORY_THRESHOLD,
 )
+from sa.media_cards import (  # noqa: F401  (re-exported)
+    CROSS_SURFACE_STALENESS_MINUTES,
+    NOW_PLAYING_CONFIG_KEY,
+    MediaCards,
+)
 from sa.health_cards import (  # noqa: F401  (re-exported)
     HealthCards,
     DISK_HEALTH_CHECK_INTERVAL_SECONDS,
@@ -102,19 +107,10 @@ PARTY_ADVISORY_COOLDOWN_MINUTES = 60
 # undefined "last time".
 PARTY_ADVISORY_LAST_NUDGE_TIME = 0.0
 
-# `config` table key check_now_playing() persists the last-seen track under,
-# so the value survives daemon restarts and is queryable by other services.
-NOW_PLAYING_CONFIG_KEY = "music_now_playing"
-
 # `config` table key POST /api/context/surface-state (service_api/routes/context.py)
 # writes the launcher's last-reported active surface/terminal-session state
 # under; read by check_cross_surface_continuity() via _read_config_json().
 SURFACE_STATE_CONFIG_KEY = "launcher_surface_state"
-
-# check_cross_surface_continuity() only offers a resume for state reported/
-# updated within this many minutes -- a paused track or edited routine from
-# hours ago isn't "picking up where you left off" anymore.
-CROSS_SURFACE_STALENESS_MINUTES = 45
 
 # `config` table key POST /api/context/attention-telemetry writes the
 # launcher's most recent rolling-window snapshot under; read by
@@ -203,7 +199,7 @@ GUEST_CARD_PRIORITY_MAX_DEMOTION = 0.08
 TRAVEL_STALE_AFTER_MINUTES = 30
 
 
-class SAEngine(EnvironmentCards, HealthCards, SuppressionMixin):
+class SAEngine(MediaCards, EnvironmentCards, HealthCards, SuppressionMixin):
     def check_situational_awareness(self):
         """Poll data and publish array of situational awareness cards."""
         results = self.decide_displays()
@@ -1416,202 +1412,6 @@ class SAEngine(EnvironmentCards, HealthCards, SuppressionMixin):
         finally:
             if db:
                 db.close()
-
-    def _write_now_playing_config(self, state):
-        """Upsert the now-playing state into `config`, following the same
-        UPDATE-then-INSERT-if-0-rows pattern used elsewhere for this table
-        (e.g. spotify_utils.save_spotify_credentials())."""
-        db = None
-        try:
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            cursor = db.cursor()
-            value = orjson.dumps(state).decode("utf-8")
-            cursor.execute(
-                "UPDATE config SET value = %s WHERE name = %s",
-                (value, NOW_PLAYING_CONFIG_KEY),
-            )
-            if cursor.rowcount == 0:
-                cursor.execute(
-                    "INSERT INTO config (name, value) VALUES (%s, %s)",
-                    (NOW_PLAYING_CONFIG_KEY, value),
-                )
-            db.commit()
-        except Exception as e:
-            logger.error(f"Now playing config write error: {e}")
-        finally:
-            if db:
-                db.close()
-
-    def check_now_playing(self, frame):
-        """Surface a situational-awareness card for whatever's actually
-        playing on Spotify right now, independent of check_gatherings()'s
-        recommendation card.
-
-        Runs every ~60s cycle like every other DISPLAY_RULES check (no
-        separate poll loop -- the daemon's outer loop only ticks that often
-        anyway). Only persists to `config` when the track or play state
-        actually changed. It publishes no event: the daemon's
-        now_playing_monitor already announces every track change (with the
-        track details the Nexus card uses), and a second `play_start` here put
-        two lines per song in the event log and doubled every play_start count
-        the rate and household-day learners read.
-
-        Persists on a play->pause transition too (not just track changes),
-        even though no card is returned for the paused state itself --
-        check_cross_surface_continuity() needs that persisted "paused N
-        minutes ago" state to offer a resume. Before that feature existed,
-        pausing never got persisted at all here.
-
-        `frame.playback` (SA-4) replaces this rule's own
-        spotify_api.get_playback_state() call -- check_party_advisory() reads the exact same
-        fetch. `frame.persisted_now_playing` replaces reading NOW_PLAYING_CONFIG_KEY here --
-        check_cross_surface_continuity() reads that same config row too.
-        """
-        try:
-            state = frame.playback or {}
-            item = state.get("item") or {}
-            track_id = item.get("id")
-            is_playing = state.get("is_playing", False)
-            if not track_id:
-                return None
-
-            # config.value is VARCHAR(512) -- cap title/artist defensively
-            # (no album art is stored here; that's re-fetched live from
-            # GET /api/music/spotify/status when needed).
-            title = (item.get("name") or "")[:150]
-            artist = ", ".join(item.get("artists") or [])[:150]
-
-            last = frame.persisted_now_playing or {}
-            if last.get("track_id") != track_id or last.get("is_playing") != is_playing:
-                self._write_now_playing_config(
-                    {
-                        "track_id": track_id,
-                        "title": title,
-                        "artist": artist,
-                        "is_playing": is_playing,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
-            if not is_playing:
-                return None
-
-            content = f"{title} — {artist}" if artist else title
-            return {
-                "mode": "music",
-                "content": f"Now playing: {content}",
-                "priority": 3.1,
-                "track_title": title,
-                "track_artist": artist,
-                "is_playing": is_playing,
-            }
-        except Exception as e:
-            logger.error(f"Now playing check error: {e}")
-            return None
-
-    def check_cross_surface_continuity(self, frame):
-        """Offer a "pick up where you left off" resume for whichever surface
-        was most recently left active: paused Spotify playback, an edited
-        Matrix routine, or a reported launcher (terminal) session. Reads
-        three existing signals rather than tracking anything new -- see
-        todo/sa/todo_cross_surface_continuity.md.
-
-        Each candidate is discarded if older than
-        CROSS_SURFACE_STALENESS_MINUTES -- a paused track from hours ago
-        isn't "picking up where you left off" anymore. Returns whichever
-        surviving candidate is most recent.
-
-        `frame.persisted_now_playing`/`frame.launcher_context.surface_state` (SA-4) replace
-        this rule's own NOW_PLAYING_CONFIG_KEY/SURFACE_STATE_CONFIG_KEY reads --
-        check_now_playing() reads the same now-playing config row, and the surface-state row
-        isn't duplicated elsewhere but moved into the frame for consistency. The routines
-        query below isn't duplicated by anything else, so it stays its own query.
-        """
-        now = frame.now
-        staleness = timedelta(minutes=CROSS_SURFACE_STALENESS_MINUTES)
-        candidates = []
-
-        now_playing = frame.persisted_now_playing or {}
-        if now_playing.get("is_playing") is False and now_playing.get("updated_at"):
-            try:
-                paused_at = datetime.fromisoformat(now_playing["updated_at"])
-            except ValueError:
-                paused_at = None
-            if paused_at and now - paused_at <= staleness:
-                title = now_playing.get("title") or "your last track"
-                minutes_ago = int((now - paused_at).total_seconds() / 60)
-                candidates.append(
-                    (
-                        paused_at,
-                        {
-                            "mode": "cross_surface_continuity",
-                            "content": f"{title} paused {minutes_ago} min ago — resume?",
-                            "priority": 5.5,
-                            "resume_type": "music",
-                            "resume_target": now_playing.get("track_id"),
-                            "data": {"minutes_ago": minutes_ago},
-                        },
-                    )
-                )
-
-        surface_state = (frame.launcher_context and frame.launcher_context.surface_state) or {}
-        if surface_state.get("terminal_session_active") and surface_state.get("updated_at"):
-            try:
-                reported_at = datetime.fromisoformat(surface_state["updated_at"])
-            except ValueError:
-                reported_at = None
-            if reported_at and now - reported_at <= staleness:
-                candidates.append(
-                    (
-                        reported_at,
-                        {
-                            "mode": "cross_surface_continuity",
-                            "content": "Terminal session still open — resume on the Deck?",
-                            "priority": 5.5,
-                            "resume_type": "terminal",
-                            "resume_target": None,
-                        },
-                    )
-                )
-
-        db = None
-        try:
-            db = pymysql.connect(
-                host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
-            )
-            cursor = db.cursor()
-            cursor.execute(
-                "SELECT name, updated_at FROM routines WHERE updated_at IS NOT NULL "
-                "ORDER BY updated_at DESC LIMIT 1"
-            )
-            row = cursor.fetchone()
-            if row:
-                name, updated_at = row
-                edited_at = updated_at.replace(tzinfo=timezone.utc)
-                if now - edited_at <= staleness:
-                    candidates.append(
-                        (
-                            edited_at,
-                            {
-                                "mode": "cross_surface_continuity",
-                                "content": f'"{name}" routine edited recently — reopen it?',
-                                "priority": 5.5,
-                                "resume_type": "routine",
-                                "resume_target": name,
-                            },
-                        )
-                    )
-        except pymysql.Error as e:
-            logger.error("Cross-surface continuity routine check error: " + str(e))
-        finally:
-            if db:
-                db.close()
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda c: c[0], reverse=True)
-        return candidates[0][1]
 
     def _read_fresh_attention_telemetry(self):
         """Return the most recent attention-telemetry snapshot (see
