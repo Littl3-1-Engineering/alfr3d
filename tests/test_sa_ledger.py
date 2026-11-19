@@ -78,11 +78,11 @@ class TestLedger:
         assert "scalar_baseline" in entry["readers"]
         assert "environment_history" in entry["provenance"]
 
-    def test_a_zero_filled_feature_says_so_in_its_note(self, tmp_path):
+    def test_the_calendar_note_says_it_is_unknown_not_free_before_capture(self, tmp_path):
         out = ledger.build(_lake(tmp_path))
         entry = next(f for f in out["features"] if f["key"] == "calendar_busy_minutes")
 
-        assert "ZERO-FILLED" in entry["note"]
+        assert "unknown, not free" in entry["note"]
 
     def test_a_registered_feature_with_no_data_is_listed_as_captured_with_zero_rows(self, tmp_path):
         out = ledger.build(_lake(tmp_path))

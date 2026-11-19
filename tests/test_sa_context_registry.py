@@ -58,7 +58,7 @@ START = datetime(2026, 10, 5, 0)  # a Monday, UTC
 HOURS = 24 * 12  # 12 days, spanning a weekend and (with the October dates) Thanksgiving
 
 
-def _con(with_weather=True, with_calendar=True):
+def _con(with_weather=True, with_calendar=True, captured_from=None):
     con = duckdb.connect()
     con.execute(f"CREATE MACRO to_local(ts) AS timezone('{silver.TIMEZONE}', timezone('UTC', ts))")
     # The presence grid: two people, the second absent some hours, some hours unobserved.
@@ -83,10 +83,11 @@ def _con(with_weather=True, with_calendar=True):
     if with_weather:
         con.execute(
             "CREATE TABLE s_weather_hourly (bucket_utc TIMESTAMP, temperature_c DOUBLE, "
-            "humidity_pct DOUBLE, pressure_hpa DOUBLE, description VARCHAR)"
+            "humidity_pct DOUBLE, pressure_hpa DOUBLE, description VARCHAR, "
+            "forecast_temp_c DOUBLE, forecast_rain_probability DOUBLE)"
         )
         con.executemany(
-            "INSERT INTO s_weather_hourly VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO s_weather_hourly VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     START + timedelta(hours=i),
@@ -94,6 +95,8 @@ def _con(with_weather=True, with_calendar=True):
                     40.0 + i % 30,
                     1000.0 + i % 9,
                     "light rain" if i % 7 == 0 else "clear sky",
+                    9.0 + (i % 13) / 3,
+                    (i % 10) / 10.0,
                 )
                 for i in range(HOURS)
                 if i % 11 != 0  # gaps: a missing hour is a NULL, not a zero
@@ -105,13 +108,18 @@ def _con(with_weather=True, with_calendar=True):
             "INSERT INTO calendar_hourly VALUES (?, ?)",
             [(START + timedelta(hours=i * 13), 30.0 + i) for i in range(20)],
         )
+        # the calendar was captured from the first hour of the window unless a test says otherwise
+        con.execute("CREATE TABLE calendar_capture (captured_from TIMESTAMP)")
+        con.execute("INSERT INTO calendar_capture VALUES (?)", [captured_from or START])
     return con
 
 
-def _available(con):
-    return {
+def _available(con, forecast=False):
+    tables = {
         r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()
     } | {"g_presence_grid"}
+    # the build adds this token when weather_hourly carries the forecast columns
+    return tables | ({"s_weather_forecast"} if forecast else set())
 
 
 def _registry_table(con):
@@ -303,3 +311,119 @@ class TestRegistryIsSound:
 
         assert readers <= known
         assert {"scalar", "drift", "presence", "daytime", "household_day"} <= modules
+
+
+class TestCalendarIsUnknownBeforeCapture:
+    def _wide(self, con, captured_from):
+        con.execute(f"CREATE TABLE context_features AS {reg.features_query(_available(con))}")
+        con.execute("CREATE VIEW g_context_features AS SELECT * FROM context_features")
+        return reg.context_hourly_query(_available(con))
+
+    def test_hours_before_capture_are_null_not_zero(self):
+        captured = START + timedelta(hours=48)
+        con = _con(captured_from=captured)
+        wide = self._wide(con, captured)
+
+        before = con.execute(
+            f"SELECT COUNT(*), COUNT(calendar_busy_minutes) FROM ({wide}) WHERE bucket_utc < ?",
+            [captured],
+        ).fetchone()
+        after_nulls = con.execute(
+            f"SELECT COUNT(*) FROM ({wide}) WHERE bucket_utc >= ? "
+            "AND calendar_busy_minutes IS NULL",
+            [captured],
+        ).fetchone()[0]
+
+        assert before == (48, 0)  # unknown, not free
+        assert after_nulls == 0  # captured: an hour with no event is a real 0
+
+    def test_from_capture_on_the_values_are_exactly_the_old_ones(self):
+        captured = START + timedelta(hours=48)
+        con = _con(captured_from=captured)
+        legacy = _legacy_context_hourly(True, True)
+        wide = self._wide(con, captured)
+
+        diff = con.execute(
+            f"SELECT COUNT(*) FROM (SELECT * FROM ({legacy}) WHERE bucket_utc >= ? "
+            f"EXCEPT SELECT * FROM ({wide}) WHERE bucket_utc >= ?)",
+            [captured, captured],
+        ).fetchone()[0]
+
+        assert diff == 0
+
+    def test_a_lake_with_no_capture_record_has_no_calendar_column_values(self):
+        con = _con(with_calendar=True)
+        con.execute("DROP TABLE calendar_capture")
+        con.execute(f"CREATE TABLE context_features AS {reg.features_query(_available(con))}")
+        con.execute("CREATE VIEW g_context_features AS SELECT * FROM context_features")
+        wide = reg.context_hourly_query(_available(con))
+
+        n = con.execute(f"SELECT COUNT(calendar_busy_minutes) FROM ({wide})").fetchone()[0]
+
+        assert n == 0
+
+
+class TestForecastFeatures:
+    def test_forecast_features_exist_in_the_long_table_not_the_wide_one(self):
+        con = _con()
+        available = _available(con, forecast=True)
+        con.execute(f"CREATE TABLE context_features AS {reg.features_query(available)}")
+        con.execute("CREATE VIEW g_context_features AS SELECT * FROM context_features")
+
+        keys = {
+            r[0]
+            for r in con.execute("SELECT DISTINCT feature_key FROM context_features").fetchall()
+        }
+        wide = reg.context_hourly_query(available)
+        cols = [d[0] for d in con.execute(f"SELECT * FROM ({wide}) LIMIT 0").description]
+
+        assert {"forecast_temp_c", "forecast_rain_probability", "forecast_error_6h_c"} <= keys
+        assert not {"forecast_temp_c", "forecast_error_6h_c"} & set(
+            cols
+        )  # context_hourly unchanged
+
+    def test_the_forecast_error_is_the_observation_six_hours_later_minus_the_forecast(self):
+        con = _con()
+        available = _available(con, forecast=True)
+        con.execute(f"CREATE TABLE context_features AS {reg.features_query(available)}")
+        hour = START + timedelta(hours=30)
+
+        got = con.execute(
+            "SELECT value_num FROM context_features WHERE feature_key = 'forecast_error_6h_c' "
+            "AND bucket_utc = ?",
+            [hour],
+        ).fetchone()[0]
+        expected = con.execute(
+            "SELECT (SELECT temperature_c FROM s_weather_hourly WHERE bucket_utc = ?) "
+            "- (SELECT forecast_temp_c FROM s_weather_hourly WHERE bucket_utc = ?)",
+            [hour + timedelta(hours=6), hour],
+        ).fetchone()[0]
+
+        assert got == pytest.approx(expected)
+
+    def test_no_error_where_the_observation_six_hours_later_does_not_exist(self):
+        con = _con()
+        available = _available(con, forecast=True)
+        con.execute(f"CREATE TABLE context_features AS {reg.features_query(available)}")
+        last = START + timedelta(hours=HOURS - 1)
+
+        n = con.execute(
+            "SELECT COUNT(*) FROM context_features WHERE feature_key = 'forecast_error_6h_c' "
+            "AND bucket_utc > ?",
+            [last - timedelta(hours=6)],
+        ).fetchone()[0]
+
+        assert n == 0  # never an invented value for the future
+
+    def test_forecast_features_are_not_built_when_weather_has_no_forecast_columns(self):
+        con = _con()
+
+        query = reg.features_query(_available(con, forecast=False))
+
+        assert "forecast_temp_c" not in query and "forecast_error_6h_c" not in query
+
+    def test_the_forecast_features_say_how_approximate_the_lead_is(self):
+        by_key = {f.key: f for f in reg.REGISTRY}
+
+        assert "target time is not stored" in by_key["forecast_temp_c"].provenance
+        assert "Approximate" in by_key["forecast_error_6h_c"].description
