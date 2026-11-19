@@ -323,3 +323,27 @@ class TestCoverage:
             for name, spec in parity.COVERED.items()
             if name != "device_rhythm"
         )
+
+
+class TestScalarBand:
+    def test_the_scalar_band_is_half_a_sigma_not_half_a_bit(self):
+        from services.service_sa.sa.learners import scalar
+
+        margin = parity.NEAR_BAR_MARGIN_BITS["scalar_baseline"]
+        bar = parity.BAR_BITS["scalar_baseline"]
+
+        assert bar == parity._z_bits(scalar.MIN_ABS_Z)
+        assert margin == parity._z_bits(scalar.MIN_ABS_Z + 0.5) - bar
+        assert margin > 2.0  # the 4 sigma bar is near 14 bits; half a bit would be a sliver
+
+    def test_a_flag_half_a_sigma_over_the_bar_is_borderline_for_scalar_only(self):
+        bar = parity.BAR_BITS["scalar_baseline"]
+        flagged = {DAYS[1]: {"bits": bar + 2.0, "confidence": 0.5, "n": 1}}
+
+        wide = parity.compare_days(
+            flagged, {}, DAYS, bar, parity.NEAR_BAR_MARGIN_BITS["scalar_baseline"]
+        )
+        narrow = parity.compare_days(flagged, {}, DAYS, bar)
+
+        assert wide["outcomes"]["borderline"] == 1
+        assert narrow["outcomes"]["live_only"] == 1
