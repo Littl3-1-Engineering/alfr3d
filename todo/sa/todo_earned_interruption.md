@@ -9,9 +9,9 @@
 
 | | value |
 |---|---|
-| impressions (`action = 'impression'`, 2026-11-02 to 11-20) | **124** (deck 89, web 35), about 6.5 a day |
-| explicit interactions since 2026-11-01 | **6**: `acked` 4, `dismissed` 1, `not_useful` 1 (all Deck) |
-| rules with at least 5 explicit interactions | **0** (the most is `time` and `household_composition` with 3 and 2) |
+| impressions (`action = 'impression'`, 2026-11-02 to 11-20) | **125** (124 at the first count; deck 89, web 35 then), about 6.5 a day |
+| explicit interactions since 2026-11-01 (`tapped`, `acked`, `not_useful`) | **5**: `acked` 4, `not_useful` 1 (all Deck). One `dismissed` (neutral) is not counted; the first version of this table counted it and said 6 |
+| rules with at least 5 explicit interactions | **0** (the most is 2, for `time` and `household_composition`) |
 | most impressions for one rule | `household_composition` 29, `time` 27, `rhythm_break_anomaly` 21, `email` 16, the other 8 rules 8 or fewer |
 | `visible_ms` | present on every impression; 3 s to 6,657 s, rule means 20 s to 1,139 s |
 
