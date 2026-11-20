@@ -1172,3 +1172,155 @@ async def get_context_findings(
             for key, found in targets.items()
         ],
     }
+
+
+# --- GET /api/context/teach-me: the visible user model (sa_profiles + sa_inferences), read-only ---
+
+TEACH_ME_DEFAULT_DAYS = 14
+TEACH_ME_MAX_DAYS = 90
+
+
+def _json_value(value):
+    if isinstance(value, (str, bytes)):
+        try:
+            return orjson.loads(value)
+        except orjson.JSONDecodeError:
+            return None
+    return value
+
+
+def _iso(value):
+    return value.isoformat() if value is not None else None
+
+
+def _teach_profile(row, include_params):
+    (learner, version, subject_type, subject_id, signal, params, n_eff, coverage, quality,
+     stability, fitted_from, fitted_to, computed_at) = row  # fmt: skip
+    params = _json_value(params)
+    evidence = {
+        "fitted_from": _iso(fitted_from),
+        "fitted_to": _iso(fitted_to),
+        "computed_at": _iso(computed_at),
+    }
+    if include_params:
+        evidence["params"] = params
+    else:
+        evidence["param_keys"] = sorted(params) if isinstance(params, dict) else []
+    return {
+        "profile": {
+            "learner": learner,
+            "learner_version": version,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "signal": signal,
+        },
+        # The stored components, not a combined number: sa/confidence.py multiplies them with a
+        # sufficiency term that is not stored, so a single figure here would be invented.
+        "confidence": {
+            "n_eff": n_eff,
+            "coverage": coverage,
+            "source_quality": quality,
+            "stability": stability,
+        },
+        "evidence": evidence,
+    }
+
+
+def _teach_inference(row):
+    (layer, kind, subject_type, subject_id, signal, context, window_start, window_end, observed,
+     expected, probability, surprise, confidence, n_eff, evidence, learner,
+     computed_at) = row  # fmt: skip
+    return {
+        "profile": {
+            "layer": layer,
+            "kind": kind,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "signal": signal,
+            "learner": learner,
+            "window_start": _iso(window_start),
+            "window_end": _iso(window_end),
+        },
+        "confidence": {
+            "probability": probability,
+            "surprise_bits": surprise,
+            "confidence": confidence,
+            "n_eff": n_eff,
+        },
+        "evidence": {
+            "observed": _json_value(observed),
+            "expected": _json_value(expected),
+            "context": _json_value(context),
+            "because": _json_value(evidence),
+            "computed_at": _iso(computed_at),
+        },
+    }
+
+
+@router.get("/context/teach-me")
+async def get_teach_me(
+    learner: Optional[str] = Query(None, max_length=48),
+    subject_type: Optional[str] = Query(None, max_length=16),
+    signal: Optional[str] = Query(None, max_length=48),
+    days: int = Query(TEACH_ME_DEFAULT_DAYS, ge=1, le=TEACH_ME_MAX_DAYS),
+    min_confidence: float = Query(0.0, ge=0.0, le=1.0),
+    include_params: bool = Query(False),
+    limit: int = Query(100, ge=1, le=500),
+    _user=Depends(require_permission("context", "teach_me")),
+):
+    """What Alfr3d has learned about the household, in the Teach-me shape (profile, confidence,
+    evidence): the learners' fitted profiles (`sa_profiles`) and the scored inferences of the last
+    `days` days (`sa_inferences`), newest first.
+
+    Owner only (`context` / `teach_me` is technoking-only; a resident or guest gets 403): learned
+    state describes people's routines. Read-only: it reads two tables and writes nothing, drives
+    no card and no actuation. A profile's `params` can be large, so they are returned only with
+    `include_params=true`; otherwise just their top-level keys. Confidence is reported as the stored
+    components, never a combined figure. `min_confidence` filters inferences only.
+    """
+    import pymysql
+
+    p_where, p_params = [], []
+    i_where, i_params = ["computed_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY)"], [days]
+    i_where.append("COALESCE(confidence, 0) >= %s")
+    i_params.append(min_confidence)
+    for column, value in (("learner", learner), ("subject_type", subject_type), ("signal", signal)):
+        if value:
+            p_where.append(f"{column} = %s")
+            p_params.append(value)
+            i_where.append(f"{column} = %s")
+            i_params.append(value)
+    try:
+        with db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT learner, learner_version, subject_type, subject_id, signal, params, n_eff, "
+                "coverage, source_quality, stability, fitted_from, fitted_to, computed_at "
+                f"FROM sa_profiles {'WHERE ' + ' AND '.join(p_where) if p_where else ''} "
+                "ORDER BY learner, subject_type, subject_id, signal LIMIT %s",
+                p_params + [limit],
+            )
+            profiles = cursor.fetchall()
+            cursor.execute(
+                "SELECT layer, kind, subject_type, subject_id, signal, context, window_start, "
+                "window_end, observed, expected, probability, surprise, confidence, n_eff, "
+                f"evidence, learner, computed_at FROM sa_inferences WHERE {' AND '.join(i_where)} "
+                "ORDER BY computed_at DESC, id DESC LIMIT %s",
+                i_params + [limit],
+            )
+            inferences = cursor.fetchall()
+    except pymysql.err.ProgrammingError as e:
+        if e.args and e.args[0] == 1146:
+            return {"available": False, "profiles": [], "inferences": []}
+        logger.error(f"Error reading the teach-me model: {e}")
+        raise HTTPException(status_code=500, detail="learned model unavailable")
+    except Exception as e:
+        logger.error(f"Error reading the teach-me model: {e}")
+        raise HTTPException(status_code=500, detail="learned model unavailable")
+
+    return {
+        "available": True,
+        "window_days": days,
+        "profiles": [_teach_profile(r, include_params) for r in profiles],
+        "inferences": [_teach_inference(r) for r in inferences],
+    }

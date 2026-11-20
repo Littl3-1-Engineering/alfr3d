@@ -2381,3 +2381,125 @@ def test_findings_failure_is_a_500_without_leaking_detail(api_client):
 def test_findings_are_a_read_route_with_no_write_methods(api_client):
     assert api_client.post("/api/context/findings").status_code in (404, 405)
     assert api_client.delete("/api/context/findings").status_code in (404, 405)
+
+
+# --- GET /api/context/teach-me (owner-only, read-only view of sa_profiles + sa_inferences) ---
+
+
+def _teach_db(profiles=None, inferences=None, error=None):
+    cm = MagicMock()
+    db = MagicMock()
+    cursor = db.cursor.return_value
+    if error:
+        cursor.execute.side_effect = error
+    cursor.fetchall.side_effect = [profiles or [], inferences or []]
+    cm.__enter__.return_value = db
+    return cm, cursor
+
+
+def _teach_profile_row(params='{"hours": [0.1, 0.2], "n": 40}'):
+    return (
+        "presence", "1.0", "user", "1", "presence.home", params, 38.5, 0.9, 1.0, 0.8,
+        date(2026, 10, 1), date(2026, 11, 18), datetime(2026, 11, 19, 3, 30),
+    )  # fmt: skip
+
+
+def _teach_inference_row():
+    return (
+        1, "deviation", "user", "1", "presence.home", '{"daypart": "morning"}',
+        datetime(2026, 11, 19, 8), datetime(2026, 11, 19, 9), '{"home": false}',
+        '{"p_home": 0.9}', 0.1, 3.32, 0.42, 30.0, '{"because": ["usually home"]}', "presence",
+        datetime(2026, 11, 19, 9, 5),
+    )  # fmt: skip
+
+
+def _owner():
+    return _bearer(1, "technoking")
+
+
+def test_teach_me_requires_an_owner(api_client):
+    assert api_client.get("/api/context/teach-me").status_code == 401
+    for role in ("resident", "guest"):
+        response = api_client.get("/api/context/teach-me", headers=_bearer(2, role))
+        assert response.status_code == 403, role
+    cm, _ = _teach_db()
+    with patch("routes.context.db_connection", return_value=cm):
+        owner = api_client.get("/api/context/teach-me", headers=_bearer(1, "owner"))
+    assert owner.status_code == 200
+
+
+def test_teach_me_comes_in_the_profile_confidence_evidence_shape(api_client):
+    cm, _ = _teach_db(profiles=[_teach_profile_row()], inferences=[_teach_inference_row()])
+    with patch("routes.context.db_connection", return_value=cm):
+        data = api_client.get("/api/context/teach-me", headers=_owner()).json()
+
+    assert data["available"] is True and data["window_days"] == 14
+    prof = data["profiles"][0]
+    assert prof["profile"] == {
+        "learner": "presence",
+        "learner_version": "1.0",
+        "subject_type": "user",
+        "subject_id": "1",
+        "signal": "presence.home",
+    }
+    assert prof["confidence"] == {
+        "n_eff": 38.5,
+        "coverage": 0.9,
+        "source_quality": 1.0,
+        "stability": 0.8,
+    }
+    assert prof["evidence"]["param_keys"] == ["hours", "n"] and "params" not in prof["evidence"]
+    assert prof["evidence"]["fitted_to"] == "2026-11-18"
+    inf = data["inferences"][0]
+    assert inf["profile"]["kind"] == "deviation" and inf["profile"]["layer"] == 1
+    assert inf["confidence"]["surprise_bits"] == 3.32 and inf["confidence"]["confidence"] == 0.42
+    assert inf["evidence"]["observed"] == {"home": False}
+    assert inf["evidence"]["because"] == {"because": ["usually home"]}
+
+
+def test_teach_me_params_only_on_request(api_client):
+    cm, _ = _teach_db(profiles=[_teach_profile_row()])
+    with patch("routes.context.db_connection", return_value=cm):
+        data = api_client.get(
+            "/api/context/teach-me", params={"include_params": "true"}, headers=_owner()
+        ).json()
+    assert data["profiles"][0]["evidence"]["params"] == {"hours": [0.1, 0.2], "n": 40}
+
+
+def test_teach_me_filters_are_parameters(api_client):
+    cm, cursor = _teach_db()
+    evil = "x'; DROP TABLE sa_profiles; --"
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get(
+            "/api/context/teach-me", params={"learner": evil}, headers=_owner()
+        )
+    assert response.status_code == 200
+    for call in cursor.execute.call_args_list:
+        sql, params = call.args
+        assert "DROP TABLE" not in sql and evil in params
+
+    for bad in ({"days": 0}, {"days": 500}, {"min_confidence": 2}, {"limit": 0}, {"limit": 9999}):
+        assert (
+            api_client.get("/api/context/teach-me", params=bad, headers=_owner()).status_code == 422
+        )
+
+
+def test_teach_me_before_the_tables_exist_is_unavailable_not_an_error(api_client):
+    missing = pymysql.err.ProgrammingError(1146, "Table 'sa_profiles' doesn't exist")
+    cm, _ = _teach_db(error=missing)
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get("/api/context/teach-me", headers=_owner())
+    assert response.status_code == 200
+    assert response.json() == {"available": False, "profiles": [], "inferences": []}
+
+
+def test_teach_me_failure_is_a_500_without_leaking_detail(api_client):
+    cm, _ = _teach_db(error=RuntimeError("secret host"))
+    with patch("routes.context.db_connection", return_value=cm):
+        response = api_client.get("/api/context/teach-me", headers=_owner())
+    assert response.status_code == 500 and "secret" not in response.text
+
+
+def test_teach_me_is_a_read_route_with_no_write_methods(api_client):
+    assert api_client.post("/api/context/teach-me", headers=_owner()).status_code in (404, 405)
+    assert api_client.delete("/api/context/teach-me", headers=_owner()).status_code in (404, 405)
