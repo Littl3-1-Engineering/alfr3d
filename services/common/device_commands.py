@@ -22,7 +22,9 @@ from .db_pool import get_connection
 
 logger = logging.getLogger(__name__)
 
-ORIGINS = ("user", "routine", "system")
+# "autonomy" is Layer 3 acting under an owner-granted level; it must stay distinguishable from
+# "system" so rate limits, idempotency and the predictor can tell it apart.
+ORIGINS = ("user", "routine", "system", "autonomy")
 
 # smarthome_devices column that identifies a device for each source -- used to resolve
 # smarthome_device_id at write time.

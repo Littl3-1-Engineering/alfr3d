@@ -390,3 +390,70 @@ class TestCoolingOffStaysDataOnly:
             "def execute",
         ):
             assert forbidden not in source
+
+
+class TestOwnUnreversedActionsAreNotApproval:
+    """At level 2 or 3 an action nobody undid is silence, not agreement
+    (todo/sa/todo_l3_executor_spec.md review item 5)."""
+
+    def test_without_the_cause_split_it_is_as_before(self):
+        assert proposals.recommend(EVIDENCE)["recommend"] is True
+
+    def test_the_actions_alfr3d_took_itself_do_not_count_as_acceptance(self):
+        own = {"proposals": 30, "acted_on": 30, "acted_on_alfr3d": 30, "undone": 0}
+        got = proposals.recommend(own)
+        assert got["recommend"] is False and "acceptance 0%" in got["reason"]
+
+    def test_a_mix_counts_only_the_household_share(self):
+        mixed = {"proposals": 30, "acted_on": 28, "acted_on_alfr3d": 6, "undone": 0}
+        got = proposals.recommend(mixed)  # 22 of 30 = 73 %
+        assert got["recommend"] is False and "acceptance 73%" in got["reason"]
+        ok = {
+            "proposals": 30,
+            "acted_on": 28,
+            "acted_on_alfr3d": 3,
+            "undone": 0,
+        }  # 25 of 30 = 83 %
+        assert proposals.recommend(ok)["recommend"] is True
+
+    def test_a_recommendation_shows_the_unreversed_own_actions_separately(self):
+        ok = {"proposals": 30, "acted_on": 28, "acted_on_alfr3d": 3, "undone": 0}
+        assert "3 of its own unreversed actions not counted" in proposals.recommend(ok)["reason"]
+
+    def test_level_2_cannot_recommend_itself_into_level_3(self):
+        at_level_2 = {
+            "proposals": 40,
+            "acted_on": 40,
+            "acted_on_alfr3d": 40,
+            "undone": 0,
+        }
+        assert proposals.recommend(at_level_2)["recommend"] is False
+
+
+class TestEvidenceFromLabels:
+    def test_counts_by_label_and_separates_the_cause(self):
+        from services.service_sa.sa import outcomes
+
+        labelled = [
+            (outcomes.ACTED_ON, "household"),
+            (outcomes.ACTED_ON, "household"),
+            (outcomes.ACTED_ON, "alfr3d"),
+            (outcomes.UNDONE, "alfr3d"),
+            (outcomes.REJECTED, None),
+            (outcomes.IGNORED, None),
+            (outcomes.PENDING, None),
+        ]
+        got = outcomes.evidence_from_labels(labelled)
+        assert got == {
+            "proposals": 6,  # pending is not decided yet, so it is not counted
+            "acted_on": 3,
+            "acted_on_alfr3d": 1,
+            "undone": 1,
+            "rejected": 1,
+            "ignored": 1,
+        }
+
+    def test_an_empty_history_is_all_zero(self):
+        from services.service_sa.sa import outcomes
+
+        assert outcomes.evidence_from_labels([])["proposals"] == 0

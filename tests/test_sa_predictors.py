@@ -159,3 +159,74 @@ class TestRegistryAndSafety:
 
     def test_no_lake_is_an_empty_result_not_an_error(self, tmp_path):
         assert predictors.evaluate_lake(tmp_path) == {}
+
+
+class TestAutonomyHoursAreNotTrainingData:
+    """A lamp the executor turned on at 19:00 must not teach the predictor to turn it on at 19:00
+    (todo/sa/todo_l3_executor_spec.md review item 4). The state it caused is excluded from the rows
+    from the command until the next change of state, whoever made that change."""
+
+    def test_hours_caused_by_an_autonomy_command_are_dropped(self):
+        tr = [
+            (D0 + timedelta(hours=17, seconds=3), "on"),
+            (D0 + timedelta(hours=21, minutes=30), "off"),
+        ]
+        cmd = [(D0 + timedelta(hours=17), "on")]
+        plain = predictors.hourly_states(tr, D0 + timedelta(hours=24), UTC)
+        kept = predictors.hourly_states(tr, D0 + timedelta(hours=24), UTC, autonomy=cmd)
+        hours = [h for _d, h, *_ in kept]
+        assert [h for _d, h, *_ in plain] == list(range(17, 24))
+        assert hours == [22, 23]  # 17-21 were the executor's doing (21 is mixed)
+
+    def test_a_household_change_is_still_learned_from(self):
+        tr = [(D0 + timedelta(hours=17), "on"), (D0 + timedelta(hours=21), "off")]
+        cmd = [(D0 + timedelta(hours=9), "on")]  # an unrelated, earlier autonomy command
+        kept = predictors.hourly_states(tr, D0 + timedelta(hours=24), UTC, autonomy=cmd)
+        assert len(kept) == 7
+
+    def test_the_command_must_match_the_state_it_caused(self):
+        tr = [(D0 + timedelta(hours=17, seconds=3), "on")]
+        wrong = [(D0 + timedelta(hours=17), "off")]
+        assert len(predictors.hourly_states(tr, D0 + timedelta(hours=20), UTC, autonomy=wrong)) == 3
+
+    def test_a_command_long_before_the_change_did_not_cause_it(self):
+        tr = [(D0 + timedelta(hours=17, minutes=30), "on")]
+        cmd = [(D0 + timedelta(hours=17), "on")]  # 30 minutes earlier: a person did this one
+        assert len(predictors.hourly_states(tr, D0 + timedelta(hours=20), UTC, autonomy=cmd)) == 3
+
+    def test_without_any_autonomy_commands_nothing_changes(self):
+        tr = _schedule(12)
+        assert predictors.hourly_states(
+            tr, D0 + timedelta(days=12), UTC, autonomy=()
+        ) == predictors.hourly_states(tr, D0 + timedelta(days=12), UTC)
+
+    def test_a_lamp_the_executor_runs_does_not_look_predictable(self):
+        """Every on-change is autonomy-caused: the predictor must have nothing to learn from."""
+        tr = _schedule(30)
+        cmds = [(t - timedelta(seconds=2), s) for t, s in tr]
+        rows = predictors.hourly_states(tr, D0 + timedelta(days=30), UTC, autonomy=cmds)
+        assert predictors.evaluate(rows)["status"] == "insufficient_evidence"
+        assert predictors.evaluate(_rows(tr, 30))["status"] == "scored"
+
+    def test_autonomy_commands_are_read_from_the_lake(self, tmp_path):
+        import duckdb
+
+        folder = tmp_path / "bronze" / "device_command_history" / "date=2026-10-01"
+        folder.mkdir(parents=True)
+        con = duckdb.connect()
+        con.execute(
+            "CREATE TABLE c AS SELECT * FROM (VALUES "
+            "('switch.lamp','turn_on','autonomy',1,TIMESTAMP '2026-10-01 17:00:00'),"
+            "('switch.lamp','turn_off','user',1,TIMESTAMP '2026-10-01 18:00:00'),"
+            "('switch.lamp','turn_on','autonomy',0,TIMESTAMP '2026-10-01 19:00:00'),"
+            "('switch.other','turn_off','autonomy',1,TIMESTAMP '2026-10-01 20:00:00'),"
+            "('switch.lamp','toggle','autonomy',1,TIMESTAMP '2026-10-01 21:00:00')"
+            ") t(entity_ref, command, origin, success, issued_at)"
+        )
+        con.execute(f"COPY c TO '{folder / 'part-0.parquet'}' (FORMAT PARQUET)")
+        got = predictors.autonomy_commands(str(tmp_path))
+        assert got == {
+            "switch.lamp": [(datetime(2026, 10, 1, 17), "on")],  # only successful, autonomy, on/off
+            "switch.other": [(datetime(2026, 10, 1, 20), "off")],
+        }
+        assert predictors.autonomy_commands(str(tmp_path / "nothing")) == {}

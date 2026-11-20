@@ -68,6 +68,25 @@ def test_record_device_command_unknown_origin_becomes_system(_no_device_command_
     assert _no_device_command_db_writes[0][1][_SUCCESS] is False
 
 
+def test_autonomy_is_a_recorded_origin_not_rewritten_to_system(
+    _no_device_command_db_writes,
+):
+    """Autonomous commands must be distinguishable from the daemon's in device_command_history
+    (todo/sa/todo_l3_executor_spec.md review item 2); rate limits and idempotency read it.
+    """
+    assert "autonomy" in device_commands.ORIGINS
+    device_commands.record_device_command(
+        source="homeassistant",
+        entity_ref="switch.x",
+        command="turn_on",
+        success=True,
+        origin="autonomy",
+        context={"proposal_id": "p-1", "level": 2},
+    )
+
+    assert _no_device_command_db_writes[0][1][_ORIGIN] == "autonomy"
+
+
 def test_record_device_command_never_raises(monkeypatch):
     def boom(sql, args):
         raise RuntimeError("Table 'device_command_history' doesn't exist")

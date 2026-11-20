@@ -101,3 +101,78 @@ Where it replaces old wording, in this repository (tracked docs only): `todo_tra
 `AGENTS.md` and `CLAUDE.md` stay gitignored and are not edited, committed or merged; the rule is not
 added to either.** The Claude Code working rule "Nothing autonomously actuates a device" is in the
 Notion prompt page, not in the repo; it is changed only with the owner's wording approval.
+
+## Review of this spec against the code (2026-11-20, for the owner; nothing built)
+
+Read after the re-promotion work, against `util_routines.py`, `common/ha_utils.py`,
+`common/device_commands.py`, `routes/iot.py`, `sa/predictors.py` and `sa/outcomes.py`. Six things in
+the spec above are wrong or missing. None is fatal; all must be settled before any code that can act.
+
+1. **Step 8 names a function that cannot do the job, and a worse one is nearby.**
+   `util_routines.control_iot_device` accepts only `thermostat_set`, `lock`, `unlock`, `cover_open`
+   and `cover_close`; for `switch_on` it returns "Unknown action type". It also lives in
+   `service_daemon`, which the SA image does not contain, and it is the function that can **unlock a
+   door**. Do not route autonomy through it. The real low-level call is
+   `common.ha_utils.ha_control_device(entity_id, "turn_on" | "turn_off", origin=..., context=...)`
+   (`common/` is in the SA image; HA credentials come from the `config` table). The executor should be
+   one narrow wrapper that maps only registered action types (`switch_on`, `switch_off`) to those two
+   services and refuses any entity outside the `switch` and `light` domains. That makes the
+   allowlist structural, not a convention.
+2. **`origin = "autonomy"` would silently be recorded as `system`.** `device_commands.ORIGINS` is
+   `("user", "routine", "system")` and an unknown value is rewritten to `system`, so autonomous
+   commands would be indistinguishable from the daemon's in `device_command_history`. Add `autonomy`
+   to `ORIGINS` (the column is VARCHAR(16), so it fits, no migration) with a test that the stored row
+   says `autonomy`. Rate limits and idempotency then come from that table (durable across restarts)
+   instead of in-memory counters.
+3. **HA answers 200 for an entity that no longer exists** (documented in `routes/iot.py`), so "command
+   sent" is not success. Before acting the executor must check the entity exists
+   (`ha_entity_exists`); after acting it must confirm the state actually changed
+   (`refresh_ha_device_state`). No change, or a change it cannot attribute, is the spec's "failed or
+   ambiguous" case: demote to level 0 and raise a card.
+4. **The predictor would learn from its own actions.** `switch_usual_state` trains on the HA state
+   history "whoever changed the state". Once the executor turns a lamp on at 19:00 that state is
+   training evidence for turning it on at 19:00: a loop that makes the prediction look better each
+   time it acts. Before levels 2 and 3 can act, hours whose state change was caused by an
+   `autonomy` command (readable from `device_command_history`, already in the lake) must be excluded
+   from training and from the held-out score.
+5. **A type would count its own unreversed actions as approval.** `label_action` already records the
+   cause (`household` or `alfr3d`), but `recommend()` counts every `acted_on`. At level 2 or 3 an
+   action nobody undid is silence, not agreement. Promotion evidence for a level that acts must count
+   only `household`-caused `acted_on` (plus explicit confirms), and show unreversed own actions
+   separately. Without this, level 2 can recommend itself into level 3.
+6. **Quiet hours should come from `DayContext`**, the unified time-of-day source (`common/day_context.py`),
+   not a second hard-coded 23:00 to 07:00. Same window the mute gate uses.
+
+Two further facts shape the order of work:
+
+- **Level 1 needs no executor.** A card with a confirm button that calls the existing
+  `POST /api/iot/devices/{id}/control` is an ordinary user command (`origin = "user"`, a resident's
+  tap). It cannot act on its own. It can ship, and start producing real outcome labels, long before
+  anything can act by itself.
+- **There is nothing for an executor to do yet.** No proposals exist, one of six switches has a
+  predictor that beats the usual rate, and explicit feedback is twenty reactions in total.
+
+### Status of the small fixes (owner approved the order 2026-11-20)
+
+Built together, none touches a device: `ORIGINS` now includes `autonomy` (item 2);
+`predictors.hourly_states(..., autonomy=)` excludes the hours an autonomous command caused, read
+from the lake by `predictors.autonomy_commands`, and `evaluate_lake` uses it (item 4);
+`recommend()` counts only household-caused `acted_on` as acceptance and shows the unreversed own
+actions separately, and `outcomes.evidence_from_labels` builds the counts with that split (item 5).
+Items 1, 3 and 6 remain for the executor itself.
+
+### Proposed order (each step needs the owner's go; none touches a device by itself)
+
+1. **Small safety fixes first:** items 2 (`ORIGINS`), 4 (exclude autonomy-caused hours from training)
+   and 5 (evidence by cause). Independent of the executor, testable now, and harmless.
+2. **Proposal cards at level 0** from the predictor, so real outcomes start to exist.
+3. **Level 1** through the existing control endpoint (item 1's wrapper is not needed yet).
+4. **The gated executor for levels 2 and 3**, only after weeks of real outcome labels, and still
+   behind the flag, dark.
+
+### Decisions for the owner
+
+1. Agree to the order above (executor last, not next)?
+2. Agree that autonomy never goes through `util_routines.control_iot_device`, and instead through one
+   narrow `switch`/`light` wrapper over `ha_control_device`?
+3. Start with step 1 (the three small fixes)?
