@@ -231,9 +231,11 @@ out of the 10-row window within minutes. The cooldown now comes from its own que
 `dismissed`/`acked`/`not_useful`/`tapped` row, with no row limit, so a later `shown` cannot cancel it;
 only a later tap (re-engagement) ends it early. Not understood: why the Deck sent a `shown` for a card it
 had just hidden locally (00:43:08 and 00:44:09 UTC); the backend no longer depends on that.
-**Also found, not fixed (Deck, predates this work):** the "ALFR3D's music pick" rule matches any card with
-`mode == "music"`, including plain `now_playing`, and always says "Gathering detected", so it claims a
-gathering that is not happening, and feedback on it lands on `now_playing`.
+**Also found (Deck, predates this work), since fixed:** the "ALFR3D's music pick" rule matched any card with
+`mode == "music"`, including plain `now_playing`, and always said "Gathering detected", so it claimed a
+gathering that was not happening, and feedback on it landed on `now_playing`. Fixed in `alfr3d_deck`
+`431733a` ("only a real gathering card gets the music-pick wording"): the rule now matches only
+`isGathering`; now-playing falls through to the generic insight.
 
 **Verified live 2026-11-14** against a throwaway MySQL 8.0 (empty volume, port 3307, removed
 afterwards; production untouched): the full Alembic chain 0001 to 0061 applies, downgrade 0061
