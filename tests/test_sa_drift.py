@@ -155,3 +155,88 @@ class TestApply:
         assert lowered == 1 and len(conn.cur.statements) == 1
         sql, params = conn.cur.statements[0]
         assert "stability > %s" in sql and params[3:5] == ("user", "1")
+
+
+class TestHouseholdDay:
+    """The household day learner's daily person-minutes at home is a watched series."""
+
+    KEY = ("household_day", "household", "household")
+
+    def _days(self, n, level_fn):
+        noise = _noise(scale=30.0)
+        return [
+            {"date": START + timedelta(days=i), "home_minutes": level_fn(i) + noise()}
+            for i in range(n)
+        ]
+
+    def test_it_is_a_target_with_its_own_subject_family_and_sigma_floor(self):
+        assert drift.TARGETS["household_day"] == "household"
+        assert drift.FEATURE_MIN_SIGMA["household_home_minutes"] == 60.0
+
+    def test_profiled_subjects_include_the_household_profile(self):
+        class Cursor:
+            def execute(self, sql, params=None):
+                self.sql = sql
+
+            def fetchall(self):
+                return [
+                    ("household_day", "household", "household"),
+                    ("household_day", "user", "1"),  # wrong family for the learner: ignored
+                    ("presence_profile", "user", "1"),
+                ]
+
+        class Conn:
+            def cursor(self):
+                self.cur = Cursor()
+                return self.cur
+
+        conn = Conn()
+        subjects = drift.profiled_subjects(conn)
+
+        assert "'household'" in conn.cur.sql
+        assert subjects == {self.KEY, ("presence_profile", "user", "1")}
+
+    def test_the_feature_is_the_household_day_table_without_unmeasured_days(self, monkeypatch):
+        days = self._days(30, lambda i: 600.0)
+        days[3]["home_minutes"] = None  # no presence data that day: not a zero
+        monkeypatch.setattr(drift.household_day, "load_days", lambda lake: {"days": days})
+
+        out = drift.load_features("/nonexistent-lake", {self.KEY})
+
+        assert out[self.KEY]["feature"] == "household_home_minutes"
+        assert len(out[self.KEY]["points"]) == 29
+        assert START + timedelta(days=3) not in [d for d, _ in out[self.KEY]["points"]]
+
+    def test_it_is_not_loaded_when_the_household_profile_is_not_wanted(self, monkeypatch):
+        def boom(lake):
+            raise AssertionError("load_days must not run for an unwatched household")
+
+        monkeypatch.setattr(drift.household_day, "load_days", boom)
+
+        assert drift.load_features("/nonexistent-lake", {("presence_profile", "user", "1")}) == {}
+
+    def test_a_change_in_how_much_the_house_is_occupied_caps_household_day_stability(
+        self, monkeypatch
+    ):
+        days = self._days(90, lambda i: 900.0 if i < 70 else 400.0)
+        monkeypatch.setattr(drift.household_day, "load_days", lambda lake: {"days": days})
+        features = drift.load_features("/nonexistent-lake", {self.KEY})
+
+        (profile,) = drift.DriftLearner().fit(features, daytype_of=lambda d: "work")
+
+        assert profile.params["target_learner"] == "household_day"
+        assert profile.subject_type == "household" and profile.subject_id == "household"
+        assert profile.params["changes"][-1]["direction"] == "down"
+        assert profile.stability < 1.0
+
+    def test_apply_caps_the_household_day_profile_row_only(self, monkeypatch):
+        days = self._days(90, lambda i: 900.0 if i < 70 else 400.0)
+        monkeypatch.setattr(drift.household_day, "load_days", lambda lake: {"days": days})
+        features = drift.load_features("/nonexistent-lake", {self.KEY})
+        profiles = drift.DriftLearner().fit(features, daytype_of=lambda d: "work")
+        conn = _Conn()
+
+        drift.apply_stability(conn, profiles)
+
+        (sql, params) = conn.cur.statements[0]
+        assert params[2:5] == ("household_day", "household", "household")

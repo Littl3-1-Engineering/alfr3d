@@ -11,7 +11,9 @@ Model
 -----
 One daily feature per profiled subject: minutes at home per person (observed days), the daily mean
 of a scalar series (log scale where the scalar learner uses it), the daily count of an event or
-email stream (log1p). Per series a two-sided tabular CUSUM:
+email stream (log1p), and, for the household day learner, the household's person-minutes at home
+before its cutoff hour (the same day table that learner scores against). Per series a two-sided
+tabular CUSUM:
 
 - A reference is the first 14 days of the current regime: median per day type (work / off) and a
   robust sigma (1.4826 x MAD of the residuals, floored at 5 % of the level, so a flat series does
@@ -42,6 +44,7 @@ from datetime import date, datetime, timedelta
 import duckdb
 
 from sa import confidence, inference_store
+from sa.learners import household_day
 from sa.learners.base import Inference, Learner, Profile, utcnow
 from sa.learners.scalar import subject_id_for, to_model, uses_log
 
@@ -64,7 +67,12 @@ MIN_SHIFT_SIGMA = 1.0  # and be at least this large for the typical day of that 
 Z_CLIP = 4.0  # one wild day may not carry the accumulator on its own
 # Smallest sigma worth testing against, per feature: below it a flat series turns any wiggle into
 # a many-sigma "shift" (a visitor with zero minutes at home every day, a counter that is always 0).
-FEATURE_MIN_SIGMA = {"minutes_home": 45.0, "daily_count.log1p": 0.4}
+FEATURE_MIN_SIGMA = {
+    "minutes_home": 45.0,
+    "daily_count.log1p": 0.4,
+    # person-minutes at home up to the household day learner's cutoff, summed over residents
+    "household_home_minutes": household_day.SIGMA_FLOOR["home_minutes"],
+}
 RECENT_ALARM_DAYS = 14
 RECOVERY_DAYS = 28
 STABILITY_AT_CHANGE = 0.3
@@ -80,6 +88,7 @@ TARGETS = {
     "stay_profile": "user",  # same daily at-home minutes: a changed routine changes stay lengths
     "scalar_baseline": "series",
     "event_rate": "stream",
+    "household_day": "household",  # person-minutes at home before the cutoff, all residents
 }
 
 
@@ -344,6 +353,18 @@ def load_features(lake_dir, wanted):
                     out.setdefault(key, {"feature": "daily_count.log1p", "points": []})
                     out[key]["points"].append((d, math.log1p(float(n))))
 
+        household_key = ("household_day", "household", "household")
+        if household_key in wanted:
+            # the household day learner's own day table (completed, fully observed days up to its
+            # cutoff hour), so the series drift watches is the one that learner scores against
+            points = [
+                (day["date"], float(day["home_minutes"]))
+                for day in household_day.load_days(lake_dir)["days"]
+                if day.get("home_minutes") is not None
+            ]
+            if points:
+                out[household_key] = {"feature": "household_home_minutes", "points": points}
+
         email = _path(lake_dir, "gold", "email_hourly")
         if os.path.exists(email):
             horizon = con.execute(
@@ -394,7 +415,7 @@ def profiled_subjects(conn):
     cursor = conn.cursor()
     cursor.execute(
         "SELECT learner, subject_type, subject_id FROM sa_profiles WHERE learner IN %s "
-        "AND subject_type IN ('user', 'series', 'stream')",
+        "AND subject_type IN ('user', 'series', 'stream', 'household')",
         (tuple(TARGETS),),
     )
     return {(row[0], row[1], row[2]) for row in cursor.fetchall() if TARGETS[row[0]] == row[1]}
