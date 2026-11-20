@@ -155,7 +155,7 @@ Teach-me and resets; nothing sends, drafts or changes a message.
 
 1. Subject retention: 30, **90 (proposed)** or 365 days; and sender address after that: **hash (proposed)**
    or blank.
-2. Fix the card path's `format=full` now, as its own small PR, ahead of the rest? (Recommended: yes.)
+2. ~~Fix the card path's `format=full` now~~ Done: #467 (`format=metadata`, From/Subject only, with a regression test).
 3. Whose mailbox is it, and may other residents connect theirs later? (Per-person stays in the design
    either way; not built.)
 4. Try `gmail.metadata` on a throwaway account, accepting a re-authorise and a changed sync?

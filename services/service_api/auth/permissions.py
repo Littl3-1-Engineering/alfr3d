@@ -38,7 +38,9 @@ PERMISSIONS = {
     # location (todo_device_location_reporting.md) -- the "*" wildcard covers every sub-action,
     # and the resident-or-above floor deliberately 403s guest-typed Deck users out of location
     # reporting.
-    "context": {"*": _TECHNOKING_AND_RESIDENT},
+    # "teach_me" is the owner's view of what Alfr3d has learned about the household (profiles,
+    # inferences, params): owner-only, so a resident or guest Deck user cannot read it.
+    "context": {"*": _TECHNOKING_AND_RESIDENT, "teach_me": _TECHNOKING_ONLY},
     "devices": {"*": _TECHNOKING_AND_RESIDENT},
     "environment": {"*": _TECHNOKING_ONLY},
     "integrations": {"*": _TECHNOKING_ONLY},
