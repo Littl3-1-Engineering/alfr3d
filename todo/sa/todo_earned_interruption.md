@@ -118,9 +118,9 @@ evidence) with no new endpoint.
   the replay reports the double count's effect.
 - **Unlinked Brief dismissals:** `BriefRepository.dismiss` reports `dismissed` with no `impression_id`, so
   those swipes cannot be tied to a display. A small Deck fix, listed as a prerequisite below.
-- **A known mislabel:** the Deck's "ALFR3D's music pick" rule matches any `mode == "music"` card (including
-  plain `now_playing`), so feedback on it lands on the wrong rule (noted in `todo_card_feedback_loop.md`).
-  Fix before trusting the music cells.
+- **A mislabel, fixed:** the Deck's "ALFR3D's music pick" rule used to match any `mode == "music"` card
+  (including plain `now_playing`), so feedback landed on the wrong rule. Fixed in `alfr3d_deck` `431733a`;
+  feedback recorded **before** that fix is still mislabelled, so treat the music cells' older rows with care.
 - **Selection:** a tap or a not-useful needs a person at the screen; unattended displays only add ignores.
 
 ## Phases (after the trigger; each ends with a gate)
@@ -142,8 +142,9 @@ Teach-me and resets; card counts and `MAX_DISPLAYS` are unchanged; CI green.
 
 ## Prerequisites to do earlier (small, independent)
 
-1. Deck: tie Brief dismissals to an `impression_id` (cross-repo, `alfr3d_deck`).
-2. Deck: stop the "music pick" rule claiming plain `now_playing` cards.
+1. Deck: tie Brief dismissals to an `impression_id` (cross-repo, `alfr3d_deck`): PR #74 open, needs an
+   on-device check. The radar surface has no impression tracker, so its dismissals stay unlinked.
+2. ~~Deck: stop the "music pick" rule claiming plain `now_playing` cards.~~ Already fixed (`431733a`).
 
 ## Decisions needed from the owner
 
@@ -151,7 +152,7 @@ Teach-me and resets; card counts and `MAX_DISPLAYS` are unchanged; CI green.
 2. Are the trigger numbers (300 impressions, 30 explicit, two rules with 5) right?
 3. Four dayparts, or DayContext's seven?
 4. May the learner ever hold a card back (L3), or only reorder (L2)?
-5. Do the two small Deck prerequisites go ahead now?
+5. ~~Do the two small Deck prerequisites go ahead now?~~ One was already fixed, the other is PR #74.
 
 ## Out of scope
 
