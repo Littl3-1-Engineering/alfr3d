@@ -117,6 +117,7 @@ All under `/api/autonomy`, JSON, bearer-authenticated; `guest` is refused on eve
    after a demotion, re-promotion needs (a) a cooling-off period (proposed 14 days), (b) a fresh
    evidence window that starts at the demotion, not the old counts, and (c) a second demotion inside
    the cooling-off doubles it. Numbers are placeholders until real outcomes exist.
+   **Built 2026-11-20**: see `todo_l3_repromotion.md`.
 2. **Promotion one level at a time**, never a jump. Agreed.
 3. **Recommendation thresholds** (20 proposals, 80 % acted on, at most 5 % undone): agreed as
    placeholders, to be set against real outcome data.

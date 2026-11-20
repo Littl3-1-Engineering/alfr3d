@@ -20,6 +20,12 @@ The ladder: 0 predict only (at most a card), 1 suggest with one-tap confirm, 2 s
   **Guests never grant, promote, or have an action triggered from their own pattern.**
 - **Demotion is automatic and immediate** after an undo or a "not useful" (one level down), after a
   failed or ambiguous undo (straight to 0), and on the kill switch (everything to 0).
+- **Quick to judge, slow to forgive** (`cooling_off`, todo/sa/todo_l3_repromotion.md): after an
+  automatic demotion that key cannot be promoted for 14 days, doubling with each further automatic
+  demotion in the 90 days up to the latest one (capped at 112 days); a failed undo counts as two.
+  The owner may override with an acknowledgement, which is logged; the system never does. An owner's
+  own demotion and the kill switch start no cooling-off. The counts that justify a promotion are
+  the ones since the demotion, not the ones from before it.
 - **No never-list**: any action type can be proposed and can earn approval, so what limits it is
   information and friction: every proposal carries its cost and reversibility.
 - **Scope**: household scope only is built. Person and presence-conditioned scopes are named in the
@@ -32,11 +38,16 @@ can only ever return a card.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 PREDICT_ONLY, SUGGEST, STANDING, ACT_THEN_TELL = 0, 1, 2, 3
 LEVELS = (PREDICT_ONLY, SUGGEST, STANDING, ACT_THEN_TELL)
-LEVEL_NAMES = {0: "predict only", 1: "suggest", 2: "standing permission", 3: "act then tell"}
+LEVEL_NAMES = {
+    0: "predict only",
+    1: "suggest",
+    2: "standing permission",
+    3: "act then tell",
+}
 MODE_BY_LEVEL = {0: "card", 1: "ask", 2: "standing", 3: "act_then_tell"}
 
 # Scopes: household is built; the others are designed for and refused until the owner asks.
@@ -70,9 +81,17 @@ class Proposal:
     expires_at: datetime = None
 
 
+# Placeholders until real outcomes exist (todo/sa/todo_l3_repromotion.md).
+COOLING_BASE_DAYS = 14
+COOLING_WINDOW_DAYS = 90
+COOLING_CAP_DAYS = 112
+SYSTEM = "system"
+
+
 def validate_proposal(proposal, known_action_types):
     """Problems with a proposal, as strings (empty when it is well formed). A proposal without its
-    reasons, its cost or its reversibility is malformed: the owner could not judge it."""
+    reasons, its cost or its reversibility is malformed: the owner could not judge it.
+    """
     problems = []
     if proposal.action_type not in known_action_types:
         problems.append(f"unknown action type {proposal.action_type!r}")
@@ -120,6 +139,51 @@ def validate_row(row):
     return problems
 
 
+@dataclass(frozen=True)
+class CoolingOff:
+    """A key's cooling-off after automatic demotions. `until` is None when it was never demoted by
+    the system. `count` is the weighted number of demotions in the window ending at the latest one.
+    """
+
+    until: datetime = None
+    days: int = 0
+    count: int = 0
+    last_demoted_at: datetime = None
+
+    def active(self, now):
+        return self.until is not None and now < self.until
+
+
+def cooling_off(
+    log,
+    key,
+    base_days=COOLING_BASE_DAYS,
+    window_days=COOLING_WINDOW_DAYS,
+    cap_days=COOLING_CAP_DAYS,
+):
+    """The CoolingOff for `key`, a pure function of the audit log: only automatic (`system`)
+    demotions of that exact key count, so an owner's own demotion and the kill switch start none.
+    The window ends at the latest demotion, so the length cannot shrink as time passes.
+    """
+    hits = [
+        (e["at"], e.get("weight", 1))
+        for e in log
+        if e["key"] == key
+        and e["actor"] == SYSTEM
+        and isinstance(e["from"], int)
+        and isinstance(e["to"], int)
+        and e["to"] < e["from"]
+    ]
+    if not hits:
+        return CoolingOff()
+    last = max(at for at, _ in hits)
+    count = sum(w for at, w in hits if at >= last - timedelta(days=window_days))
+    days = min(base_days * 2 ** (count - 1), cap_days)
+    return CoolingOff(
+        until=last + timedelta(days=days), days=days, count=count, last_demoted_at=last
+    )
+
+
 class Policy:
     """The autonomy policy: levels per (action type, scope, context), default 0, with a change log.
     In memory here; the table design is in todo_l3_proposal_policy_contract.md. `killed` returns
@@ -138,7 +202,7 @@ class Policy:
         row = self.rows.get((action_type, scope, scope_key, context))
         return row.level if row else PREDICT_ONLY
 
-    def _record(self, row, before, after, actor, reason, evidence, now):
+    def _record(self, row, before, after, actor, reason, evidence, now, weight=1):
         self.log.append(
             {
                 "key": row.key,
@@ -148,12 +212,19 @@ class Policy:
                 "reason": reason,
                 "evidence": evidence,
                 "at": now,
+                "weight": weight,
             }
         )
 
-    def promote(self, row_key, to_level, actor_id, actor_role, evidence, now):
+    def cooling_off(self, row_key, now=None):
+        """The CoolingOff in force for a key (see `cooling_off`)."""
+        return cooling_off(self.log, row_key)
+
+    def promote(self, row_key, to_level, actor_id, actor_role, evidence, now, override=None):
         """Raise a level. Only the owner, only one step at a time, only with the evidence snapshot
-        the owner was shown. Guests (and everyone but the owner) are refused."""
+        the owner was shown. Guests (and everyone but the owner) are refused. Inside a cooling-off
+        it is refused unless the owner passes `override={"until": <the cooling-off end shown>}`,
+        which is logged; the acknowledgement must match, so it cannot be given blind."""
         if actor_role not in PROMOTERS:
             raise PermissionError(f"only the owner promotes an action type, not {actor_role!r}")
         if not evidence:
@@ -168,19 +239,37 @@ class Policy:
         problems = validate_row(candidate)
         if problems:
             raise ValueError("; ".join(problems))
+        reason, logged = "owner promotion", evidence
+        cooling = self.cooling_off(row_key)
+        if cooling.active(now):
+            if override is None:
+                raise ValueError(
+                    f"cooling off until {cooling.until:%Y-%m-%d %H:%M} after an automatic "
+                    f"demotion on {cooling.last_demoted_at:%Y-%m-%d}; the owner may override"
+                )
+            if override.get("until") != cooling.until:
+                raise ValueError(
+                    f"to override, acknowledge the cooling-off end ({cooling.until.isoformat()})"
+                )
+            reason, logged = "owner promotion (override of cooling-off)", {
+                **evidence,
+                "override": override,
+            }
         before, self.rows[row_key] = row.level, candidate
-        self._record(candidate, before, to_level, actor_id, "owner promotion", evidence, now)
+        self._record(candidate, before, to_level, actor_id, reason, logged, now)
         return candidate
 
-    def demote(self, row_key, reason, now, failed_undo=False):
+    def demote(self, row_key, reason, now, failed_undo=False, actor=SYSTEM):
         """Automatic and immediate: one level down after an undo or a "not useful", straight to 0
-        after a failed or ambiguous undo. Nobody's approval is needed to be safer."""
+        after a failed or ambiguous undo. Nobody's approval is needed to be safer. Only the system's
+        demotions start a cooling-off; an owner who demotes by hand (`actor` their id) does not, and
+        a failed undo counts as two."""
         row = self.rows.get(row_key)
         if row is None or row.level == PREDICT_ONLY:
             return row
         to = PREDICT_ONLY if failed_undo else row.level - 1
         before, row.level = row.level, to
-        self._record(row, before, to, "system", reason, row.evidence, now)
+        self._record(row, before, to, actor, reason, row.evidence, now, 2 if failed_undo else 1)
         return row
 
     def kill(self, actor_id, now):
@@ -202,12 +291,30 @@ class Policy:
         )  # fmt: skip
 
 
-def recommend(evidence, min_proposals=20, min_acceptance=0.8, max_undo_rate=0.05):
+def recommend(
+    evidence,
+    min_proposals=20,
+    min_acceptance=0.8,
+    max_undo_rate=0.05,
+    cooling=None,
+    now=None,
+):
     """Whether the evidence would SUPPORT asking the owner for a promotion: a recommendation shown
-    to the owner, never a promotion. `evidence`: {"proposals", "acted_on", "undone", "rejected"}."""
+    to the owner, never a promotion. `evidence`: {"proposals", "acted_on", "undone", "rejected"},
+    which after a demotion must be the counts SINCE it. While `cooling` (a CoolingOff) is active at
+    `now` the answer is no, and says until when, before the counts are looked at."""
+    if cooling is not None and now is not None and cooling.active(now):
+        return {
+            "recommend": False,
+            "reason": f"cooling off until {cooling.until:%Y-%m-%d} (after an automatic demotion "
+            f"on {cooling.last_demoted_at:%Y-%m-%d})",
+        }
     n = evidence.get("proposals", 0)
     if n < min_proposals:
-        return {"recommend": False, "reason": f"only {n} proposals (need {min_proposals})"}
+        return {
+            "recommend": False,
+            "reason": f"only {n} proposals (need {min_proposals})",
+        }
     acceptance = evidence.get("acted_on", 0) / n
     undo = evidence.get("undone", 0) / n
     if acceptance < min_acceptance:
@@ -216,7 +323,10 @@ def recommend(evidence, min_proposals=20, min_acceptance=0.8, max_undo_rate=0.05
             "reason": f"acceptance {acceptance:.0%} under {min_acceptance:.0%}",
         }
     if undo > max_undo_rate:
-        return {"recommend": False, "reason": f"undo rate {undo:.0%} over {max_undo_rate:.0%}"}
+        return {
+            "recommend": False,
+            "reason": f"undo rate {undo:.0%} over {max_undo_rate:.0%}",
+        }
     return {
         "recommend": True,
         "reason": f"{n} proposals, {acceptance:.0%} accepted, {undo:.0%} undone",
@@ -230,7 +340,12 @@ def decide(proposal, policy, known_action_types):
     pattern, or a killed policy is blocked."""
     problems = validate_proposal(proposal, known_action_types)
     if problems:
-        return {"mode": None, "level": None, "blocked": True, "why": "; ".join(problems)}
+        return {
+            "mode": None,
+            "level": None,
+            "blocked": True,
+            "why": "; ".join(problems),
+        }
     if (proposal.triggered_by or {}).get("role") == GUEST:
         return {
             "mode": None,
@@ -241,7 +356,12 @@ def decide(proposal, policy, known_action_types):
     level = policy.level(proposal.action_type, context=proposal.context)
     if level == PREDICT_ONLY:
         # at most a card: the only mode reachable without an owner grant
-        return {"mode": "card", "level": 0, "blocked": False, "why": "level 0: predict only"}
+        return {
+            "mode": "card",
+            "level": 0,
+            "blocked": False,
+            "why": "level 0: predict only",
+        }
     return {
         "mode": MODE_BY_LEVEL[level],
         "level": level,
