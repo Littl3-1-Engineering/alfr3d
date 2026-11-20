@@ -259,18 +259,18 @@ def autonomy_commands(lake_dir):
     return dict(out)
 
 
-def evaluate_lake(lake_dir, zone=None, predictor=REGISTRY[0]):
-    """{switch entity: score dict} over the lake's HA switch state history. Read-only."""
+def load_switch_history(lake_dir):
+    """({entity: [(time, state)]}, end) from the lake's HA switch state history (naive UTC), or
+    ({}, None) when there is none. `end` is the last observation, truncated to the hour. Read-only.
+    """
     import glob
     import os
 
     import duckdb
 
-    from sa import silver
-
     pattern = os.path.join(lake_dir, "bronze", "ha_state_history", "date=*", "*.parquet")
     if not glob.glob(pattern):
-        return {}
+        return {}, None
     con = duckdb.connect()
     try:
         rows = con.execute(
@@ -285,8 +285,17 @@ def evaluate_lake(lake_dir, zone=None, predictor=REGISTRY[0]):
     by_entity = defaultdict(list)
     for entity, at, state in rows:
         by_entity[entity].append((at.replace(tzinfo=None), state))
+    return dict(by_entity), end.replace(tzinfo=None, minute=0, second=0, microsecond=0)
+
+
+def evaluate_lake(lake_dir, zone=None, predictor=REGISTRY[0]):
+    """{switch entity: score dict} over the lake's HA switch state history. Read-only."""
+    from sa import silver
+
+    by_entity, end = load_switch_history(lake_dir)
+    if not by_entity:
+        return {}
     zone = zone or silver.TIMEZONE
-    end = end.replace(tzinfo=None, minute=0, second=0, microsecond=0)
     own = autonomy_commands(lake_dir)
     return {
         entity: evaluate(hourly_states(trs, end, zone, autonomy=own.get(entity, ())), predictor)
