@@ -315,12 +315,16 @@ def recommend(
             "recommend": False,
             "reason": f"only {n} proposals (need {min_proposals})",
         }
-    acceptance = evidence.get("acted_on", 0) / n
+    # An action Alfr3d took itself and nobody undid is silence, not agreement: only what the
+    # household did (or confirmed) counts as acceptance.
+    own = evidence.get("acted_on_alfr3d", 0)
+    acceptance = (evidence.get("acted_on", 0) - own) / n
     undo = evidence.get("undone", 0) / n
+    note = f"; {own} of its own unreversed actions not counted" if own else ""
     if acceptance < min_acceptance:
         return {
             "recommend": False,
-            "reason": f"acceptance {acceptance:.0%} under {min_acceptance:.0%}",
+            "reason": f"acceptance {acceptance:.0%} under {min_acceptance:.0%}{note}",
         }
     if undo > max_undo_rate:
         return {
@@ -329,7 +333,7 @@ def recommend(
         }
     return {
         "recommend": True,
-        "reason": f"{n} proposals, {acceptance:.0%} accepted, {undo:.0%} undone",
+        "reason": f"{n} proposals, {acceptance:.0%} accepted, {undo:.0%} undone{note}",
     }
 
 

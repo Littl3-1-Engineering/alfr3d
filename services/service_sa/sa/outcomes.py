@@ -133,6 +133,23 @@ def label_action(
     return ACTED_ON, cause, "predicted change happened"
 
 
+def evidence_from_labels(labelled):
+    """The counts a promotion decision is shown, from [(label, cause)] pairs (`label_action`'s
+    first two fields). Pending is not decided yet, so it is not counted. `acted_on_alfr3d` is the
+    part of `acted_on` that Alfr3d did itself: `proposals.recommend` does not count it as approval.
+    """
+    counts = Counter()
+    for label, cause in labelled:
+        if label == PENDING:
+            continue
+        counts["proposals"] += 1
+        counts[label] += 1
+        if label == ACTED_ON and cause == "alfr3d":
+            counts["acted_on_alfr3d"] += 1
+    keys = ("proposals", ACTED_ON, "acted_on_alfr3d", UNDONE, REJECTED, IGNORED)
+    return {k: counts.get(k, 0) for k in keys}
+
+
 # --- Replay over the lake (read-only) --------------------------------------------------------
 
 

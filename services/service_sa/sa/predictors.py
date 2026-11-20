@@ -82,13 +82,36 @@ def day_kind(local_date):
     return WEEKEND if local_date.weekday() >= 5 else WEEKDAY
 
 
-def hourly_states(transitions, end, zone):
+AUTONOMY_MATCH_SECONDS = 120  # a state change this soon after a matching command was its effect
+
+
+def _autonomy_intervals(events, autonomy, end):
+    """[(start, stop)] spans of state that Alfr3d's own autonomous commands caused: from each
+    transition that follows a matching command to the next transition of any cause (or `end`)."""
+    spans = []
+    for i, (t, state) in enumerate(events):
+        caused = any(
+            cs == state and 0 <= (t - ct).total_seconds() <= AUTONOMY_MATCH_SECONDS
+            for ct, cs in autonomy
+        )
+        if caused:
+            spans.append((t, events[i + 1][0] if i + 1 < len(events) else end))
+    return spans
+
+
+def hourly_states(transitions, end, zone, autonomy=()):
     """[(date_local, hour_local, day_kind, on_fraction)] for one switch, from `transitions`
     ((time, 'on'|'off') in naive UTC, any order) up to `end` (naive UTC). The state before the first
-    observation is unknown, so the series starts at the first observed transition's hour."""
+    observation is unknown, so the series starts at the first observed transition's hour.
+
+    `autonomy` is [(time, 'on'|'off')] of commands Alfr3d issued under its own autonomy. The state
+    such a command caused is excluded (every hour it touches, through the next change of state,
+    whoever made it): otherwise a lamp the executor turns on at 19:00 would teach the predictor to
+    turn it on at 19:00, and the prediction would improve each time it acted."""
     events = sorted((t, s) for t, s in transitions if s in ("on", "off"))
     if not events:
         return []
+    spans = _autonomy_intervals(events, sorted(autonomy), end) if autonomy else []
     tz = ZoneInfo(zone) if isinstance(zone, str) else zone
     start = events[0][0].replace(minute=0, second=0, microsecond=0)
     out, state, i, bucket = [], None, 0, start
@@ -103,7 +126,8 @@ def hourly_states(transitions, end, zone):
         if state == "on":
             on_seconds += (nxt - cursor).total_seconds()
         local = bucket.replace(tzinfo=timezone.utc).astimezone(tz)
-        out.append((local.date(), local.hour, day_kind(local.date()), on_seconds / 3600.0))
+        if not any(bucket < stop and nxt > begin for begin, stop in spans):
+            out.append((local.date(), local.hour, day_kind(local.date()), on_seconds / 3600.0))
         bucket = nxt
     return out
 
@@ -209,6 +233,32 @@ def predict(rows, subject, hour_local, kind, predictor=REGISTRY[0]):
     )
 
 
+def autonomy_commands(lake_dir):
+    """{entity: [(time, 'on'|'off')]} of successful commands issued with origin `autonomy`, from
+    the lake's `device_command_history` (naive UTC). Empty when there are none. Read-only."""
+    import glob
+    import os
+
+    import duckdb
+
+    pattern = os.path.join(lake_dir, "bronze", "device_command_history", "date=*", "*.parquet")
+    if not glob.glob(pattern):
+        return {}
+    con = duckdb.connect()
+    try:
+        rows = con.execute(
+            f"SELECT entity_ref, command, issued_at FROM read_parquet('{pattern}', "
+            f"union_by_name=true) WHERE origin = 'autonomy' AND CAST(success AS INTEGER) = 1 "
+            f"AND command IN ('turn_on', 'turn_off') ORDER BY entity_ref, issued_at"
+        ).fetchall()
+    finally:
+        con.close()
+    out = defaultdict(list)
+    for entity, command, at in rows:
+        out[entity].append((at.replace(tzinfo=None), "on" if command == "turn_on" else "off"))
+    return dict(out)
+
+
 def evaluate_lake(lake_dir, zone=None, predictor=REGISTRY[0]):
     """{switch entity: score dict} over the lake's HA switch state history. Read-only."""
     import glob
@@ -237,8 +287,9 @@ def evaluate_lake(lake_dir, zone=None, predictor=REGISTRY[0]):
         by_entity[entity].append((at.replace(tzinfo=None), state))
     zone = zone or silver.TIMEZONE
     end = end.replace(tzinfo=None, minute=0, second=0, microsecond=0)
+    own = autonomy_commands(lake_dir)
     return {
-        entity: evaluate(hourly_states(trs, end, zone), predictor)
+        entity: evaluate(hourly_states(trs, end, zone, autonomy=own.get(entity, ())), predictor)
         for entity, trs in sorted(by_entity.items())
     }
 
