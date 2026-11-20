@@ -7,4 +7,5 @@ requests==2.34.2
 orjson==3.13.0
 aioesphomeapi==46.30.0
 zeroconf==0.154.0
+dnspython==2.8.0
 redis[hiredis]>=8.1.0

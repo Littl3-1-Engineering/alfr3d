@@ -7,10 +7,9 @@ import sys
 import time
 import logging
 import orjson
-import socket
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 shutdown_event = threading.Event()
 
@@ -21,6 +20,7 @@ from kafka import KafkaConsumer  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from common import get_producer, get_kafka_url, ha_utils, st_utils, esphome_utils  # noqa: E402
 from common import heartbeat  # noqa: E402
+import hostname_discovery  # noqa: E402
 
 # current path from which python is executed
 CURRENT_PATH = os.path.dirname(__file__)
@@ -319,27 +319,43 @@ class Device:
         return True
 
 
+# Misses are retried on a slow cadence: many LAN devices (IoT, guests) never announce a name,
+# and re-asking every 5 minute scan just burns timeouts.
+HOSTNAME_MISS_TTL = 30 * 60
+_hostname_misses: dict = {}
+
+
 def resolve_hostname(ip: str) -> Optional[str]:
     """
-    Resolve hostname for a given IP address.
+    Resolve a hostname for a LAN IP (gateway PTR -> mDNS -> system resolver).
     """
+    last_miss = _hostname_misses.get(ip)
+    if last_miss is not None and time.monotonic() - last_miss < HOSTNAME_MISS_TTL:
+        return None
     try:
-        name = socket.gethostbyaddr(ip)[0]
-        if name == "_gateway":
-            return None
-        return name
-    except socket.herror:
-        logger.error("Couldn't resolve hostname for IP: " + ip)
-        return None
+        name = hostname_discovery.discover_hostname(ip)
     except Exception as e:
-        logger.error("Failed to resolve hostname")
-        logger.error("Traceback: " + str(e))
+        logger.warning(f"Hostname discovery failed for {ip}: {e}")
         return None
+    if name:
+        _hostname_misses.pop(ip, None)
+    else:
+        _hostname_misses[ip] = time.monotonic()
+    return name
 
 
-def update_or_create_device(mac: str, ip: str, name: Optional[str]) -> str:
+def update_or_create_device(
+    mac: str,
+    ip: str,
+    name: Optional[str] = None,
+    resolve: Optional[Callable[[str], Optional[str]]] = None,
+) -> str:
     """
     Update existing device or create new one in DB.
+
+    ``resolve`` is called lazily, only when a name is actually needed: a new device, or an
+    existing one still carrying the placeholder name. Devices that already have a name
+    (including one a user set) are never renamed.
     """
     device = Device()
     exists = device.get(mac)
@@ -347,12 +363,18 @@ def update_or_create_device(mac: str, ip: str, name: Optional[str]) -> str:
     if exists:
         logger.info("Updating device with MAC: " + mac)
         device.IP = ip
+        if device.name in (None, "", Device.name):
+            found = name or (resolve(ip) if resolve else None)
+            if found:
+                logger.info(f"Discovered hostname {found} for {mac}")
+                device.name = found
         device.update()
         return "updated"
     else:
         logger.info("Creating a new DB entry for device with MAC: " + mac)
         device.IP = ip
         device.MAC = mac
+        name = name or (resolve(ip) if resolve else None)
         if name:
             device.name = name
         device.create(mac)
@@ -405,7 +427,7 @@ def check_lan():
     Parsing:
     - Splits each relevant line by tab to separate IP and MAC.
     - Builds a dictionary mapping MAC addresses to IP addresses.
-    - Attempts to resolve hostnames using socket.gethostbyaddr for each IP.
+    - Resolves hostnames lazily (see hostname_discovery.py) for new or unnamed devices only.
 
     DB Updates:
     - For each discovered MAC, checks if the device exists in the database.
@@ -459,8 +481,7 @@ def check_lan():
     # find who is online and update DB status and last_online time
     for member in netClientsMACs:
         ip = netClients2[member]
-        name = resolve_hostname(ip)
-        action = update_or_create_device(member, ip, name)
+        action = update_or_create_device(member, ip, resolve=resolve_hostname)
         if action == "created":
             created_count += 1
         elif action == "updated":
