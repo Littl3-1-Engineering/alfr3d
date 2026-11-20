@@ -165,7 +165,10 @@ Items 1, 3 and 6 remain for the executor itself.
 
 1. **Small safety fixes first:** items 2 (`ORIGINS`), 4 (exclude autonomy-caused hours from training)
    and 5 (evidence by cause). Independent of the executor, testable now, and harmless.
-2. **Proposal cards at level 0** from the predictor, so real outcomes start to exist.
+2. **Proposal cards at level 0** from the predictor, so real outcomes start to exist. *2026-11-20:
+   reordered to a silent shadow replay first (`todo_l3_proposal_shadow.md`, built): a visible card
+   needs Deck and web work, and on the real lake the predictor would have proposed nothing in
+   two weeks.*
 3. **Level 1** through the existing control endpoint (item 1's wrapper is not needed yet).
 4. **The gated executor for levels 2 and 3**, only after weeks of real outcome labels, and still
    behind the flag, dark.
