@@ -512,6 +512,34 @@ class TestGmailUtils:
 
         assert result is None
 
+    def test_check_unread_emails_requests_metadata_only(self):
+        """The card path must never request message bodies: format=metadata, From/Subject only."""
+        from unittest.mock import MagicMock, patch
+
+        from services.common import gmail_utils
+
+        service = MagicMock()
+        messages = service.users.return_value.messages.return_value
+        messages.list.return_value.execute.return_value = {"messages": [{"id": "m1"}]}
+        messages.get.return_value.execute.return_value = {
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "Jane Doe <jane@example.com>"},
+                    {"name": "Subject", "value": "Hello"},
+                ]
+            }
+        }
+        with (
+            patch.object(gmail_utils, "get_credentials", return_value=object()),
+            patch.object(gmail_utils, "build", return_value=service),
+        ):
+            result = gmail_utils.check_unread_emails()
+
+        assert result == [{"sender": "Jane Doe", "subject": "Hello"}]
+        kwargs = messages.get.call_args.kwargs
+        assert kwargs["format"] == "metadata"
+        assert kwargs["metadataHeaders"] == ["From", "Subject"]
+
 
 class TestSpotifyUtils:
     """Tests for spotify_utils.py"""
