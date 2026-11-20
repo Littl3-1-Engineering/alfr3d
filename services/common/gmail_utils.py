@@ -143,7 +143,19 @@ def check_unread_emails():
 
         emails = []
         for msg in messages[:5]:  # Limit to 5
-            msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
+            # Headers only: format=metadata never requests the body or attachments. The
+            # API still returns `snippet`, which we ignore here.
+            msg_data = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=msg["id"],
+                    format="metadata",
+                    metadataHeaders=["From", "Subject"],
+                )
+                .execute()
+            )
             headers = msg_data["payload"]["headers"]
             sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
             # Parse it to get only the name (returns "John Doe")
