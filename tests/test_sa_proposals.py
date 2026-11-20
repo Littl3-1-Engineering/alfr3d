@@ -37,7 +37,12 @@ def _granted(level, context=proposals.DEFAULT_CONTEXT):
     policy = proposals.Policy()
     for to in range(1, level + 1):
         policy.promote(
-            ("switch_on", proposals.HOUSEHOLD, "", context), to, "athos", "owner", EVIDENCE, NOW
+            ("switch_on", proposals.HOUSEHOLD, "", context),
+            to,
+            "athos",
+            "owner",
+            EVIDENCE,
+            NOW,
         )
     return policy
 
@@ -48,7 +53,9 @@ class TestNothingAtLevelZeroExecutes:
         for cost in proposals.COSTS:
             for reversibility in proposals.REVERSIBILITY:
                 got = proposals.decide(
-                    _proposal(cost_of_being_wrong=cost, reversibility=reversibility), policy, KNOWN
+                    _proposal(cost_of_being_wrong=cost, reversibility=reversibility),
+                    policy,
+                    KNOWN,
                 )
                 assert got["mode"] == "card" and got["level"] == 0 and not got["blocked"]
 
@@ -74,7 +81,12 @@ class TestNothingAtLevelZeroExecutes:
     def test_decide_returns_data_it_does_not_act_at_any_level(self):
         for level in proposals.LEVELS:
             got = proposals.decide(_proposal(), _granted(level), KNOWN)
-            assert set(got) == {"mode", "level", "blocked", "why"}  # a description, nothing else
+            assert set(got) == {
+                "mode",
+                "level",
+                "blocked",
+                "why",
+            }  # a description, nothing else
 
     def test_a_killed_policy_is_back_to_cards_only(self):
         policy = _granted(3)
@@ -125,7 +137,11 @@ class TestPromotion:
     def test_a_promotion_records_who_when_and_what_was_shown(self):
         policy = proposals.Policy()
         row = policy.promote(KEY, 1, "athos", "owner", EVIDENCE, NOW)
-        assert (row.granted_by, row.granted_at, row.evidence) == ("athos", NOW, EVIDENCE)
+        assert (row.granted_by, row.granted_at, row.evidence) == (
+            "athos",
+            NOW,
+            EVIDENCE,
+        )
         assert (
             policy.log[-1]["reason"] == "owner promotion" and policy.log[-1]["evidence"] == EVIDENCE
         )
@@ -226,9 +242,151 @@ class TestProposalValidation:
         problems = proposals.validate_proposal(_proposal(**changes), KNOWN)
         assert any(expect in p for p in problems)
 
-    def test_no_never_list_every_registered_type_can_be_proposed_and_can_earn_a_level(self):
+    def test_no_never_list_every_registered_type_can_be_proposed_and_can_earn_a_level(
+        self,
+    ):
         # irreversible and serious are allowed to be proposed: the friction is information
         risky = _proposal(cost_of_being_wrong="serious", reversibility="irreversible")
         assert proposals.validate_proposal(risky, KNOWN) == []
         assert proposals.decide(risky, proposals.Policy(), KNOWN)["mode"] == "card"
         assert proposals.decide(risky, _granted(2), KNOWN)["mode"] == "standing"
+
+
+# --- Re-promotion: quick to judge, slow to forgive (todo/sa/todo_l3_repromotion.md) ---------
+
+from datetime import timedelta  # noqa: E402
+
+
+def _demoted(level=2, reason="undo", failed_undo=False, at=NOW, actor="system"):
+    policy = _granted(level)
+    policy.demote(KEY, reason, at, failed_undo=failed_undo, actor=actor)
+    return policy
+
+
+def _days(n):
+    return NOW + timedelta(days=n)
+
+
+class TestCoolingOff:
+    def test_a_system_demotion_starts_a_fourteen_day_cooling_off(self):
+        got = _demoted().cooling_off(KEY, NOW)
+        assert (got.days, got.count, got.last_demoted_at) == (14, 1, NOW)
+        assert got.until == _days(14) and got.active(_days(13)) and not got.active(_days(14))
+
+    def test_a_key_never_demoted_is_not_cooling_off(self):
+        got = _granted(2).cooling_off(KEY, NOW)
+        assert got.until is None and not got.active(NOW)
+
+    def test_promotion_inside_it_is_refused_for_everyone_without_an_override(self):
+        policy = _demoted()
+        with pytest.raises(ValueError, match="cooling off until"):
+            policy.promote(KEY, 2, "athos", "owner", EVIDENCE, _days(3))
+        for role in ("guest", "resident", None):
+            with pytest.raises(PermissionError):
+                policy.promote(KEY, 2, "x", role, EVIDENCE, _days(3), override={"until": _days(14)})
+        assert policy.level("switch_on") == 1
+
+    def test_the_day_it_ends_promotion_works_again(self):
+        policy = _demoted()
+        assert policy.promote(KEY, 2, "athos", "owner", EVIDENCE, _days(14)).level == 2
+
+    def test_the_owner_can_override_by_acknowledging_what_was_shown_and_it_is_logged(
+        self,
+    ):
+        policy = _demoted()
+        with pytest.raises(ValueError, match="acknowledge"):
+            policy.promote(KEY, 2, "athos", "owner", EVIDENCE, _days(3), override={"until": NOW})
+        row = policy.promote(
+            KEY, 2, "athos", "owner", EVIDENCE, _days(3), override={"until": _days(14)}
+        )
+        entry = policy.log[-1]
+        assert row.level == 2 and "override" in entry["reason"]
+        assert entry["evidence"]["override"] == {"until": _days(14)} and entry["actor"] == "athos"
+
+    def test_an_override_outside_any_cooling_off_is_not_needed_and_not_recorded(self):
+        policy = _granted(1)
+        policy.promote(KEY, 2, "athos", "owner", EVIDENCE, NOW, override={"until": NOW})
+        assert policy.log[-1]["reason"] == "owner promotion"
+        assert "override" not in policy.log[-1]["evidence"]
+
+    def test_a_second_demotion_inside_the_window_doubles_it_and_it_is_capped(self):
+        policy, spans = _granted(3), []
+        for step in (0, 20, 40, 60, 80, 100):
+            policy.rows[KEY].level = 3  # a promotion in between is not the point here
+            policy.demote(KEY, "undo", _days(step))
+            spans.append(policy.cooling_off(KEY, _days(step)).days)
+        assert spans == [14, 28, 56, 112, 112, 112]
+
+    def test_a_demotion_outside_the_ninety_day_window_starts_again_at_fourteen(self):
+        policy = _demoted()
+        policy.rows[KEY].level = 2
+        policy.demote(KEY, "undo", _days(100))
+        got = policy.cooling_off(KEY, _days(100))
+        assert (got.count, got.days) == (1, 14)
+
+    def test_the_length_does_not_shrink_as_time_passes(self):
+        policy = _demoted()
+        policy.rows[KEY].level = 2
+        policy.demote(KEY, "undo", _days(80))
+        first = policy.cooling_off(KEY, _days(80))
+        later = policy.cooling_off(KEY, _days(120))
+        assert (first.days, first.until) == (
+            later.days,
+            later.until,
+        ) and first.days == 28
+
+    def test_a_failed_undo_counts_as_two_and_starts_at_twenty_eight(self):
+        got = _demoted(failed_undo=True, reason="undo failed").cooling_off(KEY, NOW)
+        assert (got.count, got.days) == (2, 28)
+
+    def test_an_owner_demotion_starts_no_cooling_off(self):
+        policy = _demoted(actor="athos", reason="owner chose")
+        assert policy.level("switch_on") == 1
+        assert policy.cooling_off(KEY, NOW).until is None
+        assert policy.promote(KEY, 2, "athos", "owner", EVIDENCE, NOW).level == 2
+
+    def test_the_kill_switch_starts_no_cooling_off(self):
+        policy = _granted(2)
+        policy.kill("athos", NOW)
+        policy.reset("athos", "owner", NOW)
+        assert policy.cooling_off(KEY, NOW).until is None and policy.level("switch_on") == 2
+
+    def test_one_key_never_changes_the_cooling_off_of_another(self):
+        policy = _demoted()
+        other = ("switch_off", proposals.HOUSEHOLD, "", proposals.DEFAULT_CONTEXT)
+        evening = ("switch_on", proposals.HOUSEHOLD, "", "evening")
+        assert policy.cooling_off(other, NOW).until is None
+        assert policy.cooling_off(evening, NOW).until is None
+        assert policy.promote(other, 1, "athos", "owner", EVIDENCE, NOW).level == 1
+
+
+class TestRecommendDuringCoolingOff:
+    def test_it_says_why_not_before_looking_at_counts(self):
+        cooling = _demoted().cooling_off(KEY, NOW)
+        got = proposals.recommend(EVIDENCE, cooling=cooling, now=_days(3))
+        assert got["recommend"] is False
+        assert "cooling off until" in got["reason"] and str(_days(14).date()) in got["reason"]
+
+    def test_after_it_ends_the_fresh_counts_decide(self):
+        cooling = _demoted().cooling_off(KEY, NOW)
+        assert proposals.recommend(EVIDENCE, cooling=cooling, now=_days(15))["recommend"] is True
+        thin = {"proposals": 4, "acted_on": 4}
+        assert (
+            "only 4 proposals"
+            in proposals.recommend(thin, cooling=cooling, now=_days(15))["reason"]
+        )
+
+    def test_without_a_cooling_off_it_is_unchanged(self):
+        assert proposals.recommend(EVIDENCE)["recommend"] is True
+
+
+class TestCoolingOffStaysDataOnly:
+    def test_nothing_new_can_reach_a_device(self):
+        source = inspect.getsource(proposals)
+        for forbidden in (
+            "control_iot_device",
+            "requests",
+            "subprocess",
+            "def execute",
+        ):
+            assert forbidden not in source
