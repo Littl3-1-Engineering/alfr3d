@@ -926,24 +926,40 @@ class TestUtilRoutines:
         assert result is False
 
     def test_get_routine_quip_returns_matching_quip(self):
-        """Test routine quips are only fetched from the matching quip type."""
+        """Routine quips come from one query scoped to the matching quip type."""
         from services.service_daemon.utils.util_routines import _get_routine_quip
 
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.side_effect = [(42,), ("yet another sunset",)]
+        mock_cursor.fetchone.return_value = ("yet another sunset",)
 
         result = _get_routine_quip(mock_cursor, "sunset")
 
         assert result == "yet another sunset"
-        calls = [c[0][0] for c in mock_cursor.execute.call_args_list]
-        assert "MAX(id)" in calls[0] and "type = %s" in calls[1]
+        assert mock_cursor.execute.call_count == 1
+        sql, params = mock_cursor.execute.call_args[0]
+        assert "type = %s" in sql and params == ("sunset",)
+
+    def test_get_routine_quip_is_not_id_gap_biased(self):
+        """Regression: `id >= randint(1, MAX(id)) LIMIT 1` weights each row by the id gap
+        before it (quip ids are shared across types), so one quip dominated idle chatter.
+        Selection must be uniform over the type's rows (ORDER BY RAND), not id-based."""
+        from services.service_daemon.utils.util_routines import _get_routine_quip
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = ("x",)
+
+        _get_routine_quip(mock_cursor, "sunset")
+
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "RAND()" in sql
+        assert "MAX(id)" not in sql and "id >=" not in sql
 
     def test_get_routine_quip_returns_none_when_no_quips(self):
         """Test routine quip returns None when the type has no entries."""
         from services.service_daemon.utils.util_routines import _get_routine_quip
 
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.side_effect = [(None,)]
+        mock_cursor.fetchone.return_value = None
 
         result = _get_routine_quip(mock_cursor, "sunset")
 
