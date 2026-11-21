@@ -97,21 +97,20 @@ logger.addHandler(handler)
 
 
 def get_random_quip(quip_type: str) -> str:
-    """Get a random quip of given type using ID-based selection (avoids ORDER BY RAND())."""
-    import random
+    """Get a uniformly random quip of the given type.
 
+    Picks among the rows that actually exist for the type. The previous
+    ``id >= randint(1, MAX(id)) LIMIT 1`` trick is only uniform when ids are
+    contiguous: ids are shared across all quip types and have gaps (deleted /
+    re-typed rows, other types interleaved), and each row's odds were
+    proportional to the id gap *before* it, so one quip after a big gap
+    dominated the idle chatter. The table is tiny, so ORDER BY RAND() is fine.
+    """
     db = pymysql.connect(host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB)
     cursor = db.cursor()
     try:
-        cursor.execute("SELECT MAX(id) FROM quips WHERE type = %s", (quip_type,))
-        max_id_result = cursor.fetchone()
-        if not max_id_result or not max_id_result[0]:
-            return None
-        max_id = max_id_result[0]
-        random_id = random.randint(1, max_id)
         cursor.execute(
-            "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1",
-            (random_id, quip_type),
+            "SELECT quips FROM quips WHERE type = %s ORDER BY RAND() LIMIT 1", (quip_type,)
         )
         result = cursor.fetchone()
         return result[0] if result else None
