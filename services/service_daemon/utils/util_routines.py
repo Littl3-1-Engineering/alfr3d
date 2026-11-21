@@ -34,7 +34,6 @@ import logging
 import orjson
 import pymysql as MySQLdb
 from datetime import timedelta, datetime, timezone
-from random import randint
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../common"))
 from common import get_producer, db_utils, ha_utils, spotify_utils, audio_cast  # noqa: E402
@@ -101,15 +100,8 @@ def _emit_routine_executed(routine_id, routine_name):
 
 def _get_routine_quip(cursor, quip_type):
     """Fetch a random quip of the given routine type using the routine's DB cursor."""
-    cursor.execute("SELECT MAX(id) FROM quips WHERE type = %s", (quip_type,))
-    max_row = cursor.fetchone()
-    if not max_row or not max_row[0]:
-        return None
-    random_id = randint(1, max_row[0])
-    cursor.execute(
-        "SELECT quips FROM quips WHERE id >= %s AND type = %s LIMIT 1",
-        (random_id, quip_type),
-    )
+    # Uniform over existing rows; `id >= randint(1, MAX(id))` is biased toward rows after id gaps.
+    cursor.execute("SELECT quips FROM quips WHERE type = %s ORDER BY RAND() LIMIT 1", (quip_type,))
     row = cursor.fetchone()
     return row[0] if row else None
 
