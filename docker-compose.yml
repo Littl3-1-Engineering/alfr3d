@@ -172,6 +172,8 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS_1}
       - LOG_LEVEL=${LOG_LEVEL}
+      # cert expiry reported by /api/health; add the tailnet name (host:port:sni) to cover it
+      - TLS_PROBE_TARGETS=${TLS_PROBE_TARGETS:-nginx:443:localhost}
     expose:
       - "5001"
     ports:
