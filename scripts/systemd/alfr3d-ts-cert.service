@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew the Alfr3d Tailscale HTTPS certificate
+After=network-online.target tailscaled.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit User/paths for the host; the user needs docker and `tailscale cert` rights
+# (`sudo tailscale set --operator=$USER` once).
+ExecStart=/home/alfr3d/alfr3d/scripts/renew_tailscale_cert.sh

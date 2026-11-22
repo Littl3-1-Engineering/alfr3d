@@ -2503,3 +2503,11 @@ def test_teach_me_failure_is_a_500_without_leaking_detail(api_client):
 def test_teach_me_is_a_read_route_with_no_write_methods(api_client):
     assert api_client.post("/api/context/teach-me", headers=_owner()).status_code in (404, 405)
     assert api_client.delete("/api/context/teach-me", headers=_owner()).status_code in (404, 405)
+
+
+@patch("routes.health.tls_health.check", return_value={"status": "expired", "certs": []})
+def test_health_reports_tls_cert_expiry_without_changing_status(_check, api_client):
+    data = api_client.get("/api/health").json()
+
+    assert data["status"] == "ok"
+    assert data["tls_certs"]["status"] == "expired"

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
 
-from common import db_connection, learner_health
+from common import db_connection, learner_health, tls_health
 from dependencies import is_docker_available, read_version, run_docker_command
 
 logger = logging.getLogger("ApiLog")
@@ -101,4 +101,5 @@ async def get_health():
         "services": services,
         # additive: `status` above stays "ok" so existing monitors are unaffected
         "learner_fits": await asyncio.get_event_loop().run_in_executor(None, _learner_fit_health),
+        "tls_certs": await asyncio.get_event_loop().run_in_executor(None, tls_health.check),
     }
