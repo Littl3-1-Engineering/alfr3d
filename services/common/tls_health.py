@@ -46,7 +46,8 @@ def summarize(entries: list[dict]) -> dict:
 def probe(host: str, port: int, sni: str, now: datetime | None = None) -> dict:
     """Handshake without verification (an expired cert must still be readable) and report expiry."""
     now = now or datetime.now(timezone.utc)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx = ssl.create_default_context()
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:

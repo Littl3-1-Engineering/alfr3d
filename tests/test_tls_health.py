@@ -50,7 +50,7 @@ def test_probe_reports_an_expired_cert(monkeypatch):
 
     now = datetime(2026, 11, 22, tzinfo=timezone.utc)
     monkeypatch.setattr(tls_health.socket, "create_connection", lambda *a, **k: _Sock())
-    monkeypatch.setattr(tls_health.ssl, "SSLContext", lambda *_: _Ctx())
+    monkeypatch.setattr(tls_health.ssl, "create_default_context", lambda *_: _Ctx())
     monkeypatch.setattr(tls_health, "_not_after", lambda der: now - timedelta(hours=3))
     out = tls_health.probe("h", 443, "a.ts.net", now=now)
     assert out["status"] == "expired" and out["days_left"] < 0
