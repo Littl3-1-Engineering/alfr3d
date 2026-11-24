@@ -22,6 +22,7 @@ confidence floor. The calibration target is about one flag-day in 14 (the househ
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from sa.sqlutil import sql_str
 from sa import silver
 from sa.learners import (
     away_unusual,
@@ -137,14 +138,15 @@ def load_calendar(lake_dir):
     con = duckdb.connect()
     try:
         events = con.execute(
-            f"SELECT start_utc, end_utc FROM read_parquet('{silver_path}') ORDER BY start_utc"
+            f"SELECT start_utc, end_utc FROM read_parquet({sql_str(silver_path)}) "
+            f"ORDER BY start_utc"
         ).fetchall()
         captured = None
         bronze = os.path.join(lake_dir, "bronze", "calendar_events", "date=*", "*.parquet")
         if glob.glob(bronze):
             captured = con.execute(
-                f"SELECT MIN(created_at) FROM read_parquet('{bronze}')"
-            ).fetchone()[0]
+                f"SELECT MIN(created_at) FROM read_parquet({sql_str(bronze)})"
+            ).fetchall()[0][0]
         if captured is None and events:
             captured = events[0][0]
         return {"events": events, "captured_from": captured}
@@ -227,13 +229,13 @@ def load_deck(lake_dir):
         reports = {}
         for install, at, kind in con.execute(
             f"SELECT device_install_id, observed_at, network_type "
-            f"FROM read_parquet('{reports_glob}') WHERE network_type IS NOT NULL"
+            f"FROM read_parquet({sql_str(reports_glob)}) WHERE network_type IS NOT NULL"
         ).fetchall():
             reports.setdefault(install, []).append((at, kind))
         owners = dict(
             con.execute(
                 f"SELECT client_install_id, MAX(user_id) "
-                f"FROM read_parquet('{owners_glob}') GROUP BY client_install_id"
+                f"FROM read_parquet({sql_str(owners_glob)}) GROUP BY client_install_id"
             ).fetchall()
         )
         return {i: sorted(r) for i, r in reports.items()}, owners
@@ -284,7 +286,8 @@ def load_locations(lake_dir):
         fixes, owners = {}, {}
         for install, user, lat, lon, accuracy, at in con.execute(
             f"SELECT client_install_id, user_id, latitude, longitude, accuracy_m, captured_at "
-            f"FROM read_parquet('{pattern}') WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+            f"FROM read_parquet({sql_str(pattern)}) "
+            f"WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
         ).fetchall():
             fixes.setdefault(install, []).append((at, lat, lon, accuracy))
             owners[install] = user

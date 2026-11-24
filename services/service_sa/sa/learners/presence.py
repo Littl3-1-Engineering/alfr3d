@@ -56,6 +56,7 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, inference_store, silver
 from sa.learners.base import Inference, Learner, Profile, utcnow
 
@@ -449,13 +450,13 @@ def load_gold(lake_dir):
         grid, intervals, users = {}, {}, {}
         for uid, name, d, h, dow, minutes, ok in con.execute(
             f"SELECT user_id, username, date_local, hour_local, dow_local, minutes_home, observed "
-            f"FROM read_parquet('{grid_path}') ORDER BY user_id, bucket_utc"
+            f"FROM read_parquet({sql_str(grid_path)}) ORDER BY user_id, bucket_utc"
         ).fetchall():
             grid.setdefault(uid, []).append((d, h, dow, minutes, ok))
             users.setdefault(uid, (name, None))
         for uid, utype, start, end, n in con.execute(
             f"SELECT user_id, user_type, start_utc, end_utc, sightings "
-            f"FROM read_parquet('{intervals_path}')"
+            f"FROM read_parquet({sql_str(intervals_path)})"
         ).fetchall():
             intervals.setdefault(uid, []).append((start, end, n))
             users[uid] = (users.get(uid, (None, None))[0], utype)

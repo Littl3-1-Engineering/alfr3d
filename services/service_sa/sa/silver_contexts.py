@@ -57,6 +57,7 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from sa.sqlutil import sql_str
 from sa import context_registry, lake
 
 # --- Daylight --------------------------------------------------------------------------------
@@ -127,10 +128,6 @@ HA_HOME_ENTITIES = re.compile(
 )
 
 
-def _sql_str(value):
-    return "'" + str(value).replace("'", "''") + "'"
-
-
 def setup(con, lake_dir, have, tz):
     """Views over the new bronze tables and the data horizons. Adds what exists to `have`."""
     bronze = Path(lake_dir) / "bronze"
@@ -144,7 +141,7 @@ def setup(con, lake_dir, have, tz):
         if list((bronze / name).glob("*/part-*.parquet")):
             pattern = f"{bronze / name}/*/part-*.parquet"
             con.execute(
-                f"CREATE VIEW b_{name} AS SELECT * FROM read_parquet('{pattern}', "
+                f"CREATE VIEW b_{name} AS SELECT * FROM read_parquet({sql_str(pattern)}, "
                 "hive_partitioning=true, union_by_name=true)"
             )
             have.add(name)
@@ -155,8 +152,8 @@ def setup(con, lake_dir, have, tz):
             continue
         horizon = lake.read_horizon(bronze / name)
         if horizon is None:
-            horizon = con.execute(f"SELECT MAX({column}) FROM b_{name}").fetchone()[0]
-        con.execute(f"CREATE TABLE horizon_{name} AS SELECT TIMESTAMP '{horizon}' AS h")
+            horizon = con.execute(f"SELECT MAX({column}) FROM b_{name}").fetchall()[0][0]
+        con.execute(f"CREATE TABLE horizon_{name} AS SELECT TIMESTAMP {sql_str(horizon)} AS h")
 
 
 # --- Silver ----------------------------------------------------------------------------------
@@ -184,7 +181,8 @@ def _ha_home_check(con, bronze, have):
         household = con.execute(
             "SELECT latitude, longitude FROM snap_environment "
             "WHERE date = (SELECT MAX(date) FROM snap_environment) LIMIT 1"
-        ).fetchone()
+        ).fetchall()
+        household = household[0] if household else None
     distance = None
     if ha and household and None not in (ha.get("latitude"), ha.get("longitude"), *household):
         distance = _haversine_km(
@@ -524,7 +522,7 @@ def build_gold(con, have):
         )
     if con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'g_sensor_hourly'"
-    ).fetchone()[0]:
+    ).fetchall()[0][0]:
         # ESPHome sensors report about every 15 minutes: four readings cover an hour.
         parts.append(
             """
@@ -593,7 +591,7 @@ def build_gold(con, have):
         )
     if con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_events_clean'"
-    ).fetchone()[0]:
+    ).fetchall()[0][0]:
         sender_parts.append(
             """
             SELECT 'notification:' || verb AS source, subject_id AS sender, NULL::VARCHAR AS domain,
@@ -609,17 +607,17 @@ def build_gold(con, have):
 
     has_grid = con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'g_presence_grid'"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     has_day = con.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_day_context'"
-    ).fetchone()[0]
+    ).fetchall()[0][0]
     if has_grid and has_day:
         has_weather = con.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_weather_hourly'"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         has_calendar = con.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 's_calendar_busy'"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         if has_calendar:
             con.execute(
                 """CREATE TABLE calendar_hourly AS
@@ -655,7 +653,7 @@ def build_gold(con, have):
             and con.execute(
                 "SELECT COUNT(*) FROM information_schema.columns "
                 "WHERE table_name = 's_weather_hourly' AND column_name = 'forecast_temp_c'"
-            ).fetchone()[0]
+            ).fetchall()[0][0]
         )
         # The registry (sa/context_registry.py) declares every context feature once: the long-form
         # `context_features` and the wide `context_hourly` (a pivot of it) are both generated from

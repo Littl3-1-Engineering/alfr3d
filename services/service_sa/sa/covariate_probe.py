@@ -36,6 +36,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 import duckdb
+from sa.sqlutil import sql_str
 from sa.screen import (  # noqa: F401  (moved to the production screen; kept importable here)
     _naive,
     anomaly_vs_trailing_week,
@@ -79,13 +80,15 @@ def load_features(lake_dir):
     con = duckdb.connect()
     try:
         have = {
-            r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{path}')").fetchall()
+            r[0]
+            for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({sql_str(path)})").fetchall()
         }
         keys = [k for k in keys if k in have]
         if not keys:
             return {}
         rows = con.execute(
-            f"SELECT bucket_utc, {', '.join(keys)} FROM read_parquet('{path}') ORDER BY bucket_utc"
+            f"SELECT bucket_utc, {', '.join(keys)} "
+            f"FROM read_parquet({sql_str(path)}) ORDER BY bucket_utc"
         ).fetchall()
     finally:
         con.close()
@@ -101,7 +104,7 @@ def load_presence_targets(lake_dir):
     try:
         rows = con.execute(
             f"SELECT username, bucket_utc, dow_local, hour_local, minutes_home "
-            f"FROM read_parquet('{path}') WHERE observed ORDER BY username, bucket_utc"
+            f"FROM read_parquet({sql_str(path)}) WHERE observed ORDER BY username, bucket_utc"
         ).fetchall()
     finally:
         con.close()

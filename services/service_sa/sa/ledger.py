@@ -15,6 +15,7 @@ import json
 import os
 from datetime import timedelta
 
+from sa.sqlutil import sql_str
 from sa import context_registry as reg
 
 
@@ -61,7 +62,9 @@ def build(lake_dir, window_days=30, features=reg.REGISTRY, families=reg.SERIES_F
         for p, col in ((f_path, "bucket_utc"), (s_path, "bucket_utc")):
             if p:
                 horizons.append(
-                    con.execute(f"SELECT MAX({col}) FROM read_parquet('{p}')").fetchone()[0]
+                    con.execute(f"SELECT MAX({col}) FROM read_parquet({sql_str(p)})").fetchall()[0][
+                        0
+                    ]
                 )
         horizon = max((h for h in horizons if h is not None), default=None)
         since = horizon - timedelta(days=window_days) if horizon else None
@@ -71,7 +74,7 @@ def build(lake_dir, window_days=30, features=reg.REGISTRY, families=reg.SERIES_F
             for key, first, last, rows, recent in con.execute(
                 f"SELECT feature_key, MIN(bucket_utc), MAX(bucket_utc), COUNT(*), "
                 f"COUNT(DISTINCT bucket_utc) FILTER (WHERE bucket_utc > ?) "
-                f"FROM read_parquet('{f_path}') GROUP BY feature_key",
+                f"FROM read_parquet({sql_str(f_path)}) GROUP BY feature_key",
                 [since],
             ).fetchall():
                 feature_stats[key] = {
@@ -86,7 +89,7 @@ def build(lake_dir, window_days=30, features=reg.REGISTRY, families=reg.SERIES_F
             for key, first, last, rows, recent in con.execute(
                 f"SELECT series_key, MIN(bucket_utc), MAX(bucket_utc), COUNT(*), "
                 f"COUNT(DISTINCT bucket_utc) FILTER (WHERE bucket_utc > ?) "
-                f"FROM read_parquet('{s_path}') GROUP BY series_key ORDER BY series_key",
+                f"FROM read_parquet({sql_str(s_path)}) GROUP BY series_key ORDER BY series_key",
                 [since],
             ).fetchall():
                 series_stats[key] = {

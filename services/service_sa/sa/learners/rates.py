@@ -31,11 +31,12 @@ import logging
 import math
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, inference_store
 from sa.learners.base import Inference, Learner, Profile, utcnow
 from sa.learners.scalar import subject_id_for
@@ -340,26 +341,26 @@ def load_streams(lake_dir, tz_name=None):
         senders_file = path("gold", "sender_daily")
         if os.path.exists(ctx):
             for d, wk, hol in con.execute(
-                f"SELECT date, is_weekend, is_holiday FROM read_parquet('{ctx}')"
+                f"SELECT date, is_weekend, is_holiday FROM read_parquet({sql_str(ctx)})"
             ).fetchall():
                 out["daytypes"][d] = "off" if (wk or hol) else "work"
 
         horizon = None
         if os.path.exists(rates):
             horizon = con.execute(
-                f"SELECT MAX(bucket_utc) FROM read_parquet('{rates}')"
-            ).fetchone()[0]
+                f"SELECT MAX(bucket_utc) FROM read_parquet({sql_str(rates)})"
+            ).fetchall()[0][0]
             alive = {
                 b
                 for (b,) in con.execute(
-                    f"SELECT DISTINCT bucket_utc FROM read_parquet('{rates}')"
+                    f"SELECT DISTINCT bucket_utc FROM read_parquet({sql_str(rates)})"
                 ).fetchall()
             }
             if horizon:
                 window = [horizon - timedelta(hours=i) for i in range(1, COVERAGE_HOURS + 1)]
                 out["coverage"] = sum(1 for b in window if b in alive) / COVERAGE_HOURS
             rows = con.execute(
-                f"SELECT signal, date_local, hour_local, n FROM read_parquet('{rates}') "
+                f"SELECT signal, date_local, hour_local, n FROM read_parquet({sql_str(rates)}) "
                 f"WHERE signal IN ({','.join('?' * len(EVENT_SIGNALS))})",
                 list(EVENT_SIGNALS),
             ).fetchall()
@@ -376,7 +377,7 @@ def load_streams(lake_dir, tz_name=None):
             cols = ", ".join(c for _, c in EMAIL_STREAMS)
             email = con.execute(
                 f"SELECT date_local, hour_local, bucket_utc, {cols} "
-                f"FROM read_parquet('{path('gold', 'email_hourly')}') ORDER BY bucket_utc"
+                f"FROM read_parquet({sql_str(path('gold', 'email_hourly'))}) ORDER BY bucket_utc"
             ).fetchall()
             for i, (name, _col) in enumerate(EMAIL_STREAMS):
                 cells = {(r[0], r[1]): int(r[3 + i] or 0) for r in email}
@@ -388,7 +389,7 @@ def load_streams(lake_dir, tz_name=None):
         if os.path.exists(senders_file) and horizon:
             last_full_day = (horizon - timedelta(hours=1)).date() - timedelta(days=1)
             rows = con.execute(
-                f"SELECT source, sender, date_local, n FROM read_parquet('{senders_file}')"
+                f"SELECT source, sender, date_local, n FROM read_parquet({sql_str(senders_file)})"
             ).fetchall()
             senders = {}
             for src, sender, d, n in rows:

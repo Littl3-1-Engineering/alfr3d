@@ -30,6 +30,7 @@ Stable identity: a series is named by what it IS (an ESPHome sensor is `host:nam
 """
 
 from dataclasses import dataclass
+from sa.sqlutil import sql_str
 
 # --- Privacy scopes ----------------------------------------------------------------------------
 
@@ -406,7 +407,7 @@ def features_query(available, features=REGISTRY, joins=JOINS):
             num, text = f"CAST(({f.value}) AS DOUBLE)", "NULL::VARCHAR"
             present = f"({f.value}) IS NOT NULL"
         parts.append(
-            f"SELECT '{f.key}' AS feature_key, s.bucket_utc, {num} AS value_num, "
+            f"SELECT {sql_str(f.key)} AS feature_key, s.bucket_utc, {num} AS value_num, "
             f"{text} AS value_text FROM spine s {on} WHERE {present}"
         )
     if not parts:
@@ -428,7 +429,7 @@ def context_hourly_query(available, features=REGISTRY, joins=JOINS):
             continue
         if buildable(f, available, joins):
             col = "text" if f.kind == "text" else "num"
-            agg = f"MAX(value_{col}) FILTER (WHERE feature_key = '{f.key}')"
+            agg = f"MAX(value_{col}) FILTER (WHERE feature_key = {sql_str(f.key)})"
             pivot.append(f"{agg} AS {f.key}")
             cast = _PIVOT_CAST[f.kind]
             columns.append(f"CAST(x.{f.key} AS {cast}) AS {f.key}" if cast else f"x.{f.key}")

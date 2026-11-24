@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from sa.sqlutil import sql_str
 from sa import confidence as confidence_contract
 
 HOUR = timedelta(hours=1)
@@ -247,7 +248,7 @@ def autonomy_commands(lake_dir):
     con = duckdb.connect()
     try:
         rows = con.execute(
-            f"SELECT entity_ref, command, issued_at FROM read_parquet('{pattern}', "
+            f"SELECT entity_ref, command, issued_at FROM read_parquet({sql_str(pattern)}, "
             f"union_by_name=true) WHERE origin = 'autonomy' AND CAST(success AS INTEGER) = 1 "
             f"AND command IN ('turn_on', 'turn_off') ORDER BY entity_ref, issued_at"
         ).fetchall()
@@ -274,12 +275,12 @@ def load_switch_history(lake_dir):
     con = duckdb.connect()
     try:
         rows = con.execute(
-            f"SELECT entity_id, last_changed, state FROM read_parquet('{pattern}', "
+            f"SELECT entity_id, last_changed, state FROM read_parquet({sql_str(pattern)}, "
             f"union_by_name=true) WHERE domain = 'switch' ORDER BY entity_id, last_changed"
         ).fetchall()
         end = con.execute(
-            f"SELECT MAX(last_changed) FROM read_parquet('{pattern}', union_by_name=true)"
-        ).fetchone()[0]
+            f"SELECT MAX(last_changed) FROM read_parquet({sql_str(pattern)}, union_by_name=true)"
+        ).fetchall()[0][0]
     finally:
         con.close()
     by_entity = defaultdict(list)

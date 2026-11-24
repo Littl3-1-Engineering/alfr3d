@@ -43,6 +43,7 @@ from datetime import date, datetime, timedelta
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, inference_store
 from sa.learners import household_day
 from sa.learners.base import Inference, Learner, Profile, utcnow
@@ -298,7 +299,7 @@ def load_features(lake_dir, wanted):
         daily = _path(lake_dir, "gold", "daily_rhythm")
         if os.path.exists(daily):
             for uid, d, minutes in con.execute(
-                f"SELECT user_id, date_local, minutes_home FROM read_parquet('{daily}') "
+                f"SELECT user_id, date_local, minutes_home FROM read_parquet({sql_str(daily)}) "
                 f"WHERE observed ORDER BY user_id, date_local"
             ).fetchall():
                 for target in ("presence_profile", "stay_profile", "daytime_profile"):
@@ -312,7 +313,7 @@ def load_features(lake_dir, wanted):
             by_subject = {
                 subject_id_for(k): k
                 for (k,) in con.execute(
-                    f"SELECT DISTINCT series_key FROM read_parquet('{scalar}')"
+                    f"SELECT DISTINCT series_key FROM read_parquet({sql_str(scalar)})"
                 ).fetchall()
             }
             for subject_id, series_key in by_subject.items():
@@ -320,7 +321,7 @@ def load_features(lake_dir, wanted):
                 if key not in wanted:
                     continue
                 rows = con.execute(
-                    f"SELECT date_local, AVG(mean), COUNT(*) FROM read_parquet('{scalar}') "
+                    f"SELECT date_local, AVG(mean), COUNT(*) FROM read_parquet({sql_str(scalar)}) "
                     f"WHERE series_key = ? AND mean IS NOT NULL GROUP BY date_local "
                     f"HAVING COUNT(*) >= {MIN_SCALAR_HOURS} ORDER BY date_local",
                     [series_key],
@@ -333,17 +334,17 @@ def load_features(lake_dir, wanted):
         rates = _path(lake_dir, "gold", "hourly_rates")
         if os.path.exists(rates):
             horizon = con.execute(
-                f"SELECT MAX(date_local) FROM read_parquet('{rates}')"
-            ).fetchone()[0]
+                f"SELECT MAX(date_local) FROM read_parquet({sql_str(rates)})"
+            ).fetchall()[0][0]
             rows = con.execute(
                 f"SELECT signal, date_local, SUM(n), COUNT(DISTINCT hour_local) "
-                f"FROM read_parquet('{rates}') GROUP BY signal, date_local "
+                f"FROM read_parquet({sql_str(rates)}) GROUP BY signal, date_local "
                 f"ORDER BY signal, date_local"
             ).fetchall()
             live = {
                 d
                 for (d,) in con.execute(
-                    f"SELECT date_local FROM read_parquet('{rates}') GROUP BY date_local "
+                    f"SELECT date_local FROM read_parquet({sql_str(rates)}) GROUP BY date_local "
                     f"HAVING COUNT(DISTINCT bucket_utc) >= {MIN_RATE_HOURS}"
                 ).fetchall()
             }
@@ -368,8 +369,8 @@ def load_features(lake_dir, wanted):
         email = _path(lake_dir, "gold", "email_hourly")
         if os.path.exists(email):
             horizon = con.execute(
-                f"SELECT MAX(date_local) FROM read_parquet('{email}')"
-            ).fetchone()[0]
+                f"SELECT MAX(date_local) FROM read_parquet({sql_str(email)})"
+            ).fetchall()[0][0]
             for stream, col in (
                 ("email/all", "n"),
                 ("email/promotions", "n_promotions"),
@@ -379,7 +380,7 @@ def load_features(lake_dir, wanted):
                 if key not in wanted:
                     continue
                 rows = con.execute(
-                    f"SELECT date_local, SUM({col}) FROM read_parquet('{email}') "
+                    f"SELECT date_local, SUM({col}) FROM read_parquet({sql_str(email)}) "
                     f"WHERE date_local < ? GROUP BY date_local "
                     f"HAVING COUNT(DISTINCT hour_local) >= {MIN_RATE_HOURS} ORDER BY date_local",
                     [horizon],
@@ -402,7 +403,7 @@ def _daytypes(lake_dir):
         kinds = {
             d: ("off" if (wk or hol) else "work")
             for d, wk, hol in con.execute(
-                f"SELECT date, is_weekend, is_holiday FROM read_parquet('{path}')"
+                f"SELECT date, is_weekend, is_holiday FROM read_parquet({sql_str(path)})"
             ).fetchall()
         }
     finally:

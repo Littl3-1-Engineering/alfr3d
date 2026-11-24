@@ -6,6 +6,7 @@ import os
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa.learners.base import Profile
 
 NAME = "presence_bridge"
@@ -53,7 +54,8 @@ def run_fit(lake_dir, conn):
     con = duckdb.connect()
     try:
         rows = con.execute(
-            f"SELECT user_id, bridge_minutes, basis, nap_gaps, nights FROM read_parquet('{path}')"
+            f"SELECT user_id, bridge_minutes, basis, nap_gaps, nights "
+            f"FROM read_parquet({sql_str(path)})"
         ).fetchall()
     finally:
         con.close()
