@@ -50,6 +50,7 @@ from datetime import datetime, timedelta
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, covariates, inference_store
 from sa.covariates import weighted_median  # noqa: F401  (shared; re-exported for callers)
 from sa.learners.base import Inference, Learner, Profile, utcnow
@@ -460,7 +461,8 @@ def load_series(lake_dir):
         grouped = {}
         for key, t, d, h, mean, cov in con.execute(
             f"SELECT series_key, bucket_utc, date_local, hour_local, mean, coverage "
-            f"FROM read_parquet('{gold}') WHERE mean IS NOT NULL ORDER BY series_key, bucket_utc"
+            f"FROM read_parquet({sql_str(gold)}) WHERE mean IS NOT NULL "
+            f"ORDER BY series_key, bucket_utc"
         ).fetchall():
             grouped.setdefault(key, []).append(
                 {
@@ -475,14 +477,14 @@ def load_series(lake_dir):
         entities = os.path.join(lake_dir, "silver", "ha_entities", "part-0.parquet")
         if os.path.exists(entities):
             for entity_id, describes in con.execute(
-                f"SELECT entity_id, describes_ha_home FROM read_parquet('{entities}')"
+                f"SELECT entity_id, describes_ha_home FROM read_parquet({sql_str(entities)})"
             ).fetchall():
                 flags["ha:" + entity_id] = bool(describes)
         weather = os.path.join(lake_dir, "silver", "weather_hourly", "part-0.parquet")
         if os.path.exists(weather):
             rows = con.execute(
                 f"SELECT bucket_utc, CAST(bucket_local AS DATE), hour(bucket_local), temperature_c "
-                f"FROM read_parquet('{weather}') WHERE temperature_c IS NOT NULL "
+                f"FROM read_parquet({sql_str(weather)}) WHERE temperature_c IS NOT NULL "
                 f"ORDER BY bucket_utc"
             ).fetchall()
             if rows:

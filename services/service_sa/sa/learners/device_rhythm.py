@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, inference_store
 from sa.learners import presence
 from sa.learners.base import Inference, Learner, Profile
@@ -392,14 +393,14 @@ def load_gold(lake_dir, tz=None):
         return out
     con = duckdb.connect()
     try:
-        con.execute(f"CREATE MACRO to_local(ts) AS timezone('{tz}', timezone('UTC', ts))")
-        con.execute(f"CREATE VIEW sess AS SELECT * FROM read_parquet('{sessions_file}')")
+        con.execute(f"CREATE MACRO to_local(ts) AS timezone({sql_str(tz)}, timezone('UTC', ts))")
+        con.execute(f"CREATE VIEW sess AS SELECT * FROM read_parquet({sql_str(sessions_file)})")
         con.execute(
             f"""CREATE VIEW hrs AS
                 SELECT bucket_utc, bool_or(observed) AS observed
-                FROM read_parquet('{grid_file}') GROUP BY 1"""
+                FROM read_parquet({sql_str(grid_file)}) GROUP BY 1"""
         )
-        out["horizon"] = con.execute("SELECT MAX(end_utc) FROM sess").fetchone()[0]
+        out["horizon"] = con.execute("SELECT MAX(end_utc) FROM sess").fetchall()[0][0]
         for device_id, name, d, h, dow, minutes, ok in con.execute(_HOURLY_SQL).fetchall():
             out["rows"].setdefault(device_id, []).append((d, h, dow, min(60.0, minutes), ok))
             out["names"][device_id] = name

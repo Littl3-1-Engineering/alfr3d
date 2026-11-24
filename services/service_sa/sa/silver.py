@@ -52,6 +52,7 @@ import duckdb
 import pyarrow as pa
 import pymysql
 
+from sa.sqlutil import sql_str
 from sa import presence_bridge, silver_contexts
 
 logger = logging.getLogger("SASilver")
@@ -248,7 +249,7 @@ def _view(con, name, lake, *parts, snapshot=False):
     # that was entirely NULL on one day is typed differently from other days. Match by name, not
     # by the first file's schema.
     con.execute(
-        f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{pattern}', "
+        f"CREATE VIEW {name} AS SELECT * FROM read_parquet({sql_str(pattern)}, "
         "hive_partitioning=true, union_by_name=true)"
     )
     return True
@@ -264,8 +265,8 @@ def _write(con, query, layer, table, lake):
         f"COPY ({query}) TO '{tmp_dir / 'part-0.parquet'}' (FORMAT PARQUET, COMPRESSION ZSTD)"
     )
     rows = con.execute(
-        f"SELECT COUNT(*) FROM read_parquet('{tmp_dir / 'part-0.parquet'}')"
-    ).fetchone()[0]
+        f"SELECT COUNT(*) FROM read_parquet({sql_str(tmp_dir / 'part-0.parquet')})"
+    ).fetchall()[0][0]
     shutil.rmtree(out_dir, ignore_errors=True)
     os.replace(tmp_dir, out_dir)
     return rows
@@ -274,7 +275,7 @@ def _write(con, query, layer, table, lake):
 def _setup(con, lake, exclusions, aliases, tz):
     """Views over bronze, the helper macro, and the override tables. Returns the set of bronze
     sources that exist, so a table whose input is missing is skipped rather than failing."""
-    con.execute(f"CREATE MACRO to_local(ts) AS timezone('{tz}', timezone('UTC', ts))")
+    con.execute(f"CREATE MACRO to_local(ts) AS timezone({sql_str(tz)}, timezone('UTC', ts))")
     have = set()
     for name in (
         "device_history",
@@ -446,7 +447,7 @@ def _build_person_bridge(con, fixed_gap):
     if fixed_gap is not None:
         rows = [(u, int(fixed_gap), "fixed", 0, 0) for u in users]
     elif users:
-        ref = con.execute("SELECT MAX(ts) FROM sightings").fetchone()[0]
+        ref = con.execute("SELECT MAX(ts) FROM sightings").fetchall()[0][0]
         since = ref - timedelta(days=presence_bridge.WINDOW_DAYS)
         gaps = {}
         for user_id, gap in con.execute(
@@ -571,7 +572,9 @@ def _build_gold(con, have, lake):
     silver = {t: Path(lake) / "silver" / t / "part-0.parquet" for t in SILVER_TABLES}
     for name, path in silver.items():
         if path.exists():
-            con.execute(f"CREATE OR REPLACE VIEW s_{name} AS SELECT * FROM read_parquet('{path}')")
+            con.execute(
+                f"CREATE OR REPLACE VIEW s_{name} AS SELECT * FROM read_parquet({sql_str(path)})"
+            )
 
     if silver["presence_intervals"].exists() and "device_history" in have:
         # Hourly UTC buckets from each person's first sighting to the data horizon. `observed`
@@ -774,7 +777,8 @@ def _location(con, have):
     row = con.execute(
         "SELECT latitude, longitude FROM snap_environment "
         "WHERE date = (SELECT MAX(date) FROM snap_environment) LIMIT 1"
-    ).fetchone()
+    ).fetchall()
+    row = row[0] if row else None
     if not row or row[0] is None or row[1] is None:
         return None
     return float(row[0]), float(row[1])
@@ -791,7 +795,7 @@ def _register_views(con, lake):
             if path.exists():
                 con.execute(
                     f"CREATE OR REPLACE VIEW {prefix}_{table} AS "
-                    f"SELECT * FROM read_parquet('{path}')"
+                    f"SELECT * FROM read_parquet({sql_str(path)})"
                 )
 
 
@@ -799,13 +803,15 @@ def _earliest_day(con, have):
     days = []
     if "device_history" in have:
         days.append(
-            con.execute("SELECT MIN(CAST(timestamp AS DATE)) FROM b_device_history").fetchone()[0]
+            con.execute("SELECT MIN(CAST(timestamp AS DATE)) FROM b_device_history").fetchall()[0][
+                0
+            ]
         )
     if "household_events" in have:
         days.append(
-            con.execute("SELECT MIN(CAST(occurred_at AS DATE)) FROM b_household_events").fetchone()[
+            con.execute("SELECT MIN(CAST(occurred_at AS DATE)) FROM b_household_events").fetchall()[
                 0
-            ]
+            ][0]
         )
     days = [d for d in days if d]
     return min(days) if days else None

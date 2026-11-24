@@ -39,6 +39,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
+from sa.sqlutil import sql_str
+
 ACTED_ON, IGNORED, UNDONE, REJECTED, PENDING = (
     "acted_on",
     "ignored",
@@ -165,7 +167,7 @@ def load_cards(lake_dir):
     try:
         return con.execute(
             f"SELECT rule_id, action, impression_id, occurred_at, user_id, surface "
-            f"FROM read_parquet('{pattern}', union_by_name=true) ORDER BY occurred_at"
+            f"FROM read_parquet({sql_str(pattern)}, union_by_name=true) ORDER BY occurred_at"
         ).fetchall()
     finally:
         con.close()

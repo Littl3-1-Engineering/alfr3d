@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 
 import duckdb
 
+from sa.sqlutil import sql_str
 from sa import confidence, inference_store, layer2, presence_bridge
 from sa.layer2 import fisher_p  # noqa: F401  (re-exported: tests and backtests import it here)
 from sa.learners import presence
@@ -493,13 +494,13 @@ def _add_event_counts(con, rates_file, days):
         return
     first = dict(
         con.execute(
-            f"SELECT signal, MIN(date_local) FROM read_parquet('{rates_file}') GROUP BY 1"
+            f"SELECT signal, MIN(date_local) FROM read_parquet({sql_str(rates_file)}) GROUP BY 1"
         ).fetchall()
     )
     counts = {
         (d, signal): n
         for d, signal, n in con.execute(
-            f"SELECT date_local, signal, SUM(n) FROM read_parquet('{rates_file}') "
+            f"SELECT date_local, signal, SUM(n) FROM read_parquet({sql_str(rates_file)}) "
             f"WHERE hour_local < {CUTOFF_HOUR} GROUP BY 1, 2"
         ).fetchall()
     }
@@ -518,10 +519,10 @@ def load_days(lake_dir):
         return {"days": [], "coverage": 0.0}
     con = duckdb.connect()
     try:
-        con.execute(f"CREATE VIEW sess AS SELECT * FROM read_parquet('{sessions_file}')")
+        con.execute(f"CREATE VIEW sess AS SELECT * FROM read_parquet({sql_str(sessions_file)})")
         con.execute(
             "CREATE VIEW grid AS SELECT date_local, hour_local, bool_or(observed) AS observed "
-            f"FROM read_parquet('{grid_file}') GROUP BY 1, 2"
+            f"FROM read_parquet({sql_str(grid_file)}) GROUP BY 1, 2"
         )
         intervals_file = os.path.join(lake_dir, "silver", "presence_intervals", "part-0.parquet")
         has_home = os.path.exists(intervals_file)
@@ -535,10 +536,12 @@ def load_days(lake_dir):
         )
         if has_home:
             types = ", ".join("'" + t + "'" for t in HOME_USER_TYPES)
-            con.execute(f"CREATE VIEW grid_users AS SELECT * FROM read_parquet('{grid_file}')")
+            con.execute(
+                f"CREATE VIEW grid_users AS SELECT * FROM read_parquet({sql_str(grid_file)})"
+            )
             con.execute(
                 "CREATE VIEW user_types AS SELECT DISTINCT user_id FROM "
-                f"read_parquet('{intervals_file}') WHERE user_type IN ({types})"
+                f"read_parquet({sql_str(intervals_file)}) WHERE user_type IN ({types})"
             )
         rows = con.execute(sql).fetchall()
         days = [
@@ -556,7 +559,7 @@ def load_days(lake_dir):
         _add_event_counts(con, rates_file, days)
         total = con.execute(
             f"SELECT COUNT(DISTINCT date_local) FROM grid WHERE hour_local < {CUTOFF_HOUR}"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         coverage = len(days) / total if total else 0.0
         return {"days": days, "coverage": min(1.0, coverage)}
     finally:
