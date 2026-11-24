@@ -5,7 +5,8 @@ Layer: tooling for L1 and L2 | Roadmap: [SA_ROADMAP.md](SA_ROADMAP.md)
 Status 2026-11-19: **slices 1 to 3 built, in progress**. Slices 1 and 2 (replay harness, parity
 script, the stay-arrival fix) merged in PR #422 and deployed to the NUC on 2026-11-18. Slice 3
 (branch `feat/sa-parity-coverage`) adds the Deck family to the replay and parity for the scalar,
-rate and device-rhythm learners. The stay parity re-run waits for days after the deploy.
+rate and device-rhythm learners. Stay parity re-run done 2026-11-23: the arrival fix holds (see
+"Stay re-run after the fix").
 
 ## What exists
 
@@ -101,6 +102,42 @@ also replaces the profile live used on D. Profiles are not versioned, so the pro
 the lake instead. That rebuild equals live's only while the lake's inputs are unchanged, so the
 comparison starts at `MATCHING_INPUTS_SINCE` (2026-11-01, the learned presence bridge); advance it
 after any later learner or silver change, never backwards.
+
+### Stay re-run after the fix: 2026-11-19 to 2026-11-22, run 2026-11-23
+
+`parity --only stay_profile`, `replay.py` and `parity.py` from origin/main (1e9dd7c4) copied into
+the sa-learner container, run, and removed. Verdict `MISMATCH: 2 day(s) to explain`; both
+explained below, so no stay defect is left open.
+
+| outcome | subject-days |
+|---|---|
+| both | 2 (user 6, 11-19 and 11-20) |
+| live-only | 2 (user 6, 11-21 and 11-22) |
+| replay-only | 0 |
+| borderline | 0 |
+| neither | 20 (users 1, 8, 9, 10, 18 all four days; user 6 none) |
+
+- **The fix worked.** Users 9 and 6 no longer produce the daily ~24 h live-only rows: user 9 is
+  `neither` on all 4 days, and user 6's two shared days agree to 0.04 bits (11-19: 6.23 live,
+  6.22 replay; 11-20: 6.23 live, 6.19 replay; confidence 0.0 on both sides). Card-floor flips 0,
+  profiles agree with their refits (`n_eff`, coverage, source quality identical; user 9's stability
+  0.625 live against 1.0 refit is the drift cap, expected and labelled).
+- **The two live-only days are one row, not two stays, and not the arrival-lag bug.** Live holds a
+  single `stay_profile` row for user 6: `window_start` 2026-11-21 17:43:30, `window_end` 11-23
+  15:37:47 (refresh time, i.e. now), `stay_minutes` 2,754 (about 46 h), 5.935 bits, confidence 0.0.
+  `parity.live_days` credits a multi-day stay row to every day it spans, so that one row, scored as
+  of 11-23, lands on both 11-21 and 11-22 (identical 5.935 bits on both is the tell). The arrival-lag
+  signature is a start at the *previous* stay's start with an end at the next arrival; here the
+  start is the real arrival (lake interval starts 17:41:27, 2 min earlier) and the end is the
+  present, with the phones sighted 15:33 today. The replay scores each day at that day's own
+  profile and stay length (6 h at the end of 11-21, 30 h at the end of 11-22; the 11-22 profile has
+  already seen a 29.7 h stay on 11-20 to 11-21), so it flags neither day. Neither side is wrong:
+  they score different stay lengths.
+- **Parity limit, not a live defect.** A stay that is still running at the time of the run cannot be
+  compared day by day, because live stores only its latest score. Candidate fix, not built: credit a
+  still-open stay row (`window_end` within the live lag of the run time) to its start day only, or
+  exclude it from the comparison. No card impact: confidence is 0.0, so nothing fires.
+- `MATCHING_INPUTS_SINCE["stay_profile"]` stays 2026-11-19; this run confirms it.
 
 ### First run: 2026-11-01 to 2026-11-17, NUC lake and database
 
@@ -270,8 +307,10 @@ as events and Deck states accumulate.
 - [x] Presence and daytime one-sided days looked at (above): one live-data gap, one tolerance band,
       one bridge deploy date, one daytime day left unexplained.
 - [x] Deck family reconstructed; its discount cannot be calibrated yet (no overlap in the data).
-- [ ] **Stay parity re-run** once the lake holds a few days after 2026-11-19 (needs 14 person-days:
-      6 profiles, so 3 days). Expect the live-only stay days to stop.
+- [x] **Stay parity re-run, 2026-11-23** (lake 2026-11-19..11-22, 6 profiles x 4 days = 24
+      subject-days, read-only on the NUC). Result below ("Stay re-run after the fix"): the ~24 h
+      live-only stay days are gone; the two remaining live-only days are one still-running stay
+      attributed to the days it spans, not the arrival-lag bug.
 - [x] Scalar hypothesis checked and refuted (above); replaced by a measured finding.
 - [x] Per-series calibrated bar for the scalar learner (branch `fix/sa-scalar-per-series-bar`, see
       "Fix" under the switch_count finding). **Not deployed**: it changes which attention cards fire,
