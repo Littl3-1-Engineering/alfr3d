@@ -31,6 +31,8 @@ DEFAULT_STALE_SECONDS = 90
 def touch(path: str) -> None:
     """Record that the caller's main loop is making progress."""
     try:
+        if ".." in path:
+            raise Exception("Invalid file path")
         with open(path, "w") as f:
             f.write(str(time.time()))
     except OSError as e:
