@@ -278,7 +278,7 @@
    "signature": "(self)"
   },
   "check_system_health": {
-   "sha": "sha256:60d7af2c78d1eaa9",
+   "sha": "sha256:e347b647b9921b32",
    "signature": "(self, frame=None)"
   },
   "check_time": {
