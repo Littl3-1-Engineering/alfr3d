@@ -35,11 +35,34 @@ MYSQL_PSWD = os.environ.get("MYSQL_PSWD")
 SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS = 300
 SYSTEM_HEALTH_FAILURES_BEFORE_ALERT = 2
 
-# (key, display name, common module, is-configured fn, probe fn) -- an unconfigured integration
-# is never probed or alerted on.
+# (key, display name, common module, is-configured fn, probe fn, what an outage means) -- an
+# unconfigured integration is never probed or alerted on. The last field is the card's
+# consequence clause, so it says what actually breaks (devices read offline, the map goes blank).
 SYSTEM_HEALTH_INTEGRATIONS = (
-    ("home_assistant", "Home Assistant", "ha_utils", "is_ha_configured", "test_ha_connection"),
-    ("smartthings", "SmartThings", "st_utils", "is_st_configured", "test_st_connection"),
+    (
+        "home_assistant",
+        "Home Assistant",
+        "ha_utils",
+        "is_ha_configured",
+        "test_ha_connection",
+        "synced devices will read offline",
+    ),
+    (
+        "smartthings",
+        "SmartThings",
+        "st_utils",
+        "is_st_configured",
+        "test_st_connection",
+        "synced devices will read offline",
+    ),
+    (
+        "map_tiles",
+        "Map tiles",
+        "map_tiles_utils",
+        "is_map_tiles_configured",
+        "test_map_tiles",
+        "the dashboard map will show a blank or watermarked basemap",
+    ),
 )
 
 # check_disk_health(): sa-learner samples the disk every few hours, so the rule re-reads the
@@ -66,12 +89,23 @@ class HealthCards:
         decide_displays() never suppresses it. Not a frame field (SA-4) -- it probes external
         services rather than reading shared state.
         """
-        from common import ha_utils, st_utils
+        from common import ha_utils, map_tiles_utils, st_utils
 
-        modules = {"ha_utils": ha_utils, "st_utils": st_utils}
+        modules = {
+            "ha_utils": ha_utils,
+            "st_utils": st_utils,
+            "map_tiles_utils": map_tiles_utils,
+        }
         now = time.time()
         down = []
-        for key, name, module_name, configured_fn, probe_fn in SYSTEM_HEALTH_INTEGRATIONS:
+        for (
+            key,
+            name,
+            module_name,
+            configured_fn,
+            probe_fn,
+            impact,
+        ) in SYSTEM_HEALTH_INTEGRATIONS:
             state = SYSTEM_HEALTH_STATE.setdefault(key, {"failures": 0, "last_probe": 0.0})
             try:
                 if now - state["last_probe"] >= SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS:
@@ -88,22 +122,23 @@ class HealthCards:
                 # the integration being down either -- that would be a false urgent alert.
                 logger.error(f"System health probe for {key} failed: {e}")
             if state["failures"] >= SYSTEM_HEALTH_FAILURES_BEFORE_ALERT:
-                down.append((key, name, state["failures"]))
+                down.append((key, name, state["failures"], impact))
 
         if not down:
             return None
-        names = ", ".join(name for _key, name, _n in down)
+        names = ", ".join(name for _key, name, _n, _impact in down)
+        impacts = "; ".join(dict.fromkeys(impact for _key, _name, _n, impact in down))
         minutes = SYSTEM_HEALTH_PROBE_INTERVAL_SECONDS // 60
         return {
             "mode": "system_health",
-            "content": f"{names} unreachable — synced devices will read offline",
+            "content": f"{names} unreachable — {impacts}",
             "priority": 2.2,
             "urgent": True,
             "data": {
-                "unreachable": [key for key, _name, _n in down],
+                "unreachable": [key for key, _name, _n, _impact in down],
                 "because": [
                     f"{name}: {n} consecutive failed checks (every {minutes} min)"
-                    for _key, name, n in down
+                    for _key, name, n, _impact in down
                 ],
             },
         }

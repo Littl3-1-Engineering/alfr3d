@@ -3936,8 +3936,9 @@ class TestSystemHealth:
         engine.SYSTEM_HEALTH_STATE.clear()
 
     @staticmethod
-    def _run(ha=(True, False), st=(False, False), now=1000.0, daemon=None):
-        """Run one check. ha/st = (configured, connected); st defaults to unconfigured."""
+    def _run(ha=(True, False), st=(False, False), now=1000.0, daemon=None, tiles=True):
+        """Run one check. ha/st = (configured, connected); st defaults to unconfigured.
+        `tiles` is whether the map-tile probe passes (healthy by default, never the network)."""
         from services.service_sa.sa.engine import SAEngine
 
         daemon = daemon or SAEngine()
@@ -3945,6 +3946,8 @@ class TestSystemHealth:
             "common.ha_utils.test_ha_connection", return_value=(ha[1], "m")
         ), patch("common.st_utils.is_st_configured", return_value=st[0]), patch(
             "common.st_utils.test_st_connection", return_value=(st[1], "m")
+        ), patch(
+            "common.map_tiles_utils.test_map_tiles", return_value=(tiles, "m")
         ), patch(
             "services.service_sa.sa.engine.time.time", return_value=now
         ):
@@ -3960,6 +3963,21 @@ class TestSystemHealth:
         assert card["urgent"] is True
         assert card["data"]["unreachable"] == ["home_assistant"]
         assert "Home Assistant" in card["content"]
+
+    def test_failing_map_tiles_fire_a_card_that_says_the_map_is_affected(self):
+        """The 2026-11 CARTO watermark case: tiles answer 200 but are a placeholder."""
+        self._run(ha=(True, True), tiles=False, now=1000.0)
+        card = self._run(ha=(True, True), tiles=False, now=1000.0 + 301)
+        assert card["urgent"] is True
+        assert card["data"]["unreachable"] == ["map_tiles"]
+        assert "Map tiles" in card["content"]
+        assert "map" in card["content"]
+        assert "offline" not in card["content"]  # not the device-offline wording
+
+    def test_map_tile_recovery_clears_the_alert(self):
+        self._run(ha=(True, True), tiles=False, now=1000.0)
+        assert self._run(ha=(True, True), tiles=False, now=1301.0) is not None
+        assert self._run(ha=(True, True), tiles=True, now=1602.0) is None
 
     def test_probes_are_rate_limited_between_cycles(self):
         self._run(now=1000.0)
@@ -3981,7 +3999,7 @@ class TestSystemHealth:
         daemon = SAEngine()
         with patch("common.ha_utils.is_ha_configured", side_effect=RuntimeError("db down")), patch(
             "common.st_utils.is_st_configured", return_value=False
-        ):
+        ), patch("common.map_tiles_utils.test_map_tiles", return_value=(True, "m")):
             for i in range(4):
                 with patch(
                     "services.service_sa.sa.engine.time.time",
