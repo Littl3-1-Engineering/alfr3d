@@ -6,6 +6,7 @@ import sys
 import logging
 import subprocess
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import orjson
@@ -229,6 +230,20 @@ def _fetch_quips(category=None):
         return quips
 
 
+def _utc_iso(value):
+    """Serialize a naive-UTC MySQL TIMESTAMP as explicit ISO-8601 UTC ("...Z").
+
+    The DB session and containers run in UTC, so `NOW()`-stamped columns such as
+    `routines.last_run` come back as naive datetimes; a bare `str()` of one is
+    indistinguishable from local time and clients displayed it as such.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return str(value)
+
+
 def _fetch_routines():
     import pymysql
 
@@ -252,7 +267,7 @@ def _fetch_routines():
             if routine.get("time"):
                 routine["time"] = str(routine["time"])
             if routine.get("last_run"):
-                routine["last_run"] = str(routine["last_run"])
+                routine["last_run"] = _utc_iso(routine["last_run"])
         return routines
 
 
