@@ -82,3 +82,18 @@ def test_validator_rejects_overlong():
 
     with pytest.raises(ValueError):
         _validate_stream_url("rtsp://" + "a" * 300)
+
+
+def test_every_top_level_api_module_is_copied_into_the_image():
+    """service_api/Dockerfile copies files one by one; a new top-level module missing there
+    imports fine in CI and crash-loops the container (PR #495 on the NUC, 2026-11-27)."""
+    from pathlib import Path
+
+    api = Path(__file__).parent.parent / "services" / "service_api"
+    dockerfile = (api / "Dockerfile").read_text()
+    missing = [
+        p.name
+        for p in api.glob("*.py")
+        if f"COPY service_api/{p.name} " not in dockerfile and p.name != "__init__.py"
+    ]
+    assert missing == [], f"not in service_api/Dockerfile: {missing}"
