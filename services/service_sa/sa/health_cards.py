@@ -71,6 +71,11 @@ DISK_HEALTH_CHECK_INTERVAL_SECONDS = 900
 DISK_HEALTH_SPEAK_COOLDOWN_SECONDS = 24 * 3600
 DISK_HEALTH_STATE = {"checked": 0.0, "result": None, "spoke": 0.0}
 
+# check_backup_health(): same cadence as the disk rule; never speaks (a stale backup is a
+# heads-up, not an emergency, and the card stays up until a fresh dump lands).
+BACKUP_HEALTH_CHECK_INTERVAL_SECONDS = 900
+BACKUP_HEALTH_STATE = {"checked": 0.0, "newest": None}
+
 # Per-integration probe state: {key: {"failures": int, "last_probe": float}}. In-memory only --
 # a restart just re-probes, and the alert needs fresh consecutive failures anyway.
 SYSTEM_HEALTH_STATE = {}
@@ -209,6 +214,53 @@ class HealthCards:
                 "total_bytes": result["total"],
                 "days_left": result["days_left"],
                 "lake_bytes": result["lake_bytes"],
+                "because": result["because"],
+            },
+        }
+
+    def check_backup_health(self, frame=None):
+        """Card when the newest daily DB backup is over 36 h old (ambient) or 96 h (urgent).
+
+        Failures of setup/db_backup_daily.sh are otherwise visible only in ~/db_backups/backup.log
+        (cron has no mail here). The host snapshot (setup/host_usage.sh) records the newest
+        dump's mtime into sa_storage_metrics; the age is computed here from that fixed mtime, so
+        it keeps growing even if the snapshot cron itself stops. No card when no daily backup
+        has ever been seen. Read-only; never speaks.
+        """
+        del frame
+        now = time.time()
+        state = BACKUP_HEALTH_STATE
+        if now - state["checked"] >= BACKUP_HEALTH_CHECK_INTERVAL_SECONDS:
+            state["checked"] = now
+            db = None
+            try:
+                db = pymysql.connect(
+                    host=MYSQL_DATABASE, user=MYSQL_USER, passwd=MYSQL_PSWD, db=MYSQL_DB
+                )
+                utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                state["newest"] = disk.load_backup_newest(db, utc_now)
+            except Exception as e:
+                # Keep the last reading: a DB blip must not clear or raise a backup alert.
+                logger.error(f"Backup health check error: {e}")
+            finally:
+                if db:
+                    db.close()
+        result = disk.assess_backups(state["newest"], now)
+        if not result or result["level"] == "ok":
+            return None
+        critical = result["level"] == "critical"
+        return {
+            "mode": "backup_health",
+            "content": (
+                f"Database backup {'badly ' if critical else ''}overdue: "
+                f"last good one is {result['age_hours']:.0f} hours old"
+            ),
+            "priority": 2.15 if critical else 5.85,
+            **({"urgent": True} if critical else {}),
+            "data": {
+                "level": result["level"],
+                "age_hours": round(result["age_hours"], 1),
+                "newest_epoch": result["newest"],
                 "because": result["because"],
             },
         }
