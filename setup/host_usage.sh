@@ -26,6 +26,13 @@ DF=$(docker system df --format '{{.Type}}	{{.Size}}	{{.Reclaimable}}') || { echo
     COUNT=$(ls -1 "$BACKUP_DIR" 2>/dev/null | wc -l)
     BYTES=$(du -sb "$BACKUP_DIR" 2>/dev/null | cut -f1)
     printf 'backups\t%s\t%s\n' "$COUNT" "${BYTES:-0}"
+    # Newest finished daily dump (db_backup_daily.sh renames into place only after verifying, so
+    # a match is always a good file). 0/0 = none yet; the backup_health card ignores that.
+    NEWEST=$(ls -1t "$BACKUP_DIR"/alfr3d_daily_*.sql.gz 2>/dev/null | head -1)
+    DAILIES=$(ls -1 "$BACKUP_DIR"/alfr3d_daily_*.sql.gz 2>/dev/null | wc -l)
+    MTIME=0
+    [ -n "$NEWEST" ] && MTIME=$(stat -c %Y "$NEWEST" 2>/dev/null || echo 0)
+    printf 'backup_newest\t%s\t%s\n' "$MTIME" "$DAILIES"
 } > "$TMP"
 
 chmod 644 "$TMP"

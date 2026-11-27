@@ -7,7 +7,7 @@ makes that checkable. It pins four things against a snapshot taken before any co
    one must still resolve on the class AND be byte-identical, which flags an edit hiding inside a
    move (a unit test only notices if it happens to cover the line);
 2. every module-level function and constant of `engine` (the same, by hash);
-3. `DISPLAY_RULES` (rule id, priority, check method) and the card budget `MAX_DISPLAYS == 26`;
+3. `DISPLAY_RULES` (rule id, priority, check method) and the card budget `MAX_DISPLAYS == 27`;
 4. the names tests patch on the `engine` module (`engine.get_producer`, `engine.pymysql`, ...):
    a patch replaces a name in `engine`'s own namespace, so code that moves must keep reading those
    names through `engine`, and the names must keep existing there.
@@ -113,8 +113,8 @@ class TestTheSplitIsAPureMove:
         surface = current_surface()
 
         assert surface["display_rules"] == snapshot["display_rules"]
-        assert surface["max_displays"] == snapshot["max_displays"] == 26
-        assert len(engine.SAEngine.DISPLAY_RULES) == 26
+        assert surface["max_displays"] == snapshot["max_displays"] == 27
+        assert len(engine.SAEngine.DISPLAY_RULES) == 27
 
     def test_every_display_rule_names_a_real_method(self):
         for _rule_id, _priority, check_name in engine.SAEngine.DISPLAY_RULES:

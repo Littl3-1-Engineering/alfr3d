@@ -99,6 +99,7 @@ class TestDecideDisplays:
         "urgent": True,
     }
     DISK_HEALTH_CARD = {"mode": "disk_health", "content": "dh", "priority": 5.9}
+    BACKUP_HEALTH_CARD = {"mode": "backup_health", "content": "bh", "priority": 5.85}
     DEVICE_HEALTH_CARD = {
         "mode": "device_health",
         "content": "C200 has been offline for 10 h",
@@ -250,6 +251,7 @@ class TestDecideDisplays:
         check_household_unusual_day=None,
         check_system_health=None,
         check_disk_health=None,
+        check_backup_health=None,
         check_device_health=None,
     ):
         """Build a SAEngine with each check_* replaced by a stub returning the given card."""
@@ -283,6 +285,7 @@ class TestDecideDisplays:
         daemon.check_household_unusual_day = MagicMock(return_value=check_household_unusual_day)
         daemon.check_system_health = MagicMock(return_value=check_system_health)
         daemon.check_disk_health = MagicMock(return_value=check_disk_health)
+        daemon.check_backup_health = MagicMock(return_value=check_backup_health)
         daemon.check_device_health = MagicMock(return_value=check_device_health)
         return daemon
 
@@ -356,6 +359,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_backup_health=self.BACKUP_HEALTH_CARD,
             check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
@@ -470,6 +474,7 @@ class TestDecideDisplays:
             check_household_unusual_day=self.HOUSEHOLD_UNUSUAL_DAY_CARD,
             check_system_health=self.SYSTEM_HEALTH_CARD,
             check_disk_health=self.DISK_HEALTH_CARD,
+            check_backup_health=self.BACKUP_HEALTH_CARD,
             check_device_health=self.DEVICE_HEALTH_CARD,
         )
 
@@ -483,7 +488,7 @@ class TestDecideDisplays:
         # rule fired exactly once, so all twenty-four cards come back -- nothing dropped.
         from services.service_sa.sa.engine import SAEngine
 
-        assert len(result) == 26 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
+        assert len(result) == 27 == SAEngine.MAX_DISPLAYS == len(SAEngine.DISPLAY_RULES)
 
         # No two cards silently collide on priority value.
         # (music and now_playing intentionally share mode "music" at different
@@ -513,6 +518,7 @@ class TestDecideDisplays:
             "climate_deviation",
             "cross_surface_continuity",
             "wind_down_signal",
+            "backup_health",
             "disk_health",
             "mood",
             "household_composition",

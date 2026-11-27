@@ -250,6 +250,8 @@ const SituationalAwareness = ({ timezone = null }) => {
       case 'system_health': return <ServerCrash className="text-fui-magenta" />;
       // Disk or lake running out of room -- magenta like system_health, urgent only when critical.
       case 'disk_health': return <HardDrive className="text-fui-magenta" />;
+      // Daily DB backup overdue -- same family as disk_health.
+      case 'backup_health': return <HardDrive className="text-fui-magenta" />;
       default: return <Thermometer className="text-error" />;
     }
   };

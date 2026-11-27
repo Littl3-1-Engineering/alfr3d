@@ -1,6 +1,6 @@
 # Daily database backup with 7-day rotation
 
-## Status: 🟢 Built, tested and installed on the NUC 2026-10-13 (`setup/db_backup_daily.sh`, user crontab `0 4 * * *`). First scheduled run is 2026-10-14 04:00 local. Off-box copy and failure alerting remain open.
+## Status: 🟢 Built, tested and installed on the NUC 2026-10-13; staleness alert (`backup_health` card) built 2026-11-27, not yet deployed (`setup/db_backup_daily.sh`, user crontab `0 4 * * *`). First scheduled run is 2026-10-14 04:00 local. Off-box copy and failure alerting remain open.
 
 ## Why
 
@@ -43,8 +43,6 @@ pre-migration dump stays; this adds an unattended daily one so a bad day never c
 
 ## Still open
 
-- **Failure is only visible in `~/db_backups/backup.log`** (cron has no mail here). Add a staleness
-  check: `check_disk_health` (or a sibling rule) should warn when the newest `alfr3d_daily_*` is over
-  ~36 h old. That needs the backup folder visible to the SA containers (read-only mount), the same
-  gap as the backup-folder-size item in the disk monitoring doc.
+- ~~**Failure is only visible in `~/db_backups/backup.log`**~~ Built 2026-11-27: `setup/host_usage.sh` (already on the host cron, every 4 h) appends a `backup_newest` line (mtime of the newest `alfr3d_daily_*.sql.gz`, count); `sa-learner` stores it as `host.backup_newest` in `sa_storage_metrics` (no migration, no new mount: it rides the existing `/host_usage` bind mount); `SAEngine.check_backup_health` raises an ambient card at 36 h and an urgent one at 96 h. The age is computed from the stored mtime, so the card still goes stale if the host snapshot cron itself dies. Silent until a first daily backup has been seen. Deploy: rebuild `sa-awareness` + `sa-learner`; the host script is re-read by cron on its next run (copy it if the NUC runs a stale checkout).
+- **Off-box copy** still open: needs a destination decision (another machine over Tailscale vs a cloud bucket).
 - The 7 dailies are ~26 MB each (about 185 MB), so the disk cost is small.

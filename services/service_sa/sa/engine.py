@@ -73,6 +73,8 @@ from sa.media_cards import (  # noqa: F401  (re-exported)
 )
 from sa.health_cards import (  # noqa: F401  (re-exported)
     HealthCards,
+    BACKUP_HEALTH_CHECK_INTERVAL_SECONDS,
+    BACKUP_HEALTH_STATE,
     DISK_HEALTH_CHECK_INTERVAL_SECONDS,
     DISK_HEALTH_SPEAK_COOLDOWN_SECONDS,
     DISK_HEALTH_STATE,
@@ -254,6 +256,9 @@ class SAEngine(
         # Disk running out is the same kind of "the system is about to go blind" as system_health:
         # critical is urgent (2.1, just above it), warn is an ambient heads-up near mood.
         ("disk_health", 5.9, "check_disk_health"),
+        # A daily DB backup that stopped landing: ambient at 36 h, urgent at 96 h (priority is
+        # set per call by check_backup_health, 2.15 critical / 5.85 warn).
+        ("backup_health", 5.85, "check_backup_health"),
         # Actionable, near event/gathering: a genuine deviation from a device's
         # established on/off rhythm is worth surfacing promptly.
         ("rhythm_break_anomaly", 2.6, "check_rhythm_break_anomaly"),

@@ -91,6 +91,11 @@
    "check_disk_health"
   ],
   [
+   "backup_health",
+   5.85,
+   "check_backup_health"
+  ],
+  [
    "rhythm_break_anomaly",
    2.6,
    "check_rhythm_break_anomaly"
@@ -131,7 +136,7 @@
    "check_household_unusual_day"
   ]
  ],
- "max_displays": 26,
+ "max_displays": 27,
  "methods": {
   "_any_device_in_dnd": {
    "sha": "sha256:87bb3437e01442cf",
@@ -196,6 +201,10 @@
   "check_attention_focus": {
    "sha": "sha256:667ce2e037334c04",
    "signature": "(self, frame)"
+  },
+  "check_backup_health": {
+   "sha": "sha256:763abcca21ec1f4e",
+   "signature": "(self, frame=None)"
   },
   "check_climate_advisory": {
    "sha": "sha256:dfbfe5479e1eb5a3",

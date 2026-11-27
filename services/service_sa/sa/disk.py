@@ -28,6 +28,16 @@ HOST_USAGE_MAX_AGE_SECONDS = 12 * 3600
 HOST_MAX_AGE_DAYS = 1
 _UNITS = {"B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4}
 
+# Backup freshness (check_backup_health): the daily dump runs at 04:00, so over ~36 h old means a
+# missed run; over 4 days means several. `host.backup_newest` stores the newest dump's mtime
+# (epoch seconds) in row_count and the number of dailies in data_bytes.
+BACKUP_NEWEST_TABLE = HOST_PREFIX + "backup_newest"
+BACKUP_WARN_SECONDS = 36 * 3600
+BACKUP_CRITICAL_SECONDS = 96 * 3600
+# Looked up over a long window on purpose: the mtime is a fact that only ages, so if the host
+# cron stops feeding samples the card still goes stale rather than going silent.
+BACKUP_LOOKBACK_DAYS = 14
+
 HISTORY_DAYS = 30
 # A fresh install must not alert on a growth rate fitted to two points.
 MIN_SAMPLES_FOR_TREND = 6
@@ -73,7 +83,7 @@ def read_host_usage(path=None, now=None):
             lines = [ln.rstrip("\n").split("\t") for ln in f if ln.strip()]
     except OSError:
         return None
-    usage = {"docker": {}, "backups": None}
+    usage = {"docker": {}, "backups": None, "backup_newest": None}
     taken = None
     for cols in lines:
         try:
@@ -85,6 +95,10 @@ def read_host_usage(path=None, now=None):
                     usage["docker"][cols[1]] = (size, reclaim or 0)
             elif cols[0] == "backups":
                 usage["backups"] = (int(cols[1]), int(cols[2]))
+            elif cols[0] == "backup_newest":
+                mtime, dailies = int(cols[1]), int(cols[2])
+                if mtime > 0 and dailies > 0:
+                    usage["backup_newest"] = (mtime, dailies)
         except (IndexError, ValueError):
             continue
     if (
@@ -106,6 +120,9 @@ def record_host_usage(conn, path=None):
     ]
     if usage["backups"]:
         rows.append((HOST_PREFIX + "backups", usage["backups"][0], usage["backups"][1], 0))
+    if usage["backup_newest"]:
+        mtime, dailies = usage["backup_newest"]
+        rows.append((BACKUP_NEWEST_TABLE, mtime, dailies, 0))
     cursor = conn.cursor()
     cursor.executemany(
         "INSERT INTO sa_storage_metrics (table_name, row_count, data_bytes, index_bytes, "
@@ -127,6 +144,38 @@ def load_host_usage(conn, now):
         (HOST_PREFIX + "%", now - timedelta(days=HOST_MAX_AGE_DAYS)),
     )
     return {name: (int(r), int(d), int(i)) for name, r, d, i in cursor.fetchall()}
+
+
+def load_backup_newest(conn, now):
+    """(newest_dump_epoch, daily_count) from the latest `host.backup_newest` row, or None."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT row_count, data_bytes FROM sa_storage_metrics WHERE table_name = %s "
+        "AND recorded_at >= %s ORDER BY recorded_at DESC LIMIT 1",
+        (BACKUP_NEWEST_TABLE, now - timedelta(days=BACKUP_LOOKBACK_DAYS)),
+    )
+    row = cursor.fetchone()
+    return (int(row[0]), int(row[1])) if row and int(row[0]) > 0 else None
+
+
+def assess_backups(newest, now_epoch):
+    """None when there is nothing to judge (no daily backup ever seen: not configured, or a fresh
+    install before its first 04:00 run), else {"level", "age_hours", "newest", "because"}."""
+    if not newest:
+        return None
+    mtime, dailies = newest
+    age = max(0.0, now_epoch - mtime)
+    level = "ok"
+    if age >= BACKUP_CRITICAL_SECONDS:
+        level = "critical"
+    elif age >= BACKUP_WARN_SECONDS:
+        level = "warn"
+    hours = age / 3600
+    because = [
+        f"newest daily database backup is {hours:.0f} hours old (expected under 36)",
+        f"{dailies} daily backup(s) on disk; check ~/db_backups/backup.log on the server",
+    ]
+    return {"level": level, "age_hours": hours, "newest": mtime, "because": because}
 
 
 def host_consumers(host):
