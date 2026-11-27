@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../common"))
 from tree_of_alfr3d import project_tree_router, start_file_watcher_task, set_manager  # noqa: E402
 from common import db_connection  # noqa: E402
 
+from stream_secrets import encrypt_existing_stream_urls  # noqa: E402
 from dependencies import (  # noqa: E402
     manager,
     publish_events,
@@ -276,6 +277,12 @@ async def broadcast_devices():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     set_manager(manager)
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, encrypt_existing_stream_urls, db_connection
+        )
+    except Exception as e:
+        logger.error(f"stream_url backfill failed: {e}")
     asyncio.create_task(consume_events())
     asyncio.create_task(consume_sa())
     asyncio.create_task(collect_container_metrics())

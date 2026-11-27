@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from starlette.responses import Response
 
 from dependencies import db_connection
+from stream_secrets import decrypt_stream_url, redact_credentials
 from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
@@ -165,7 +166,7 @@ async def _start_locked(device_id: int) -> dict:
         "-timeout",
         "15000000",
         "-i",
-        camera["stream_url"],
+        decrypt_stream_url(camera["stream_url"]),
         "-c:v",
         "copy",
         "-c:a",
@@ -192,7 +193,8 @@ async def _start_locked(device_id: int) -> dict:
             line = await proc.stderr.readline()
             if not line:
                 break
-            logger.warning(f"ffmpeg hls[{device_id}]: {line.decode(errors='replace').strip()}")
+            text = redact_credentials(line.decode(errors="replace").strip())
+            logger.warning(f"ffmpeg hls[{device_id}]: {text}")
 
     stderr_task = asyncio.create_task(log_stderr())
     _hls_state[device_id] = {"process": proc, "stderr_task": stderr_task}
@@ -315,7 +317,7 @@ async def camera_snapshot(device_id: int):
                 "-rtsp_transport",
                 "tcp",
                 "-i",
-                camera["stream_url"],
+                decrypt_stream_url(camera["stream_url"]),
                 "-vframes",
                 "1",
                 "-f",

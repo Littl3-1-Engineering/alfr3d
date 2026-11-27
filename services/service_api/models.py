@@ -27,6 +27,9 @@ class UserUpdate(BaseModel):
 def _validate_stream_url(v: Optional[str]) -> Optional[str]:
     if v and not v.startswith(("rtsp://", "rtsps://")):
         raise ValueError("stream_url must start with rtsp:// or rtsps://")
+    if v and len(v) > 300:
+        # Stored as a Fernet token (~1.4x + overhead) in a VARCHAR(512).
+        raise ValueError("stream_url must be at most 300 characters")
     return v
 
 
