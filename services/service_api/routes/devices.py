@@ -13,6 +13,7 @@ from dependencies import (
     ALFR3D_ENV_NAME,
 )
 from models import DeviceCreate, DeviceUpdate
+from stream_secrets import encrypt_stream_url
 from auth.dependencies import require_permission
 
 logger = logging.getLogger("ApiLog")
@@ -202,7 +203,7 @@ async def create_device(data: DeviceCreate, _perm=Depends(require_permission("de
                     type_id,
                     user_id,
                     env_id,
-                    data.stream_url or None,
+                    encrypt_stream_url(data.stream_url),
                 ),
             )
             db.commit()
@@ -250,7 +251,7 @@ async def update_device(
             if data.stream_url is not None:
                 if data.stream_url:
                     updates.append("stream_url = %s")
-                    params.append(data.stream_url)
+                    params.append(encrypt_stream_url(data.stream_url))
                 else:
                     updates.append("stream_url = NULL")
             if data.position is not None:

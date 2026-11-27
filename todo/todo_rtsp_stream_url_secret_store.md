@@ -1,6 +1,9 @@
 # Move camera RTSP credentials into the secrets store
 
-## Status: TODO
+## Status: 🟡 Built 2026-11-27 (branch `fix/rtsp-url-encrypt-at-rest`), not yet deployed. Password rotation still owed (see bottom).
+
+## What shipped
+`services/service_api/stream_secrets.py`: whole URL stored as a Fernet token; routes/devices.py encrypts on create/update; routes/stream.py decrypts only at ffmpeg start + snapshot and redacts `user:pass@` from ffmpeg stderr before logging; models validator caps URLs at 300 chars so the token fits VARCHAR(512). Existing plaintext rows are converted at API startup (`encrypt_existing_stream_urls`, idempotent) rather than by an alembic migration, because the migrate container has no `secrets_data` volume. Reads use `decrypt_or_plaintext`, so rollout is zero-downtime. Tests: `tests/test_stream_secrets.py`. Note: the backfill runs on first boot, so take a DB backup first (the daily one at 04:00 counts).
 
 ## Problem
 `device.stream_url` (camera rows, `device_type = 'camera'`) stores the full RTSP URL
